@@ -149,7 +149,7 @@ function turned(l: LayoutJson, rotation: LayoutJson['rotation']): LayoutJson {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The bezel's charcoal (drive-bezel.tsx): the drawer is framed in it, so it reads as part of the drive. */
+/** The old bezel's charcoal: the drawer is framed in it, so it reads as part of the drive. */
 export const BEZEL_EDGE = '#1d2126';
 
 /**
@@ -165,19 +165,7 @@ export const BEZEL_EDGE = '#1d2126';
 export function DisplayEditor({ device, open, onOpenChange }: {
   device: DeviceListItem; open: boolean; onOpenChange: (open: boolean) => void;
 }) {
-  /* The "?" is the toggle's sibling, never inside it: a button in a button
-     is invalid, and opening help must not expand the editor. */
-  const toggle = (
-    <span className="flex items-center gap-1 self-start" style={{ color: 'var(--muted)' }}>
-      <button type="button" onClick={() => onOpenChange(!open)} aria-expanded={open}
-              data-testid={`display-toggle-${device.id}`}
-              className="text-[11px] font-semibold uppercase tracking-wide">
-        {open ? '▾' : '▸'} Change Display
-      </button>
-      <HelpTip topic="display" />
-    </span>
-  );
-  if (!open) return <div className="mt-2 flex min-w-0 flex-col">{toggle}</div>;
+  if (!open) return null;
   return (
     <div className="flex min-w-0 flex-col gap-2 rounded-b-xl border-4 border-t-0 px-3 pb-3 pt-4 lg:border-[6px]"
          data-testid={`display-drawer-${device.id}`}
@@ -185,7 +173,6 @@ export function DisplayEditor({ device, open, onOpenChange }: {
            borderColor: BEZEL_EDGE, background: 'var(--track)',
            boxShadow: 'inset 0 10px 10px -6px rgb(0 0 0 / 0.45), inset 0 0 0 1px #3a4048, 0 2px 0 rgb(0 0 0 / 0.25)',
          }}>
-      {toggle}
       {device.displayLayouts
         ? <Editor device={device} onCancel={() => onOpenChange(false)} />
         : (

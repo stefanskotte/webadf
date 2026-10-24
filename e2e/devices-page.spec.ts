@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices, pairingCodes } from '@/db/schema/devices';
+import { disks } from '@/db/schema/catalog';
 import { signUpFresh, runTag } from './helpers';
 import { decodeLayout, encodeLayout } from '@/lib/display-layout';
 import { pairDevice, seedDisk, cleanupSeeded, authHeader, publishTestRelease, cleanupTestReleases } from './device-helpers';
@@ -545,7 +546,7 @@ test('Cancel closes the pairing form without minting a code', async ({ page }) =
 
 // --- the drive-bezel card (design A2) ---------------------------------------
 
-test('the bezel display names the mounted disk, so the card does not repeat it until a mount is in flight', async ({ page, request }) => {
+test('the bezel display names the mounted disk, and the drive box names it too, always visible', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
   const { deviceId: idConverged } = await pairDevice(page, request, 'Bezel Converged');
   const { deviceId: idPending } = await pairDevice(page, request, 'Bezel Pending');
@@ -570,16 +571,51 @@ test('the bezel display names the mounted disk, so the card does not repeat it u
   // alone, cut at the firmware's DC_LABEL_MAX (24) as mount.ts sends it.
   const shown = `BezelA-${tag} — ${`BezelA-${tag} (Disk 1)`.slice(0, 24)}`;
   await expect(page.getByTestId(`device-oled-${idConverged}`)).toHaveAttribute('data-oled', shown);
-  await expect(page.getByTestId(`device-disk-${idConverged}`)).toHaveClass(/sr-only/);
+  const box = page.getByTestId(`device-disk-${idConverged}`);
+  await expect(box).toBeVisible();
+  await expect(box).toContainText('In the drive');
+  await expect(box).toContainText(`BezelA-${tag}`);
 
   await expect(page.getByTestId(`device-oled-${idPending}`)).toHaveAttribute('data-oled', shown);
   const words = page.getByTestId(`device-disk-${idPending}`);
-  await expect(words).not.toHaveClass(/sr-only/);
+  await expect(words).toBeVisible();
   await expect(words).toContainText('Mounting…');
   await expect(words).toContainText(`BezelB-${tag}`);
 });
 
-test('pressing the bezel display opens the drawer, and the bezel behind it cannot be pressed', async ({ page, request }) => {
+test('the protection switch flips the disk, the disk title links to its title, and an empty drive offers the library', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId: idDisk } = await pairDevice(page, request, 'Switch Disk');
+  const { deviceId: idEmpty } = await pairDevice(page, request, 'Switch Empty');
+  const tag = runTag();
+  const { gameId, diskId } = await seedDisk(orgId, { title: `Switch-${tag}`, diskNo: 1, sha256: sha(`${tag}-s`), writeProtected: false });
+  await setDevice(idDisk, {
+    desiredGameId: gameId, desiredDiskId: diskId, desiredSha256: sha(`${tag}-s`), desiredDiskNo: 1,
+    mountedGameId: gameId, mountedDiskId: diskId, mountedSha256: sha(`${tag}-s`), mountedDiskNo: 1,
+    lastSeenAt: new Date(),
+  });
+  await setDevice(idEmpty, { lastSeenAt: new Date() });
+
+  await page.goto('/devices');
+  const sw = page.getByTestId(`device-protection-${idDisk}`);
+  await expect(sw).toHaveText('Writable');
+  await expect(sw).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByTestId(`device-disk-title-${idDisk}`)).toHaveAttribute('href', `/games/${gameId}`);
+
+  await sw.click();
+  await expect(sw).toHaveText('Protected');
+  await expect(sw).toHaveAttribute('aria-pressed', 'true');
+  const [row] = await getDb().select({ wp: disks.writeProtected }).from(disks).where(eq(disks.id, diskId));
+  expect(row.wp).toBe(true);
+
+  const empty = page.getByTestId(`device-protection-${idEmpty}`);
+  await expect(empty).toHaveText('—');
+  await expect(empty).toBeDisabled();
+  await expect(page.getByTestId(`device-open-library-${idEmpty}`)).toHaveAttribute('href', '/library');
+  await expect(page.getByTestId(`device-disk-title-${idEmpty}`)).toHaveCount(0);
+});
+
+test('pressing the bezel display opens the display drawer', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId } = await pairDevice(page, request);
   await page.goto('/devices');
@@ -587,9 +623,7 @@ test('pressing the bezel display opens the drawer, and the bezel behind it canno
   await expect(page.getByTestId(`display-drawer-${deviceId}`)).toHaveCount(0);
   await page.getByTestId(`device-oled-${deviceId}`).click();
   await expect(page.getByTestId(`display-drawer-${deviceId}`)).toBeVisible();
-  await expect(page.getByTestId(`display-toggle-${deviceId}`)).toHaveText('▾ Change Display');
-  // inert: the blurred face is out of the tab order and the click path.
-  await expect(page.getByTestId(`device-oled-${deviceId}`).locator('xpath=..')).toHaveAttribute('inert', '');
+  await expect(page.getByTestId(`display-toggle-${deviceId}`)).toHaveText('Change display');
 });
 
 // Pillock, 2026-10-19: the bezel drew the board's screen upside down at

@@ -1,4 +1,4 @@
-import { driveBoxText, firmwareCellText, signalCell, statusPill } from '@/lib/devices-look';
+import { firmwareCellText, signalCell, statusPill } from '@/lib/devices-look';
 import { deviceState, isOnline, relative } from '@/lib/device-state';
 import { firmwareLabel, updateLabel, type FirmwareState } from '@/lib/firmware-state';
 import { isDefaultDeviceName } from '@/lib/device-name';
@@ -14,26 +14,17 @@ import { SecondDriveReadings } from './second-drive-readings';
 import { SecondDriveSetting } from './second-drive-setting';
 import { BootDiskSetting } from './boot-disk-setting';
 import { HelpTip } from '@/components/help/help-tip';
-import { NextDiskButton } from './next-disk-button';
 import { DeviceAlias } from './device-alias';
 import { DriveFront } from './drive-front';
 import { DeleteDeviceDialog } from './delete-device-dialog';
-import { ReinsertButton } from './reinsert-button';
+import { DriveBox } from './drive-box';
+import { TransferBox } from './transfer-box';
 
 /**
- * The drive-bezel card (design A2, 2026-10-07): name, online badge and MAC on
- * TOP; then the front of the drive -- the board's own OLED, drawn by
- * display.wasm, its LEDs and eject -- with the Display drawer under it; then
- * write-protect, firmware and actions along the BOTTOM. The card is exactly
- * as tall as its content, growing when the drawer opens and shrinking when it
- * closes: it was square until 2026-10-08, which left an empty band between
- * the bezel and the bottom row (the operator asked for it to go).
- *
- * The disk is named in words only while the OLED cannot be trusted to name
- * it: a mount or eject in flight, or a request the board has not confirmed.
- * Once the board reports, its screen says which disk, and repeating it was
- * the duplicate this design removed. The words stay in the DOM (sr-only) for
- * screen readers either way.
+ * The Devices card (spec §2): the drive tile and the info column on top, then the offline strip, the drive box (DF0
+ * in words, its protection switch and actions), the last error and stuck-start strips, a standalone Transfer box,
+ * and the settings that Tasks 4-6 still replace. The disk is always named in words in the drive box; the glass is a
+ * canvas.
  */
 export function DeviceCard(
   { device, now, firmware, selection, onCancelUpdate, next, sendLine, transfer, uploadLine }: {
@@ -46,7 +37,7 @@ export function DeviceCard(
     next?: NextInfo | null;
     /** Send to Amiga's one line (spec §4), or null when nothing waits or happened lately. */
     sendLine?: string | null;
-    /** Whether Transfer runs on the Amiga; null for a board that cannot take files. Not drawn until Task 3. */
+    /** Whether Transfer runs on the Amiga; null for a board that cannot take files. */
     transfer?: { running: boolean } | null;
     uploadLine?: { text: string; href: boolean } | null;
   },
@@ -68,25 +59,13 @@ export function DeviceCard(
     error: device.firmwareUpdateError,
   });
 
-  // The disk in words (heading, title, detail): the look rules live in devices-look.ts (spec §4.2).
-  const { label: heading, title: bigText, meta: subText } = driveBoxText(device, state);
-
-  // Words on screen only while the OLED shows something other than the disk
-  // asked for: the old disk (pending, stale). Converged and empty: the glass
-  // already says it.
-  const spelled = state === 'pending' || state === 'stale';
-
-  // While a mount or eject is still in flight (state === 'pending'), the
-  // MOUNTED disk is the OLD one -- bigText above is already showing the NEW
-  // disk's title (what's being mounted) or, while ejecting, the disk on its
-  // way out. Either way, tagging that title with the OLD disk's write-protect
-  // would describe the wrong disk, so the tag reads "--" until convergence
-  // (fix round 1, controller ruling).
-  const protection: 'protected' | 'writable' | 'none' =
-    state === 'pending' ? 'none'
-    : device.mountedWriteProtected === true ? 'protected'
-    : device.mountedWriteProtected === false ? 'writable'
-    : 'none';
+  // The preload line is about the disk in the drive, which only a converged board has. Not in Network mode before
+  // fw 1.12.1: the spare slot held the driver disk then (plan 2026-10-12 ruling 19). From 1.12.1 the driver disk has
+  // DF1's own slot and DF0's next disk preloads as in the other modes.
+  const preload = next?.preload && state === 'converged'
+    && (device.secondDriveReported !== 'net' || firmwareAtLeast(device.firmwareVersion, NET_PICK_FW))
+    ? { text: preloadText(next.diskNo, next.preload), kind: next.preload }
+    : null;
 
   const pill = statusPill(online);
   const signal = signalCell(device.rssi, online);
@@ -98,9 +77,9 @@ export function DeviceCard(
              style={{ borderRadius: 20, boxShadow: '0 24px 48px -28px rgb(36 33 27 / .35)' }}
              data-testid={`device-${device.id}`}
              data-state={state}>
-      {/* TOP ROW: the drive tile's slot (Task 3 puts the tile here; today's bezel stays in the lower half) and the
-          info column. A column below md. */}
+      {/* TOP ROW: the drive tile and the info column. A column below md. */}
       <div className="flex flex-col gap-5 px-5 pb-6 pt-6 sm:px-7 sm:pt-7 md:flex-row md:items-center md:gap-8">
+        <DriveFront device={device} online={online} />
         <div className="flex min-w-0 flex-1 flex-col gap-3.5">
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
             <div className="min-w-0 max-w-full">
@@ -192,79 +171,39 @@ export function DeviceCard(
         </div>
       )}
 
-      {/* The lower half keeps today's pieces until Tasks 3-6 replace them. */}
-      <div className="mx-3 mb-3 flex flex-col gap-2">
-      <DriveFront device={device} online={online} />
-
-      {/* The disk in words. Visible only while the OLED would name the wrong
-          disk (see the doc comment); converged and empty keep it for screen
-          readers, since the glass is a canvas. */}
-      {/* Layout classes only when shown: `w-full` would override sr-only's 1px
-          width and push the hidden block past the card (2px of page scroll at
-          390px, mobile.spec.ts). */}
-      <div className={spelled ? 'flex w-full min-w-0 flex-col items-start gap-0.5 rounded-lg border-2 border-dashed px-3 py-2' : 'sr-only'}
-           style={spelled ? { borderColor: 'var(--primary-action)' } : undefined}
-           data-testid={`device-disk-${device.id}`}>
-        <span className="text-[11px] font-semibold uppercase tracking-wide"
-              style={{ color: state === 'stale' ? 'var(--amber-text)' : 'var(--muted)' }}>
-          {heading}
-        </span>
-        {/*
-          A disk's title is often a filename-derived string with no spaces
-          (fix round 1, minor 1) -- overflow-wrap: anywhere lets it break
-          instead of stretching the card (and the grid row) past its column.
-        */}
-        <span className="w-full text-[17px] font-bold leading-tight"
-              style={{ overflowWrap: 'anywhere', color: 'var(--ink)' }}>
-          {bigText}
-        </span>
-        <span className="text-[12px]" style={{ color: 'var(--muted)' }}>{subText}</span>
+      <div className="mx-3 mb-3">
+        <DriveBox device={device} state={state} next={next ?? null} preload={preload} />
       </div>
-      {/* Converged and empty only: while an eject is still in flight the drive is not empty yet (A4). */}
-      {state === 'empty' && device.lastDiskId && device.lastDiskTitle && (
-        <ReinsertButton deviceId={device.id} diskId={device.lastDiskId} title={device.lastDiskTitle} diskNo={device.lastDiskNo} />
+
+      {device.lastError && (
+        // overflowWrap: a device-reported error can be URL-shaped with no natural break point, which once gave the
+        // whole page horizontal scroll at 390px.
+        <div className="mx-3 mb-3 min-w-0 rounded-[12px] px-3.5 py-2.5 text-[13px]"
+             style={{ background: 'var(--danger-bg)', color: 'var(--danger-fg)', overflowWrap: 'anywhere' }}
+             data-testid={`device-error-${device.id}`}>
+          {device.lastError}
+        </div>
       )}
-      {/* Gated like the Next button below: the line is about the disk in the
-          drive, which only a converged board has. Not on the OLED, so it
-          stays visible. */}
-      {/* Not in Network mode before fw 1.12.1: the spare slot held the driver disk then (plan 2026-10-12 ruling 19).
-          From 1.12.1 the driver disk has DF1's own slot and DF0's next disk preloads as in the other modes. */}
-      {next?.preload && state === 'converged'
-        && (device.secondDriveReported !== 'net' || firmwareAtLeast(device.firmwareVersion, NET_PICK_FW)) && (
-        <span className="flex items-center gap-1">
-          <span className="text-[11px]" style={{ color: 'var(--muted)' }} data-testid={`device-preload-${device.id}`}
-                data-preload={next.preload}>
-            {preloadText(next.diskNo, next.preload)}
-          </span>
-          <HelpTip topic="next-disk" />
-        </span>
+      {lastBoot && (
+        <div className="mx-3 mb-3 min-w-0 rounded-[12px] px-3.5 py-2.5 text-[13px]"
+             style={{ background: 'var(--warning-bg)', color: 'var(--warning-fg)', overflowWrap: 'anywhere' }}
+             data-testid={`device-last-boot-${device.id}`}>
+          {lastBoot}
+        </div>
       )}
 
-      {sendLine && (
-        <Link href={`/ingest?board=${encodeURIComponent(device.id)}`} data-testid={`device-send-${device.id}`}
-              className="w-fit text-[11px] font-semibold underline underline-offset-2" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>
-          {sendLine}
-        </Link>
+      {/* Until the Network panel (Task 5) holds it: a board with a send or upload line gets the Transfer box here. */}
+      {(sendLine || uploadLine) && (
+        <TransferBox className="mx-3 mb-3" deviceId={device.id} transfer={transfer ?? null}
+                     sendLine={sendLine ?? null} uploadLine={uploadLine ?? null} />
       )}
-      {uploadLine && (uploadLine.href ? (
-        <Link href={`/ingest?from=${encodeURIComponent(device.id)}#from-amiga`} data-testid={`device-upload-${device.id}`}
-              className="w-fit text-[11px] font-semibold underline underline-offset-2" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>
-          {uploadLine.text}
-        </Link>
-      ) : (
-        <span data-testid={`device-upload-${device.id}`} className="text-[11px]" style={{ color: 'var(--muted)' }}>{uploadLine.text}</span>
-      ))}
+
+      <div className="mx-3 mb-3 flex flex-col gap-2">
       {/* BOTTOM: write protection, firmware, and every existing action. */}
       <div className="flex flex-col gap-2">
         <SecondDriveReadings device={device} />
         <SecondDriveSetting device={device} next={next} now={now} />
         <BootDiskSetting device={device} />
-        {lastBoot && (
-          <span className="text-[11px]" style={{ color: 'var(--warning-fg)', overflowWrap: 'anywhere' }}
-                data-testid={`device-last-boot-${device.id}`}>
-            {lastBoot}
-          </span>
-        )}
         {i2c && (
           <span className="flex min-w-0 items-start gap-1" data-testid={`device-nfc-${device.id}`} data-ok={i2c.ok}>
             <span className="flex min-w-0 flex-col text-[11px]" style={{ overflowWrap: 'anywhere' }}>
@@ -274,36 +213,11 @@ export function DeviceCard(
             <HelpTip topic="nfc" className="-mt-1" />
           </span>
         )}
-        <span className="w-fit shrink-0 self-start rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-              style={{
-                borderColor: 'var(--hairline)',
-                color: protection === 'none' ? 'var(--muted)' : 'var(--ink)',
-                // Amber is FILL ONLY (globals.css: --accent-amber "fails AA
-                // as text") -- Writable gets an accent bar, never amber
-                // text, which is exactly what --amber-text exists to avoid.
-                boxShadow: protection === 'writable' ? 'inset 3px 0 0 var(--accent-amber)' : undefined,
-              }}
-              data-testid={`device-protection-${device.id}`}>
-          {protection === 'protected' ? 'Protected' : protection === 'writable' ? 'Writable' : '—'}
-        </span>
-
         <div className="flex items-center justify-end gap-2">
-          {next && state === 'converged' && <NextDiskButton deviceId={device.id} next={next} />}
           <DeleteDeviceDialog deviceId={device.id} name={device.name} />
         </div>
       </div>
 
-      {device.lastError && (
-        // overflowWrap: same reasoning as the firmware line above (fix round
-        // 1, critical 2) -- a device-reported error can be URL-shaped with no
-        // natural break point, which overflowed the card by 238px and gave
-        // the whole page horizontal scroll at 390px (re-review finding).
-        <div className="min-w-0 rounded-lg px-3 py-2 text-[12px]"
-             style={{ background: 'var(--input-bg)', color: 'var(--amber-text)', overflowWrap: 'anywhere' }}
-             data-testid={`device-error-${device.id}`}>
-          {device.lastError}
-        </div>
-      )}
       </div>
     </article>
   );

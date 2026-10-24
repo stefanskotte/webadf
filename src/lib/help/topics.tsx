@@ -321,7 +321,7 @@ export const HELP_TOPICS = {
     ),
   },
 
-  // Sources: display-editor.tsx, drive-bezel.tsx, live-display.ts, display-editor-geometry.ts:172-178 (status texts), HANDOFF 3ax;
+  // Sources: display-editor.tsx, drive-glass.tsx, live-display.ts, display-editor-geometry.ts:172-178 (status texts), HANDOFF 3ax;
   // panel chips and the boot-time check: wifi-floppy/firmware/src/ssd1306.c (detect_sh1106, ssd1306_init), HANDOFF 3az.
   // NFC icon: display.c draw_nfc (present / struck = absent / inverted = write armed), main.c ui.nfc (armed wins,
   // then g_nfc_reader), display_layout.h EL_NFC (in no default), display-layout.ts NFC_ELEMENT_FIRMWARE 1.10.0,
@@ -331,7 +331,7 @@ export const HELP_TOPICS = {
   // full only at 100 %), display_layout.h STATUS_OPT_ICON (opt 1; the word in every default),
   // display_layout_for (built-in screens take the icon), display-layout.ts STATUS_ICON_FIRMWARE 1.15.0.
   // Rotation (1.17.0): oled_cmds.c (A0/C0 in the controller, every screen turns), display_layout.h
-  // REC_ROTATION, display-editor.tsx (Rotation select, reset keeps the turn), drive-bezel.tsx (stripRotation), route.ts tooOldReason.
+  // REC_ROTATION, display-editor.tsx (Rotation select, reset keeps the turn), drive-glass.tsx (stripRotation), route.ts tooOldReason.
   // Track counter side arrow (1.18.0): display.c track_text ("42" arrow "79", down = side 0, up = side 1).
   // The 1.17.0 head element (id 10) was withdrawn; stored layouts that name it lose it silently.
   display: {
@@ -341,7 +341,7 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          Each board&apos;s card shows its screen, drawn from its layout and last reported disk. Press <em>Change Display</em>, or the screen, to edit it.
+          Each board&apos;s card shows its screen, drawn from its layout and last reported disk. Press <em>Change display</em> under the drive, or its screen, to edit it.
         </p>
         <p>
           Pick the <em>Panel</em> (128×32 or 128×64) and drag elements into place, shown or hidden, at 1× or 2×.{' '}

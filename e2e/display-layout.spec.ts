@@ -162,7 +162,7 @@ test('Cancel throws away unsaved edits and closes the drawer without asking the 
   await page.getByTestId(`display-cancel-${deviceId}`).click();
 
   await expect(page.getByTestId(`display-drawer-${deviceId}`)).toHaveCount(0);
-  await expect(page.getByTestId(`display-toggle-${deviceId}`)).toHaveText('▸ Change Display');
+  await expect(page.getByTestId(`display-toggle-${deviceId}`)).toHaveText('Change display');
   expect(writes).toEqual([]);
   expect((await deviceRow(deviceId)).displayVersion).toBe(0);
 
