@@ -14,6 +14,7 @@ test('the (i) opens About: build, hosting, platform, firmware and an empty libra
   for (const id of ['web-app', 'hosting', 'platform', 'firmware', 'library', 'about-webadf']) {
     await expect(page.getByTestId(`about-${id}`)).toBeVisible();
   }
+  await expect(page.getByTestId('about-about-webadf')).toContainText('WebFloppy');
   await expect(page.getByTestId('about-commit')).toHaveText(/\S/);
   await expect(page.getByTestId('about-hosting-mode')).toHaveText(/^(Hosted \(webadf\.vercel\.app\)|Self-hosted)$/);
   await expect(page.getByTestId('about-firmware')).toContainText('No boards paired');

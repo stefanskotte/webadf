@@ -77,7 +77,7 @@ export default async function AppLayout({
               style={{ color: "var(--ink)", fontFamily: "var(--font-display)" }}
             >
               <Logo size={24} />
-              webadf
+              webfloppy
             </Link>
             {/* Beside the wordmark, in flow, rather than beside the pill: the
                 pill is absolutely centred (below), so anything placed next to

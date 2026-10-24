@@ -463,7 +463,7 @@ export const HELP_TOPICS = {
           'Needs board firmware 1.11.0 or newer.',
           <>For a real floppy or an emulator, <a className="underline" href="/api/paulanet-disk">download the PaulaNET driver disk</a>.</>,
           'With board firmware 1.16.0, the driver compresses with LZ4: what the Amiga receives on every Amiga, and what it sends on a 68020 or faster. Already-compressed files travel as before. If you installed PaulaNET before, run Install again from the driver disk in DF1 to get it.',
-          'PaulaNET is by Rob Smith (RobSmithDev), used with his permission. The driver disk carries webadf’s LZ4 build of his driver.',
+          'PaulaNET is by Rob Smith (RobSmithDev), used with his permission. The driver disk carries WebFloppy’s LZ4 build of his driver.',
         ]} />
       </>
     ),

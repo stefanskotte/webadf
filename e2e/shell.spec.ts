@@ -16,10 +16,18 @@ test('the shell renders on the ground with the right fonts', async ({ page }) =>
 
   await expect(page.getByRole('link', { name: 'Library' })).toHaveAttribute('aria-current', 'page');
   await expect(page.getByTestId('app-header')).toHaveCSS('background-color', 'rgb(255, 253, 248)');
+  // The name (spec §9): the wordmark is lowercase, titles and text say WebFloppy.
+  // /library sets no title of its own, so it gets the root default.
+  await expect(page.getByTestId('wordmark-home')).toHaveText('webfloppy');
+  await expect(page).toHaveTitle('WebFloppy');
   await page.screenshot({ path: 'test-results/shell.png', fullPage: true });
 
   // The gear is the current page on /settings, and only there.
   await expect(page.getByRole('link', { name: 'Settings' })).not.toHaveAttribute('aria-current', 'page');
   await page.getByTestId('settings-link').click();
   await expect(page.getByTestId('settings-link')).toHaveAttribute('aria-current', 'page');
+
+  // A child segment's own title goes through the root template.
+  await page.goto('/help');
+  await expect(page).toHaveTitle('Help · WebFloppy');
 });

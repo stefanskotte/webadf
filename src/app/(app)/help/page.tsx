@@ -10,7 +10,7 @@ export default function HelpPage() {
   return (
     <>
       <PageHeader title="Help"
-                  subtitle="What the less obvious parts of webadf do, and why." />
+                  subtitle="What the less obvious parts of WebFloppy do, and why." />
       <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
         <nav aria-label="Topics" className="glass-card p-4 text-[13.5px]">
           <ul className="flex flex-wrap gap-x-4 gap-y-1">

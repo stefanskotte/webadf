@@ -39,7 +39,7 @@ export default async function AdminLayout({
             style={{ color: 'var(--ink)', fontFamily: 'var(--font-display)' }}
           >
             <Logo size={24} />
-            <span>webadf <span style={{ color: 'var(--muted)' }}>admin</span></span>
+            <span>webfloppy <span style={{ color: 'var(--muted)' }}>admin</span></span>
           </span>
           {/* Absolutely centred, matching the app shell exactly -- see its
               comment for the two weaker versions that were measured first,

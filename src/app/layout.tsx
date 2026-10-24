@@ -8,7 +8,7 @@ const mono = Geist_Mono({ variable: "--font-mono", subsets: ["latin"] });
 const display = Bricolage_Grotesque({ variable: "--font-display", subsets: ["latin"], axes: ["opsz"] });
 
 export const metadata: Metadata = {
-  title: "webadf",
+  title: { default: 'WebFloppy', template: '%s · WebFloppy' },
   description: "Your Amiga disk library, one click from the Gotek.",
 };
 
