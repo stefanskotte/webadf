@@ -6,6 +6,23 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
+type DeleteDialogContentProps = {
+  kind: 'game' | 'disk';
+  id: string;
+  title: string;
+  /** Only meaningful for a title: how many disks go with it. */
+  diskCount?: number;
+  onDeleted?: () => void;
+  /**
+   * Where to go when this deletion removes the subject of the CURRENT page.
+   *
+   * Set by the title page, where deleting the last disk empties the title and
+   * the server deletes it too. Left unset on the library grid, where the page
+   * is the library and outlives any card on it.
+   */
+  redirectWhenGone?: string;
+};
+
 /**
  * Confirming the removal of a title, or of one disk.
  *
@@ -21,25 +38,58 @@ import { toast } from 'sonner';
  */
 export function DeleteDiskDialog({
   kind, id, title, diskCount, onDeleted, redirectWhenGone,
-}: {
-  kind: 'game' | 'disk';
-  id: string;
-  title: string;
-  /** Only meaningful for a title: how many disks go with it. */
-  diskCount?: number;
-  onDeleted?: () => void;
-  /**
-   * Where to go when this deletion removes the subject of the CURRENT page.
-   *
-   * Set by the title page, where deleting the last disk empties the title and
-   * the server deletes it too. Left unset on the library grid, where the page
-   * is the library and outlives any card on it.
-   */
-  redirectWhenGone?: string;
-}) {
-  const router = useRouter();
+}: DeleteDialogContentProps) {
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
+  if (open) {
+    return (
+      <DeleteDialog kind={kind} id={id} title={title} diskCount={diskCount} onDeleted={onDeleted}
+                    redirectWhenGone={redirectWhenGone} open onClose={() => setOpen(false)} />
+    );
+  }
+  return (
+    <button
+      type="button"
+      data-testid={`delete-${kind}-${id}`}
+      aria-label={`Delete ${title}`}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(true); }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      /*
+       * A quiet icon, not a red pill.
+       *
+       * The red box was doing danger-signalling on a control that cannot do
+       * damage on its own: every path through here opens a confirmation
+       * that names what will be deleted and cannot be dismissed by accident
+       * (see the dialog's own comment on what it must say). Shouting at the
+       * trigger buys nothing and costs a red rectangle on every card in the
+       * library, which crowds the thing people are actually looking at --
+       * the titles. The confirmation is where the danger colour belongs,
+       * and it is still there on the confirm button.
+       *
+       * The hit area stays the size it was; only the paint changed. The
+       * accessible name still says what will be deleted, because "trash
+       * icon" is not a description of anything to a screen reader.
+       */
+      className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--danger-bg)] hover:text-[var(--danger-fg)]"
+      style={{ color: 'var(--faint)' }}
+      title={`Delete ${title}`}
+    >
+      <Trash2 size={14} strokeWidth={1.75} aria-hidden />
+    </button>
+  );
+}
+
+/**
+ * The controlled confirmation behind `DeleteDiskDialog`, also rendered by the title menu (outside its popup).
+ * `open` / `onClose`: the caller owns visibility; everything else is `DeleteDiskDialog`'s props. Renders nothing
+ * while closed.
+ */
+export function DeleteDialog({
+  kind, id, title, diskCount, onDeleted, redirectWhenGone, open, onClose,
+}: DeleteDialogContentProps & { open: boolean; onClose: () => void; }) {
+  const router = useRouter();
+    const [busy, setBusy] = useState(false);
 
   async function confirm() {
     setBusy(true);
@@ -58,7 +108,7 @@ export function DeleteDiskDialog({
           ? `Ejected from ${ejected.join(', ')}.`
           : undefined,
       });
-      setOpen(false);
+      onClose();
       onDeleted?.();
 
       // THE SERVER TELLS US WHETHER THE TITLE STILL EXISTS, so we do not have
@@ -78,40 +128,7 @@ export function DeleteDiskDialog({
     }
   }
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        data-testid={`delete-${kind}-${id}`}
-        aria-label={`Delete ${title}`}
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(true); }}
-        onPointerDown={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-        onTouchStart={(e) => e.stopPropagation()}
-        /*
-         * A quiet icon, not a red pill.
-         *
-         * The red box was doing danger-signalling on a control that cannot do
-         * damage on its own: every path through here opens a confirmation
-         * that names what will be deleted and cannot be dismissed by accident
-         * (see the dialog's own comment on what it must say). Shouting at the
-         * trigger buys nothing and costs a red rectangle on every card in the
-         * library, which crowds the thing people are actually looking at --
-         * the titles. The confirmation is where the danger colour belongs,
-         * and it is still there on the confirm button.
-         *
-         * The hit area stays the size it was; only the paint changed. The
-         * accessible name still says what will be deleted, because "trash
-         * icon" is not a description of anything to a screen reader.
-         */
-        className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--danger-bg)] hover:text-[var(--danger-fg)]"
-        style={{ color: 'var(--faint)' }}
-        title={`Delete ${title}`}
-      >
-        <Trash2 size={14} strokeWidth={1.75} aria-hidden />
-      </button>
-    );
-  }
+  if (!open) return null;
 
   const disks = diskCount ?? 1;
 
@@ -169,7 +186,7 @@ export function DeleteDiskDialog({
             type="button"
             data-testid="delete-cancel"
             disabled={busy}
-            onClick={() => setOpen(false)}
+            onClick={() => onClose()}
             className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold disabled:opacity-50"
             style={{ color: 'var(--muted)' }}
           >

@@ -52,9 +52,74 @@ export function FobButton({ testId, title, disks, devices, mode = 'disk' }: {
   mode?: 'disk' | 'next';
 }) {
   const [open, setOpen] = useState(false);
-  const [phase, setPhase] = useState<Phase>({ k: 'choose' });
-  const [diskId, setDiskId] = useState<string | null>(null);
-  const [deviceId, setDeviceId] = useState<string | null>(null);
+  function onOpen(e: React.MouseEvent) {
+    // Inside the library card's <a href>: must not navigate or start a drag.
+    e.preventDefault();
+    e.stopPropagation();
+    setOpen(true);
+  }
+  const trigger = mode === 'next' ? (
+    <button type="button" data-testid="write-next-card" onClick={onOpen}
+            className="flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-semibold text-white"
+            style={{ background: 'var(--primary-action)' }}>
+      <Nfc size={14} strokeWidth={1.75} aria-hidden /> Write a Next-disk card
+    </button>
+  ) : (
+    <button
+      type="button"
+      data-testid={testId}
+      aria-label={`Write ${title} to an NFC tag`}
+      title="Write to an NFC tag"
+      onClick={onOpen}
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
+      style={{ color: 'var(--faint)' }}
+    >
+      <Nfc size={14} strokeWidth={1.75} aria-hidden />
+    </button>
+  );
+  return (
+    <>
+      {trigger}
+      <FobDialog title={title} disks={disks} devices={devices} mode={mode} open={open} onClose={() => setOpen(false)} />
+    </>
+  );
+}
+
+/**
+ * The controlled dialog behind `FobButton`, also rendered by the title menu (outside its popup).
+ * `open` / `onClose`: the caller owns visibility; `title`, `disks`, `devices`, `mode` are the button's. Renders
+ * nothing while closed; each opening starts fresh (and, with one disk and one board, arms the reader at once), and
+ * every way out -- `onClose`, unmount, pagehide -- withdraws the request.
+ */
+export function FobDialog({ title, disks, devices, mode = 'disk', open, onClose }: {
+  title: string;
+  disks: FobDisk[];
+  devices: FobDevice[];
+  mode?: 'disk' | 'next';
+  open: boolean;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+  return <FobDialogBody title={title} disks={disks} devices={devices} mode={mode} onClose={onClose} />;
+}
+
+function FobDialogBody({ title, disks, devices, mode, onClose }: {
+  title: string;
+  disks: FobDisk[];
+  devices: FobDevice[];
+  mode: 'disk' | 'next';
+  onClose: () => void;
+}) {
+  // Nothing to choose: go straight to "tap a tag" (the first render is already `starting`; the effect below arms it).
+  const onlyDisk = mode === 'next' ? null : (disks.length === 1 ? disks[0].id : null);
+  const onlyDevice = devices.length === 1 ? devices[0].id : null;
+  const direct = (mode === 'next' || onlyDisk !== null) && onlyDevice !== null;
+  const [phase, setPhase] = useState<Phase>(direct ? { k: 'starting' } : { k: 'choose' });
+  const [diskId, setDiskId] = useState<string | null>(onlyDisk);
+  const [deviceId, setDeviceId] = useState<string | null>(onlyDevice);
   const [now, setNow] = useState(() => Date.now());
   const titleId = useId();
 
@@ -85,13 +150,12 @@ export function FobButton({ testId, title, disks, devices, mode = 'disk' }: {
   function close() {
     withdraw();
     generation.current += 1;
-    setOpen(false);
-    setPhase({ k: 'choose' });
+    onClose();
   }
 
-  async function start(disk: string | null, device: string) {
+  async function start(disk: string | null, device: string, first = false) {
     const gen = generation.current;
-    setPhase({ k: 'starting' });
+    if (!first) setPhase({ k: 'starting' });
     let res: Response;
     try {
       res = await fetch('/api/nfc/write', {
@@ -128,21 +192,6 @@ export function FobButton({ testId, title, disks, devices, mode = 'disk' }: {
     const t = Date.now();
     setNow(t);
     setPhase({ k: 'waiting', deviceId: body.deviceId, deviceName: body.deviceName ?? 'the board', seq: body.seq, deadline: t + WAIT_MS });
-  }
-
-  function onOpen(e: React.MouseEvent) {
-    // Inside the library card's <a href>: must not navigate or start a drag.
-    e.preventDefault();
-    e.stopPropagation();
-    generation.current += 1;
-    const onlyDisk = mode === 'next' ? null : (disks.length === 1 ? disks[0].id : null);
-    const onlyDevice = devices.length === 1 ? devices[0].id : null;
-    setDiskId(onlyDisk);
-    setDeviceId(onlyDevice);
-    setOpen(true);
-    // Nothing to choose: go straight to "tap a tag".
-    if ((mode === 'next' || onlyDisk) && onlyDevice) void start(onlyDisk, onlyDevice);
-    else setPhase({ k: 'choose' });
   }
 
   // Poll the request and tick the countdown while waiting.
@@ -198,12 +247,11 @@ export function FobButton({ testId, title, disks, devices, mode = 'disk' }: {
   // handles it too, for focus inside the dialog; this catches focus left
   // on the page behind.
   useEffect(() => {
-    if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- close only reads refs and setters
-  }, [open]);
+  }, []);
 
   // Unmount while armed (a client-side navigation away mid-wait) withdraws
   // too, and bumps the generation so a POST still in flight withdraws its
@@ -233,29 +281,16 @@ export function FobButton({ testId, title, disks, devices, mode = 'disk' }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reads only refs and setters
   }, []);
 
-  const trigger = mode === 'next' ? (
-    <button type="button" data-testid="write-next-card" onClick={onOpen}
-            className="flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-semibold text-white"
-            style={{ background: 'var(--primary-action)' }}>
-      <Nfc size={14} strokeWidth={1.75} aria-hidden /> Write a Next-disk card
-    </button>
-  ) : (
-    <button
-      type="button"
-      data-testid={testId}
-      aria-label={`Write ${title} to an NFC tag`}
-      title="Write to an NFC tag"
-      onClick={onOpen}
-      onPointerDown={(e) => e.stopPropagation()}
-      onMouseDown={(e) => e.stopPropagation()}
-      onTouchStart={(e) => e.stopPropagation()}
-      className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
-      style={{ color: 'var(--faint)' }}
-    >
-      <Nfc size={14} strokeWidth={1.75} aria-hidden />
-    </button>
-  );
-  if (!open) return trigger;
+
+  // Arm at once when there is nothing to choose.
+  // Deferred a microtask (the first render is already `starting`), and once only, so a dev double-mount arms one request.
+  const armedOnOpen = useRef(false);
+  useEffect(() => {
+    if (!direct || armedOnOpen.current) return;
+    armedOnOpen.current = true;
+    queueMicrotask(() => { void start(mode === 'next' ? null : onlyDisk, onlyDevice, true); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per opening
+  }, []);
 
   const chosenDisk = disks.find((d) => d.id === diskId);
   const heading = mode === 'next' ? 'Next-disk card' : (disks.length > 1 && chosenDisk ? `${title} — Disk ${chosenDisk.diskNo}` : title);
@@ -280,7 +315,6 @@ export function FobButton({ testId, title, disks, devices, mode = 'disk' }: {
   // preventDefault, which the choice buttons do not need either.
   return (
     <>
-      {trigger}
       {createPortal((
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
