@@ -71,4 +71,6 @@ Each area: a short spec, a plan, the build, the e2e specs for that area, merge.
 - Library multi-select (operator 2026-10-25): an icon at the top of the grid and table views turns on "multi
   operations"; a checkbox then appears in each title's left corner, and the top bar expands to the operations (Move to
   collection, Delete). Nothing changes until OK is pressed; Cancel leaves everything as it was. Bulk routes for move
-  and delete are needed (today both act on one title).
+  and delete are needed (today both act on one title). **Placement (operator 2026-10-25): build it right after the
+  redesign (Phase C) finishes**; the design is inferred in the current style and UX, and the OK confirmation is an
+  in-app dialog (`.wf-modal`), never a browser `confirm()`.
