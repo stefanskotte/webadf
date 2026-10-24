@@ -176,8 +176,17 @@ describe('chipSlots', () => {
     expect(chipSlots(w)).toBe(n);
   });
 
+  // The Admin item widens the pill by ~77px: two widest chips plus "+k" no
+  // longer fit at 2xl, nor three at 1920 (measured 2026-10-24).
+  it.each([
+    [390, 0], [1279, 0], [1280, 1], [1535, 1], [1536, 1], [1919, 1], [1920, 2], [2560, 2],
+  ])('with the Admin item, at %ipx there is room for %i chip(s)', (w, n) => {
+    expect(chipSlots(w, true)).toBe(n);
+  });
+
   it('never exceeds MAX_CHIPS', () => {
     expect(chipSlots(10_000)).toBeLessThanOrEqual(MAX_CHIPS);
+    expect(chipSlots(10_000, true)).toBeLessThanOrEqual(MAX_CHIPS);
   });
 });
 

@@ -224,13 +224,13 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
       {createPortal((
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: 'rgb(11 18 28 / 0.55)' }}
+          style={{ background: 'var(--scrim)' }}
           onPointerDown={stop} onMouseDown={stop} onTouchStart={stop}
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') close(); }}
           onClick={(e) => { e.stopPropagation(); if (e.target === e.currentTarget) close(); }}
         >
           <div role="dialog" aria-modal="true" aria-labelledby={titleId} data-testid="card-mount-dialog"
-               className="glass-card flex max-h-full w-full max-w-[440px] flex-col gap-3 overflow-y-auto p-6 text-left">
+               className="glass-card wf-modal flex max-h-full w-full max-w-[440px] flex-col gap-3 overflow-y-auto p-6 text-left">
             <h2 id={titleId} className="text-[15px] font-bold" style={{ color: 'var(--ink)' }}>
               {ejecting ? 'Eject or cancel' : 'Mount'}
             </h2>

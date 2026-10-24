@@ -49,17 +49,19 @@ import { chipSlots, diskText, preloadText, protectTag, splitChips, type DriveChi
  * the room is what lies between the wordmark and the viewport-centred pill,
  * about 370px at 1280 -- one full chip, not the three the design first asked
  * for. The count grows with the viewport instead, 1 / 2 / 3 at xl / 2xl /
- * 1920px, and never passes MAX_CHIPS.
+ * 1920px (1 / 1 / 2 when the pill carries the Admin item), and never passes
+ * MAX_CHIPS.
  */
-export function DriveChips({ chips }: { chips: DriveChip[] }) {
+export function DriveChips({ chips, showAdmin = false }: { chips: DriveChip[]; showAdmin?: boolean }) {
   // Zero paired devices: nothing at all, not an empty "Drives" control.
   if (chips.length === 0) return null;
   const { shown } = splitChips(chips);
+  const visibility = showAdmin ? CHIP_VISIBILITY_ADMIN : CHIP_VISIBILITY;
   return (
     <>
       <div className="hidden min-w-0 items-center gap-1.5 xl:flex" data-testid="drive-chips">
-        {shown.map((c, i) => <Chip key={c.id} chip={c} className={CHIP_VISIBILITY[i]} />)}
-        {chips.length > 1 && <MoreChip chips={chips} />}
+        {shown.map((c, i) => <Chip key={c.id} chip={c} className={visibility[i]} />)}
+        {chips.length > 1 && <MoreChip chips={chips} showAdmin={showAdmin} />}
       </div>
       {/* ml-auto below sm puts it at the right end of the wordmark's line
           (the search box and sign-out wrap to line two there); from sm the
@@ -94,9 +96,12 @@ export function DriveChips({ chips }: { chips: DriveChip[] }) {
  * layout test measures the result at 1280.
  */
 const CHIP_VISIBILITY = ['flex', 'hidden 2xl:flex', 'hidden min-[1920px]:flex'] as const;
+/** With the Admin item: 1 / 1 / 2 (chipSlots(w, true)); a third chip never fits. */
+const CHIP_VISIBILITY_ADMIN = ['flex', 'hidden min-[1920px]:flex', 'hidden'] as const;
 
 /** "+k" is drawn only while some board has no chip of its own at this width. */
-function moreVisibility(n: number): string {
+function moreVisibility(n: number, showAdmin: boolean): string {
+  if (showAdmin) return n > 2 ? 'flex' : 'flex min-[1920px]:hidden'; // n === 2
   if (n > 3) return 'flex';
   if (n === 3) return 'flex min-[1920px]:hidden';
   return 'flex 2xl:hidden'; // n === 2
@@ -108,34 +113,44 @@ function moreVisibility(n: number): string {
  * which is safe because the list only exists once someone has opened it --
  * after hydration, with a real viewport to read.
  */
-function MoreChip({ chips }: { chips: DriveChip[] }) {
+function MoreChip({ chips, showAdmin }: { chips: DriveChip[]; showAdmin: boolean }) {
   const n = chips.length;
   const label = (slots: number) => `+${Math.max(0, n - slots)}`;
   return (
     <DropdownMenu>
-      {/* No aria-label: the two display:none numbers are out of the
+      {/* No aria-label: the other display:none numbers are out of the
           accessibility tree, so the name is exactly the "+k" on screen. */}
       <DropdownMenuTrigger data-testid="drive-chip-more" title="More drives"
-                           className={`${CHIP_CLASS} ${moreVisibility(n)}`} style={CHIP_STYLE}>
-        <span className="2xl:hidden">{label(1)}</span>
-        {/* Bounded on BOTH sides by its own variant, not "2xl:inline
-            min-[1920px]:hidden": that pair relies on the stylesheet emitting
-            min-[1920px] after 2xl, and it does not -- at 1920 the chip read
-            "+2 +1". max-[1920px] is width < 1920px, the exact complement of
-            min-[1920px], so exactly one number shows in every band. */}
-        <span className="hidden 2xl:max-[1920px]:inline">{label(2)}</span>
-        <span className="hidden min-[1920px]:inline">{label(3)}</span>
+                           className={`${CHIP_CLASS} ${moreVisibility(n, showAdmin)}`} style={CHIP_STYLE}>
+        {showAdmin ? (
+          <>
+            {/* With the Admin item: one chip below 1920, two from it. */}
+            <span className="min-[1920px]:hidden">{label(1)}</span>
+            <span className="hidden min-[1920px]:inline">{label(2)}</span>
+          </>
+        ) : (
+          <>
+            <span className="2xl:hidden">{label(1)}</span>
+            {/* Bounded on BOTH sides by its own variant, not "2xl:inline
+                min-[1920px]:hidden": that pair relies on the stylesheet emitting
+                min-[1920px] after 2xl, and it does not -- at 1920 the chip read
+                "+2 +1". max-[1920px] is width < 1920px, the exact complement of
+                min-[1920px], so exactly one number shows in every band. */}
+            <span className="hidden 2xl:max-[1920px]:inline">{label(2)}</span>
+            <span className="hidden min-[1920px]:inline">{label(3)}</span>
+          </>
+        )}
         <ChevronDownIcon className="h-3 w-3 opacity-70" aria-hidden />
       </DropdownMenuTrigger>
       <MenuPopup testId="drive-chip-more-menu" align="start">
-        <MoreList chips={chips} />
+        <MoreList chips={chips} showAdmin={showAdmin} />
       </MenuPopup>
     </DropdownMenu>
   );
 }
 
-function MoreList({ chips }: { chips: DriveChip[] }) {
-  return <DriveList chips={splitChips(chips, chipSlots(window.innerWidth)).rest} />;
+function MoreList({ chips, showAdmin }: { chips: DriveChip[]; showAdmin: boolean }) {
+  return <DriveList chips={splitChips(chips, chipSlots(window.innerWidth, showAdmin)).rest} />;
 }
 
 // No `display` here: every caller supplies its own (`flex`, or a
@@ -144,13 +159,13 @@ function MoreList({ chips }: { chips: DriveChip[] }) {
 // last. gap-1/px-2 rather than roomier values: each 4px here is 4px per chip
 // of a width budget chipSlots is measured against.
 const CHIP_CLASS =
-  'h-[30px] max-w-full items-center gap-1 rounded-full border px-2 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-white/60';
-// The TopNav pill's own translucent-white treatment, so the chips read as
-// part of the same header rather than as cards dropped onto it.
+  'h-9 max-w-full items-center gap-1 rounded-[10px] border px-2 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)]';
+// The board's drive chip: surface-2 on the header's surface, with a hairline,
+// so it reads as a control sitting in the bar rather than a card on it.
 const CHIP_STYLE = {
-  background: 'rgb(255 255 255 / 0.12)',
-  borderColor: 'rgb(255 255 255 / 0.16)',
-  color: 'var(--on-dark)',
+  background: 'var(--surface-2)',
+  borderColor: 'var(--line)',
+  color: 'var(--ink)',
 } as const;
 
 function StatusDot({ online }: { online: boolean }) {
@@ -160,8 +175,8 @@ function StatusDot({ online }: { online: boolean }) {
     <>
       <span aria-hidden className="h-[7px] w-[7px] shrink-0 rounded-full"
             style={online
-              ? { background: 'var(--online-dot)' }
-              : { border: '1.5px solid rgb(233 240 244 / 0.7)' }} />
+              ? { background: 'var(--online-dot)', boxShadow: '0 0 0 3px rgb(63 191 85 / 0.18)' }
+              : { border: '1.5px solid var(--muted)' }} />
       <span className="sr-only">{online ? 'Online' : 'Offline'}</span>
     </>
   );
@@ -182,22 +197,23 @@ function Chip({ chip, className }: { chip: DriveChip; className: string }) {
         style={{ ...CHIP_STYLE, ...(chip.online ? {} : { opacity: 0.8 }) }}
       >
         <StatusDot online={chip.online} />
-        {/* Both texts capped at 3.5rem: a chip at most ~187px wide is what
-            lets three, plus "+k", sit beside the wordmark at 1920 without
-            reaching the pill even when it carries Admin -- measured at 4rem,
-            the "+k" ran 24px into it (the budget chipSlots is built on). The
-            full name is in `title` and the menu; the disk's number is only in
-            the menu, for the same room. */}
+        {/* The name capped at 3.5rem and the disk at 3.25rem: a chip at most
+            ~180px wide is what lets two, plus "+k", sit 16px clear of the
+            pill at 2xl, and three at 1920 -- the budget chipSlots is built
+            on. At 3.5rem for both (184px) a member's widest pair came to
+            11.8px of the pill at 1536 (2026-10-24); at 4rem the "+k" ran into
+            it. The full name and title are in `title` and the menu; the
+            disk's number is only in the menu, for the same room. */}
         <span className="max-w-[3.5rem] truncate font-semibold" data-testid={`drive-chip-name-${chip.id}`}>
           {chip.shortName}
         </span>
-        <span className="max-w-[3.5rem] truncate" style={{ color: 'var(--on-dark-muted)' }}
+        <span className="max-w-[3.25rem] truncate font-mono" style={{ color: 'var(--muted)' }}
               data-testid={`drive-chip-disk-${chip.id}`}>
           {diskText(chip)}
         </span>
         {tag && (
-          <span className="shrink-0 rounded border px-1 font-mono text-[9.5px] font-semibold leading-[14px]"
-                style={{ borderColor: 'rgb(255 255 255 / 0.3)' }}
+          <span className="shrink-0 rounded-[5px] px-1 font-mono text-[9.5px] font-semibold leading-[14px]"
+                style={{ background: 'var(--track)', color: 'var(--muted)' }}
                 data-testid={`drive-chip-wp-${chip.id}`}>
             {tag}
           </span>
@@ -220,11 +236,9 @@ function MenuPopup({ testId, align, children }: { testId: string; align: 'start'
       // for a chip is narrower than a disk title. A fixed width that never
       // exceeds the viewport less its gutters instead: Base UI will not pull
       // an over-wide popup back on screen by itself.
-      // backdrop-blur: --glass-strong is 80% white, and over the library's
-      // cards a multi-board list (the phone's) let the text behind show
-      // through its own -- seen in the first screenshot, not predicted.
-      className="w-64 max-w-[calc(100vw-2rem)] backdrop-blur-xl"
-      style={{ background: 'var(--glass-strong)', color: 'var(--ink)', border: '1px solid var(--hairline-strong)' }}
+      // Opaque --surface, so nothing on the page behind shows through.
+      className="w-64 max-w-[calc(100vw-2rem)] rounded-2xl"
+      style={{ background: 'var(--surface)', color: 'var(--ink)', border: '1px solid var(--line)', boxShadow: 'var(--shadow-card)' }}
     >
       {children}
     </DropdownMenuContent>
@@ -235,7 +249,7 @@ function MenuPopup({ testId, align, children }: { testId: string; align: 'start'
 function DriveList({ chips }: { chips: DriveChip[] }) {
   return chips.map((c, i) => (
     <div key={c.id}>
-      {i > 0 && <DropdownMenuSeparator className="my-1.5" style={{ background: 'var(--hairline-strong)' }} />}
+      {i > 0 && <DropdownMenuSeparator className="my-1.5" style={{ background: 'var(--line)' }} />}
       <DriveEntry chip={c} />
     </div>
   ));
@@ -363,7 +377,7 @@ function DriveEntry({ chip }: { chip: DriveChip }) {
       {/* The divider keeps Eject -- the one action that reaches out and pulls
           a disk from under a running Amiga -- from sitting flush against the
           other two. No confirmation, matching the Eject button on /devices. */}
-      <DropdownMenuSeparator style={{ background: 'var(--hairline-strong)' }} />
+      <DropdownMenuSeparator style={{ background: 'var(--line)' }} />
       <DropdownMenuItem
         data-testid={`drive-eject-${chip.id}`}
         disabled={!chip.canEject}

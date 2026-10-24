@@ -9,7 +9,7 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
-  --font-heading: var(--font-sans);
+  --font-heading: var(--font-display);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -49,24 +49,24 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
+  --background: #F3EFE6;
   --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
+  --card: #FFFDF8;
+  --card-foreground: #24211B;
+  --popover: #FFFDF8;
+  --popover-foreground: #24211B;
+  --primary: #24211B;
+  --primary-foreground: #FFFDF8;
+  --secondary: #EFE9DD;
+  --secondary-foreground: #24211B;
   --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --muted-foreground: #5B5446;
+  --accent: #F6F2E9;
+  --accent-foreground: #24211B;
+  --destructive: #B3341F;
+  --border: #E4DCCB;
+  --input: #E4DCCB;
+  --ring: #7A7262;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -119,13 +119,18 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    /* The FULL --ring, not /50: half-strength blended to ~2:1 on the cream surface, under WCAG 1.4.11's 3:1. */
+    @apply border-border outline-ring;
   }
   body {
     @apply bg-background text-foreground;
   }
   html {
     @apply font-sans;
+  }
+  /* Bricolage Grotesque for every page title (spec §5); h2 and below stay Geist. */
+  h1 {
+    font-family: var(--font-display);
   }
 
   /* ---- pressability ------------------------------------------------------
@@ -168,25 +173,25 @@
   [role="button"]:not([aria-disabled="true"]):hover,
   a.btn-like:hover {
     box-shadow:
-      inset 0 0 0 999px rgb(22 39 58 / 0.10),
-      0 1px 2px rgb(30 45 60 / 0.10);
+      inset 0 0 0 999px rgb(36 33 27 / 0.10),
+      0 1px 2px rgb(36 33 27 / 0.10);
   }
 
   /* ...except on the dark buttons, where a dark wash does nothing. Screenshot,
-     2026-09-11: the same 10% ink laid over --primary-action (#16273a) was very
-     nearly invisible, while it read clearly on the pale glass ones. Dark
+     2026-09-11: the same 10% ink laid over --primary-action (then #16273a, now
+     ink #24211B) was very nearly invisible, while it read clearly on the pale glass ones. Dark
      surfaces have to go the other way.
 
      `.text-white` is the discriminator and it is a reliable one here rather
      than a guess: in this codebase every filled dark button carries it,
-     because white-on-navy is the only way that fill is legible. If a dark
+     because white-on-ink is the only way that fill is legible. If a dark
      button ever appears without it, it will hover weakly and this comment is
      where to look. */
   button.text-white:not(:disabled):hover,
   a.btn-like.text-white:hover {
     box-shadow:
       inset 0 0 0 999px rgb(255 255 255 / 0.15),
-      0 1px 2px rgb(30 45 60 / 0.16);
+      0 1px 2px rgb(36 33 27 / 0.16);
   }
   button.text-white:not(:disabled):active,
   a.btn-like.text-white:active {
@@ -197,7 +202,7 @@
   [role="button"]:not([aria-disabled="true"]):active,
   a.btn-like:active {
     transform: translateY(0.5px);
-    box-shadow: inset 0 0 0 999px rgb(22 39 58 / 0.16);
+    box-shadow: inset 0 0 0 999px rgb(36 33 27 / 0.16);
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -214,68 +219,68 @@
   }
 }
 
-/* ---- webadf design tokens (spec §11.1) ---- */
+/* ---- webadf design tokens (spec §11.1; values: Phase B spec §4) ----
+   The NAMES predate the WebFloppy redesign and were kept so the ~900 reads
+   across the app did not change (Phase B spec §3.1). Two of them now say
+   something other than what they mean:
+   - `--on-dark` / `--on-dark-muted` mean "text on the page ground" (ink and
+     muted), not text on a dark background -- the dark gradient is gone.
+   - `--glass*` are opaque surfaces, not translucent glass.
+   Phase C renames them area by area. */
 :root {
-  --grad-top: #1b2534;
-  --grad-2:   #3a4d61;
-  --grad-3:   #8d97a1;
-  --grad-4:   #c8cfd3;
-  --grad-bot: #eef1f2;
+  color-scheme: light;
 
-  --on-dark:        #eef3f6;
-  /* 0.78, not 0.62. At 0.62 this text sat at 4.03:1 over the gradient's
-     #3a4d61 band -- under AA -- and it is used for page subtitles and the
-     eyebrow, which are small. 0.78 measures 5.35:1 there and 8.68:1 over
-     the darker top band. */
-  --on-dark-muted:  rgb(233 240 244 / 0.78);
+  /* The ground and its surfaces (new in Phase B, spec §4.3). */
+  --ground:      #F3EFE6;
+  --surface:     #FFFDF8;
+  --surface-2:   #F6F2E9;
+  --track:       #EFE9DD;
+  --line:        #E4DCCB;
+  --line-strong: #D3C8B2;
+  --scrim:       rgb(36 33 27 / 0.45);
+  --shadow-modal: 0 40px 80px -20px rgb(36 33 27 / 0.5);
 
-  --ink:        #16232f;
-  --foreground: #223140;
-  /* This ramp is contrast-checked, not eyeballed. The previous values were
-     --muted #5b6c7c (4.90:1), --muted-2 #8a99a6 (2.64:1) and --faint
-     #a9b4bd (1.91:1) measured against a glass card over the gradient's pale
-     #f1f4f5 band. The lower two failed WCAG AA badly while being used at
-     10-11px in the library table -- small, mono, and the hardest text in the
-     app to read. Every value below clears 4.5:1 on that same background.
+  --on-dark:        #24211B;   /* ink: 13.99:1 on the ground */
+  --on-dark-muted:  #5B5446;   /* muted: 6.53:1 on the ground */
 
-     The ramp is necessarily tighter than it was: on a near-white surface you
-     cannot have both four visibly distinct greys and AA at all of them. Size
-     and weight carry the rest of the hierarchy. Do not lighten these back
-     toward the old values without re-running the contrast numbers. */
-  --muted:      #4c5966;   /* 6.49:1 */
-  --muted-2:    #5f6874;   /* 5.11:1 */
-  --faint:      #666d75;   /* 4.74:1 */
+  --ink:        #24211B;   /* 15.79 surface / 13.99 ground / 13.28 track */
+  --foreground: #24211B;
+  /* Contrast-checked, not eyeballed (WCAG AA 4.5:1 for text). --muted-2 and
+     --faint carry 10-11px text, so they are the design's #7A7262 darkened one
+     step: #7A7262 fails AA on the ground (4.15), surface-2 (4.26) and the
+     track (3.94). Do not lighten them without re-running the numbers in
+     src/lib/design-tokens.test.ts. */
+  --muted:      #5B5446;   /* 7.37 surface / 6.53 ground / 6.71 surface-2 / 6.20 track */
+  --muted-2:    #6E6657;   /* 5.58 surface / 4.94 ground / 5.08 surface-2 / 4.69 track */
+  --faint:      #6E6657;   /* same as --muted-2; size carries the rest */
 
-  --glass:        rgb(255 255 255 / 0.62);
-  --glass-panel:  rgb(255 255 255 / 0.68);
-  --glass-strong: rgb(255 255 255 / 0.80);
-  --glass-subtle: rgb(255 255 255 / 0.45);
-  --glass-border: rgb(255 255 255 / 0.65);
-  --input-bg:     rgb(255 255 255 / 0.75);
-  --hairline:     rgb(30 45 60 / 0.08);
-  --hairline-strong: rgb(30 45 60 / 0.14);
-  --shadow-card:  0 1px 2px rgb(30 45 60 / 0.06), 0 8px 24px rgb(30 45 60 / 0.09);
+  --glass:        #FFFDF8;   /* surface */
+  --glass-panel:  #FFFDF8;   /* surface */
+  --glass-strong: #FFFDF8;   /* surface (menus, panels) */
+  --glass-subtle: #F6F2E9;   /* surface-2 */
+  --glass-border: #E4DCCB;   /* line */
+  --input-bg:     #FFFDF8;   /* inputs sit on cards; the line border marks them */
+  --hairline:     #F0EADF;   /* row divider */
+  --hairline-strong: #E4DCCB;
+  /* Now the POPOVER shadow; cards are flat (see .glass-card). */
+  --shadow-card:  0 24px 48px -12px rgb(36 33 27 / 0.28), 0 4px 12px rgb(36 33 27 / 0.08);
 
-  /* The mobile nav bar's surface (below sm only -- see the wrapper in each
-     shell's layout). Deliberately NOT one of the --glass-* values above:
-     those are white, for dark text on a pale card, and the nav pill's text is
-     the light --on-dark ramp tuned against the gradient's dark TOP band. The
-     bar is fixed to the BOTTOM of the viewport, where the gradient has run
-     down to --grad-bot (#eef1f2); white glass there leaves the nav labels at
-     roughly 1.5:1. Carrying --grad-top down with the bar keeps them at the
-     ratio they were designed for. Held at 0.90 rather than opaque so the
-     content scrolling under it still reads as content. */
-  --nav-scrim:          rgb(27 37 52 / 0.90);
-  --nav-scrim-hairline: rgb(255 255 255 / 0.14);
+  /* The mobile bottom bar is a surface like the header; its nav text is ink
+     and muted, which clear AA on it as on any surface. */
+  --nav-scrim:          rgb(255 253 248 / 0.96);
+  --nav-scrim-hairline: #E4DCCB;
 
-  --primary-action: #16273a;
-  --accent-blue:    #1a35d6;
-  --accent-amber:   #f5822e;   /* FILL ONLY — fails AA as text */
-  --amber-text:     #a8560f;   /* use this for amber text */
-  --success-bg: #dff2e2; --success-fg: #1c7a3e;
-  --warning-bg: #fdf1cf; --warning-fg: #8a6207;
-  --danger-bg:  #fbe1e1; --danger-fg:  #c0342e;
-  --online-dot: #5fd18b;
+  --primary-action: #24211B;   /* ink buttons; white on it 16.05:1 */
+  --accent-blue:    #1D4F86;   /* 8.21 surface / 7.28 ground */
+  /* The accent. Text uses --amber-text; --accent-amber is a FILL (4.31:1 on
+     the ground, 4.42 on surface-2 -- under AA; 4.86 on the surface only).
+     White on it: 4.94:1. Never ink text on it (3.25:1). */
+  --accent-amber:   #B5541A;
+  --amber-text:     #A84C16;   /* 5.57 surface / 4.93 ground / 5.07 surface-2 / 4.68 track */
+  --success-bg: #DDF0DC; --success-fg: #1F6A2A;   /* 5.57:1 */
+  --warning-bg: #FBEBD3; --warning-fg: #7A4A08;   /* 6.38:1 */
+  --danger-bg:  #F8E1DB; --danger-fg:  #B3341F;   /* 4.90 on its bg / 6.03 surface; white on it 6.13 */
+  --online-dot: #3FBF55;
 }
 
 @theme inline {
@@ -284,23 +289,47 @@
   --color-glass: var(--glass);
   --color-accent-blue: var(--accent-blue);
   --color-amber-text: var(--amber-text);
-  --radius-card: 14px;
+  --color-ground: var(--ground);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-track: var(--track);
+  --color-line: var(--line);
+  --radius-card: 16px;
 }
 
-/* Fixed is load-bearing: the gradient must stay put while content scrolls. */
-.bg-page-gradient {
-  background: linear-gradient(180deg,
-    var(--grad-top) 0%, var(--grad-2) 9%, var(--grad-3) 34%,
-    var(--grad-4) 62%, var(--grad-bot) 100%);
-  background-attachment: fixed;
+.bg-page {
+  background: var(--ground);
   min-height: 100vh;
 }
 
-.glass-card {
-  background: var(--glass);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-card);
-  backdrop-filter: blur(12px);
-  box-shadow: var(--shadow-card);
+/* Modal panels sit beside .glass-card on each dialog. Both are in the components layer, and .glass-card comes
+   first, so .wf-modal's 20px radius beats the card's 16px (unlayered, .glass-card beat it on every dialog that
+   carries both), and a panel's own utilities still win over both (the phone sheets' rounded-t / rounded-none keep
+   their corners); an unlayered rule would beat every utility. */
+@layer components {
+  /* Flat: a surface and a 1px line. The border (not a ring shadow) keeps every
+     card's box exactly as it was; no backdrop-filter, so a card is no longer a
+     containing block for fixed-position children. */
+  .glass-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-card);
+  }
+
+  .wf-modal {
+    border-radius: 20px;
+    box-shadow: var(--shadow-modal), 0 0 0 1px var(--line);
+  }
 }
 
+/* Segmented control (Phase B spec §7): TopNav, AdminNav, the library view toggle. In the components layer so
+   an item's own size utilities win (the view toggle keeps h-10 w-11 text-[11px] sm:h-8 sm:w-9). */
+@layer components {
+  .seg { display: flex; gap: 2px; padding: 4px; background: var(--track); border-radius: 12px; }
+  .seg-item { height: 34px; padding: 0 16px; display: flex; align-items: center; border-radius: 9px;
+    font-size: 14px; font-weight: 500; color: var(--muted); }
+  .seg-item:hover { background: rgb(255 253 248 / 0.6); color: var(--ink); }
+  .seg-item[aria-current="page"], .seg-item[aria-pressed="true"] { background: var(--surface); color: var(--ink);
+    font-weight: 600; box-shadow: 0 1px 2px rgb(36 33 27 / 0.12), 0 0 0 1px rgb(36 33 27 / 0.04); }
+  .seg-item--icon { padding: 0; justify-content: center; }
+}

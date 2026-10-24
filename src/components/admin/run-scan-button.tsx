@@ -44,8 +44,8 @@ export function RunScanButton() {
       onClick={onClick}
       disabled={busy}
       data-testid="run-scan"
-      className="h-[34px] rounded-full px-4 text-[13px] font-semibold disabled:opacity-50"
-      style={{ background: 'var(--on-dark)', color: '#16273a' }}
+      className="h-[34px] rounded-full px-4 text-[13px] font-semibold text-white disabled:opacity-50"
+      style={{ background: 'var(--primary-action)' }}
     >
       {/* A pass is bounded at ~240 s, so say it is working rather than looking hung. */}
       {busy ? 'Scanning…' : 'Run now'}

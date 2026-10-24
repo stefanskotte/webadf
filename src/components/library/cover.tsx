@@ -20,7 +20,7 @@ function gradientFor(id: string): string {
 export function CoverThumb({ id, coverUrl }: { id: string; coverUrl?: string | null }) {
   return (
     <div className="relative h-[32px] w-[40px] shrink-0 overflow-hidden rounded" data-testid="cover-thumb"
-         style={{ background: gradientFor(id), boxShadow: '0 1px 2px rgb(30 45 60 / 0.22)' }}>
+         style={{ background: gradientFor(id), boxShadow: '0 1px 2px rgb(36 33 27 / 0.22)' }}>
       {coverUrl && (
         <img src={coverUrl} alt="" aria-hidden="true" loading="lazy" decoding="async"
              className="absolute inset-0 h-full w-full object-cover" />
@@ -51,7 +51,7 @@ export function Cover({
     <div className="relative overflow-hidden rounded-lg" style={{
       aspectRatio: '1.23 / 1',   // matches the firmware's 138x112 cover box
       background: gradientFor(id),
-      boxShadow: '0 1px 3px rgb(30 45 60 / 0.22)',
+      boxShadow: '0 1px 3px rgb(36 33 27 / 0.22)',
     }}>
       {coverUrl ? (
         <>
@@ -102,13 +102,13 @@ export function Cover({
       {kind && (
         <div className="absolute left-2 top-2 rounded-full px-2 py-0.5 font-mono text-[9.5px] font-bold"
              data-testid="grid-kind"
-             style={{ background: 'rgb(255 255 255 / 0.90)', color: '#16273a' }}>
+             style={{ background: 'rgb(255 255 255 / 0.90)', color: 'var(--ink)' }}>
           {kind}
         </div>
       )}
       {diskCount > 1 && (
         <div className="absolute right-2 top-2 rounded-full px-2 py-0.5 font-mono text-[9.5px] font-bold"
-             style={{ background: 'rgb(255 255 255 / 0.90)', color: '#16273a' }}>
+             style={{ background: 'rgb(255 255 255 / 0.90)', color: 'var(--ink)' }}>
           {diskCount}
         </div>
       )}

@@ -15,6 +15,10 @@
  * needed: centring moves the form off the darkest inch, and the panel then
  * guarantees legibility wherever it actually lands, so none of this quietly
  * depends on the viewport being tall enough.
+ *
+ * Since Phase B (2026-10-24) the page is the flat cream ground (`bg-page`,
+ * `--ground`) and the gradient is gone; the history above is why the frame
+ * exists, and the centred panel stays.
  */
 export default function AuthLayout({ children }: LayoutProps<'/'>) {
   return (

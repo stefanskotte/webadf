@@ -31,8 +31,8 @@ import { EmptyLibrary, HoldsLabel, TitleControls, TitleName, driveState, pending
 // card's five controls at their card size (24px each), right-aligned.
 const COLS = 'grid-cols-[48px_1fr_104px_50px_128px_40px_96px_128px]';
 const MIN_W = 'min-w-[800px]';
-const ROW = `grid ${COLS} ${MIN_W} items-center border-b px-4 py-1.5 font-mono text-[11px] hover:bg-white/40`;
-const ROW_BORDER = { borderColor: 'rgb(30 45 60 / 0.05)' };
+const ROW = `grid ${COLS} ${MIN_W} items-center border-b px-4 py-1.5 font-mono text-[11px] hover:bg-[color:var(--surface-2)]`;
+const ROW_BORDER = { borderColor: 'rgb(36 33 27 / 0.05)' };
 
 export function GameTable({ games, collectionId = null, fob = null, drives = null, folderDisks = {}, firstPage = true }: {
   games: GameListItem[];

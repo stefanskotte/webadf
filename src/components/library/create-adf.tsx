@@ -88,8 +88,8 @@ export function CreateAdf() {
 
   const trigger = {
     'data-testid': 'create-adf',
-    className: 'flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-semibold disabled:opacity-50',
-    style: { background: 'var(--on-dark)', color: '#16273a' },
+    className: 'flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-semibold text-white disabled:opacity-50',
+    style: { background: 'var(--primary-action)', color: '#fff' },
     children: (
       <>
         {busy ? 'Creating…' : 'New disk'}

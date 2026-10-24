@@ -90,7 +90,7 @@ export function UrlFetch({
           data-testid="url-fetch"
           disabled={busy || url.trim() === ''}
           className="h-11 shrink-0 rounded-lg px-4 text-[13px] font-medium disabled:opacity-50 sm:h-[34px]"
-          style={{ background: '#fff', border: '1px solid var(--hairline-strong)', boxShadow: 'var(--shadow-card)', color: 'var(--ink)' }}
+          style={{ background: 'var(--surface-2)', border: '1px solid var(--line)', boxShadow: 'var(--shadow-card)', color: 'var(--ink)' }}
         >
           {busy ? 'Working…' : 'Fetch'}
         </button>

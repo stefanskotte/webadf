@@ -40,9 +40,9 @@ export function StagingConfirm({
   }, []);
 
   return createPortal((
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgb(11 18 28 / 0.55)' }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'var(--scrim)' }}>
       <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} data-testid="staging-confirm"
-           className="glass-card w-full max-w-[440px] p-6 text-left outline-none">
+           className="glass-card wf-modal w-full max-w-[440px] p-6 text-left outline-none">
         <h2 id={titleId} className="text-[15px] font-bold" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>{question}</h2>
         <div className="mt-5 flex items-center justify-end gap-2">
           <button type="button" ref={cancelBtn} data-testid="staging-confirm-cancel" disabled={busy} onClick={onCancel}

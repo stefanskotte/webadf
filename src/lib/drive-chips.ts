@@ -154,23 +154,30 @@ export const MAX_CHIPS = 3;
 
 /**
  * How many chips fit beside the wordmark at a viewport width (0 below xl,
- * where the compact "Drives" control is used instead).
+ * where the compact "Drives" control is used instead). `showAdmin` is the
+ * layout's own flag: the Admin item widens the pill, and with it the slots
+ * shrink.
  *
- * Measured 2026-09-25 in Chromium, not guessed. The chips start at x=132,
- * after the wordmark, and must stop short of the nav pill, which is centred
- * on the VIEWPORT (the layout's comment on why) and 248px wide -- 322px with
- * the Admin item. A chip with a long name and a long title is ~187px, the
- * "+k" chip ~50-65px. So, with Admin (the tighter case):
- *   - 1280 (xl):   pill at 479 -> ONE chip + "+k" ends at 373
- *   - 1536 (2xl):  pill at 607 -> TWO + "+k" end at 566
- *   - 1920:        pill at 799 -> THREE + "+k" end at 775, the design's maximum
- * Two at 1280 would end near 560, well into the pill.
+ * Measured 2026-09-25 in Chromium, not guessed; re-measured 2026-10-24 for
+ * the Phase B header (Geist, the 18px Bricolage "webfloppy" wordmark,
+ * segmented nav). The chips start 16px after the wordmark (x=168) and must
+ * stop 16px short of the nav pill, which is centred on the VIEWPORT (the
+ * layout's comment on why) and 317px wide -- 394px with the Admin item. The
+ * widest chip (long name, long title, WP tag, both texts at their caps) is
+ * ~180px, chips sit 6px apart, and the "+k" chip is ~45-48px. So the widest
+ * case, n chips + "+k", ends at about 168 + 186n + 48:
+ *   - member  (pill left 481 / 609 / 801 at 1280 / 1536 / 1920):
+ *       1 chip ends at ~402, 2 at ~588, 3 at ~774 -> 1 / 2 / 3, each >= 16px clear
+ *   - with Admin (pill left 443 / 571 / 763):
+ *       1 chip ends at ~402; 2 at ~588 would run under the pill at 1536, and
+ *       3 at ~774 under it at 1920 -> 1 / 1 / 2
+ * drive-chips.spec measures that widest case for both, at all three widths.
  * The CSS in drive-chips.tsx mirrors these breakpoints literally (Tailwind
- * cannot read them from here); the e2e layout test proves 1280.
+ * cannot read them from here).
  */
-export function chipSlots(viewportWidth: number): number {
-  if (viewportWidth >= 1920) return 3;
-  if (viewportWidth >= 1536) return 2;
+export function chipSlots(viewportWidth: number, showAdmin = false): number {
+  if (viewportWidth >= 1920) return showAdmin ? 2 : 3;
+  if (viewportWidth >= 1536) return showAdmin ? 1 : 2;
   if (viewportWidth >= 1280) return 1;
   return 0;
 }

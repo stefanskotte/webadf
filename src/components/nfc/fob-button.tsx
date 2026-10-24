@@ -235,8 +235,8 @@ export function FobButton({ testId, title, disks, devices, mode = 'disk' }: {
 
   const trigger = mode === 'next' ? (
     <button type="button" data-testid="write-next-card" onClick={onOpen}
-            className="flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-semibold"
-            style={{ background: 'var(--on-dark)', color: '#16273a' }}>
+            className="flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-semibold text-white"
+            style={{ background: 'var(--primary-action)' }}>
       <Nfc size={14} strokeWidth={1.75} aria-hidden /> Write a Next-disk card
     </button>
   ) : (
@@ -284,7 +284,7 @@ export function FobButton({ testId, title, disks, devices, mode = 'disk' }: {
       {createPortal((
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: 'rgb(11 18 28 / 0.55)' }}
+          style={{ background: 'var(--scrim)' }}
           onPointerDown={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
@@ -292,7 +292,7 @@ export function FobButton({ testId, title, disks, devices, mode = 'disk' }: {
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') close(); }}
         >
           <div role="dialog" aria-modal="true" aria-labelledby={titleId} data-testid="fob-dialog"
-               className="glass-card flex max-h-full w-full max-w-[440px] flex-col gap-3 overflow-y-auto p-6 text-left">
+               className="glass-card wf-modal flex max-h-full w-full max-w-[440px] flex-col gap-3 overflow-y-auto p-6 text-left">
             <h2 id={titleId} className="text-[15px] font-bold" style={{ color: 'var(--ink)' }}>
               Write to an NFC tag
             </h2>

@@ -57,10 +57,10 @@ export function DeleteDeviceDialog({ deviceId, name }: { deviceId: string; name:
 
   return createPortal((
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-         style={{ background: 'rgb(11 18 28 / 0.55)' }}>
+         style={{ background: 'var(--scrim)' }}>
       <div role="dialog" aria-modal="true" aria-label={`Delete ${name}`}
            data-testid="device-delete-dialog"
-           className="glass-card w-full max-w-[440px] p-6 text-left">
+           className="glass-card wf-modal w-full max-w-[440px] p-6 text-left">
         <h2 className="text-[15px] font-bold" style={{ color: 'var(--ink)' }}>Delete this device?</h2>
         <p className="mt-2 text-[13px]" style={{ color: 'var(--muted)' }}>
           <strong style={{ color: 'var(--ink)' }}>{name}</strong> will be removed from your account.

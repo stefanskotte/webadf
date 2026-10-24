@@ -7,10 +7,12 @@ import { test, expect, type Page } from '@playwright/test';
  * green suite, because neither is visible in the source of the file that
  * causes it:
  *
- *  - /sign-in and /sign-up were the only pages with no shell and no glass
+ *  - /sign-in and /sign-up were the only pages with no shell and no
  *    surface, so shadcn's `--foreground` (#252525, which assumes a white
- *    page) landed on `--grad-top` (#1b2534). Measured 1.01:1 -- the heading
- *    was the same colour as the thing behind it.
+ *    page) landed on the old dark gradient's top (#1b2534). Measured 1.01:1
+ *    -- the heading was the same colour as the thing behind it. Since Phase B
+ *    the page is the flat cream ground (#F3EFE6) under ink, and cards are the
+ *    surface (#FFFDF8); the same probe guards that nothing light lands on it.
  *  - sonner resolved `theme="system"` from prefers-color-scheme (no
  *    ThemeProvider is mounted, so useTheme fell back), which applies a
  *    HARD-CODED #e8e8e8 description colour, while the toast background
@@ -115,7 +117,7 @@ function ratio(fg: number[], bg: number[]) {
 }
 
 for (const path of ['/sign-in', '/sign-up']) {
-  test(`${path} text is legible on the gradient`, async ({ page }) => {
+  test(`${path} text is legible on the ground`, async ({ page }) => {
     await page.goto(path);
     for (const sel of ['h1', 'label[for="email"]', 'label[for="password"]', 'button[type="submit"]']) {
       const p = await probe(page, sel);
@@ -127,6 +129,21 @@ for (const path of ['/sign-in', '/sign-up']) {
     await page.screenshot({ path: `test-results/zz${path.replace('/', '-')}.png` });
   });
 }
+
+test('the shell and an empty library are legible on the new ground', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/library');
+  await expect(page.getByTestId('game-grid')).toBeVisible();
+  for (const sel of ['[data-testid=wordmark-home]', 'header nav a:not([aria-current])', 'h1',
+                     '[data-testid=game-grid] p:nth-of-type(2)', '[data-testid=sign-out]']) {
+    const p = await probe(page, sel);
+    expect(p, `${sel} not found or transparent`).toBeTruthy();
+    const r = ratio(p!.fg, p!.bg);
+    console.log(`library   ${sel.padEnd(40)} ${r.toFixed(2)}:1`);
+    expect(r, `${sel} contrast`).toBeGreaterThan(4.5);
+  }
+  await page.screenshot({ path: 'test-results/zz-library-ground.png', fullPage: true });
+});
 
 test('a toast description is legible', async ({ page }) => {
   await signUpFresh(page);
@@ -151,14 +168,12 @@ test('a toast description is legible', async ({ page }) => {
 
 test('the search panel metadata line is legible while its row is highlighted', async ({ page }) => {
   // The panel's own comment (search-box.tsx) works out the math for this
-  // exact case: the panel is painted opaque (#f1f4f5) precisely because the
-  // translucent version measured under AA on the page gradient's dark band,
-  // and the highlighted row then composites a further overlay
-  // (rgb(30 45 60 / 0.08)) on top of that, landing on ~#e0e4e6. --muted
-  // (not --muted-2) is what the metadata line uses there, landing at
-  // ~5.6:1. probe() now actually composites that overlay rather than
-  // skipping it as a low-alpha layer, so this measures the real
-  // highlighted-row pixels rather than the plain panel underneath them.
+  // exact case: the panel is the opaque surface (#FFFDF8), so the page
+  // never shows through, and the highlighted row is surface-2 (#F6F2E9).
+  // --muted (#5B5446, not --muted-2) is what the metadata line uses there,
+  // landing at 6.71:1. probe() composites any translucent layer between
+  // the text and the first opaque one rather than skipping it, so this
+  // measures the real highlighted-row pixels, not the plain panel under them.
   // Highlight defaults to index 0, so the TOP row -- the one this test
   // reads -- is highlighted by default, not an edge case reached only by
   // hovering.
@@ -180,4 +195,99 @@ test('the search panel metadata line is legible while its row is highlighted', a
   const r = ratio(p!.fg, p!.bg);
   console.log(`search    metadata line                  ${r.toFixed(2)}:1  "${p!.text.slice(0, 40)}"`);
   expect(r).toBeGreaterThan(4.5);
+});
+
+/**
+ * A focused control's indicator, composited over what is behind the control,
+ * against that same background (WCAG 1.4.11 wants 3:1). The indicator is the
+ * outline when it has one, else the widest box-shadow ring (Tailwind's
+ * `ring-*`). Half-strength `--ring` (`outline-ring/50`, `ring-ring/50`)
+ * blended to ~2:1 on the cream bar (Task 4's review, 2026-10-24).
+ */
+async function focusIndicator(page: Page, sel: string) {
+  return page.evaluate((s) => {
+    const el = document.querySelector(s) as HTMLElement | null;
+    if (!el || document.activeElement !== el) return { error: `${s} is not focused` };
+    // Button has transition-all: read the ring where it lands, not mid-fade.
+    for (const a of el.getAnimations()) a.finish();
+    const ctx = document.createElement('canvas').getContext('2d')!;
+    const SENTINEL = '#010203';
+    const parse = (v: string) => {
+      if (!v || v === 'transparent') return null;
+      ctx.fillStyle = SENTINEL;
+      ctx.fillStyle = v;
+      if (ctx.fillStyle === SENTINEL && v.toLowerCase() !== SENTINEL) return null;
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillRect(0, 0, 1, 1);
+      const d = ctx.getImageData(0, 0, 1, 1).data;
+      return [d[0], d[1], d[2], d[3] / 255];
+    };
+    const cs = getComputedStyle(el);
+    let indicator: number[] | null = null;
+    let kind = `none (focus-visible ${el.matches(':focus-visible')}, box-shadow ${cs.boxShadow})`;
+    if (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0) {
+      indicator = parse(cs.outlineColor);
+      kind = `outline ${cs.outlineStyle} ${cs.outlineWidth} ${cs.outlineColor}`;
+    }
+    if (!indicator || indicator[3] === 0) {
+      // Split the shadow list on top-level commas; Chromium writes each
+      // shadow's colour first.
+      const shadows: string[] = [];
+      let depth = 0, cur = '';
+      for (const ch of cs.boxShadow) {
+        if (ch === '(') depth++;
+        if (ch === ')') depth--;
+        if (ch === ',' && depth === 0) { shadows.push(cur.trim()); cur = ''; } else cur += ch;
+      }
+      if (cur.trim()) shadows.push(cur.trim());
+      let best = 0;
+      for (const sh of shadows) {
+        const m = sh.match(/^([a-z-]+\([^)]*\)|#[0-9a-f]+)\s+(.*)$/i);
+        if (!m) continue;
+        const lengths = m[2].split(/\s+/).map(parseFloat);
+        const spread = lengths[3] ?? 0;
+        const c = parse(m[1]);
+        if (c && c[3] > 0 && spread > best) { best = spread; indicator = c; kind = `ring ${sh}`; }
+      }
+    }
+    // What the indicator is drawn over: the control's surroundings, not
+    // the control itself.
+    const layers: number[][] = [];
+    let node: Element | null = el.parentElement;
+    while (node) {
+      const p = parse(getComputedStyle(node).backgroundColor);
+      if (p) { layers.push(p); if (p[3] > 0.5) break; }
+      node = node.parentElement;
+    }
+    const over = (top: number[], bg: number[]) => [0, 1, 2].map((i) => top[i] * top[3] + bg[i] * (1 - top[3]));
+    let bg = [...layers[layers.length - 1].slice(0, 3)];
+    for (let i = layers.length - 2; i >= 0; i--) bg = over(layers[i], bg);
+    return { kind, indicator: indicator ? over(indicator, bg) : null, bg };
+  }, sel);
+}
+
+test('header focus indicators clear 3:1 against the bar', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/library');
+  // A key press first, so programmatic focus counts as keyboard focus and
+  // :focus-visible applies the way it does for a Tab.
+  await page.keyboard.press('Tab');
+  for (const sel of [
+    'header nav a:not([aria-current])', // .seg-item
+    '[data-testid=about-link]',
+    '[data-testid=settings-link]',
+    '[data-testid=sign-out]',
+    '[data-testid=search-input]',
+  ]) {
+    await page.locator(sel).first().focus();
+    const f = await focusIndicator(page, sel);
+    expect('error' in f ? f.error : null, sel).toBeNull();
+    const { kind, indicator, bg } = f as { kind: string; indicator: number[] | null; bg: number[] };
+    // Soft, so one run reports every control rather than the first.
+    expect.soft(indicator, `${sel}: no visible focus indicator (${kind})`).toBeTruthy();
+    if (!indicator) continue;
+    const r = ratio(indicator, bg);
+    console.log(`focus     ${sel.padEnd(38)} ${r.toFixed(2)}:1  ${kind}`);
+    expect.soft(r, `${sel} focus indicator (${kind})`).toBeGreaterThanOrEqual(3);
+  }
 });

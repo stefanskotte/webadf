@@ -47,8 +47,8 @@ export function IssueInviteButton() {
     <div className="flex items-center gap-3">
       {code && (
         <span
-          className="rounded-full px-3 py-1 font-mono text-[13px] font-semibold"
-          style={{ background: 'var(--on-dark)', color: '#16273a' }}
+          className="rounded-full px-3 py-1 font-mono text-[13px] font-semibold text-white"
+          style={{ background: 'var(--primary-action)' }}
           data-testid="new-invite-code"
         >
           {code}
@@ -63,8 +63,8 @@ export function IssueInviteButton() {
         type="button"
         onClick={onClick}
         disabled={busy}
-        className="h-[34px] rounded-full px-4 text-[13px] font-semibold disabled:opacity-50"
-        style={{ background: 'var(--on-dark)', color: '#16273a' }}
+        className="h-[34px] rounded-full px-4 text-[13px] font-semibold text-white disabled:opacity-50"
+        style={{ background: 'var(--primary-action)' }}
       >
         {busy ? 'Issuing…' : 'Issue invite'}
       </button>

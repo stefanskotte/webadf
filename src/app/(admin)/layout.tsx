@@ -29,52 +29,63 @@ export default async function AdminLayout({
         {/* Below sm the header wraps: wordmark on line one, then the search
             box, the operator's email and the way back. They do not fit on one
             line at 390px, and nowrap would push the last of them off-screen. */}
-        <header className="relative flex flex-wrap items-center gap-3 px-4 pt-4 sm:flex-nowrap sm:gap-4 sm:px-7">
+        <header
+          data-testid="admin-header"
+          className="relative flex flex-wrap items-center gap-3 border-b px-4 py-3 sm:h-[72px] sm:flex-nowrap sm:gap-4 sm:px-7 sm:py-0"
+          style={{ background: 'var(--surface)', borderColor: 'var(--line)' }}
+        >
           <span
-            className="flex items-center gap-2.5 text-base font-bold tracking-[-0.02em]"
-            style={{ color: 'var(--on-dark)' }}
+            className="flex shrink-0 items-center gap-2.5 whitespace-nowrap text-[18px] font-bold tracking-[-0.02em]"
+            style={{ color: 'var(--ink)', fontFamily: 'var(--font-display)' }}
           >
-            <Logo size={22} />
-            <span>webadf <span style={{ color: 'var(--on-dark-muted)' }}>admin</span></span>
+            <Logo size={24} />
+            <span>webfloppy <span style={{ color: 'var(--muted)' }}>admin</span></span>
           </span>
-          {/* Absolutely centred, matching the app shell exactly -- see its
-              comment for the two weaker versions that were measured first,
-              and for why below sm the same wrapper becomes a fixed bottom bar
-              instead of a strip painted over the wordmark (spec D-6-2). The
-              two shells must agree here: the pill is the one thing that stays
-              put while moving between them. */}
+          {/* In flow from sm, centred in the space between the wordmark and
+              the right-hand group, and absolutely centred on the bar only
+              from 2xl, where that measures clear of the search box (Phase B
+              final review F1: centred from sm, the pill ran ~40px under the
+              search box at 1280, and clicks on its hidden part went to the
+              input). The app shell does the same from xl; this bar's right
+              group is wider, so it waits until 2xl. Below sm the same wrapper
+              becomes a fixed bottom bar instead of a strip painted over the
+              wordmark (spec D-6-2). e2e/header-overlap.spec.ts pins it. */}
           <div
             // h-[34px] matching the flow content's height, with items-center,
             // so the pill's centre lines up with the search box's rather than
             // its TOP edge lining up with the search box's top -- the pill is
             // 42px tall (34 + its own 4px padding), so aligning tops left it
-            // sitting 4px high. pointer-events-none on the full-width wrapper,
-            // auto on the pill: the wrapper spans the header and would
-            // otherwise swallow clicks meant for the search box behind it.
-            // The bar takes the clicks back below sm, where it is a surface
-            // in its own right with nothing behind it.
+            // sitting 4px high. From 2xl, pointer-events-none on the
+            // full-width wrapper, auto on the pill: there the wrapper spans
+            // the header and would otherwise swallow clicks meant for the
+            // search box behind it. In flow (sm to 2xl) it covers nothing.
             //
-            // The scrim is dark, not one of the white --glass-* surfaces:
-            // the pill's text is the light --on-dark ramp, tuned against the
-            // gradient's dark TOP band, and the bottom of the viewport is
-            // where the gradient has reached its pale end.
-            className="pointer-events-auto fixed inset-x-0 bottom-0 z-40 flex items-center justify-center border-t border-(--nav-scrim-hairline) bg-(--nav-scrim) px-3 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-md sm:pointer-events-none sm:absolute sm:top-4 sm:bottom-auto sm:z-auto sm:h-[34px] sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none"
+            // 2xl:top-[19px] is (72 - 34) / 2: the 72px bar's middle. Below sm
+            // the bar's look comes from --nav-scrim / --nav-scrim-hairline, a
+            // light surface now like the header itself.
+            className="pointer-events-auto fixed inset-x-0 bottom-0 z-40 flex items-center justify-center border-t border-(--nav-scrim-hairline) bg-(--nav-scrim) px-3 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-md sm:static sm:z-auto sm:min-w-0 sm:flex-1 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none 2xl:pointer-events-none 2xl:absolute 2xl:inset-x-0 2xl:top-[19px] 2xl:bottom-auto 2xl:h-[34px]"
           >
-            {/* Four items here at every width, so the pill scrolls inside
-                this clamp rather than the bar scrolling around it -- a
-                justify-center scroll container puts the start of its own
+            {/* The pill scrolls inside this clamp, at every width where the
+                space left for it is short (the phone bar, and the in-flow bar
+                at narrow sm widths), rather than the bar scrolling around it
+                -- a justify-center scroll container puts the start of its own
                 content out of reach once it overflows. */}
-            <div className="pointer-events-auto max-w-full overflow-x-auto sm:max-w-none sm:overflow-visible">
+            <div className="pointer-events-auto max-w-full overflow-x-auto">
               <AdminNav />
             </div>
           </div>
           {/* Wraps onto its own full-width line below sm; ml-auto is inert
               there and still does the work at sm and up. */}
-          <div className="ml-auto flex w-full flex-wrap items-center gap-3 sm:w-auto sm:flex-nowrap sm:gap-4">
+          <div className="ml-auto flex w-full flex-wrap items-center gap-3 sm:w-auto sm:shrink-0 sm:flex-nowrap sm:gap-4">
             <SearchBox />
+            {/* Hidden from sm until xl: with it, the bar has no room for the
+                pill between the wordmark and the search box (the pill would
+                scroll inside a 0px clamp at 640 and the bar overflowed the
+                viewport). It is a label, not a control; below sm it has its
+                own wrapped line again. */}
             <span
-              className="max-w-[180px] truncate font-mono text-[11.5px]"
-              style={{ color: 'var(--on-dark-muted)' }}
+              className="max-w-[180px] truncate font-mono text-[11.5px] sm:hidden xl:block"
+              style={{ color: 'var(--muted)' }}
               data-testid="admin-email"
             >
               {email}
@@ -82,8 +93,9 @@ export default async function AdminLayout({
             {/* The way back to the ordinary app; the admin shell has no TopNav. */}
             <Link
               href="/library"
-              className="whitespace-nowrap text-[13px] font-medium"
-              style={{ color: 'rgb(233 240 244 / 0.78)' }}
+              // Colours as classes, not an inline style: an inline colour
+              // would beat the hover.
+              className="whitespace-nowrap text-[13px] font-medium text-(--muted) hover:text-(--ink)"
             >
               Back to library
             </Link>

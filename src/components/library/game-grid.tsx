@@ -119,7 +119,7 @@ function SetDropHint() {
     <div
       data-testid="set-drop-target"
       className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] border-2"
-      style={{ borderColor: 'var(--primary-action)', background: 'rgb(11 18 28 / 0.35)' }}
+      style={{ borderColor: 'var(--primary-action)', background: 'rgb(36 33 27 / 0.35)' }}
     >
       <span className="rounded-full px-3 py-1 text-[12px] font-semibold text-white"
             style={{ background: 'var(--primary-action)' }}>

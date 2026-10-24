@@ -1,6 +1,6 @@
 'use client';
 
-// The typeahead pill in both shells' headers. Fires on every keystroke
+// The typeahead box in both shells' headers. Fires on every keystroke
 // against /api/search, so the debounce and the abort below are load-bearing:
 // without them a fast typist has several requests in flight at once and they
 // resolve in arrival order, not the order they were sent -- see the comments
@@ -13,6 +13,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { SearchIcon } from 'lucide-react';
 import { matchHelpTopics } from '@/lib/help/match';
 import { HELP_TOPICS, type HelpTopicId } from '@/lib/help/topics';
 
@@ -255,7 +256,12 @@ export function SearchBox() {
     // Full width below sm: the header wraps the search box onto a line of its
     // own there, and a shrink-to-fit box would leave that line mostly empty
     // while the input it contains stayed too narrow to read a query in.
-    <div className="relative w-full sm:w-auto">
+    // mr-2 keeps the box 16px clear of the icon buttons, which sit 8px
+    // apart (gap-2 on the header's right group) -- below sm as well, where
+    // the box shares its wrapped line with them (spec §6.1).
+    <div className="relative mr-2 w-full sm:w-auto">
+      <SearchIcon aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2"
+                  style={{ color: 'var(--muted-2)' }} />
       <input
         ref={inputRef}
         data-testid="search-input"
@@ -276,7 +282,7 @@ export function SearchBox() {
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         // pr-9 leaves room for the key hint; without it a long query runs
-        // underneath the badge instead of scrolling behind the pill's edge.
+        // underneath the badge instead of scrolling behind the box's edge.
         // w-48, not w-56. The admin shell carries the operator's email and a
         // back-link beside this box, and at w-56 the centred nav pill and this
         // input overlapped by 15px at 1280 (measured, both shells). 192px
@@ -284,12 +290,11 @@ export function SearchBox() {
         // Below sm none of that applies -- the pill has left the header for
         // the bottom bar -- and 192px would waste the line the box now has to
         // itself, so it takes the whole of it.
-        className="h-[34px] w-full rounded-full border pl-4 pr-4 text-[13px] outline-none transition-colors sm:w-48 sm:pr-9"
-        style={{
-          background: 'rgb(255 255 255 / 0.12)',
-          borderColor: 'rgb(255 255 255 / 0.16)',
-          color: 'var(--on-dark)',
-        }}
+        // The focus ring is a box-shadow in the full --ring (>= 3:1 on the
+        // bar, WCAG 1.4.11): the border colour is an inline style, which a
+        // focus-visible border class could not override.
+        className="h-10 w-full rounded-[10px] border pl-9 pr-4 text-[14px] outline-none transition-colors placeholder:text-(--muted-2) focus-visible:ring-2 focus-visible:ring-(--ring) sm:w-48 sm:pr-9"
+        style={{ background: 'var(--surface-2)', borderColor: 'var(--line)', color: 'var(--ink)' }}
       />
 
       {/* The "/" shortcut has always worked; nothing on screen said so, which
@@ -307,39 +312,17 @@ export function SearchBox() {
           // to press it with -- on a touch device it is decoration sitting on
           // top of the input's text. The shortcut itself still works for
           // anything with a keyboard attached at any width.
-          className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded border px-1.5 font-mono text-[11px] leading-[15px] sm:block"
-          style={{
-            background: 'rgb(255 255 255 / 0.10)',
-            borderColor: 'rgb(255 255 255 / 0.22)',
-            color: 'rgb(233 240 244 / 0.78)',
-          }}
+          className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded-md border px-1.5 font-mono text-[11px] leading-[15px] sm:block"
+          style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--muted)' }}
         >
           /
         </kbd>
       )}
 
       {showPanel && (
-        // OPAQUE, not --glass-strong. The panel is anchored at top-[42px],
-        // so its upper region composites over the page gradient's DARK band
-        // (--grad-top / --grad-2), not the pale band --muted-2/--faint were
-        // contrast-checked against (see the ramp's comment in globals.css) --
-        // translucent here measured ~4.1:1 / ~3.8:1, under AA for this
-        // small text. #f1f4f5 is that exact pale band, painted opaque: it
-        // reproduces the composited backdrop the ramp was tuned against
-        // regardless of where the panel sits on the gradient, which is a
-        // stronger fix than re-tuning two token values for one placement.
-        // Recomputed against #f1f4f5: --ink 14.44:1, --muted 6.49:1,
-        // --muted-2 5.11:1, --faint 4.74:1 -- all clear 4.5:1 on the PLAIN
-        // panel. But the highlighted row (see `highlighted` below) adds a
-        // rgb(30 45 60 / 0.08) overlay on top of that, compositing to about
-        // #e0e4e6, and highlight defaults to 0 -- the top row is highlighted
-        // whenever any row shows, i.e. this is the default state, not an
-        // edge case. On that composited surface --muted-2 drops to 4.41:1,
-        // under AA. The per-row metadata line below therefore uses --muted
-        // (6.49:1 on #f1f4f5, 5.60:1 on the highlighted #e0e4e6), not
-        // --muted-2, so it clears AA either way. --faint is unaffected and
-        // stays as-is: it is only used on the group labels, which are never
-        // highlighted.
+        // The panel is the opaque --surface, so the page never shows through.
+        // The highlighted row is --surface-2; the per-row metadata stays
+        // --muted, 6.71:1 on that row (--muted-2 is kept off highlighted rows).
         <div
           data-testid="search-panel"
           // The panel is anchored right-0 and grows leftwards, so on a narrow
@@ -349,10 +332,10 @@ export function SearchBox() {
           // phones below that, and the min() is what makes those degrade to a
           // narrower panel rather than a truncated one. Above sm it always
           // resolves to 20rem, which is today's w-80 exactly.
-          className="absolute right-0 top-[42px] z-50 w-[min(20rem,calc(100vw-2rem))] rounded-xl border p-1.5 sm:w-80"
+          className="absolute right-0 top-[46px] z-50 w-[min(20rem,calc(100vw-2rem))] rounded-2xl border p-1.5 sm:w-80"
           style={{
-            background: '#f1f4f5',
-            borderColor: 'var(--hairline-strong)',
+            background: 'var(--surface)',
+            borderColor: 'var(--line)',
             boxShadow: 'var(--shadow-card)',
           }}
         >
@@ -388,7 +371,7 @@ export function SearchBox() {
                     onMouseEnter={() => setHighlight(index)}
                     onClick={() => select({ kind: 'title', item: t })}
                     className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2 py-1.5 text-left"
-                    style={highlighted ? { background: 'rgb(30 45 60 / 0.08)' } : undefined}
+                    style={highlighted ? { background: 'var(--surface-2)' } : undefined}
                   >
                     <span className="text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
                       {t.title}
@@ -422,7 +405,7 @@ export function SearchBox() {
                     onMouseEnter={() => setHighlight(index)}
                     onClick={() => select({ kind: 'collection', item: c })}
                     className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2 py-1.5 text-left"
-                    style={highlighted ? { background: 'rgb(30 45 60 / 0.08)' } : undefined}
+                    style={highlighted ? { background: 'var(--surface-2)' } : undefined}
                   >
                     <span className="text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
                       {c.name}
@@ -452,7 +435,7 @@ export function SearchBox() {
                     onMouseEnter={() => setHighlight(index)}
                     onClick={() => select({ kind: 'help', item: { id } })}
                     className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2 py-1.5 text-left"
-                    style={highlighted ? { background: 'rgb(30 45 60 / 0.08)' } : undefined}
+                    style={highlighted ? { background: 'var(--surface-2)' } : undefined}
                   >
                     <span className="text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
                       {HELP_TOPICS[id].title}

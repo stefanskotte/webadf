@@ -1,6 +1,6 @@
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
 import { createHash } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { signUpFresh, runTag } from './helpers';
@@ -303,6 +303,90 @@ test('the chips are centred between the wordmark and the pill, and stay centred 
       return Math.abs(g.left - g.right) <= 4 && g.right < before.right - 20;
     }).toBe(true);
   });
+
+/**
+ * The widest chip there is: a long alias, a long title (both at their caps)
+ * and a WP tag. The Admin item makes the pill its widest, so the super-admin
+ * is the tightest the header ever gets (Task 4's review, 2026-10-24: at 1536
+ * and 1920 this case ran ~25px under the pill; a member's ran to 11.8px of it
+ * at 1536). Slots per width are chipSlots' (drive-chips.ts).
+ */
+for (const who of ['super-admin', 'member'] as const) {
+  const slotsAt = who === 'super-admin' ? { 1280: 1, 1536: 1, 1920: 2 } : { 1280: 1, 1536: 2, 1920: 3 };
+  test(`as a ${who}, chips with long names, long titles and WP stay 16px clear of the pill at 1280, 1536 and 1920`,
+    async ({ page, request }) => {
+      test.setTimeout(90_000);
+      if (who === 'super-admin') await signInAsSuperAdmin(page); else await signUpFresh(page);
+      await expect(page.getByRole('link', { name: 'Admin' })).toHaveCount(who === 'super-admin' ? 1 : 0);
+      // "Aa…" so they sort before anything else the admin's org may hold
+      // ("Admin bench" from the test below, for one) and take the slots.
+      // In the chips' own order (by name), so ids[i] is chip i.
+      const names = ['Aardvark living room A1200', 'Aardwolf workbench A500', 'Aarhus spare A600', 'Aaron attic CDTV'];
+      const ids: string[] = [];
+      // The super-admin's org outlives this test: its boards go at the end of
+      // THIS test, not the file's afterAll, or they would take the slot a
+      // later test's board expects. (cleanupSeeded still removes the disks.)
+      try {
+        for (const [i, n] of names.entries()) {
+          const board = await onlineBoard(page, request, n);
+          ids.push(board.deviceId);
+          const [{ orgId }] = await getDb().select({ orgId: devices.orgId }).from(devices).where(eq(devices.id, board.deviceId));
+          const tag = runTag();
+          const s = sha(`chip-fit-${who}-${i}-${tag}`);
+          const disk = { sha256: s, ...(await seedDisk(orgId, { title: `Zool 2 The Ninja of the Nth Dimension ${tag.slice(-5)}`, diskNo: 1, sha256: s })) };
+          await mountAndConverge(page, request, board, disk);
+        }
+
+        for (const width of [1280, 1536, 1920] as const) {
+          await page.setViewportSize({ width, height: 800 });
+          await page.goto('/library');
+          await expect(page.getByTestId('drive-chip-more')).toBeVisible();
+          // The worst case really is on screen: exactly this width's slots,
+          // every one ours, naming its disk and wearing its tag.
+          const visible = await page.getByTestId('drive-chips').evaluate((el) =>
+            [...el.children].filter((c) => (c as HTMLElement).offsetWidth > 0)
+              .map((c) => c.getAttribute('data-testid')!).filter((t) => t !== 'drive-chip-more'));
+          expect(visible.map((t) => t.replace('drive-chip-', '')), `chips at ${width}`).toEqual(ids.slice(0, slotsAt[width]));
+          for (const id of ids.slice(0, slotsAt[width])) {
+            await expect(chip(page, id)).toHaveAttribute('data-phase', 'loaded');
+            await expect(page.getByTestId(`drive-chip-wp-${id}`)).toHaveText('WP');
+          }
+          const more = page.getByTestId('drive-chip-more');
+          expect((await more.evaluate((el: HTMLElement) => el.innerText)).trim(), `"+k" at ${width}`)
+            .toBe(`+${4 - slotsAt[width]}`);
+          const g = await chipGaps(page);
+          expect(g.right, `gap to the pill at ${width}: ${JSON.stringify(g)}`).toBeGreaterThanOrEqual(16);
+          expect(g.left, `gap to the wordmark at ${width}: ${JSON.stringify(g)}`).toBeGreaterThanOrEqual(16);
+          // The "+k" list is chosen from the same slots in JS: it holds exactly the rest.
+          await more.click();
+          for (const id of ids.slice(slotsAt[width])) await expect(page.getByTestId(`drive-entry-${id}`)).toBeVisible();
+          for (const id of ids.slice(0, slotsAt[width])) await expect(page.getByTestId(`drive-entry-${id}`)).toHaveCount(0);
+          await page.keyboard.press('Escape');
+        }
+      } finally {
+        if (ids.length) await getDb().delete(devices).where(inArray(devices.id, ids));
+      }
+    });
+}
+
+test('the first-paint pill estimate matches the real pill at 1280', async ({ page }) => {
+  await signUpFresh(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/library');
+  const est = Number(await page.getByTestId('header-start').getAttribute('data-pill-estimate'));
+  const real = await page.locator('header nav').evaluate((n) => n.getBoundingClientRect().width);
+  expect(Math.abs(real - est), `estimate ${est}, measured ${real}`).toBeLessThanOrEqual(2);
+});
+
+test('the first-paint pill estimate matches the real pill at 1280 with the Admin item', async ({ page }) => {
+  await signInAsSuperAdmin(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/library');
+  await expect(page.getByRole('link', { name: 'Admin' })).toBeVisible();
+  const est = Number(await page.getByTestId('header-start').getAttribute('data-pill-estimate'));
+  const real = await page.locator('header nav').evaluate((n) => n.getBoundingClientRect().width);
+  expect(Math.abs(real - est), `estimate ${est}, measured ${real}`).toBeLessThanOrEqual(2);
+});
 
 test('the "+k" chip shows exactly one number, the right one, at every chip width', async ({ page, request }) => {
   test.setTimeout(60_000);

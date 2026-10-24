@@ -204,8 +204,8 @@ export function DeviceList({
               not shift under the cursor mid-click. */}
           <button type="button" data-testid="update-start" onClick={() => setOpen(true)}
                   disabled={chosen.length === 0 || untick > 0}
-                  className="rounded-full px-4 py-1.5 text-[13px] font-semibold disabled:opacity-50"
-                  style={{ background: 'var(--amber-text)', color: '#16273a' }}>
+                  className="rounded-full px-4 py-1.5 text-[13px] font-semibold text-white disabled:opacity-50"
+                  style={{ background: 'var(--amber-text)' }}>
             Update
           </button>
           <button type="button" onClick={() => setPicked(new Set())}
@@ -255,10 +255,10 @@ export function DeviceList({
       */}
       {open && latest && createPortal((
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-             style={{ background: 'rgb(0 0 0 / 0.5)' }}>
+             style={{ background: 'var(--scrim)' }}>
           <form role="dialog" aria-modal="true" aria-labelledby={titleId} data-testid="update-dialog"
                 onSubmit={(e) => { e.preventDefault(); void confirm(); }}
-                className="glass-card flex max-h-full w-full max-w-lg flex-col gap-3 overflow-y-auto p-6">
+                className="glass-card wf-modal flex max-h-full w-full max-w-lg flex-col gap-3 overflow-y-auto p-6">
             <h2 id={titleId} className="text-[15px] font-semibold" style={{ color: 'var(--ink)' }}>
               Update {chosen.length} device{chosen.length === 1 ? '' : 's'}
             </h2>
@@ -312,8 +312,8 @@ export function DeviceList({
               {/* With no password to type, the caret starts on Update instead. */}
               <button type="submit" data-testid="update-confirm" autoFocus={skipPassword}
                       disabled={busy || (!skipPassword && password.length === 0)}
-                      className="rounded-full px-4 py-1.5 text-[13px] font-semibold disabled:opacity-50"
-                      style={{ background: 'var(--amber-text)', color: '#16273a' }}>
+                      className="rounded-full px-4 py-1.5 text-[13px] font-semibold text-white disabled:opacity-50"
+                      style={{ background: 'var(--amber-text)' }}>
                 {busy ? 'Requesting…' : 'Update'}
               </button>
             </div>

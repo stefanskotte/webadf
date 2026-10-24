@@ -94,7 +94,7 @@ export default async function AboutPage() {
           ) : <Row label="Library">{UNAVAILABLE}</Row>}
         </Section>
 
-        <Section id="about-webadf" title="webadf">
+        <Section id="about-webadf" title="WebFloppy">
           <Row label="What">An Amiga floppy library that mounts disks on real Amigas over Wi-Fi.</Row>
           <Row label="Licence">MIT</Row>
           <Row label="More">

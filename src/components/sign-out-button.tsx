@@ -8,18 +8,9 @@ export function SignOutButton() {
   return (
     <Button
       variant="ghost"
-      // The ghost variant sets no resting text colour, so it inherited
-      // body's --foreground (#223140) -- effectively invisible against the
-      // dark top of the page gradient (--grad-top #1b2534, ~1.16:1
-      // contrast). Every other header element already overrides explicitly
-      // (the wordmark uses --on-dark, TopNav's inactive items use
-      // rgb(233 240 244 / .78)); this brings Sign out in line with them,
-      // including a legible hover state on the same translucent-white
-      // treatment TopNav's pill uses, instead of ghost's default
-      // hover:bg-muted + hover:text-foreground (a light bg with dark text
-      // would itself be fine, but paired with our forced light resting
-      // text it would flip to low contrast on hover).
-      className="text-[color:var(--on-dark-muted)] hover:bg-white/10 hover:text-[color:var(--on-dark)]"
+      // The ghost variant's colours are set here for the header.
+      data-testid="sign-out"
+      className="h-9 rounded-[10px] px-3.5 text-[14px] font-medium text-(--muted) hover:bg-(--track) hover:text-(--ink)"
       onClick={async () => {
         await signOut();
         router.push('/sign-in');

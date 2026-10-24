@@ -5,13 +5,13 @@
  * a real page uses, so a test waiting for real content never mistakes a placeholder for it.
  */
 
-/** One grey shape. `onDark` for shapes over the gradient's dark top band (the page header). */
+/** One grey shape. `onDark` is kept for callers; both shades are equal on the light ground. */
 export function Bone({ className = '', onDark = false, style }: { className?: string; onDark?: boolean; style?: React.CSSProperties }) {
   return (
     <div
       aria-hidden
       className={`rounded-md motion-safe:animate-pulse ${className}`}
-      style={{ background: onDark ? 'rgb(255 255 255 / 0.16)' : 'rgb(30 45 60 / 0.08)', ...style }}
+      style={{ background: onDark ? 'rgb(36 33 27 / 0.07)' : 'rgb(36 33 27 / 0.07)', ...style }}
     />
   );
 }

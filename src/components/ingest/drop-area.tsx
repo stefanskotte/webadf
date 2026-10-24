@@ -25,7 +25,7 @@ export function DropArea({
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => { e.preventDefault(); onFiles(e.dataTransfer.files); }}
       className="flex h-44 shrink-0 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 text-center focus-within:ring-2 focus-within:ring-offset-2"
-      style={{ borderColor: 'rgb(245 130 46 / 0.55)', background: 'var(--glass-subtle)', '--tw-ring-color': 'var(--accent-amber)' } as React.CSSProperties}
+      style={{ borderColor: 'color-mix(in srgb, var(--accent-amber) 55%, transparent)', background: 'var(--glass-subtle)', '--tw-ring-color': 'var(--accent-amber)' } as React.CSSProperties}
     >
       <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent-amber)" strokeWidth="1.6" aria-hidden>
         <path d="M12 16V4m0 0L8 8m4-4 4 4" />
@@ -36,7 +36,7 @@ export function DropArea({
       <span
         aria-hidden
         className="mt-1 flex h-[32px] items-center rounded-lg px-4 text-[13px] font-medium"
-        style={{ background: '#fff', border: '1px solid var(--hairline-strong)', boxShadow: 'var(--shadow-card)', color: 'var(--ink)' }}
+        style={{ background: 'var(--surface-2)', border: '1px solid var(--line)', boxShadow: 'var(--shadow-card)', color: 'var(--ink)' }}
       >
         Browse…
       </span>

@@ -230,14 +230,14 @@ export function FileEditProvider({
       {confirmOpen && createPortal((
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: 'rgb(11 18 28 / 0.55)' }}
+          style={{ background: 'var(--scrim)' }}
         >
           <div
             role="alertdialog"
             aria-modal="true"
             aria-label="This edit will drop the disk's TOSEC identity"
             data-testid="identity-confirm-dialog"
-            className="glass-card w-full max-w-[440px] p-6 text-left"
+            className="glass-card wf-modal w-full max-w-[440px] p-6 text-left"
           >
             <h2 className="text-[15px] font-bold" style={{ color: 'var(--ink)' }}>
               This will drop the disk&apos;s TOSEC identity

@@ -57,23 +57,27 @@ export default async function AppLayout({
             search box plus sign-out take line two full-width. At 390px they do
             not fit on one line, and nowrap would push the sign-out button off
             the right edge rather than shrinking anything. */}
-        <header className="relative flex flex-wrap items-center gap-3 px-4 pt-4 sm:flex-nowrap sm:gap-4 sm:px-7">
+        <header
+          data-testid="app-header"
+          className="relative flex flex-wrap items-center gap-3 border-b px-4 py-3 sm:h-[72px] sm:flex-nowrap sm:gap-4 sm:px-7 sm:py-0"
+          style={{ background: "var(--surface)", borderColor: "var(--line)" }}
+        >
           {/* The wordmark and, after it, a lane that centres the drive chips
               between the wordmark and the pill -- see HeaderStart for the
               geometry. The estimate is only the first paint's; the pill is
               measured on the client. */}
-          <HeaderStart pillEstimate={showAdmin ? 386 : 312}>
+          <HeaderStart pillEstimate={showAdmin ? 394 : 317}>
             {/* The wordmark is the way home. Every other shell in the app has an
                 explicit way back to the library; this one only had the nav pill,
                 and the mark is where people click first (operator, 2026-09-21). */}
             <Link
               href="/library"
               data-testid="wordmark-home"
-              className="flex items-center gap-2.5 text-base font-bold tracking-[-0.02em]"
-              style={{ color: "var(--on-dark)" }}
+              className="flex items-center gap-2.5 text-[18px] font-bold tracking-[-0.02em]"
+              style={{ color: "var(--ink)", fontFamily: "var(--font-display)" }}
             >
-              <Logo size={22} />
-              webadf
+              <Logo size={24} />
+              webfloppy
             </Link>
             {/* Beside the wordmark, in flow, rather than beside the pill: the
                 pill is absolutely centred (below), so anything placed next to
@@ -84,7 +88,7 @@ export default async function AppLayout({
                 centres them from sm up (HeaderStart); below sm the compact
                 control's own ml-auto still puts it at the line's right end. */}
             <div className="flex flex-1 items-center sm:justify-center">
-              <DriveChips chips={chips} />
+              <DriveChips chips={chips} showAdmin={showAdmin} />
             </div>
           </HeaderStart>
         {/* The nav is centred on the VIEWPORT, which means taking it out of
@@ -104,37 +108,42 @@ export default async function AppLayout({
             a fixed bottom bar, where a thumb is (spec D-6-2). Moved by CSS,
             never duplicated -- a second, mobile copy of the nav would make
             getByRole('link') ambiguous under strict mode and fail the suite
-            at 1280. */}
+            at 1280.
+
+            Absolute centring only from xl, though. Between sm and xl it ran
+            under the search box (~55px at 1024; Phase B final review F1),
+            so there the wrapper is in flow, flex-1, centring the pill in the
+            space HeaderStart and the right-hand group leave, and the pill
+            scrolls inside its clamp when that space is short.
+            e2e/header-overlap.spec.ts pins both. */}
           <div
             // h-[34px] matching the flow content's height, with items-center,
             // so the pill's centre lines up with the search box's rather than
             // its TOP edge lining up with the search box's top -- the pill is
             // 42px tall (34 + its own 4px padding), so aligning tops left it
-            // sitting 4px high. pointer-events-none on the full-width wrapper,
-            // auto on the pill: the wrapper spans the header and would
-            // otherwise swallow clicks meant for the search box behind it.
-            // The bar takes the clicks back below sm, where it is opaque
-            // enough to look like a surface and nothing sits behind it.
+            // sitting 4px high. From xl, pointer-events-none on the
+            // full-width wrapper, auto on the pill: there the wrapper spans
+            // the header and would otherwise swallow clicks meant for the
+            // search box behind it. In flow (sm to xl) it covers nothing.
             //
-            // The scrim is dark, not one of the white --glass-* surfaces:
-            // the pill's text is the light --on-dark ramp, tuned against the
-            // gradient's dark TOP band, and the bottom of the viewport is
-            // where the gradient has reached its pale end. Glass there would
-            // leave the nav labels at roughly 1.5:1.
-            className="pointer-events-auto fixed inset-x-0 bottom-0 z-40 flex items-center justify-center border-t border-(--nav-scrim-hairline) bg-(--nav-scrim) px-3 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-md sm:pointer-events-none sm:absolute sm:top-4 sm:bottom-auto sm:z-auto sm:h-[34px] sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none"
+            // xl:top-[19px] is (72 - 34) / 2: the 72px bar's middle. Below sm
+            // the bar's look comes from --nav-scrim / --nav-scrim-hairline, a
+            // light surface now like the header itself, carrying the same
+            // segmented nav (ink on the track).
+            className="pointer-events-auto fixed inset-x-0 bottom-0 z-40 flex items-center justify-center border-t border-(--nav-scrim-hairline) bg-(--nav-scrim) px-3 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-md sm:static sm:z-auto sm:min-w-0 sm:flex-1 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none xl:pointer-events-none xl:absolute xl:inset-x-0 xl:top-[19px] xl:bottom-auto xl:h-[34px]"
           >
             {/* The pill scrolls inside this clamp rather than the bar
                 scrolling around it: a justify-center scroll container puts
                 the start of its own content out of reach once it overflows,
                 which with four items is a 320px-wide phone away. */}
             {/* data-nav-pill: what HeaderStart measures. */}
-            <div data-nav-pill className="pointer-events-auto max-w-full overflow-x-auto sm:max-w-none sm:overflow-visible">
+            <div data-nav-pill className="pointer-events-auto max-w-full overflow-x-auto">
               <TopNav showAdmin={showAdmin} />
             </div>
           </div>
           {/* Full-width on its own wrapped line below sm, so the search box
               has somewhere to grow into; ml-auto is inert at that width. */}
-          <div className="ml-auto flex w-full items-center gap-4 sm:w-auto">
+          <div className="ml-auto flex w-full items-center gap-2 sm:w-auto sm:shrink-0">
             <SearchBox />
             <AboutLink />
             <SettingsLink />
