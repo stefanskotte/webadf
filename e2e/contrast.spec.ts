@@ -7,10 +7,12 @@ import { test, expect, type Page } from '@playwright/test';
  * green suite, because neither is visible in the source of the file that
  * causes it:
  *
- *  - /sign-in and /sign-up were the only pages with no shell and no glass
+ *  - /sign-in and /sign-up were the only pages with no shell and no
  *    surface, so shadcn's `--foreground` (#252525, which assumes a white
- *    page) landed on `--grad-top` (#1b2534). Measured 1.01:1 -- the heading
- *    was the same colour as the thing behind it.
+ *    page) landed on the old dark gradient's top (#1b2534). Measured 1.01:1
+ *    -- the heading was the same colour as the thing behind it. Since Phase B
+ *    the page is the flat cream ground (#F3EFE6) under ink, and cards are the
+ *    surface (#FFFDF8); the same probe guards that nothing light lands on it.
  *  - sonner resolved `theme="system"` from prefers-color-scheme (no
  *    ThemeProvider is mounted, so useTheme fell back), which applies a
  *    HARD-CODED #e8e8e8 description colour, while the toast background
@@ -115,7 +117,7 @@ function ratio(fg: number[], bg: number[]) {
 }
 
 for (const path of ['/sign-in', '/sign-up']) {
-  test(`${path} text is legible on the gradient`, async ({ page }) => {
+  test(`${path} text is legible on the ground`, async ({ page }) => {
     await page.goto(path);
     for (const sel of ['h1', 'label[for="email"]', 'label[for="password"]', 'button[type="submit"]']) {
       const p = await probe(page, sel);
@@ -127,6 +129,21 @@ for (const path of ['/sign-in', '/sign-up']) {
     await page.screenshot({ path: `test-results/zz${path.replace('/', '-')}.png` });
   });
 }
+
+test('the shell and an empty library are legible on the new ground', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/library');
+  await expect(page.getByTestId('game-grid')).toBeVisible();
+  for (const sel of ['[data-testid=wordmark-home]', 'header nav a:not([aria-current])', 'h1',
+                     '[data-testid=game-grid] p:nth-of-type(2)', '[data-testid=sign-out]']) {
+    const p = await probe(page, sel);
+    expect(p, `${sel} not found or transparent`).toBeTruthy();
+    const r = ratio(p!.fg, p!.bg);
+    console.log(`library   ${sel.padEnd(40)} ${r.toFixed(2)}:1`);
+    expect(r, `${sel} contrast`).toBeGreaterThan(4.5);
+  }
+  await page.screenshot({ path: 'test-results/zz-library-ground.png', fullPage: true });
+});
 
 test('a toast description is legible', async ({ page }) => {
   await signUpFresh(page);
@@ -151,14 +168,12 @@ test('a toast description is legible', async ({ page }) => {
 
 test('the search panel metadata line is legible while its row is highlighted', async ({ page }) => {
   // The panel's own comment (search-box.tsx) works out the math for this
-  // exact case: the panel is painted opaque (#f1f4f5) precisely because the
-  // translucent version measured under AA on the page gradient's dark band,
-  // and the highlighted row then composites a further overlay
-  // (rgb(30 45 60 / 0.08)) on top of that, landing on ~#e0e4e6. --muted
-  // (not --muted-2) is what the metadata line uses there, landing at
-  // ~5.6:1. probe() now actually composites that overlay rather than
-  // skipping it as a low-alpha layer, so this measures the real
-  // highlighted-row pixels rather than the plain panel underneath them.
+  // exact case: the panel is the opaque surface (#FFFDF8), so the page
+  // never shows through, and the highlighted row is surface-2 (#F6F2E9).
+  // --muted (#5B5446, not --muted-2) is what the metadata line uses there,
+  // landing at 6.71:1. probe() composites any translucent layer between
+  // the text and the first opaque one rather than skipping it, so this
+  // measures the real highlighted-row pixels, not the plain panel under them.
   // Highlight defaults to index 0, so the TOP row -- the one this test
   // reads -- is highlighted by default, not an edge case reached only by
   // hovering.
