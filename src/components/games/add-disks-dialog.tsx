@@ -183,7 +183,7 @@ export function AddDisksDialog({ mode, onClose }: { mode: AddDisksMode; onClose:
     >
       <div
         role="dialog" aria-modal="true" aria-labelledby={titleId} data-testid="add-disks-dialog"
-        className="wf-modal flex h-full w-full flex-col gap-3 overflow-hidden border p-4 text-left shadow-xl backdrop-blur-xl sm:h-auto sm:max-h-[min(640px,100%)] sm:max-w-[480px] sm:rounded-[14px] sm:p-5"
+        className="wf-modal flex h-full w-full flex-col gap-3 overflow-hidden border p-4 text-left max-sm:rounded-none sm:h-auto sm:max-h-[min(640px,100%)] sm:max-w-[480px] sm:p-5"
         style={{ background: 'var(--glass-strong)', borderColor: 'var(--hairline-strong)', color: 'var(--ink)' }}
       >
         <h2 id={titleId} className="break-words text-[15px] font-bold">{heading}</h2>

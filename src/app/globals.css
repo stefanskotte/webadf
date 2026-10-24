@@ -310,10 +310,13 @@
   border-radius: var(--radius-card);
 }
 
-/* Modal panels, beside .glass-card on each dialog. */
-.wf-modal {
-  border-radius: 20px;
-  box-shadow: var(--shadow-modal), 0 0 0 1px var(--line);
+/* Modal panels, beside .glass-card on each dialog. In the components layer so a panel's own utilities win
+   (the phone sheets' rounded-t / rounded-none keep their corners); an unlayered rule would beat every utility. */
+@layer components {
+  .wf-modal {
+    border-radius: 20px;
+    box-shadow: var(--shadow-modal), 0 0 0 1px var(--line);
+  }
 }
 
 /* Segmented control (Phase B spec §7): TopNav, AdminNav, the library view toggle. */
