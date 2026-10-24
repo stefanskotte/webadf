@@ -6,7 +6,7 @@ import { HdTag } from '@/components/disks/hd-tag';
 import { UploadCard } from '@/components/ingest/upload-card';
 import { HelpTip } from '@/components/help/help-tip';
 import { adfDensity, isHfeFilename } from '@/lib/disk-format';
-import { sendErrorText, type SendTarget } from '@/lib/send-ui';
+import { sendErrorText, targetLabel, type SendTarget } from '@/lib/send-ui';
 import { downloadName, uploadErrorText } from '@/lib/from-amiga-ui';
 import { SIGNED_OUT_TEXT, isSignedOutAnswer, mergeStaging, stagingView, type StagingFilter, type Tone, type ViewRow } from '@/lib/upload-staging';
 import { useStaging } from './staging-provider';
@@ -160,7 +160,7 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
                   className="rounded-lg px-2 py-1 text-[12px]" style={quiet}
                   onChange={(e) => { const t = targets.find((x) => x.id === e.target.value); if (t) void sendTo(v, t); }}>
             <option value="">Send to Amiga…</option>
-            {targets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            {targets.map((t) => <option key={t.id} value={t.id}>{targetLabel(t)}</option>)}
           </select>
         );
       case 'delete':
