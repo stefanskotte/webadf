@@ -23,10 +23,16 @@ import { test, expect, type Page } from '@playwright/test';
  */
 import { randomUUID } from 'node:crypto';
 import { signUpFresh, runTag } from './helpers';
-import { cleanupSeeded, seedDisk } from './device-helpers';
+import { cleanupSeeded, seedDisk, pairDevice, authHeader } from './device-helpers';
+import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
+import { getDb } from '@/db';
+import { blobs } from '@/db/schema/catalog';
+import { devices } from '@/db/schema/devices';
+import { eq } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
 import { signInAsSuperAdmin } from './admin-helpers';
 
-test.afterAll(cleanupSeeded);
+test.afterAll(async () => { await cleanupTosec(); await cleanupSeeded(); });
 
 /**
  * The element's own rendered colour, over what is actually composited
@@ -143,6 +149,61 @@ test('the shell and an empty library are legible on the new ground', async ({ pa
     expect(r, `${sel} contrast`).toBeGreaterThan(4.5);
   }
   await page.screenshot({ path: 'test-results/zz-library-ground.png', fullPage: true });
+});
+
+// Phase C1 (spec §9): the library's new text pairs, measured off a seeded library with a typed, a held and an untyped
+// title. Grid first, then the table (the held row's --mounted-bg).
+test('the library card and row pairs are legible: type pill, DF0 pill, count line, held row', async ({ page, request }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  const sha = (k: string) => createHash('sha256').update(`contrast-${k}-${run}`).digest('hex');
+  const typed = await seedDisk(u.orgId, { title: `Alpha ${run}`, diskNo: 1, sha256: sha('typed') });
+  const entryId = await seedTosecEntry({
+    setName: 'Commodore Amiga - Games - [ADF]', gameName: `Alpha ${run} (1992)(Test)`, romName: `alpha-${run}.adf`,
+    title: `Alpha ${run}`, sortTitle: `typed ${run}`.toLowerCase(), year: 1992,
+  });
+  await getDb().update(blobs).set({ tosecEntryId: entryId, matchState: 'matched', matchCheckedAt: new Date() })
+    .where(eq(blobs.sha256, sha('typed')));
+  await seedDisk(u.orgId, { title: `Plain ${run}`, diskNo: 1, sha256: sha('untyped') });
+  const held = await seedDisk(u.orgId, { title: `Held ${run}`, diskNo: 1, sha256: sha('held') });
+  const { deviceId, token } = await pairDevice(page, request, `Bench ${run.slice(0, 6)}`);
+  await getDb().update(devices).set({ desiredDiskId: held.diskId, desiredSha256: sha('held'), desiredVersion: 1 })
+    .where(eq(devices.id, deviceId));
+  expect((await request.post('/api/device/status', {
+    headers: authHeader(token), data: { mountedSha256: sha('held'), mountedDiskId: held.diskId, version: 1 },
+  })).status()).toBe(204);
+
+  await page.goto('/library?view=grid');
+  const cards = page.getByTestId('game-card');
+  await expect(cards.filter({ hasText: `Alpha ${run}` })).toBeVisible();
+  await expect(cards.filter({ hasText: `Held ${run}` }).getByTestId('drive-badge')).toBeVisible();
+  const tag = (id: string, sel: string) => `[data-testid=game-card][aria-label="${id}"] ${sel}`;
+  for (const [what, sel] of [
+    ['type pill', tag(`Alpha ${run}`, '[data-testid=grid-kind]')],
+    ['DF0 pill', tag(`Held ${run}`, '[data-testid=drive-badge]')],
+    ['count line (typed)', tag(`Alpha ${run}`, '[data-testid=grid-disks]')],
+    ['count line (untyped)', tag(`Plain ${run}`, '[data-testid=grid-disks]')],
+  ] as const) {
+    const p = await probe(page, sel);
+    expect(p, `${what}: ${sel} not found`).toBeTruthy();
+    const r = ratio(p!.fg, p!.bg);
+    console.log(`card      ${what.padEnd(22)} ${r.toFixed(2)}:1  "${p!.text.slice(0, 24)}"`);
+    expect(r, what).toBeGreaterThan(4.5);
+  }
+  await page.screenshot({ path: 'test-results/zz-library-cards.png', fullPage: true });
+
+  await page.goto('/library?view=table');
+  await expect(page.getByTestId('game-row').filter({ hasText: `Held ${run}` })).toHaveAttribute('data-drive', 'mounted');
+  for (const [what, sel] of [
+    ['held row muted-2', '[data-testid=game-row][data-drive=mounted] span[style*="--muted-2"]'],
+    ['DF0 pill (row)', '[data-testid=game-row][data-drive=mounted] [data-testid=drive-badge]'],
+  ] as const) {
+    const p = await probe(page, sel);
+    expect(p, `${what}: ${sel} not found`).toBeTruthy();
+    const r = ratio(p!.fg, p!.bg);
+    console.log(`row       ${what.padEnd(22)} ${r.toFixed(2)}:1`);
+    expect(r, what).toBeGreaterThan(4.5);
+  }
 });
 
 test('a toast description is legible', async ({ page }) => {

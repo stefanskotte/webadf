@@ -61,6 +61,8 @@ export interface GameListItem {
   sizeBytes: number; sha256Prefix: string | null;
   /** Any of its disks is HD (HD spec §4.2): the table tags the size. */
   hasHd: boolean;
+  /** Any of its disks is an HFE image: spec §4 draws an HFE title's disk grey. */
+  hasHfe: boolean;
 }
 
 /**
@@ -109,6 +111,7 @@ export async function listGames(
         diskCount: sql<number>`count(${disks.id})::int`,
         sizeBytes: sql<number>`coalesce(sum(${disks.sizeBytes}), 0)::bigint`,
         hasHd: sql<boolean>`coalesce(bool_or(${isHdAdfSql()}), false)`,
+        hasHfe: sql<boolean>`coalesce(bool_or(${disks.imageFormat} = 'hfe'), false)`,
         sha256Prefix: sql<string | null>`min(${disks.sha256})`,
         diskId: sql<string | null>`min(${disks.id})`,
       })
@@ -135,6 +138,7 @@ export async function listGames(
         diskCount: sql<number>`count(${disks.id})::int`,
         sizeBytes: sql<number>`coalesce(sum(${disks.sizeBytes}), 0)::bigint`,
         hasHd: sql<boolean>`coalesce(bool_or(${isHdAdfSql()}), false)`,
+        hasHfe: sql<boolean>`coalesce(bool_or(${disks.imageFormat} = 'hfe'), false)`,
         sha256Prefix: sql<string | null>`min(${disks.sha256})`,
         diskId: sql<string | null>`min(${disks.id})`,
       })
@@ -163,6 +167,7 @@ export async function listGames(
       diskCount: sql<number>`count(${disks.id})::int`,
       sizeBytes: sql<number>`coalesce(sum(${disks.sizeBytes}), 0)::bigint`,
       hasHd: sql<boolean>`coalesce(bool_or(${isHdAdfSql()}), false)`,
+      hasHfe: sql<boolean>`coalesce(bool_or(${disks.imageFormat} = 'hfe'), false)`,
       sha256Prefix: sql<string | null>`min(${disks.sha256})`,
       diskId: sql<string | null>`min(${disks.id})`,
     })
@@ -670,6 +675,10 @@ export interface GameDetail {
   /** The cover this org chose for the title, or null (then `front`/`title_` apply). */
   coverOverrideUrl: string | null;
   links: GameLinks | null;
+  /** Game / App / Demo ..., from the TOSEC sets of the title's disks (the list's rule); null when none is recognised. */
+  kind: string | null;
+  /** Made here (Create ADF), not ingested from a file: it has no kind, and still gets a coloured disk. */
+  authored: boolean;
   disks: GameDetailDisk[];
 }
 
@@ -688,7 +697,7 @@ export async function getGameDetail(orgId: string, gameId: string): Promise<Game
       developer: games.developer, players: games.players,
       description: games.description, history: games.history,
       factsSource: games.factsSource, proseSource: games.proseSource,
-      metadataSource: games.metadataSource,
+      metadataSource: games.metadataSource, authored: games.authored,
       demozooProductionId: games.demozooProductionId, demozooLinkSource: games.demozooLinkSource,
       coverOverrideSha256: games.coverOverrideSha256,
     })
@@ -779,7 +788,16 @@ export async function getGameDetail(orgId: string, gameId: string): Promise<Game
   // getGameDemozoo joins disks again inside linkInputs.
   const demozoo = await getGameDemozoo(orgId, game, shas);
 
+  // The kind, by the list's own rule (kindFromSetName per disk, pickKind over them). Scoped through shas, which came
+  // from org-filtered disks; tosec_entries is global.
+  const kinds = shas.length === 0 ? [] : (await db
+    .select({ setName: tosecEntries.setName })
+    .from(blobs)
+    .innerJoin(tosecEntries, eq(tosecEntries.id, blobs.tosecEntryId))
+    .where(inArray(blobs.sha256, shas))).map((r) => kindFromSetName(r.setName));
+  const kind = pickKind(kinds);
+
   return {
-    ...game, languages, front, title_: titleShot, screenshots, coverOverrideUrl, links, disks: diskRows, demozoo,
+    ...game, languages, front, title_: titleShot, screenshots, coverOverrideUrl, links, kind, disks: diskRows, demozoo,
   };
 }

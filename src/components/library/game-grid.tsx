@@ -9,7 +9,8 @@ import type { FobContext } from '@/components/nfc/fob-button';
 import { DriveRing, type DriveContext } from './card-mount-button';
 import { fromQuery } from '@/lib/trail';
 import { useTrailView } from './use-trail-view';
-import { Cover } from './cover';
+import { Cover, titleByline } from './cover';
+import { kindTag } from '@/lib/library-look';
 import {
   EmptyLibrary, HoldsLabel, TitleControls, TitleName, dragStyle, driveState, pendingHideStyle, titleLabel,
 } from './title-controls';
@@ -25,7 +26,9 @@ export function GameGrid({ games, fob = null, drives = null }: {
 }) {
   const { gameIds, filteredCollectionId, previewGameId, armedGameId, pendingHide: hidden } = useCollectionsContext();
 
-  if (games.length === 0) return <EmptyLibrary testId="game-grid" />;
+  if (games.length === 0) {
+    return <EmptyLibrary testId="game-grid" variant={filteredCollectionId ? 'collection' : 'library'} />;
+  }
 
   // Filtered view: the grid is a reorderable list backed by the collection's
   // membership order, which lives as `gameIds` on the shared context
@@ -44,7 +47,7 @@ export function GameGrid({ games, fob = null, drives = null }: {
     // Five across is ~60px per card at 390px, which is smaller than the
     // cover art is legible at. Two, then three, then today's five.
     // The gutter shrinks with it: mx-7 spends 56 of 390px on nothing.
-    <div className="mx-4 grid grid-cols-2 gap-4 sm:mx-7 sm:grid-cols-3 md:grid-cols-5" data-testid="game-grid">
+    <div className="mx-4 grid grid-cols-2 gap-4 sm:mx-7 sm:grid-cols-3 md:grid-cols-5 md:gap-5" data-testid="game-grid">
       {ordered.map((g) => {
         // Only the card actually named by pendingHide hides -- every
         // other card, including the drop's TARGET, renders exactly as today.
@@ -78,6 +81,14 @@ export function GameGrid({ games, fob = null, drives = null }: {
   );
 }
 
+/**
+ * The card's own box: the flat surface card, padding 0 (the art box carries its 8 px margin). Hover deepens the
+ * shadow and the border only -- no lift (Ruling 8), so the box the drag specs measure never moves; the art inside
+ * moves instead (cover.tsx).
+ */
+const CARD_CLASS = 'glass-card group relative flex flex-col p-0 transition-[box-shadow,border-color] duration-200 '
+  + 'hover:border-[var(--line-strong)] hover:shadow-[0_18px_36px_-16px_rgb(36_33_27/0.35)]';
+
 /** No sibling moves: the sortable preview unless the pointer rests in a card's edge. */
 const stillStrategy: SortingStrategy = () => null;
 
@@ -85,23 +96,32 @@ function CardBody({ game: g, collectionId, fob, drives }: {
   game: GameListItem; collectionId?: string; fob: FobContext; drives: DriveContext;
 }) {
   const trailView = useTrailView();
+  const tag = g.kind ? kindTag(g.kind) : null;
   return (
     <>
-      <Cover id={g.id} title={g.title} diskCount={g.diskCount} coverUrl={g.coverUrl} kind={g.kind} />
-      {/* The ring says it visually; this says it to a screen reader. */}
+      <Cover game={g} holds={drives?.holds[g.id]} />
+      {/* The ring and the pill say it visually; this says it to a screen reader. */}
       <HoldsLabel game={g} drives={drives} />
-      <div className="flex flex-col gap-0.5 px-0.5 pb-1 pt-2.5">
-        <TitleName game={g} className="truncate text-[13px] font-semibold" />
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate font-mono text-[10.5px]" style={{ color: 'var(--muted-2)' }}>
-            {/* What is known, and nothing when nothing is (operator 2026-10-22: no "unidentified"). */}
-            {[g.year, g.publisher].filter(Boolean).join(' · ') || (g.authored ? 'made here' : '')}
+      <div className="flex min-w-0 flex-col gap-0.5 px-3.5 pb-1 pt-3">
+        <TitleName game={g} className="truncate text-[14px] font-semibold" />
+        {/* One line tall even when empty, so footers line up across a row. */}
+        <span className="min-h-[1lh] truncate text-[13px]" style={{ color: 'var(--muted-2)' }}>{titleByline(g)}</span>
+      </div>
+      <div className="mt-auto flex min-w-0 items-center gap-1.5 pb-2.5 pl-3.5 pr-2 pt-1.5">
+        {/* Pill and count may shrink and truncate on a 2-column phone card; the ⋯ never does, so it stays inside. */}
+        {tag && (
+          <span data-testid="grid-kind" className="min-w-0 truncate rounded-full px-2 py-0.5 text-[12px] font-medium"
+                style={{ background: tag.bg, color: tag.fg }}>
+            {g.kind}
           </span>
-          {/* Inside the card's <a href>, like the rename field, and safe the
-              same way: each control stops every pointer event before it
-              reaches the anchor or dnd-kit's drag listeners. */}
-          <TitleControls game={g} collectionId={collectionId} fob={fob} drives={drives} view={trailView} />
-        </div>
+        )}
+        <span data-testid="grid-disks" className="min-w-0 truncate font-mono text-[12px]" style={{ color: 'var(--muted-2)' }}>
+          {g.diskCount === 1 ? '1 disk' : `${g.diskCount} disks`}
+        </span>
+        <span className="flex-1" />
+        {/* Inside the card's <a href>, like the rename field, and safe the same way: the ⋯ trigger stops every
+            pointer event before it reaches the anchor or dnd-kit's drag listeners, and so does its portalled menu. */}
+        <TitleControls game={g} collectionId={collectionId} fob={fob} drives={drives} view={trailView} />
       </div>
     </>
   );
@@ -174,7 +194,7 @@ function DraggableCard({ game: g, fob, drives, pendingHide }: {
       // failure (the click the browser fires at the end of a drag) is fixed
       // in collection-provider.tsx, which is the only place it CAN be fixed.
       draggable={false}
-      className="glass-card relative flex flex-col p-2.5"
+      className={CARD_CLASS}
       style={style}
       {...attributes}
       {...listeners}
@@ -227,7 +247,7 @@ function SortableCard({ game: g, collectionId, fob, drives, armed, pendingHide }
       aria-hidden={pendingHide ? true : undefined}
       // See DraggableCard on why an anchor must opt out of native dragging.
       draggable={false}
-      className="glass-card relative flex flex-col p-2.5"
+      className={CARD_CLASS}
       style={style}
       {...attributes}
       {...listeners}

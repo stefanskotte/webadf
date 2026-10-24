@@ -8,6 +8,7 @@ export function PageHeader({
   subtitle,
   actions,
   help,
+  size = 'md',
 }: {
   /**
    * A plain label for a page that is not a drill-down ("Admin", "Hardware"),
@@ -22,7 +23,13 @@ export function PageHeader({
   actions?: React.ReactNode;
   /** A "?" beside the title, explaining what this page is about. */
   help?: HelpTopicId;
+  /**
+   * `lg` is the library's 44px Bricolage heading (Phase C1, spec 1.1); the other pages keep `md` until their own
+   * Phase C step, so two heading sizes coexist for a while on purpose.
+   */
+  size?: 'md' | 'lg';
 }) {
+  const lg = size === 'lg';
   return (
     // Stacked below sm: the actions sit beside a title of unknown length, and
     // side by side at 390px there is nothing left for either. justify-between
@@ -36,8 +43,8 @@ export function PageHeader({
           <Breadcrumb crumbs={eyebrow} />
         ) : eyebrow ? (
           <span
-            className="text-[12.5px] font-semibold"
-            style={{ color: "var(--on-dark-muted)" }}
+            className={lg ? 'text-[13px] font-medium' : 'text-[12.5px] font-semibold'}
+            style={{ color: lg ? 'var(--muted-2)' : 'var(--on-dark-muted)' }}
           >
             {eyebrow}
           </span>
@@ -49,7 +56,9 @@ export function PageHeader({
             // 26px below sm: at 34px a two-word title ("Disk contents") wraps
             // on a 390px screen, and leading-none makes a wrapped heading read
             // as one solid block.
-            className="text-[26px] font-bold leading-none tracking-[-0.032em] sm:text-[34px]"
+            className={lg
+              ? 'text-[30px] font-bold leading-none sm:text-[44px] sm:tracking-[-0.02em]'
+              : 'text-[26px] font-bold leading-none tracking-[-0.032em] sm:text-[34px]'}
             style={{ color: "var(--on-dark)" }}
           >
             {title}
@@ -58,8 +67,8 @@ export function PageHeader({
         </div>
         {subtitle && (
           <span
-            className="mt-1 font-mono text-[11.5px]"
-            style={{ color: "var(--on-dark-muted)" }}
+            className={lg ? 'mt-1 font-mono text-[13px]' : 'mt-1 font-mono text-[11.5px]'}
+            style={{ color: 'var(--on-dark-muted)' }}
           >
             {subtitle}
           </span>

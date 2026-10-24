@@ -4,25 +4,27 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { FolderInput } from 'lucide-react';
 import { useCollectionsContext } from '@/components/collections/collection-provider';
 import type { GameListItem } from '@/lib/queries';
 
 const stop = (e: React.SyntheticEvent) => { e.stopPropagation(); };
 
 /**
- * "Move to collection…" on a title (A3, the approved boards' title menu): a list of the org's collections; picking
- * one files the title there. From All titles or Uncategorized that is an add (which takes it out of Uncategorized);
- * inside a collection it is a move -- added there, then removed from the one you are standing in. A title can be in
- * several collections, so "move" means leaving this one, not every other.
+ * "Move to collection…" on a title (A3; the ⋯ title menu's item, title-menu.tsx, renders this outside its popup): a
+ * list of the org's collections; picking one files the title there. From All titles or Uncategorized that is an add
+ * (which takes it out of Uncategorized); inside a collection it is a move -- added there, then removed from the one
+ * you are standing in. A title can be in several collections, so "move" means leaving this one, not every other.
  *
  * The existing routes only: POST /api/collections/[id]/games, then DELETE .../games/[gameId]. Add first, so a
  * failure between the two leaves the title in both rather than in neither.
+ *
+ * `open` / `onClose`: the caller owns visibility. Renders nothing while closed.
  */
-export function MoveToCollectionButton({ game: g, collectionId }: { game: GameListItem; collectionId?: string }) {
+export function MoveToCollectionDialog({ game: g, collectionId, open, onClose }: {
+  game: GameListItem; collectionId?: string; open: boolean; onClose: () => void;
+}) {
   const router = useRouter();
   const { collections } = useCollectionsContext();
-  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const targets = collections.filter((c) => c.id !== collectionId);
 
@@ -41,7 +43,7 @@ export function MoveToCollectionButton({ game: g, collectionId }: { game: GameLi
         }
       }
       toast.success(`Moved to ${name}`);
-      setOpen(false);
+      onClose();
     } catch {
       toast.error('Could not reach the server', { description: `${g.title} was not moved.` });
     } finally {
@@ -50,29 +52,12 @@ export function MoveToCollectionButton({ game: g, collectionId }: { game: GameLi
     }
   }
 
-  const trigger = (
-    <button
-      type="button"
-      data-testid={`move-to-collection-${g.id}`}
-      aria-label={`Move ${g.title} to a collection`}
-      title="Move to collection…"
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(true); }}
-      onPointerDown={stop}
-      onMouseDown={stop}
-      onTouchStart={stop}
-      className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--hairline)] hover:text-[var(--ink)]"
-      style={{ color: 'var(--faint)' }}
-    >
-      <FolderInput size={14} strokeWidth={1.75} aria-hidden />
-    </button>
-  );
-  if (!open) return trigger;
+  if (!open) return null;
 
   // Portalled for the same reason as the delete dialog (delete-disk-dialog.tsx): a card's backdrop-filter, or
   // dnd-kit's transform, would otherwise become the containing block of the fixed overlay.
   return (
     <>
-      {trigger}
       {createPortal((
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -80,8 +65,8 @@ export function MoveToCollectionButton({ game: g, collectionId }: { game: GameLi
           onPointerDown={stop}
           onMouseDown={stop}
           onTouchStart={stop}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (e.target === e.currentTarget && !busy) setOpen(false); }}
-          onKeyDown={(e) => { if (e.key === 'Escape' && !busy) setOpen(false); }}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (e.target === e.currentTarget && !busy) onClose(); }}
+          onKeyDown={(e) => { if (e.key === 'Escape' && !busy) onClose(); }}
         >
           <div role="dialog" aria-modal="true" aria-label={`Move ${g.title} to a collection`} data-testid="move-dialog"
                className="glass-card wf-modal flex w-full max-w-[360px] flex-col gap-3 p-5 text-left">
@@ -113,7 +98,7 @@ export function MoveToCollectionButton({ game: g, collectionId }: { game: GameLi
               </ul>
             )}
             <div className="flex justify-end">
-              <button type="button" disabled={busy} onClick={() => setOpen(false)}
+              <button type="button" disabled={busy} onClick={() => onClose()} autoFocus={targets.length === 0}
                       className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold disabled:opacity-50" style={{ color: 'var(--muted)' }}>
                 Cancel
               </button>

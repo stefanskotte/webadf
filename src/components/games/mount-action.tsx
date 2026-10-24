@@ -15,12 +15,24 @@ export type MountTarget = MountChoice;
 type Drive = 'df0' | 'df1';
 const JSON_HEADERS = { 'content-type': 'application/json' };
 
-const cls = 'rounded-lg px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50';
-const style = { background: 'var(--primary-action)' };
+const BTN = 'inline-flex h-[38px] items-center gap-2 rounded-[10px] border px-4 text-[13px] font-semibold disabled:opacity-50';
+const cls = BTN;
+// The board's Mount: ink fill, light text.
+const style = { background: 'var(--ink)', borderColor: 'var(--ink)', color: 'var(--surface)' };
 // Eject is not destructive, but it IS the one action here that takes
-// something away, so it does not wear the primary colour.
-const ejectStyle = { borderColor: 'var(--hairline)', color: 'var(--ink)' };
-const ejectCls = 'rounded-lg border px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50';
+// something away, so it does not wear the fill: surface with an ink border.
+const ejectStyle = { background: 'var(--surface)', borderColor: 'var(--ink)', color: 'var(--ink)' };
+const ejectCls = BTN;
+
+/** The board's disk-into-slot glyph: a triangle over a bar, pointing down to mount and up to eject. Decorative. */
+function DriveIcon({ up }: { up: boolean }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d={up ? 'M12 5l7 9H5z' : 'M12 19l-7-9h14z'} />
+      <rect x="5" y={up ? 16.5 : 4} width="14" height="2.5" rx="1" />
+    </svg>
+  );
+}
 
 export function MountAction({ diskId, choices }: { diskId: string; choices: MountChoice[] }) {
   const router = useRouter();
@@ -99,7 +111,7 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
   /** Under the two buttons, always in words (show both values): read-only when DF1 is open, else why not. */
   function df1Note(c: MountChoice, testId: string) {
     return (
-      <span className="text-[10.5px]" data-testid={testId} style={{ color: 'var(--muted)' }}>
+      <span className="text-[11px]" data-testid={testId} style={{ color: 'var(--muted-2)' }}>
         {c.df1!.enabled ? 'DF1 is read-only' : c.df1!.reason}
       </span>
     );
@@ -108,8 +120,8 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
   if (choices.length === 0) {
     return (
       <Link href="/devices" data-testid={`mount-${diskId}-none`}
-            className="btn-like rounded-lg border px-3 py-1.5 text-[12px] font-semibold"
-            style={{ borderColor: 'var(--hairline)', color: 'var(--muted)' }}>
+            className="btn-like inline-flex h-[38px] items-center rounded-[10px] border px-3 text-[13px] font-medium"
+            style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--muted)' }}>
         Pair a device
       </Link>
     );
@@ -127,6 +139,7 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
               title={only.holding ? `${only.name}: ${only.holding}` : `${only.name}: empty`}
               className={ejecting ? ejectCls : cls}
               style={ejecting ? ejectStyle : style}>
+        <DriveIcon up={ejecting} />
         {busy ? 'Working…' : ejecting ? only.actionLabel : only.df1 ? 'DF0' : 'Mount'}
       </button>
     );
@@ -164,8 +177,8 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
           const ejecting = c.action === 'eject';
           return (
             <div key={c.id}
-                 className="flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5"
-                 style={{ background: 'var(--glass-strong)' }}>
+                 className="flex items-center justify-between gap-3 rounded-[10px] border px-2.5 py-1.5"
+                 style={{ background: 'var(--surface-2)', borderColor: 'var(--line)' }}>
               <span className="flex min-w-0 flex-col">
                 <span className="truncate text-[12px] font-semibold"
                       style={{ color: 'var(--ink)' }}>{c.name}</span>
@@ -198,8 +211,8 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
           );
         })}
         <button type="button" onClick={() => setExpanded(false)}
-                className="self-end rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold"
-                style={{ borderColor: 'var(--hairline)', color: 'var(--muted)' }}>
+                className="self-end rounded-[10px] border px-3 py-1.5 text-[13px] font-medium"
+                style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--muted)' }}>
           Cancel
         </button>
       </div>
@@ -211,7 +224,8 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
   const holder = choices.find((c) => c.isThisDisk);
   return (
     <button type="button" onClick={() => setExpanded(true)} disabled={busy}
-            data-testid={`mount-${diskId}`} className={cls} style={style}>
+            data-testid={`mount-${diskId}`} className={cls} style={holder ? ejectStyle : style}>
+      <DriveIcon up={!!holder} />
       {busy ? 'Working…' : holder ? `In ${holder.name} ▾` : 'Mount to ▾'}
     </button>
   );

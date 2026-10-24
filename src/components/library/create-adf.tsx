@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
-import { ChevronDownIcon } from 'lucide-react';
+import { ChevronDownIcon, PlusIcon } from 'lucide-react';
 import { Popover } from '@base-ui/react/popover';
 import { Drawer } from '@base-ui/react/drawer';
 import { ToggleGroup } from '@base-ui/react/toggle-group';
@@ -88,12 +88,14 @@ export function CreateAdf() {
 
   const trigger = {
     'data-testid': 'create-adf',
-    className: 'flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-semibold text-white disabled:opacity-50',
-    style: { background: 'var(--primary-action)', color: '#fff' },
+    // The board's secondary button (spec 1.1): surface fill, line border, plus before and a muted chevron after.
+    className: 'flex h-10 items-center gap-2 rounded-[10px] border px-3.5 text-[14px] font-medium disabled:opacity-50',
+    style: { background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' },
     children: (
       <>
-        {busy ? 'Creating…' : 'New disk'}
-        <ChevronDownIcon className="h-3.5 w-3.5" aria-hidden />
+        <PlusIcon className="h-4 w-4" aria-hidden />
+        {busy ? 'Creating…' : 'Create ADF'}
+        <ChevronDownIcon className="h-3.5 w-3.5" style={{ color: 'var(--muted-2)' }} aria-hidden />
       </>
     ),
   };
@@ -110,10 +112,9 @@ export function CreateAdf() {
   );
 
   const panelStyle = {
-    background: 'var(--glass-strong)',
+    background: 'var(--surface)',
     color: 'var(--ink)',
-    border: '1px solid var(--hairline-strong)',
-    backdropFilter: 'blur(16px)',
+    border: '1px solid var(--line)',
   };
 
   if (isPhone) {
@@ -126,9 +127,9 @@ export function CreateAdf() {
             <Drawer.Popup
               data-testid="create-adf-panel"
               className="w-full rounded-t-2xl px-4 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] outline-none [transform:translateY(var(--drawer-swipe-movement-y))] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] data-ending-style:[transform:translateY(100%)] data-starting-style:[transform:translateY(100%)]"
-              style={{ ...panelStyle, background: 'var(--popover, #fff)' }}
+              style={panelStyle}
             >
-              <div className="mx-auto mb-3 h-1 w-10 rounded-full" style={{ background: 'var(--hairline-strong)' }} aria-hidden />
+              <div className="mx-auto mb-3 h-1 w-10 rounded-full" style={{ background: 'var(--line-strong)' }} aria-hidden />
               <Drawer.Content>
                 <Drawer.Title className="mb-3 text-[15px] font-bold">New blank disk</Drawer.Title>
                 {form}
@@ -144,9 +145,9 @@ export function CreateAdf() {
     <Popover.Root open={open} onOpenChange={onOpenChange}>
       <Popover.Trigger {...trigger} />
       <Popover.Portal>
-        {/* align="start" because the trigger is the leftmost thing in the
-            page header's actions: there is no room to open from its right. */}
-        <Popover.Positioner sideOffset={8} align="start" className="z-50">
+        {/* align="end": the trigger now sits second from the right of the header's actions, so the panel opens
+            leftwards from its right edge rather than running off the page. */}
+        <Popover.Positioner sideOffset={8} align="end" className="z-50">
           <Popover.Popup
             data-testid="create-adf-panel"
             className="w-[260px] rounded-xl p-3 shadow-lg outline-none transition-[scale,opacity] duration-100 data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0"

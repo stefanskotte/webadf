@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
-import { signUpFresh, runTag } from './helpers';
+import { signUpFresh, runTag, openTitleMenu } from './helpers';
 import { pairDevice, seedDisk, addDisk, authHeader, cleanupSeeded } from './device-helpers';
 
 const sha = (s: string) => createHash('sha256').update(`fob-${s}`).digest('hex');
@@ -43,6 +43,7 @@ test('a single-disk card writes its disk, and the dialog shows the tag', async (
   const { gameId, diskId } = await seedDisk(orgId, { title, diskNo: 1, sha256: sha(runTag()) });
 
   await page.goto('/library');
+  await openTitleMenu(page, gameId);
   await page.getByTestId(`fob-${gameId}`).click();
   const dialog = page.getByTestId('fob-dialog');
   await expect(dialog.getByTestId('fob-waiting')).toHaveText(
@@ -70,6 +71,7 @@ test('Cancel withdraws the request, and the board is told to disarm', async ({ p
   const { gameId } = await seedDisk(orgId, { title: `Fob Cancel ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
 
   await page.goto('/library');
+  await openTitleMenu(page, gameId);
   await page.getByTestId(`fob-${gameId}`).click();
   await expect(page.getByTestId('fob-waiting')).toBeVisible();
 
@@ -105,10 +107,12 @@ test('a POST answering after its dialog was cancelled and reopened withdraws onl
   });
 
   await page.goto('/library');
+  await openTitleMenu(page, gameId);
   await page.getByTestId(`fob-${gameId}`).click();
   await firstArmed;
   await page.getByTestId('fob-cancel').click();             // cancel while "starting"
   await expect(page.getByTestId('fob-dialog')).toHaveCount(0);
+  await openTitleMenu(page, gameId);
   await page.getByTestId(`fob-${gameId}`).click();           // reopen: auto-starts POST 2
   await expect(page.getByTestId('fob-waiting')).toBeVisible();
   const live = await boardPoll(request, token);
@@ -135,6 +139,7 @@ test('leaving the page mid-wait withdraws the request', async ({ page, request }
   const { gameId } = await seedDisk(orgId, { title: `Fob Leave ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
 
   await page.goto('/library');
+  await openTitleMenu(page, gameId);
   await page.getByTestId(`fob-${gameId}`).click();
   await expect(page.getByTestId('fob-waiting')).toBeVisible();
 
@@ -149,6 +154,7 @@ test('a multi-disk set asks which disk, and writes the one chosen', async ({ pag
   const { diskId: disk2 } = await addDisk(orgId, gameId, { diskNo: 2, sha256: sha(runTag()) });
 
   await page.goto('/library');
+  await openTitleMenu(page, gameId);
   await page.getByTestId(`fob-${gameId}`).click();
   const dialog = page.getByTestId('fob-dialog');
   await expect(dialog.getByTestId(`fob-disk-${disk1}`)).toHaveText('Disk 1');
@@ -179,6 +185,7 @@ test('a newer request replaces the dialog\'s own', async ({ page, request }) => 
   const { gameId, diskId } = await seedDisk(orgId, { title: `Fob Replaced ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
 
   await page.goto('/library');
+  await openTitleMenu(page, gameId);
   await page.getByTestId(`fob-${gameId}`).click();
   await expect(page.getByTestId('fob-waiting')).toBeVisible();
 
@@ -201,6 +208,7 @@ test('without a reader present there is no button', async ({ page, request }) =>
 
   await page.goto('/library');
   await expect(page.getByTestId('game-card')).toHaveCount(1);
+  await openTitleMenu(page, gameId);
   await expect(page.getByTestId(`history-${gameId}`)).toBeVisible();
   await expect(page.getByTestId(`fob-${gameId}`)).toHaveCount(0);
 
@@ -217,6 +225,7 @@ test('at 390px the dialog fits the screen', async ({ page, request }) => {
   const { gameId } = await seedDisk(orgId, { title, diskNo: 1, sha256: sha(runTag()) });
 
   await page.goto('/library');
+  await openTitleMenu(page, gameId);
   await page.getByTestId(`fob-${gameId}`).click();
   const dialog = page.getByTestId('fob-dialog');
   await expect(dialog.getByTestId('fob-waiting')).toBeVisible();

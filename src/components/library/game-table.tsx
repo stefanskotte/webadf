@@ -4,7 +4,6 @@ import { createPortal } from 'react-dom';
 import { useSearchParams } from 'next/navigation';
 import { DragOverlay, useDndContext, useDraggable, type Modifier } from '@dnd-kit/core';
 import { getEventCoordinates } from '@dnd-kit/utilities';
-import { Folder } from 'lucide-react';
 import { Link } from '@/components/shell/link';
 import { fromQuery } from '@/lib/trail';
 import { useTrailView } from './use-trail-view';
@@ -18,21 +17,22 @@ import {
   useCollectionsContext, type CollectionSummary, type CollectionsDragData, type GameDragData, type PendingHide,
 } from '@/components/collections/collection-provider';
 import { DriveRing, type DriveContext } from './card-mount-button';
-import { CoverThumb } from './cover';
+import { DiskIcon } from '@/components/ui/disk-icon';
+import { collectionDot, kindTag, titleDiskColor } from '@/lib/library-look';
+import { DriveBadge } from './cover';
 import { EmptyLibrary, HoldsLabel, TitleControls, TitleName, driveState, pendingHideStyle, titleLabel } from './title-controls';
 
-// The grid condensed (operator design 2026-10-21): one row per title with the
-// card's features, and the collections as folders.
+// The grid condensed (operator design 2026-10-21), restyled to the approved board (InfLibraryTable, spec §3): one row
+// per title with the card's features, and the collections as folders.
 //
-// TYPE sits between title and year: it qualifies what the row IS, so it
-// belongs next to the name rather than out among the numbers.
-// 104px, not 82: "Educational" is the longest label and at 82 its pill ran
-// into the YEAR column. SIZE 96 so "1.72 MB HD" fits. The last track holds the
-// card's five controls at their card size (24px each), right-aligned.
-const COLS = 'grid-cols-[48px_1fr_104px_50px_128px_40px_96px_128px]';
-const MIN_W = 'min-w-[800px]';
-const ROW = `grid ${COLS} ${MIN_W} items-center border-b px-4 py-1.5 font-mono text-[11px] hover:bg-[color:var(--surface-2)]`;
-const ROW_BORDER = { borderColor: 'rgb(36 33 27 / 0.05)' };
+// TYPE sits between title and year: it qualifies what the row IS, so it belongs next to the name rather than out
+// among the numbers. 104px, not the board's 96: "Educational" is the longest label and at 96 its pill ran into the
+// YEAR column (Ruling 12). SIZE 96 so "1.72 MB HD" fits. The last track holds the ⋯ trigger.
+const COLS = 'grid-cols-[36px_minmax(0,1fr)_104px_56px_150px_52px_96px_44px]';
+const MIN_W = 'min-w-[760px]';
+const ROW = `grid ${COLS} ${MIN_W} items-center gap-x-[14px] border-b px-[18px] font-sans text-[13px]`;
+const HOVER = 'hover:bg-[color:var(--surface-2)]';
+const ROW_BORDER = { borderColor: 'var(--hairline)' };
 
 export function GameTable({ games, collectionId = null, fob = null, drives = null, folderDisks = {}, firstPage = true }: {
   games: GameListItem[];
@@ -74,10 +74,10 @@ export function GameTable({ games, collectionId = null, fob = null, drives = nul
           the grid would just compress the 1fr title column to nothing and
           never overflow. Both are inert at desktop. */}
       <div className="overflow-x-auto">
-        <div className={`grid ${COLS} ${MIN_W} items-center border-b px-4 py-2 font-mono text-[9.5px] tracking-[0.06em]`}
-             style={{ borderColor: 'var(--hairline)', color: 'var(--muted-2)' }}>
-          <span /><span>TITLE</span><span>TYPE</span><span>YEAR</span><span>PUBLISHER</span>
-          <span className="text-right">DSK</span><span className="text-right">SIZE</span>
+        <div className={`grid ${COLS} ${MIN_W} h-11 items-center gap-x-[14px] border-b px-[18px] font-sans text-[12px] font-medium`}
+             style={{ borderColor: 'var(--line)', color: 'var(--muted-2)' }}>
+          <span /><span>Name</span><span>Type</span><span>Year</span><span>Publisher</span>
+          <span className="text-right">Disks</span><span className="text-right">Size</span>
           {/* The controls' column: no header, since the rows are links, not table cells (final review M5). */}
           <span />
         </div>
@@ -95,7 +95,7 @@ export function GameTable({ games, collectionId = null, fob = null, drives = nul
           );
         })}
         {emptyNote && (
-          <p data-testid="table-empty-note" className="px-4 py-3 font-sans text-[13px]" style={{ color: 'var(--muted)' }}>
+          <p data-testid="table-empty-note" className="px-[18px] py-3 font-sans text-[13px]" style={{ color: 'var(--muted)' }}>
             {emptyNote}
           </p>
         )}
@@ -108,10 +108,10 @@ export function GameTable({ games, collectionId = null, fob = null, drives = nul
 /** Back to the library root -- the folder listing -- from a collection or All titles. */
 function UpRow({ href }: { href: string }) {
   return (
-    <Link href={href} data-testid="up-row" aria-label="Up to Library" className={ROW} style={ROW_BORDER}>
-      {/* One arrow, the text's (final review M8: the icon and "↑" drew two). */}
+    <Link href={href} data-testid="up-row" aria-label="Up to Library" className={`${ROW} ${HOVER} h-11`} style={ROW_BORDER}>
+      {/* One arrow, the text's (final review M8: the icon and "↑" drew two; Ruling 13). */}
       <span />
-      <span className="col-span-7 font-sans text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
+      <span className="col-span-7 text-[14px] font-medium" style={{ color: 'var(--muted)' }}>
         ↑ Library
       </span>
     </Link>
@@ -129,18 +129,24 @@ function FolderRow({ collection: c, disks, href }: { collection: CollectionSumma
   return (
     <Link href={href} data-testid="folder-row" data-collection-id={c.id}
           aria-label={`Open collection ${c.name}, ${titles}${diskWords}`}
-          className={ROW} style={ROW_BORDER}>
-      <span className="grid h-[32px] w-[40px] place-items-center" style={{ color: 'var(--amber-text)' }}>
-        <Folder size={18} strokeWidth={1.75} aria-hidden />
+          className={`${ROW} ${HOVER} h-[46px]`} style={ROW_BORDER}>
+      {/* The board's folder: the collection's dot colour with a light overlay on the front face. */}
+      <svg data-testid="folder-glyph" width="24" height="20" viewBox="0 0 24 20" aria-hidden>
+        <path d="M1 3a2 2 0 0 1 2-2h6l2 2.5h10a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2z" fill={collectionDot(c.id)} />
+        <path d="M1 6.5h22V17a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2z" fill="#FFFDF8" opacity="0.25" />
+      </svg>
+      <span className="flex min-w-0 items-baseline gap-2">
+        <span className="truncate text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>{c.name}</span>
+        <span className="shrink-0 text-[12px]" style={{ color: 'var(--muted-2)' }} data-testid="folder-titles">{titles}</span>
       </span>
-      <span className="col-span-4 flex min-w-0 items-baseline gap-2 pr-3">
-        <span className="truncate font-sans text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>{c.name}</span>
-        <span className="shrink-0" style={{ color: 'var(--muted-2)' }} data-testid="folder-titles">{titles}</span>
-      </span>
-      <span className="text-right font-semibold" style={{ color: 'var(--muted-2)' }} data-testid="folder-disks">
+      <span className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Collection</span>
+      <span /><span />
+      <span className="text-right font-mono" style={{ color: 'var(--muted)' }} data-testid="folder-disks">
         {disks ?? ''}
       </span>
-      <span className="col-span-2" />
+      {/* Size is blank: no folder aggregate yet (Ruling 14). */}
+      <span />
+      <span aria-hidden className="text-right" style={{ color: 'var(--muted-2)' }}>›</span>
     </Link>
   );
 }
@@ -161,7 +167,8 @@ function TitleRow({ game: g, collectionId, fob, drives, pendingHide }: {
   const attributes = { ...dragAttributes, role: undefined };
   // The row itself stays put while it is dragged -- RowDragOverlay carries
   // the title to the rail -- so it only fades, like a card does.
-  const style = { ...ROW_BORDER, opacity: isDragging ? 0.4 : 1, ...pendingHideStyle(pendingHide) };
+  const held = drives?.holds[g.id]?.some((h) => h.state === 'mounted');
+  const style = { ...ROW_BORDER, ...(held ? { background: 'var(--mounted-bg)' } : {}), opacity: isDragging ? 0.4 : 1, ...pendingHideStyle(pendingHide) };
 
   return (
     <Link
@@ -175,47 +182,48 @@ function TitleRow({ game: g, collectionId, fob, drives, pendingHide }: {
       aria-hidden={pendingHide ? true : undefined}
       // See DraggableCard on why an anchor must opt out of native dragging.
       draggable={false}
-      className={ROW}
+      className={`${ROW} ${HOVER} h-[46px]`}
       style={style}
       {...attributes}
       {...listeners}
     >
-      <div className="relative w-[40px]">
-        <CoverThumb id={g.id} coverUrl={g.coverUrl} />
-        {/* The card's ring, drawn round the thumbnail; the label says it to
-            a screen reader. Both inside this cell: a bare child of the row
-            would take a grid column of its own. */}
+      <div className="relative h-[27px] w-[26px]">
+        {/* mounted={false}: the row's one DF0 mark is the pill after the name (the grid card's rule, Task 2). */}
+        <DiskIcon color={titleDiskColor(g)} size={26} hd={g.hasHd} stack={g.diskCount} mounted={false} />
+        {/* The card's ring, drawn round the disk; the label says it to a screen reader. Both inside this cell: a
+            bare child of the row would take a grid column of its own. */}
         <DriveRing holds={drives?.holds[g.id]} compact />
         <HoldsLabel game={g} drives={drives} />
       </div>
-      <span className="flex min-w-0 flex-col gap-0.5 pr-3 font-sans">
-        <TitleName game={g} className="truncate text-[13px] font-semibold" />
+      <span className="flex min-w-0 items-center gap-2">
+        <TitleName game={g} className="truncate text-[13px] font-medium" />
+        <DriveBadge holds={drives?.holds[g.id]} diskCount={g.diskCount} inline />
       </span>
-      <span className="pr-3" data-testid="game-kind">
+      <span data-testid="game-kind">
         {g.kind
           ? (
-            <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.02em]"
-                  style={{ background: 'var(--hairline-strong)', color: 'var(--ink)' }}>
+            <span className="rounded-full px-2 py-0.5 text-[12px] font-medium"
+                  style={{ background: kindTag(g.kind).bg, color: kindTag(g.kind).fg }}>
               {g.kind}
             </span>
             )
           /* An em dash, not a guess. TOSEC recognises 45.9% of a real
              archive, so "unknown" is the common case and must read as
              "not identified" rather than as a category of its own. */
-          : <span style={{ color: 'var(--faint)' }}>—</span>}
+          : <span style={{ color: 'var(--muted-2)' }}>—</span>}
       </span>
-      <span style={{ color: 'var(--muted)' }}>{g.year ?? '—'}</span>
-      <span className="truncate pr-3" style={{ color: 'var(--muted)' }}>{g.publisher ?? '—'}</span>
-      <span className="text-right font-semibold"
-            style={{ color: g.diskCount > 1 ? 'var(--amber-text)' : 'var(--muted-2)' }}>
+      <span style={{ color: g.year ? 'var(--ink)' : 'var(--muted-2)' }}>{g.year ?? '—'}</span>
+      <span className="truncate" style={{ color: g.publisher ? 'var(--muted)' : 'var(--muted-2)' }}>{g.publisher ?? '—'}</span>
+      <span className="text-right font-mono"
+            style={{ color: g.diskCount > 1 ? 'var(--amber-text)' : 'var(--ink)' }}>
         {g.diskCount}
       </span>
-      <span className="flex items-center justify-end gap-1 text-right" style={{ color: 'var(--muted-2)' }}>
+      <span className="flex items-center justify-end gap-1.5 text-right font-mono" style={{ color: 'var(--ink)' }}>
         {fmtSize(g.sizeBytes)}{g.hasHd && <HdTag testId="game-hd-tag" />}
       </span>
       {/* Inside the row's <a href>, as on the card: each control stops every
           pointer event before it reaches the anchor or dnd-kit. */}
-      <span className="flex justify-end">
+      <span className="flex justify-self-end">
         <TitleControls game={g} collectionId={collectionId} fob={fob} drives={drives} view={trailView} />
       </span>
     </Link>

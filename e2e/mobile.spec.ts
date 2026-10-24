@@ -6,7 +6,7 @@ import { games, disks } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume } from '@/lib/adffs';
-import { signUpFresh, runTag, createAdf, stagingReady } from './helpers';
+import { signUpFresh, runTag, createAdf, stagingReady, openTitleMenu } from './helpers';
 import { cleanupSeeded, seedDisk, addDisk, pairDevice, authHeader } from './device-helpers';
 import { synthDrop } from './drag-drop-helpers';
 import { zoneOf } from '@/lib/set-folder';
@@ -113,6 +113,8 @@ test('the library grid is two columns, and nothing overflows the viewport', asyn
 
   const cards = page.getByTestId('game-card');
   await expect(cards).toHaveCount(4);
+  // Streamed cards are in the DOM before React reveals them: measure only once visible.
+  await expect(cards.nth(3)).toBeVisible();
   const a = (await cards.nth(0).boundingBox())!;
   const b = (await cards.nth(1).boundingBox())!;
   const c = (await cards.nth(2).boundingBox())!;
@@ -314,7 +316,7 @@ test('a touch drag scrolls the library, and a press-and-hold drags a card', asyn
   await held.end();
 });
 
-test('the New disk panel opens as a bottom sheet and makes a disk at a phone width', async ({ page }) => {
+test('the Create ADF panel opens as a bottom sheet and makes a disk at a phone width', async ({ page }) => {
   await signUpFresh(page);
   await page.goto('/library');
 
@@ -613,12 +615,17 @@ test('a press-and-hold inside a card\'s dialog does not drag the card behind it'
     await held.end();
   }
 
+  // The ⋯ popup is portalled out of the card too, and bubbles through it the same way.
+  await openTitleMenu(page, gameId);
+  await holdInside(page.getByTestId('title-menu-panel'));
+  await expect(page.getByTestId('title-menu-panel')).toBeVisible();
   await page.getByTestId(`fob-${gameId}`).tap();
   await expect(page.getByTestId('fob-waiting')).toBeVisible();
   await holdInside(page.getByTestId('fob-waiting'));
   await page.getByTestId('fob-cancel').tap();
   await expect(page.getByTestId('fob-dialog')).toHaveCount(0);
 
+  await openTitleMenu(page, gameId);
   await page.getByTestId(`delete-game-${gameId}`).tap();
   await expect(page.getByTestId('delete-dialog')).toBeVisible();
   await holdInside(page.getByTestId('delete-dialog'));
@@ -773,6 +780,9 @@ test('in a collection at 390px: a finger walked slowly into a card\'s centre lea
   await expect(cards).toHaveCount(3);
   const cardOf = (title: string) => cards.filter({ hasText: title });
   // Two columns: A and B side by side, so a finger walks across from one to the other.
+  // Counted is not shown: streamed cards sit in a hidden boundary until React swaps them in (box null).
+  await expect(cardOf(t('A'))).toBeVisible();
+  await expect(cardOf(t('B'))).toBeVisible();
   const from = (await cardOf(t('A')).boundingBox())!;
   const slot = (await cardOf(t('B')).boundingBox())!;
   expect(Math.abs(from.y - slot.y)).toBeLessThan(2);

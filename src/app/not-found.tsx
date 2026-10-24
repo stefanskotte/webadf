@@ -5,6 +5,7 @@ export default function NotFound() {
   return (
     <StateCard
       testId="page-not-found"
+      code="404"
       title="Page not found"
       message="There is no page at this address. The link may be mistyped or out of date."
     >

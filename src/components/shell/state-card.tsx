@@ -1,12 +1,16 @@
 import { Link } from '@/components/shell/link';
 
 /**
- * The one card every "this page cannot be shown" state uses: failed, not found, not in your library. A heading, a
- * sentence on what happened and what did not, and the ways on. In today's look (redesign Phase A); Phase B restyles
- * it once, here.
+ * The one card every "this page cannot be shown" state uses: failed, not found, not in your library. The board's look
+ * (Phase C1, InfStates): surface, 20 px radius, a mono code line, a Bricolage heading, a sentence on what happened and
+ * what did not, and the ways on.
  */
-export function StateCard({ testId, title, message, children }: {
+export function StateCard({ testId, code, codeTone = 'muted', title, message, children }: {
   testId: string;
+  /** The small mono line above the heading: `404`, `Server error`. */
+  code: string;
+  /** `danger` for a failure (ErrorView), `muted` for a plain not-found. */
+  codeTone?: 'muted' | 'danger';
   title: string;
   message: string;
   /** The actions: a button, a link, a reference line. */
@@ -17,9 +21,13 @@ export function StateCard({ testId, title, message, children }: {
       <div
         role="alert"
         data-testid={testId}
-        className="glass-card mx-auto flex max-w-[520px] flex-col gap-3 px-6 py-7"
+        className="mx-auto flex max-w-[520px] flex-col gap-3 p-7"
+        style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 20 }}
       >
-        <h1 className="text-[22px] font-bold leading-tight tracking-[-0.02em]" style={{ color: 'var(--ink)' }}>
+        <span data-testid="state-code" className="font-mono text-[13px]"
+              style={{ color: codeTone === 'danger' ? 'var(--danger-fg)' : 'var(--muted)' }}>{code}</span>
+        <h1 className="text-[22px] font-bold leading-tight tracking-[-0.02em]"
+            style={{ color: 'var(--ink)', fontFamily: 'var(--font-display)' }}>
           {title}
         </h1>
         <p className="text-[14px] leading-relaxed" style={{ color: 'var(--muted)' }}>{message}</p>
@@ -29,8 +37,21 @@ export function StateCard({ testId, title, message, children }: {
   );
 }
 
-/** The quiet way on: a text link, beside or instead of the main action. */
-export function StateLink({ href, children }: { href: string; children: React.ReactNode }) {
+/** The way on: a text link, or (`variant="button"`) the board's ink 40 px button. */
+export function StateLink({ href, children, variant = 'link' }: {
+  href: string;
+  children: React.ReactNode;
+  variant?: 'link' | 'button';
+}) {
+  if (variant === 'button') {
+    return (
+      <Link href={href}
+            className="btn-like inline-flex h-10 items-center rounded-[10px] px-4 text-[14px] font-semibold text-white"
+            style={{ background: 'var(--primary-action)' }}>
+        {children}
+      </Link>
+    );
+  }
   return (
     <Link href={href} className="text-[13.5px] font-semibold underline-offset-4 hover:underline"
           style={{ color: 'var(--primary-action)' }}>

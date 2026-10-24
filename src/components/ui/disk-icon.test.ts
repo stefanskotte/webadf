@@ -64,4 +64,12 @@ describe('DiskIcon', () => {
     expect(html).toContain('font-family:var(--font-display)');
     expect(html).toContain('font-family="var(--font-sans)"');
   });
+
+  it('names the drive that holds the disk on its badge, DF0 by default', () => {
+    expect(render({ mounted: true })).toContain('DF0</span>');
+    const df1 = render({ mounted: true, drive: 'DF1' });
+    expect(df1).toContain('DF1</span>');
+    expect(df1).not.toContain('DF0');
+    expect(render({ drive: 'DF1' })).not.toContain('DF1');
+  });
 });

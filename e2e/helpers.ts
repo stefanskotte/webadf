@@ -118,7 +118,7 @@ export async function signUpFresh(page: Page) {
 }
 
 /**
- * Make a blank disk from the library header's "New disk" panel.
+ * Make a blank disk from the library header's "Create ADF" panel.
  *
  * Every caller goes through here because the trigger click alone creates
  * nothing: it opens a small form (Size, Filesystem, Create). Both switches
@@ -149,4 +149,25 @@ export const libRows = (page: Page) => page.locator('[data-testid="staging-row"]
 export async function stagingReady(page: Page) {
   await expect(page.locator('[data-testid="staging-empty"], [data-testid="staging-row"]').first())
     .toBeVisible({ timeout: 15_000 });
+}
+
+// ---- The library's ⋯ title menu (Phase C1, spec 2026-10-24 §2) ----
+
+/**
+ * Opens a card's or a row's ⋯ menu and waits for its popup. The items (`card-mount-<id>`, `fob-<id>`,
+ * `history-<id>`, `move-to-collection-<id>`, `remove-from-collection-<id>`, `delete-game-<id>`) are then picked at
+ * PAGE level: the popup is portalled to <body>, so a locator scoped to the card or row does not reach them. Their
+ * ids carry the game id, so they are unique on the page.
+ *
+ * Taps on a touch context (the mobile project), clicks elsewhere. Playwright does not expose a context's
+ * `hasTouch`, so it is read where it lands: Chromium reports touch points only when the context has touch.
+ */
+export async function openTitleMenu(page: Page, gameId: string) {
+  const trigger = page.getByTestId(`title-menu-${gameId}`);
+  const touch = await page.evaluate(() => navigator.maxTouchPoints > 0);
+  if (touch) await trigger.tap();
+  else await trigger.click();
+  const panel = page.getByTestId('title-menu-panel');
+  await expect(panel).toBeVisible();
+  return panel;
 }

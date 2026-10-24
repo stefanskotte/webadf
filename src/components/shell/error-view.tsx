@@ -20,6 +20,8 @@ export function ErrorView({ error, retry, homeHref, homeLabel }: {
   return (
     <StateCard
       testId="error-page"
+      code="Server error"
+      codeTone="danger"
       title="This page didn't load"
       message="Something went wrong on our side. Your disks are safe; nothing was changed."
     >
@@ -27,7 +29,7 @@ export function ErrorView({ error, retry, homeHref, homeLabel }: {
         type="button"
         data-testid="error-retry"
         onClick={() => retry()}
-        className="rounded-full px-4 py-1.5 text-[13px] font-semibold text-white"
+        className="h-10 rounded-[10px] px-4 text-[14px] font-semibold text-white"
         style={{ background: 'var(--primary-action)' }}
       >
         Try again

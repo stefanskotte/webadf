@@ -6,10 +6,11 @@ export default function AppNotFound() {
   return (
     <StateCard
       testId="not-found-page"
+      code="404"
       title="That isn't in your library"
       message="It may have been deleted, or the link belongs to another account."
     >
-      <StateLink href="/library">Back to the library</StateLink>
+      <StateLink href="/library" variant="button">Back to the library</StateLink>
     </StateCard>
   );
 }

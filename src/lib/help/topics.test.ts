@@ -69,7 +69,7 @@ describe('help topics say what the app really does', () => {
   });
   it('library describes the table: folders, the way up, the card controls, filing by drag, and the default view (2026-10-21)', () => {
     const b = HELP_TOPICS.library.short + bodyText('library');
-    for (const w of ['folder', '↑ Library', 'All titles', 'Library opens in', 'version history', 'mount', 'NFC',
+    for (const w of ['folder', '↑ Library', 'All titles', 'Library opens in', '⋯', 'version history', 'mount', 'NFC',
       'remove from the collection', 'delete', 'grid only']) expect(b).toContain(w);
   });
   it('preferences names the default library view', () => {
@@ -124,6 +124,13 @@ describe('help topics say what the app really does', () => {
   });
   it('nfc: a PN532 is looked for only at start-up (fw 1.18.0 needs the boot scan to see 0x24)', () => {
     expect(bodyText('nfc')).toMatch(/restart the board after connecting/);
+  });
+  it('library: says where the DF0 pill sits in the grid and in the table, and that it reads amber while fetching', () => {
+    const b = bodyText('library').replace(/\s+/g, ' ');
+    expect(b).toMatch(/on the card.{0,3}s picture/);
+    expect(b).toMatch(/in the table after the name/);
+    expect(b).toMatch(/amber DF0…/);
+    expect(b).not.toMatch(/shows a DF0 pill on its picture/);
   });
   it('boards gives the setup network password and the Update + password step', () => {
     const b = bodyText('boards');

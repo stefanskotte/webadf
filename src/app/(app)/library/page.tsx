@@ -126,6 +126,15 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     ? { devices: readers, disksByGame: disksByGame as Record<string, FobDisk[]> }
     : null;
 
+  // The heading names the view (spec 1.1): the landing is "Library"; a collection shows its own name, All titles its.
+  // Inside a collection or All titles the eyebrow is a one-crumb trail back to the landing, keeping a non-default
+  // grid/table choice so going up does not flip the view.
+  const heading = view.kind === 'collection'
+    ? (collections.find((c) => c.id === view.id)?.name ?? 'Library')
+    : view.kind === 'all' ? 'All titles' : 'Library';
+  const upHref = viewMode === prefs.library.view ? '/library' : `/library?view=${viewMode}`;
+  const eyebrow = view.kind === 'uncategorized' ? 'Amiga collection' : [{ label: 'Library', href: upHref }];
+
   return (
     <>
       {/* Regression net for the org-bootstrap flow (e2e/auth.spec.ts): captured
@@ -133,8 +142,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           design — kept invisible on screen but present in the DOM. */}
       <span data-testid="active-org" className="sr-only">{orgId}</span>
       <PageHeader
-        eyebrow="Amiga collection"
-        title="Library"
+        size="lg"
+        eyebrow={eyebrow}
+        title={heading}
         help="library"
         subtitle={emptyInbox
           ? `${(libraryTotals?.titles ?? 0).toLocaleString()} titles · ${(libraryTotals?.disks ?? 0).toLocaleString()} disks`
@@ -142,8 +152,8 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <DemozooBadge count={reviewQueueCount} />
-            <CreateAdf />
             {view.kind !== 'collection' && !emptyInbox && <LibrarySortPicker sort={sort} />}
+            <CreateAdf />
             <ViewToggle mode={viewMode} view={view} page={paging.page} />
           </div>
         }
@@ -163,7 +173,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             horizontal axis, so it would shrink the rail and the grid to their
             content width instead of letting them fill the screen. */}
         <div className="flex flex-col gap-4 md:flex-row md:items-start">
-          <CollectionRail />
+          <CollectionRail viewMode={viewMode} />
           <div className="min-w-0 flex-1">
             {showOverview
               ? (

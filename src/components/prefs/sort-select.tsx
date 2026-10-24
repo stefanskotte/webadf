@@ -9,7 +9,7 @@ import { sortOptionId, sortFromOptionId, type SortDir, type SortOption } from '@
  * the caller's (LibrarySortPicker, the Browse list, the Preferences form).
  */
 export function SortSelect<S extends { key: string; dir: SortDir }>({
-  label = 'Sort', options, value, onChange, disabled = false, testId, describedBy,
+  label = 'Sort', options, value, onChange, disabled = false, testId, describedBy, toolbar = false,
 }: {
   label?: string;
   options: readonly SortOption<S>[];
@@ -19,10 +19,12 @@ export function SortSelect<S extends { key: string; dir: SortDir }>({
   testId?: string;
   /** The id of a hint that explains this picker (aria-describedby). */
   describedBy?: string;
+  /** The library toolbar's look (40px, surface, line border); other callers keep the compact form field. */
+  toolbar?: boolean;
 }) {
   const id = useId();
   return (
-    <span className="inline-flex items-center gap-2 text-[12px]">
+    <span className={toolbar ? 'inline-flex items-center gap-2 text-[13px]' : 'inline-flex items-center gap-2 text-[12px]'}>
       <label htmlFor={id} className="font-semibold" style={{ color: 'var(--muted)' }}>{label}</label>
       <select
         id={id}
@@ -34,8 +36,12 @@ export function SortSelect<S extends { key: string; dir: SortDir }>({
           const next = sortFromOptionId(options, e.target.value);
           if (next) onChange(next);
         }}
-        className="h-8 rounded-lg border px-2 text-[12px] disabled:opacity-60"
-        style={{ borderColor: 'var(--hairline)', background: 'var(--input-bg)', color: 'var(--ink)' }}
+        className={toolbar
+          ? 'h-10 rounded-[10px] border px-3 text-[14px] disabled:opacity-60'
+          : 'h-8 rounded-lg border px-2 text-[12px] disabled:opacity-60'}
+        style={toolbar
+          ? { borderColor: 'var(--line)', background: 'var(--surface)', color: 'var(--ink)' }
+          : { borderColor: 'var(--hairline)', background: 'var(--input-bg)', color: 'var(--ink)' }}
       >
         {options.map((o) => (
           <option key={sortOptionId(o.sort)} value={sortOptionId(o.sort)}>{o.label}</option>

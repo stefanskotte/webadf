@@ -281,6 +281,11 @@
   --warning-bg: #FBEBD3; --warning-fg: #7A4A08;   /* 6.38:1 */
   --danger-bg:  #F8E1DB; --danger-fg:  #B3341F;   /* 4.90 on its bg / 6.03 surface; white on it 6.13 */
   --online-dot: #3FBF55;
+  --mounted-bg:   #EEF6EC;   /* a held row in the library table */
+  --mounted-line: #9CCB98;   /* a held disk's ring on the title page */
+  --drive-pill-bg: #14201A;  /* the "in DF0" pill: dark ground ... */
+  --drive-pill-fg: #9BEA9F;  /* ... and its text */
+  --fetch-dot:    #E9A23B;   /* the amber dot of a fetch in progress */
 }
 
 @theme inline {

@@ -71,7 +71,7 @@ test('the front cover wins over a screenshot for the same game', async ({ page }
   await expect(card.getByTestId('cover-image')).toHaveAttribute('src', `/api/images/${front}`);
 });
 
-test('a game with no images keeps its gradient and its title overlay', async ({ page }) => {
+test('a game with no images shows its disk on a stage, and its title under the art', async ({ page }) => {
   // The majority case, and the one most likely to be broken by accident:
   // OpenRetro recognises 4 of 61 real disks, so most cards look like this.
   const user = await signUpFresh(page);
@@ -81,9 +81,11 @@ test('a game with no images keeps its gradient and its title overlay', async ({ 
   const card = page.getByTestId('game-card').filter({ hasText: 'plaincard' });
   await expect(card).toBeVisible();
   await expect(card.getByTestId('cover-image')).toHaveCount(0);
-  // The overlay title is what the gradient card shows; losing it would leave
-  // an unlabelled coloured rectangle.
-  await expect(card.getByText('plaincard', { exact: true }).first()).toBeVisible();
+  // The disk icon is what the card shows instead (spec §1.3), and the title is printed under the art: losing
+  // either would leave an unlabelled box. (The disk's own label prints the title too, so only visible copies count.)
+  await expect(card.getByTestId('cover-disk')).toBeVisible();
+  await expect(card.getByText('No cover art yet')).toBeVisible();
+  await expect(card.getByText('plaincard', { exact: true }).filter({ visible: true }).first()).toBeVisible();
 });
 
 test('the disk-count badge survives on a card that has a cover', async ({ page }) => {
@@ -103,5 +105,5 @@ test('the disk-count badge survives on a card that has a cover', async ({ page }
   await expect(card.getByTestId('cover-image')).toBeVisible();
   // Disk count comes from the aggregate query; a cover join done wrong would
   // fan out and inflate it. Two disks must still read exactly 2.
-  await expect(card.getByText('2', { exact: true })).toBeVisible();
+  await expect(card.getByTestId('grid-disks')).toHaveText('2 disks');
 });

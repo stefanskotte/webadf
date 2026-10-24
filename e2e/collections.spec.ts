@@ -5,7 +5,7 @@ import { getDb } from '@/db';
 import { games, blobs } from '@/db/schema/catalog';
 import { collections, collectionGames } from '@/db/schema/collections';
 import { user } from '@/db/schema/auth';
-import { signUpFresh, runTag } from './helpers';
+import { signUpFresh, runTag, openTitleMenu } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
 import { cleanupSeeded, seedDisk } from './device-helpers';
 import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
@@ -92,6 +92,10 @@ async function dragOnto(
   // the only moment the drop-target highlight exists to be asserted on.
   opts: { whileOver?: () => Promise<void> } = {},
 ) {
+  // Wait for both, rather than measuring whatever is there the instant the page settles: a box read during a
+  // refresh comes back null.
+  await expect(source).toBeVisible();
+  await expect(target).toBeVisible();
   const from = await source.boundingBox();
   const to = await target.boundingBox();
   if (!from || !to) throw new Error('drag: source or target is not visible');
@@ -299,6 +303,10 @@ test('Uncategorized: a card dropped on a rail collection hides at once, keeps it
   await expect(page.getByTestId('game-card')).toHaveCount(2);
   const cardA = cardTitled(page, `HideFile ${run}`);
   const other = cardTitled(page, `Stays ${run}`);
+  // Counted is not shown: a streamed page's cards sit in a hidden boundary until React swaps them in, and a box
+  // read then is null.
+  await expect(cardA).toBeVisible();
+  await expect(other).toBeVisible();
   const aBox = (await cardA.boundingBox())!;
   const otherBox = (await other.boundingBox())!;
 
@@ -333,6 +341,7 @@ test('All titles: a card dropped on a rail collection is hidden during the add a
   await page.goto('/library?collection=all');
   await expect(page.getByTestId('game-card')).toHaveCount(2);
   const cardA = cardTitled(page, `HideAll ${run}`);
+  await expect(cardA).toBeVisible();   // see the Uncategorized test: counted is not shown
   const aBox = (await cardA.boundingBox())!;
 
   await dragOnto(page, cardA, railRow(page, id));
@@ -456,6 +465,7 @@ test('the per-card control removes a game from the collection, not from the libr
   await page.goto(`/library?collection=${id}`);
   await expect(page.getByTestId('game-card')).toHaveCount(2);
 
+  await openTitleMenu(page, a.gameId);
   await page.getByTestId(`remove-from-collection-${a.gameId}`).click();
   await expect(page.getByTestId('game-card')).toHaveCount(1);
   await expect(page.getByTestId('game-card')).toContainText(`Stays ${run}`);
@@ -469,6 +479,8 @@ test('the per-card control removes a game from the collection, not from the libr
 
   // The control is offered ONLY inside a collection: "remove from collection"
   // means nothing in the unfiltered library, and there is no id to remove from.
+  await openTitleMenu(page, b.gameId);
+  await expect(page.getByTestId(`move-to-collection-${b.gameId}`)).toBeVisible();
   await expect(page.getByTestId(`remove-from-collection-${b.gameId}`)).toHaveCount(0);
 });
 
@@ -800,4 +812,33 @@ test('All titles sits at the bottom of the rail and still shows everything', asy
 
   await page.getByTestId('collection-all').click();
   await expect(page.getByTestId('game-card')).toHaveCount(2);
+});
+
+test('inside a collection the heading is its name and its rail row is the current page', async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  const a = await seedDisk(u.orgId, { title: `Member ${run}`, diskNo: 1, sha256: randomUUID().replace(/-/g, '').padEnd(64, '4') });
+  const name = `Heading ${run}`;
+  const id = await apiCreateCollection(page, name);
+  await apiAddGame(page, id, a.gameId);
+
+  // The landing: "Library", and the inbox row is the current one.
+  await page.goto('/library');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Library');
+  await expect(page.getByTestId('collection-uncategorized')).toHaveAttribute('aria-current', 'page');
+
+  // In the collection: its name is the heading, a Library crumb leads back, and exactly one rail row is current --
+  // the collection's own.
+  await page.goto(`/library?collection=${id}`);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(name);
+  await expect(page.getByTestId('breadcrumb').getByRole('link', { name: 'Library' })).toHaveAttribute('href', '/library');
+  const rail = page.getByTestId('collection-rail');
+  await expect(rail.locator('[aria-current="page"]')).toHaveCount(1);
+  await expect(railRow(page, id).getByRole('link')).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByTestId('collection-uncategorized')).not.toHaveAttribute('aria-current', 'page');
+
+  // All titles names itself the same way.
+  await page.goto('/library?collection=all');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('All titles');
+  await expect(page.getByTestId('collection-all')).toHaveAttribute('aria-current', 'page');
 });

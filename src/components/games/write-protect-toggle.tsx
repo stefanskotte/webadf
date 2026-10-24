@@ -26,16 +26,21 @@ export function WriteProtectToggle({ diskId, writeProtected }: {
             title={writeProtected
               ? 'Write protected — the device will refuse writes'
               : 'Writable — the Amiga can save to this disk; each save becomes a new version'}
-            className="rounded-md border px-2 py-1 text-[10.5px] font-semibold uppercase tracking-wide disabled:opacity-50"
-            style={writeProtected
-              // --hairline is 8% and read as no border at all, which made this
-              // toggle look like a status chip rather than the control it is --
-              // the clearest instance of the operator's "hard to distinguish
-              // labels and buttons". --hairline-strong (14%) is still quiet
-              // enough not to compete with the actions beside it.
-              ? { borderColor: 'var(--hairline-strong)', color: 'var(--muted)' }
-              : { borderColor: 'var(--amber-text)', color: 'var(--amber-text)' }}>
+            className="flex h-[38px] items-center gap-2.5 rounded-[10px] px-3 text-[13px] font-medium disabled:opacity-50"
+            style={{ color: 'var(--ink)' }}>
+      <WpSwitch on={writeProtected} />
       {writeProtected ? 'Protected' : 'Writable'}
     </button>
+  );
+}
+
+/** The board's switch: a 32x18 track (ink when protected, line-strong when writable) with a 14px knob. Decorative. */
+export function WpSwitch({ on }: { on: boolean }) {
+  return (
+    <span aria-hidden="true" className="flex h-[18px] w-8 shrink-0 box-border p-0.5"
+          style={{ justifyContent: on ? 'flex-end' : 'flex-start', background: on ? 'var(--ink)' : 'var(--line-strong)',
+                   borderRadius: 999 }}>
+      <span className="size-3.5 rounded-full" style={{ background: '#FFFDF8', boxShadow: '0 1px 2px rgba(0,0,0,0.25)' }} />
+    </span>
   );
 }

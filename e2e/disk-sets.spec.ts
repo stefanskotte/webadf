@@ -105,14 +105,25 @@ async function seedSet(orgId: string, title: string, n: number) {
 }
 
 /**
+ * A locator's bounding box once it is visible. Library cards and rows stream in: they sit in the DOM hidden until
+ * React reveals them, and a hidden element's boundingBox() is null -- which is the "Cannot read properties of null
+ * (reading 'x')" these drags used to die with. Always wait for the element before measuring it.
+ */
+async function box(l: Locator) {
+  await expect(l).toBeVisible();
+  const b = await l.boundingBox();
+  if (!b) throw new Error('box: no bounding box for a visible element');
+  return b;
+}
+
+/**
  * Drag with the real pointer -- copied from disk-drag-drop.spec.ts's
  * `dragOnto` (itself from collections.spec.ts): dnd-kit's MouseSensor needs
  * 8px of travel it can SEE accumulate, so a single jump never starts a drag.
  */
 async function dragOnto(page: Page, source: Locator, target: Locator) {
-  const from = await source.boundingBox();
-  const to = await target.boundingBox();
-  if (!from || !to) throw new Error('drag: source or target is not visible');
+  const from = await box(source);
+  const to = await box(target);
   const sx = from.x + from.width / 2;
   const sy = from.y + from.height / 2;
   const tx = to.x + to.width / 2;
@@ -502,8 +513,8 @@ const card = (page: Page, title: string) => page.getByTestId('game-card').filter
  * (and only there) before letting go.
  */
 async function dragCardOnto(page: Page, source: Locator, target: Locator) {
-  const from = (await source.boundingBox())!;
-  const to = (await target.boundingBox())!;
+  const from = (await box(source));
+  const to = (await box(target));
   const sx = from.x + from.width / 2;
   const sy = from.y + from.height / 2;
   const tx = to.x + to.width / 2;
@@ -660,8 +671,8 @@ test('All titles: the dragged card hides while the dialog is open, fades back on
   await expect(page.getByTestId('game-card')).toHaveCount(2);
   const cardA = card(page, `HideA ${tag}`);
   const cardB = card(page, `HideB ${tag}`);
-  const aBoxBefore = (await cardA.boundingBox())!;
-  const boxBefore = (await cardB.boundingBox())!;
+  const aBoxBefore = (await box(cardA));
+  const boxBefore = (await box(cardB));
   const dialog = page.getByTestId('set-drop-dialog');
 
   await dragCardOnto(page, cardA, cardB);
@@ -669,7 +680,7 @@ test('All titles: the dragged card hides while the dialog is open, fades back on
   // A is gone -- not merely faded -- and its slot is still there: B, the
   // card the drop landed ON, has not moved a pixel.
   await expect(cardA).toBeHidden();
-  const boxDuring = (await cardB.boundingBox())!;
+  const boxDuring = (await box(cardB));
   expect(boxDuring).toEqual(boxBefore);
 
   // Cancel fades A back into its own slot; the grid never reflowed, so this
@@ -714,7 +725,7 @@ test('a failed Add keeps the dialog open and the dragged card hidden through it;
   await expect(page.getByTestId('game-card')).toHaveCount(2);
   const cardA = card(page, `FailA ${tag}`);
   const cardB = card(page, `FailB ${tag}`);
-  const aBoxBefore = (await cardA.boundingBox())!;
+  const aBoxBefore = (await box(cardA));
   const dialog = page.getByTestId('set-drop-dialog');
 
   await dragCardOnto(page, cardA, cardB);
@@ -864,7 +875,7 @@ async function walk(page: Page, from: Point, to: Point, onStep?: (p: Point) => P
  * drop area, which is no target, so nothing arms or moves yet).
  */
 async function pickUp(page: Page, source: Locator): Promise<Point> {
-  const p = at((await source.boundingBox())!, 0.5, 0.5);
+  const p = at((await box(source)), 0.5, 0.5);
   await page.mouse.move(p.x, p.y);
   await page.mouse.down();
   return walk(page, p, { x: p.x + 12, y: p.y + 12 });
@@ -894,7 +905,7 @@ async function letGo(page: Page) {
  */
 async function walkIntoCentreAndHold(page: Page, source: Locator, target: Locator,
   opts: { pauseInEdgeAt?: [number, number]; creep?: boolean } = {}) {
-  const slot = (await target.boundingBox())!;
+  const slot = (await box(target));
   let from = await pickUp(page, source);
   let pausedOff: number | null = null;
   if (opts.pauseInEdgeAt) {
@@ -979,8 +990,8 @@ test('in a collection: the dragged card hides while the dialog is open, fades ba
   await expect(page.getByTestId('game-card')).toHaveCount(3);
   const cardA = card(page, s.title('A'));
   const cardB = card(page, s.title('B'));
-  const aBoxBefore = (await cardA.boundingBox())!;
-  const boxBefore = (await cardB.boundingBox())!;
+  const aBoxBefore = (await box(cardA));
+  const boxBefore = (await box(cardB));
   const dialog = page.getByTestId('set-drop-dialog');
 
   const m = await walkIntoCentreAndHold(page, cardA, cardB);
@@ -992,7 +1003,7 @@ test('in a collection: the dragged card hides while the dialog is open, fades ba
   // A is gone -- not merely faded -- and its slot is still there: B, the
   // card the drop landed ON, has not moved a pixel (no reflow of the grid).
   await expect(cardA).toBeHidden();
-  const boxDuring = (await cardB.boundingBox())!;
+  const boxDuring = (await box(cardB));
   expect(offBy(boxDuring, boxBefore)).toBeLessThanOrEqual(1);
 
   // Cancel fades A back into its own slot -- the membership order is
@@ -1001,7 +1012,7 @@ test('in a collection: the dragged card hides while the dialog is open, fades ba
   await expect(dialog).toHaveCount(0);
   await expect(cardA).toBeVisible();
   expect(await gridIds(page)).toEqual([s.a.gameId, s.b.gameId, s.c.gameId]);
-  expect(offBy((await cardA.boundingBox())!, aBoxBefore)).toBeLessThanOrEqual(1);
+  expect(offBy((await box(cardA)), aBoxBefore)).toBeLessThanOrEqual(1);
   // The fade itself is still running (pointer-events stay off it until it
   // finishes, so a person cannot grab a half-transparent card): outrun it
   // before picking the card up again.
@@ -1029,13 +1040,13 @@ test('in a collection: a card dropped on another card\'s left or right edge reor
   await expect(page.getByTestId('game-card')).toHaveCount(3);
 
   // A onto B's LEFT edge, held longer than ARM_DELAY_MS: an edge never arms.
-  let slot = (await card(page, s.title('B')).boundingBox())!;
+  let slot = (await box(card(page, s.title('B'))));
   let p = await pickUp(page, card(page, s.title('A')));
   await walk(page, p, at(slot, 0.1, 0.5));
   await page.waitForTimeout(ARM_DELAY_MS + 300);
   await expect(page.getByTestId('set-drop-target')).toHaveCount(0);
   // Rested in the edge, so the reorder preview shows: B has moved aside.
-  expect(offBy((await card(page, s.title('B')).boundingBox())!, slot)).toBeGreaterThan(50);
+  expect(offBy((await box(card(page, s.title('B')))), slot)).toBeGreaterThan(50);
   await letGo(page);
   await expect.poll(() => membershipOf(s.collectionId)).toEqual([s.b.gameId, s.a.gameId, s.c.gameId]);
   await expect(page.getByTestId('set-drop-dialog')).toHaveCount(0);
@@ -1043,12 +1054,12 @@ test('in a collection: a card dropped on another card\'s left or right edge reor
 
   // A (now second) back onto B's RIGHT edge (B is now first).
   await page.waitForTimeout(400);   // the drop's settle animation
-  slot = (await card(page, s.title('B')).boundingBox())!;
+  slot = (await box(card(page, s.title('B'))));
   p = await pickUp(page, card(page, s.title('A')));
   await walk(page, p, at(slot, 0.9, 0.5));
   await page.waitForTimeout(ARM_DELAY_MS + 300);
   await expect(page.getByTestId('set-drop-target')).toHaveCount(0);
-  expect(offBy((await card(page, s.title('B')).boundingBox())!, slot)).toBeGreaterThan(50);
+  expect(offBy((await box(card(page, s.title('B')))), slot)).toBeGreaterThan(50);
   await letGo(page);
   await expect.poll(() => membershipOf(s.collectionId)).toEqual([s.a.gameId, s.b.gameId, s.c.gameId]);
   await expect(page.getByTestId('set-drop-dialog')).toHaveCount(0);
@@ -1143,7 +1154,7 @@ test('in a collection: a quick drop on a card\'s centre -- let go before it arms
   // A walks at a hand's pace, straight across B, to just inside C's centre
   // (C is two slots away), and lets go at once -- the operator's "drag it
   // onto the card and let go".
-  const slot = (await card(page, s.title('C')).boundingBox())!;
+  const slot = (await box(card(page, s.title('C'))));
   const start = await pickUp(page, card(page, s.title('A')));
   let entered = 0;
   await walk(page, start, at(slot, 0.3, 0.5), async (p) => {
@@ -1180,7 +1191,7 @@ test('in a collection: a hand-paced drag to a card\'s MIDDLE, a short settle and
   // A walks straight across B's centre to the very middle of C, checking at
   // every step that no card offers a set: moving through a centre is not a
   // rest, so it never arms -- neither B on the way nor C on arrival.
-  const slot = (await card(page, s.title('C')).boundingBox())!;
+  const slot = (await box(card(page, s.title('C'))));
   const start = await pickUp(page, card(page, s.title('A')));
   let hintSteps = 0;
   await walk(page, start, at(slot, 0.5, 0.5), async () => {
@@ -1220,10 +1231,16 @@ test('in a collection: a drop in an empty cell after the last card moves the car
   expect(await gridIds(page)).toEqual(ids);
   const writes = watchOrderWrites(page);
 
+  // Bring the grid up the page first. With 4:5 cards the second row starts below the fold at 1280x720, and a
+  // pointer parked in its lower half sits inside dnd-kit's auto-scroll zone (the bottom 20% of the viewport): the
+  // page scrolls under the held card, the row slides up, and the pointer ends BELOW the grid -- where a drop rightly
+  // does nothing. 60 px of top margin keeps the whole walk (card A's centre to the empty cell) clear of both zones.
+  await card(page, title('A')).evaluate((el) => window.scrollBy(0, el.getBoundingClientRect().top - 60));
+
   // Five across at 1280: F and G make a partial second row. The empty cell
   // after G is in G's row, two columns right of it, under D.
-  const d = (await card(page, title('D')).boundingBox())!;
-  const g = (await card(page, title('G')).boundingBox())!;
+  const d = (await box(card(page, title('D'))));
+  const g = (await box(card(page, title('G'))));
   expect(g.y - d.y, 'G is on a second row').toBeGreaterThan(d.height / 2);
   const cell = { x: d.x + d.width / 2, y: g.y + g.height / 2 };
   expect(cell.y, 'the empty cell is on screen').toBeLessThan(page.viewportSize()!.height);
@@ -1256,8 +1273,8 @@ test('in a collection: a drop in the gap between two cards reorders to the neare
 
   // The gutter between B and C, 3 px left of C: in neither card, and nearer
   // C's middle than B's.
-  const b = (await card(page, s.title('B')).boundingBox())!;
-  const c = (await card(page, s.title('C')).boundingBox())!;
+  const b = (await box(card(page, s.title('B'))));
+  const c = (await box(card(page, s.title('C'))));
   expect(c.x - (b.x + b.width), 'there is a gutter between B and C').toBeGreaterThan(8);
   const gap = { x: c.x - 3, y: c.y + c.height / 2 };
   const within = (p: Point, box: Box) => p.x >= box.x && p.x <= box.x + box.width && p.y >= box.y && p.y <= box.y + box.height;
@@ -1286,7 +1303,7 @@ test('in a collection: a drop outside the grid changes nothing', async ({ page }
   const writes = watchOrderWrites(page);
 
   // Below the row of cards, under B: no card, no gutter between cards, no rail row.
-  const b = (await card(page, s.title('B')).boundingBox())!;
+  const b = (await box(card(page, s.title('B'))));
   const below = { x: b.x + b.width / 2, y: b.y + b.height + 60 };
   expect(below.y, 'the drop point is on screen').toBeLessThan(page.viewportSize()!.height);
   const start = await pickUp(page, card(page, s.title('A')));

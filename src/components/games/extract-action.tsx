@@ -73,8 +73,8 @@ export function ExtractAction({ diskId, extractable, reason, help = true }: {
     <span className="flex min-w-0 max-w-full flex-col gap-1 sm:max-w-[260px]">
       <span className="flex items-center gap-1 self-start" style={{ color: 'var(--ink)' }}>
         <button type="button" onClick={onExtract} disabled={busy} data-testid={`extract-${diskId}`}
-                className="btn-like shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
-                style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}>
+                className="btn-like inline-flex h-[38px] shrink-0 items-center rounded-[10px] border px-3 text-[13px] font-medium disabled:opacity-50"
+                style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}>
           Extract as ADF
         </button>
         {help && <HelpTip topic="hd-hfe" />}

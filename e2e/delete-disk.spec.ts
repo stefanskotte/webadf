@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { getDb } from '@/db';
 import { games, disks, blobs, entitlements } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
-import { signUpFresh, runTag, createAdf } from './helpers';
+import { signUpFresh, runTag, createAdf, openTitleMenu } from './helpers';
 import { cleanupSeeded, seedDisk, pairDevice } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
@@ -24,6 +24,7 @@ test('deleting a title asks first, then removes it and its disks', async ({ page
 
   // It asks. A delete that just happens on one click is not what was asked
   // for, and this one ejects hardware.
+  await openTitleMenu(page, gameId);
   await page.getByTestId(`delete-game-${gameId}`).click();
   await expect(page.getByTestId('delete-dialog')).toBeVisible();
 
@@ -32,6 +33,7 @@ test('deleting a title asks first, then removes it and its disks', async ({ page
   await expect(page.getByTestId('delete-dialog')).toHaveCount(0);
   expect(await gameRows(gameId)).toHaveLength(1);
 
+  await openTitleMenu(page, gameId);
   await page.getByTestId(`delete-game-${gameId}`).click();
   await page.getByTestId('delete-confirm').click();
   await expect(page.getByTestId('game-card')).toHaveCount(0);
@@ -191,7 +193,7 @@ test('deleting the last disk from its own page lands on the library, not a 404',
 
   // Landed on the library, and NOT on an error page.
   await expect(page).toHaveURL(/\/library/);
-  // The New disk trigger is unique to /library and visible, so this
+  // The Create ADF trigger is unique to /library and visible, so this
   // asserts the library actually RENDERED rather than that the URL merely
   // changed -- a 404 at /library would satisfy the URL check alone.
   await expect(page.getByTestId('create-adf')).toBeVisible();

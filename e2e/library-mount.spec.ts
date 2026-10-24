@@ -5,7 +5,7 @@ import { getDb } from '@/db';
 import { disks } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { stableId } from '@/lib/ingest';
-import { signUpFresh, runTag } from './helpers';
+import { signUpFresh, runTag, openTitleMenu } from './helpers';
 import { cleanupSeeded, pairDevice, seedDisk, authHeader, df1OnBoard } from './device-helpers';
 
 test.afterAll(async () => { await cleanupSeeded(); });
@@ -31,8 +31,10 @@ test('a card mounts its disk, rings dashed until the board confirms, then solid 
   const c = card(page, title);
   await expect(c).not.toHaveAttribute('data-drive', /.+/);
 
-  // One disk, one board: one click mounts.
-  await c.getByTestId(`card-mount-${gameId}`).click();
+  // One disk, one board: one click mounts, and the item says where.
+  await openTitleMenu(page, gameId);
+  await expect(page.getByTestId(`card-mount-${gameId}`)).toContainText('Mount in DF0');
+  await page.getByTestId(`card-mount-${gameId}`).click();
   await expect(page.getByText('Mount requested')).toBeVisible();
   const row = await deviceRow(deviceId);
   expect(row.desiredDiskId).toBe(diskId);
@@ -46,7 +48,9 @@ test('a card mounts its disk, rings dashed until the board confirms, then solid 
   })).status()).toBe(204);
   await page.reload();
   await expect(c).toHaveAttribute('data-drive', 'mounted');
-  const eject = c.getByTestId(`card-eject-${gameId}`);
+  await openTitleMenu(page, gameId);
+  const eject = page.getByTestId(`card-eject-${gameId}`);
+  await expect(eject).toContainText('Eject from DF0');
   // The board's own name, read back rather than assumed from the pairing call.
   const { name } = await deviceRow(deviceId);
   await expect(eject).toHaveAttribute('title', `In ${name} · Eject`);
@@ -59,7 +63,8 @@ test('a card mounts its disk, rings dashed until the board confirms, then solid 
   await expect(page.getByText('Eject requested')).toBeVisible();
   expect((await deviceRow(deviceId)).desiredDiskId).toBeNull();
   await expect(c).not.toHaveAttribute('data-drive', /.+/);
-  await expect(c.getByTestId(`card-mount-${gameId}`)).toBeVisible();
+  await openTitleMenu(page, gameId);
+  await expect(page.getByTestId(`card-mount-${gameId}`)).toBeVisible();
 });
 
 test('a disk set asks which disk, and the ring names it', async ({ page, request }) => {
@@ -79,7 +84,9 @@ test('a disk set asks which disk, and the ring names it', async ({ page, request
   try {
     await page.goto('/library');
     const c = card(page, title);
-    await c.getByTestId(`card-mount-${gameId}`).click();
+    await openTitleMenu(page, gameId);
+    await expect(page.getByTestId(`card-mount-${gameId}`)).toContainText('Mount…');
+    await page.getByTestId(`card-mount-${gameId}`).click();
     const dialog = page.getByTestId('card-mount-dialog');
     await expect(dialog).toBeVisible();
     await expect(page.getByTestId('card-mount-confirm')).toBeDisabled();
@@ -91,7 +98,9 @@ test('a disk set asks which disk, and the ring names it', async ({ page, request
     // Never reported, so offline: asked for, not confirmed -- the same words
     // the title page uses (mount-choice.ts), never "In".
     const { name } = await deviceRow(deviceId);
-    await expect(c.getByTestId(`card-eject-${gameId}`))
+    await openTitleMenu(page, gameId);
+    await expect(page.getByTestId(`card-eject-${gameId}`)).toContainText('Cancel mount');
+    await expect(page.getByTestId(`card-eject-${gameId}`))
       .toHaveAttribute('title', `Requested on ${name} — disk 2 — not confirmed · Cancel`);
   } finally {
     await getDb().update(devices).set({ desiredDiskId: null, desiredSha256: null }).where(eq(devices.id, deviceId));
@@ -117,7 +126,8 @@ test('Cancel on a swap keeps the disk the board holds, rather than emptying the 
   await page.goto('/library');
   const nextCard = card(page, `Next ${run}`);
   await expect(nextCard).toHaveAttribute('data-drive', 'fetching');
-  await nextCard.getByTestId(`card-eject-${next.gameId}`).click();
+  await openTitleMenu(page, next.gameId);
+  await page.getByTestId(`card-eject-${next.gameId}`).click();
   await expect(page.getByText('Mount cancelled')).toBeVisible();
 
   // The drive is asked for `held` again -- not emptied -- so the board is
@@ -139,7 +149,8 @@ test('with DF1 On, the card asks which drive; DF1 mounts into DF1, and an HD dis
   const { deviceId } = await df1OnBoard(page, request);
 
   await page.goto('/library');
-  await card(page, title).getByTestId(`card-mount-${gameId}`).click();
+  await openTitleMenu(page, gameId);
+  await page.getByTestId(`card-mount-${gameId}`).click();
   const dialog = page.getByTestId('card-mount-dialog');
   await expect(dialog).toBeVisible();                     // one disk, one board, but DF1 On: it asks
   await expect(dialog.getByTestId('card-mount-df1-note')).toHaveText('DF1 is read-only');
@@ -151,7 +162,8 @@ test('with DF1 On, the card asks which drive; DF1 mounts into DF1, and an HD dis
   expect((await deviceRow(deviceId)).desiredDiskId).toBeNull();
 
   await page.reload();
-  await card(page, hdTitle).getByTestId(`card-mount-${hd.gameId}`).click();
+  await openTitleMenu(page, hd.gameId);
+  await page.getByTestId(`card-mount-${hd.gameId}`).click();
   await expect(dialog.getByTestId('card-mount-drive-df1')).toBeDisabled();
   await expect(dialog.getByTestId('card-mount-df1-note')).toHaveText('DF1 takes standard DD disks only');
   await expect(dialog.getByTestId('card-mount-confirm')).toHaveText('Mount');   // DF0 stays the choice

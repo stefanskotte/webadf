@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { ratio } from '@/lib/contrast.test-util';
 
 // Pins the Phase B palette (spec docs/superpowers/specs/2026-10-24-phase-b-foundation-design.md §4) as it is WRITTEN
 // in globals.css, and the §4.5 contrast pairs that must clear WCAG AA (4.5:1 for text).
@@ -12,13 +13,6 @@ function tokens(): Record<string, string> {
   for (const m of css.matchAll(/(--[a-z0-9-]+):\s*(#[0-9a-fA-F]{6})\b/g)) out[m[1]] = m[2].toUpperCase();
   return out;
 }
-function lum(hex: string) {
-  const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
-    .map((x) => (x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4));
-  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
-}
-const ratio = (a: string, b: string) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
-
 /** A token's value, failing loudly (not with NaN) when the token is missing or not a hex. */
 function tok(name: string): string {
   const v = tokens()[name];

@@ -67,16 +67,15 @@ test('one org cannot see another org\'s games', async ({ browser }) => {
   await pageA.goto('/library');
   const cardA = pageA.getByTestId('game-card').filter({ hasText: titleA });
   await expect(cardA).toBeVisible();
-  await expect(cardA.getByText('2', { exact: true })).toBeVisible();
+  await expect(cardA.getByTestId('grid-disks')).toHaveText('2 disks');
   await expect(pageA.getByText(titleB)).toHaveCount(0);
 
   await pageB.goto('/library');
   const cardB = pageB.getByTestId('game-card').filter({ hasText: titleB });
   await expect(cardB).toBeVisible();
-  // The count badge only renders when diskCount > 1 (see Cover), so a
-  // single-disk game showing no "2"/"3"/etc. badge is itself part of the
-  // proof -- a leaking join would surface an extra disk here.
-  await expect(cardB.getByText(/^[2-9]$/)).toHaveCount(0);
+  // The card's footer prints the count (grid-disks, spec §1.3): a leaking join
+  // would surface an extra disk here and read "2 disks".
+  await expect(cardB.getByTestId('grid-disks')).toHaveText('1 disk');
   await expect(pageB.getByText(titleA)).toHaveCount(0);
 
   await a.close(); await b.close();

@@ -1,10 +1,9 @@
 'use client';
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Eject, Play } from 'lucide-react';
 import { holdAction, holdLabel, type Hold } from '@/lib/drive-holds';
 import { df1Option, type Df1Board } from '@/lib/df1-pick';
 
@@ -47,55 +46,33 @@ export function DriveRing({ holds, compact = false }: { holds: Hold[] | undefine
 
 const stop = (e: React.SyntheticEvent) => { e.stopPropagation(); };
 
-/**
- * Mount or eject a title from its library card. Same look and placement as
- * the NFC, history and delete controls beside it, and the same picker as the
- * NFC button: one click when there is one disk and one board, otherwise
- * "which disk?" and "which board?". When a disk of this title is in a drive
- * the control becomes Eject for that board (or asks which, if several).
- *
- * The request is the existing one the title page uses (/api/devices/[id]/mount
- * and /eject). The board acts on its next poll; the layout's live poller is
- * what turns the dashed ring solid once it reports.
- */
-export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives }: {
+/** The props every part of the mount control shares: the title, how many disks it has, and the org's boards. */
+type CardMountProps = {
   gameId: string; title: string; diskCount: number; singleDiskId: string | null;
   drives: NonNullable<DriveContext>;
-}) {
+};
+
+/**
+ * The mount control's logic, without any markup: what the title holds, which disks it could mount, and `act` /
+ * `undo` (mount, eject, cancel with the toasts and the Undo). `CardMountDialog` uses it, and the title menu
+ * (title-menu.tsx) calls `act` / `undo` directly for a one-click Mount or Eject.
+ * `available`: false when there is no board
+ * or no disk, where the control draws nothing.
+ */
+export function useCardMount({ gameId, diskCount, singleDiskId, drives }: Omit<CardMountProps, 'title'>) {
   const router = useRouter();
   const holds = drives.holds[gameId] ?? [];
   // disksByGame carries every title on the page (library/page.tsx), with what DF1's rule needs. The single-disk
   // fallback is never reached from that page; without a format DF1 refuses rather than guesses.
   const disks: DriveDisk[] = drives.disksByGame[gameId]
     ?? (diskCount === 1 && singleDiskId ? [{ id: singleDiskId, diskNo: 1, imageFormat: 'unknown', sizeBytes: 0 }] : []);
-  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [diskId, setDiskId] = useState<string | null>(null);
-  const [deviceId, setDeviceId] = useState<string | null>(null);
-  const [drive, setDrive] = useState<'df0' | 'df1'>('df0');
-  const titleId = useId();
-  const triggerRef = useRef<HTMLButtonElement>(null);
-
-  /** Close the picker and hand focus back to the button that opened it. */
-  function close() {
-    setOpen(false);
-    triggerRef.current?.focus();
-  }
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpen(false); triggerRef.current?.focus(); } };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
-
-  if (drives.devices.length === 0 || disks.length === 0) return null;
+  const available = drives.devices.length > 0 && disks.length > 0;
   const ejecting = holds.length > 0;
 
   /** Mount `disk` on `device`, or empty the drive (`disk` null). `cancel`: this undoes a request. `toDf1`: into DF1. */
   async function act(device: string, disk: string | null, cancel = false, toDf1 = false) {
     setBusy(true);
-    setOpen(false);
     try {
       let res: Response;
       try {
@@ -146,53 +123,58 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
     return act(h.deviceId, cancel ? h.revertDiskId : null, cancel);
   }
 
-  function onClick(e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (ejecting) {
-      if (holds.length === 1) { void undo(holds[0]); return; }
-      setDeviceId(null);
-      setOpen(true);
-      return;
-    }
-    const onlyDisk = disks.length === 1 ? disks[0].id : null;
-    const onlyDevice = drives.devices.length === 1 ? drives.devices[0].id : null;
-    // A board with DF1 On always asks which drive.
-    if (onlyDisk && onlyDevice && drives.devices[0].df1 === null) { void act(onlyDevice, onlyDisk); return; }
-    setDiskId(onlyDisk);
-    setDeviceId(onlyDevice);
-    setDrive('df0');
-    setOpen(true);
-  }
+  return { holds, disks, busy, available, ejecting, act, undo };
+}
 
-  const single = holds.length === 1 ? holds[0] : null;
-  const verb = single ? holdAction(single) : 'Eject';
-  const label = ejecting
-    ? `${holds.map((h) => holdLabel(h, diskCount)).join('; ')} · ${single ? verb : 'Eject or cancel'}`
-    : 'Mount';
-  const trigger = (
-    <button
-      ref={triggerRef}
-      type="button"
-      data-testid={`${ejecting ? 'card-eject' : 'card-mount'}-${gameId}`}
-      aria-label={ejecting
-        ? (single ? `${verb} ${title} — ${holdLabel(single, diskCount)}` : `Eject or cancel ${title}`)
-        : `Mount ${title}`}
-      title={label}
-      disabled={busy}
-      onClick={onClick}
-      onPointerDown={stop}
-      onMouseDown={stop}
-      onTouchStart={stop}
-      className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)] disabled:opacity-50"
-      style={{ color: ejecting ? 'var(--primary-action)' : 'var(--faint)' }}
-    >
-      {ejecting
-        ? <Eject size={14} strokeWidth={1.75} aria-hidden />
-        : <Play size={14} strokeWidth={1.75} aria-hidden />}
-    </button>
-  );
-  if (!open) return trigger;
+/**
+ * The mount picker, rendered by the title menu (title-menu.tsx) outside its popup: "which disk?", "which board?"
+ * and, on a board with DF1 On, "which drive?". The request is the one the title page uses
+ * (/api/devices/[id]/mount and /eject); the board acts on its next poll, and the layout's live poller is what turns
+ * the dashed ring solid once it reports.
+ * `open` / `onClose`: the caller owns visibility (Close, Escape and the backdrop call `onClose`, and so does a
+ * request once it starts); the rest say which title and which boards. Renders nothing while closed or when there is no board
+ * or no disk; each opening starts with the choices cleared (or preselected when there is only one).
+ */
+export function CardMountDialog(props: CardMountProps & {
+  open: boolean; onClose: () => void;
+  /** The caller's own `useCardMount` result, when it has one (the menu shares its busy state); else made here. */
+  mount?: ReturnType<typeof useCardMount>;
+}) {
+  const { mount, ...rest } = props;
+  return mount ? <CardMountDialogWith {...rest} m={mount} /> : <CardMountDialogOwn {...rest} />;
+}
+
+type DialogState = CardMountProps & { open: boolean; onClose: () => void };
+
+function CardMountDialogOwn(props: DialogState) {
+  const m = useCardMount(props);
+  return <CardMountDialogWith {...props} m={m} />;
+}
+
+function CardMountDialogWith({ open, onClose, m, ...rest }: DialogState & { m: ReturnType<typeof useCardMount> }) {
+  if (!open || !m.available) return null;
+  return <CardMountPicker {...rest} m={m} onClose={onClose} />;
+}
+
+function CardMountPicker({ title, diskCount, drives, m, onClose }: Omit<CardMountProps, 'gameId' | 'singleDiskId'> & {
+  m: ReturnType<typeof useCardMount>; onClose: () => void;
+}) {
+  const { holds, disks, ejecting, undo } = m;
+  // A request starting closes the picker first, as it always did.
+  const act: typeof m.act = (...a) => { onClose(); return m.act(...a); };
+  const onlyDisk = disks.length === 1 ? disks[0].id : null;
+  const onlyDevice = drives.devices.length === 1 ? drives.devices[0].id : null;
+  const [diskId, setDiskId] = useState<string | null>(ejecting ? null : onlyDisk);
+  const [deviceId, setDeviceId] = useState<string | null>(ejecting ? null : onlyDevice);
+  const [drive, setDrive] = useState<'df0' | 'df1'>('df0');
+  const titleId = useId();
+  const close = onClose;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const pill = 'rounded-full px-4 py-1.5 text-[12.5px] font-semibold disabled:opacity-50';
   const choice = (on: boolean) => ({
@@ -220,7 +202,6 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
 
   return (
     <>
-      {trigger}
       {createPortal((
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -284,7 +265,7 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
               <button type="button" onClick={close} autoFocus={!ready} className={pill} style={{ color: 'var(--muted)' }}>Close</button>
               <button type="button" data-testid="card-mount-confirm" autoFocus={ready} disabled={!ready}
                       onClick={() => {
-                        if (chosenHold) void undo(chosenHold);
+                        if (chosenHold) { onClose(); void undo(chosenHold); }
                         else if (deviceId && diskId) void act(deviceId, diskId, false, useDf1);
                       }}
                       className={`${pill} text-white`} style={{ background: 'var(--primary-action)' }}>

@@ -13,6 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { MENU_ITEM_HIGHLIGHT } from '@/components/ui/menu-item-look';
 import { AddDisksDialog } from './add-disks-dialog';
 
 export interface DiskSetControls {
@@ -26,12 +27,14 @@ export interface DiskSetControls {
 // The drive-chip menu's item look (drive-chips.tsx ITEM_CLASS), with a 44px
 // row below `sm` so a finger can hit it.
 const ITEM_CLASS =
-  'min-h-11 px-2 py-1 text-[13px] sm:min-h-8 focus:bg-black/5 data-highlighted:bg-black/5';
+  `min-h-11 px-2 py-1 text-[13px] sm:min-h-8 ${MENU_ITEM_HIGHLIGHT}`;
 
-const TRIGGER_CLASS = 'grid h-11 w-11 shrink-0 place-items-center rounded-lg sm:h-8 sm:w-8';
-const TRIGGER_STYLE = { background: 'var(--glass-strong)', color: 'var(--ink)' };
-const CONTENT_CLASS = 'w-48 max-w-[calc(100vw-2rem)] backdrop-blur-xl';
-const CONTENT_STYLE = { background: 'var(--glass-strong)', color: 'var(--ink)', border: '1px solid var(--hairline-strong)' };
+// The 38 px ghost look the other icon buttons on the row wear (44 px below `sm`).
+const TRIGGER_CLASS = 'grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors hover:bg-[var(--surface-2)] sm:h-[38px] sm:w-[38px]';
+const TRIGGER_STYLE = { color: 'var(--ink)' };
+// The panel matches the title menu (spec §2): surface, line border, 12 px radius.
+const CONTENT_CLASS = 'w-48 max-w-[calc(100vw-2rem)] rounded-[12px]';
+const CONTENT_STYLE = { background: 'var(--surface)', color: 'var(--ink)', border: '1px solid var(--line)', boxShadow: 'var(--shadow-modal)' };
 
 export function DiskSetMenu({ diskId, name, controls }: {
   diskId: string;
@@ -61,7 +64,7 @@ export function DiskSetMenu({ diskId, name, controls }: {
                           disabled={!controls.canDown} onClick={controls.onDown}>
           Move down
         </DropdownMenuItem>
-        <DropdownMenuSeparator className="my-1" style={{ background: 'var(--hairline-strong)' }} />
+        <DropdownMenuSeparator className="my-1" style={{ background: 'var(--line)' }} />
         <DropdownMenuItem data-testid={`disk-move-out-${diskId}`} className={ITEM_CLASS}
                           onClick={controls.onMoveOut}>
           Move out of set

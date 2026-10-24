@@ -23,6 +23,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { collectionDot } from '@/lib/library-look';
 import { viewHref, isCurrentView, type LibraryView } from '@/lib/library-view';
 import {
   useCollectionsContext,
@@ -31,7 +32,15 @@ import {
   type CollectionsDragData,
 } from './collection-provider';
 
-export function CollectionRail() {
+const ROW = 'flex h-[38px] min-w-0 items-center gap-2.5 rounded-[10px] px-3 text-[14px]';
+const CURRENT_STYLE = { background: 'var(--surface)', boxShadow: '0 1px 2px rgb(36 33 27 / .1), 0 0 0 1px var(--line)' };
+
+/** The 8x8 rounded square in front of every rail row (spec 1.2). */
+function Dot({ color }: { color: string }) {
+  return <span aria-hidden className="h-2 w-2 shrink-0 rounded-[3px]" style={{ background: color }} />;
+}
+
+export function CollectionRail({ viewMode = 'grid' }: { viewMode?: 'grid' | 'table' }) {
   const { collections, view, uncategorizedCount } = useCollectionsContext();
   const searchParams = useSearchParams();
 
@@ -39,18 +48,22 @@ export function CollectionRail() {
   // `collection` -- so switching slices never drops the grid/table toggle.
   const hrefFor = (v: LibraryView) => viewHref(v, new URLSearchParams(searchParams.toString()));
   const current = (v: LibraryView) => isCurrentView(view, v);
+  const inbox = current({ kind: 'uncategorized' });
+  const all = current({ kind: 'all' });
 
   // Below `md` the rail is a full-width band above the grid (page.tsx stacks
-  // the two there), so it drops its fixed 224px and takes the page's own
-  // gutter on both sides. From `md` it is the left column again and the right
-  // margin goes back to nothing: the parent's `gap-4` is what separates it
-  // from the grid, and a second margin would widen that split beyond what it
-  // has always been.
+  // the two there), so it takes the page's own gutter on both sides. From `md`
+  // it is the 240px left column and the right margin goes back to nothing: the
+  // parent's `gap-4` is what separates it from the grid. No card box (spec
+  // 1.2): the rail sits on the ground, and the current row is the only
+  // surface in it.
   return (
     <aside
-      className="glass-card ml-4 mr-4 flex w-auto shrink-0 flex-col gap-1 p-3 sm:ml-7 sm:mr-7 md:mr-0 md:w-56"
+      className="ml-4 mr-4 flex w-auto shrink-0 flex-col gap-0.5 sm:ml-7 sm:mr-7 md:mr-0 md:w-60"
       data-testid="collection-rail"
     >
+      <div className="px-3 py-2 text-[12px] font-medium" style={{ color: 'var(--muted-2)' }}>Collections</div>
+
       {/* The inbox, and the landing view. It sits with the collections
           rather than apart from them because it behaves like one: it has a
           count, it is a place titles are, and filing one into a collection
@@ -59,26 +72,21 @@ export function CollectionRail() {
       <Link
         href={hrefFor({ kind: 'uncategorized' })}
         data-testid="collection-uncategorized"
-        className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-semibold"
-        style={
-          current({ kind: 'uncategorized' })
-            ? { background: 'var(--primary-action)', color: '#fff' }
-            : { color: 'var(--ink)' }
-        }
+        aria-current={inbox ? 'page' : undefined}
+        className={`${ROW} justify-between hover:bg-[var(--track)]`}
+        style={inbox ? CURRENT_STYLE : undefined}
       >
-        <span className="truncate">Uncategorized</span>
-        <span
-          className="shrink-0 font-mono text-[10.5px]"
-          style={{ color: current({ kind: 'uncategorized' }) ? 'rgb(255 255 255 / 0.75)' : 'var(--faint)' }}
-        >
-          {uncategorizedCount}
+        <span className="flex min-w-0 items-center gap-2.5">
+          <Dot color="#C4B9A2" />
+          <span className="truncate" style={{ color: 'var(--ink)', fontWeight: inbox ? 600 : 500 }}>Uncategorized</span>
         </span>
+        <span className="shrink-0 font-mono text-[12px]" style={{ color: 'var(--muted-2)' }}>{uncategorizedCount}</span>
       </Link>
 
-      <div className="my-1 h-px" style={{ background: 'var(--hairline)' }} />
+      <div className="my-1 h-px" style={{ background: 'var(--line)' }} />
 
       {collections.length === 0 ? (
-        <p className="px-2.5 py-1 text-[11.5px]" style={{ color: 'var(--faint)' }}>
+        <p className="px-3 py-1 text-[12px]" style={{ color: 'var(--muted-2)' }}>
           No collections yet
         </p>
       ) : (
@@ -96,7 +104,7 @@ export function CollectionRail() {
         </SortableContext>
       )}
 
-      <div className="my-1 h-px" style={{ background: 'var(--hairline)' }} />
+      <div className="my-1 h-px" style={{ background: 'var(--line)' }} />
 
       <CreateCollectionForm />
 
@@ -104,19 +112,23 @@ export function CollectionRail() {
           escape hatch, not the place you work. Kept because it is the only
           view that shows a title filed in two collections once, and the only
           one where "where did that disk go" has a single answer. */}
-      <div className="mt-1 h-px" style={{ background: 'var(--hairline)' }} />
+      <div className="my-1 h-px" style={{ background: 'var(--line)' }} />
       <Link
         href={hrefFor({ kind: 'all' })}
         data-testid="collection-all"
-        className="mt-1 rounded-md px-2.5 py-1.5 text-[13px] font-semibold"
-        style={
-          current({ kind: 'all' })
-            ? { background: 'var(--primary-action)', color: '#fff' }
-            : { color: 'var(--muted-2)' }
-        }
+        aria-current={all ? 'page' : undefined}
+        className={`${ROW} hover:bg-[var(--track)]`}
+        style={all ? CURRENT_STYLE : undefined}
       >
-        All titles
+        <Dot color="var(--ink)" />
+        <span className="truncate" style={{ color: 'var(--ink)', fontWeight: all ? 600 : 500 }}>All titles</span>
       </Link>
+
+      <p className="mx-3 mt-3 hidden text-[12px] leading-[1.5] md:block" style={{ color: 'var(--muted-2)' }}>
+        {viewMode === 'table'
+          ? 'Drag a row onto a collection to file it.'
+          : 'Drag titles onto a collection to file them. Drag collections to reorder.'}
+      </p>
     </aside>
   );
 }
@@ -165,9 +177,9 @@ function CollectionRow({
     // or size shift -- because moving a drop target out from under the cursor
     // mid-drag is how you make a drop land somewhere the person did not aim.
     background: isDropTarget
-      ? 'color-mix(in srgb, var(--accent-amber) 20%, transparent)'
-      : draggingGame ? 'rgb(36 33 27 / 0.05)' : undefined,
-    boxShadow: isDropTarget ? 'inset 0 0 0 2px var(--accent-amber)' : undefined,
+      ? 'var(--surface-2)'
+      : active ? CURRENT_STYLE.background : draggingGame ? 'rgb(36 33 27 / 0.05)' : undefined,
+    boxShadow: isDropTarget ? '0 0 0 1px var(--ink)' : active ? CURRENT_STYLE.boxShadow : undefined,
   };
 
   const [renaming, setRenaming] = useState(false);
@@ -248,7 +260,7 @@ function CollectionRow({
       data-testid="collection-row"
       data-collection-id={collection.id}
       data-drop-target={isDropTarget ? 'true' : undefined}
-      className="flex items-center gap-1 rounded-md px-1 py-0.5"
+      className="group flex h-[38px] items-center gap-1 rounded-[10px] pl-1 pr-1.5 hover:bg-[var(--track)]"
     >
       {/*
         `touchAction: 'none'` was already here for the old PointerSensor and is
@@ -269,7 +281,7 @@ function CollectionRow({
         {...attributes}
         {...listeners}
         style={{ touchAction: 'none', color: 'var(--muted-2)' }}
-        className="grid h-6 w-5 shrink-0 cursor-grab place-items-center active:cursor-grabbing"
+        className="grid h-7 w-5 shrink-0 cursor-grab place-items-center opacity-60 group-hover:opacity-100 focus-visible:opacity-100 active:cursor-grabbing"
       >
         <GripVertical size={13} />
       </button>
@@ -285,44 +297,43 @@ function CollectionRow({
             if (e.key === 'Enter') { e.preventDefault(); submitRename(); }
             if (e.key === 'Escape') { setName(collection.name); setRenaming(false); }
           }}
-          className="min-w-0 flex-1 rounded border px-1.5 py-0.5 text-[13px]"
-          style={{ borderColor: 'var(--hairline-strong)', background: 'var(--input-bg)', color: 'var(--ink)' }}
+          className="h-8 min-w-0 flex-1 rounded-lg border px-2 text-[14px]"
+          style={{ borderColor: 'var(--line-strong)', background: 'var(--surface)', color: 'var(--ink)' }}
         />
       ) : (
         <Link
           href={href}
-          data-testid="collection-name"
-          className="min-w-0 flex-1 truncate rounded px-1.5 py-1 text-[13px] font-semibold"
-          style={active ? { background: 'var(--primary-action)', color: '#fff' } : { color: 'var(--ink)' }}
+          aria-current={active ? 'page' : undefined}
+          className="flex h-full min-w-0 flex-1 items-center gap-2.5 pl-1.5"
         >
-          {collection.name}
+          <Dot color={collectionDot(collection.id)} />
+          <span
+            data-testid="collection-name"
+            className="min-w-0 flex-1 truncate text-[14px]"
+            style={{ color: 'var(--ink)', fontWeight: active ? 600 : 500 }}
+          >
+            {collection.name}
+          </span>
+          {/* The count sits in the row's plain surface whether or not the collection is selected, so it stays a
+              --muted-2 grey: an earlier draft flipped it to #fff when active and rendered it invisible. */}
+          <span data-testid="collection-count" className="shrink-0 font-mono text-[12px]" style={{ color: 'var(--muted-2)' }}>
+            {collection.gameCount}
+          </span>
         </Link>
       )}
-
-      {/* The active highlight lives on the Link alone, not on this row, so
-          this count sits on the rail's plain glass whether or not the
-          collection is selected -- it must stay a --muted-2 grey. An earlier
-          draft flipped it to #fff when active and rendered it invisible. */}
-      <span
-        data-testid="collection-count"
-        className="shrink-0 font-mono text-[10.5px]"
-        style={{ color: 'var(--muted-2)' }}
-      >
-        {collection.gameCount}
-      </span>
 
       <DropdownMenu>
         <DropdownMenuTrigger
           data-testid={`collection-menu-${collection.id}`}
           aria-label={`More actions for ${collection.name}`}
-          className="grid h-6 w-5 shrink-0 place-items-center rounded"
-          style={{ color: 'var(--muted-2)' }}
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-lg hover:bg-[var(--track)]"
+          style={{ color: 'var(--muted)' }}
         >
-          <MoreHorizontal size={13} />
+          <MoreHorizontal size={15} />
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="end"
-          style={{ background: 'var(--glass-strong)', color: 'var(--ink)', border: '1px solid var(--hairline-strong)' }}
+          style={{ background: 'var(--surface)', color: 'var(--ink)', border: '1px solid var(--line)' }}
         >
           <DropdownMenuItem
             data-testid={`collection-rename-${collection.id}`}
@@ -381,8 +392,7 @@ function CreateCollectionForm() {
   }
 
   return (
-    <form onSubmit={onSubmit} className="flex items-center gap-1.5 px-0.5">
-      <Plus size={13} style={{ color: 'var(--muted-2)' }} className="shrink-0" />
+    <form onSubmit={onSubmit} className="flex items-center gap-1.5 px-1 py-1">
       <input
         data-testid="collection-create"
         aria-label="New collection name"
@@ -390,9 +400,18 @@ function CreateCollectionForm() {
         disabled={busy}
         onChange={(e) => setName(e.target.value)}
         placeholder="New collection"
-        className="min-w-0 flex-1 rounded border bg-transparent px-1.5 py-1 text-[12.5px]"
-        style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
+        className="h-9 min-w-0 flex-1 rounded-[9px] px-2.5 text-[13px]"
+        style={{ background: 'var(--surface)', border: '1px dashed var(--line-strong)', color: 'var(--ink)' }}
       />
+      <button
+        type="submit"
+        aria-label="Add collection"
+        disabled={busy}
+        className="grid h-9 w-9 shrink-0 place-items-center rounded-[9px] border disabled:opacity-50"
+        style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}
+      >
+        <Plus size={16} aria-hidden />
+      </button>
     </form>
   );
 }
