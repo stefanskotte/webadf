@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   adfSendName, canCancel, canRetry, cardSendLine, clearableCount, orderQueue, failureText, formatSize, longOffline, offlineFor, orderTargets,
-  pickTarget, receiverLine, receiverRunning, sendErrorText, stateChip, targetState, transferState,
+  pickTarget, receiverLine, targetLabel, receiverRunning, sendErrorText, stateChip, targetState, transferState,
   type SendTarget, type TransferView,
 } from './send-ui';
 
@@ -98,6 +98,15 @@ describe('boards to send to', () => {
     expect(pickTarget(ts, null, NOW)).toBe('new');
     expect(pickTarget([], 'new', NOW)).toBeNull();
     expect(pickTarget([ts[0]], null, NOW)).toBe('old');
+  });
+});
+
+describe('a board in the Send to Amiga menu', () => {
+  it('reads its name, then its MAC in parentheses', () => {
+    expect(targetLabel(t())).toBe('Bench (28:CD:C1:19:6A:38)');
+  });
+  it('reads the name alone when the board never reported a MAC', () => {
+    expect(targetLabel(t({ macAddress: null }))).toBe('Bench');
   });
 });
 

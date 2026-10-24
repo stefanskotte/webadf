@@ -113,6 +113,11 @@ export function longOffline(t: SendTarget, now: number): boolean {
   return !t.online && (t.lastSeenAt === null || now - t.lastSeenAt > LONG_OFFLINE_MS);
 }
 
+/** A board as the Send to Amiga menu lists it: its name, then its MAC in parentheses when it reported one. */
+export function targetLabel(t: Pick<SendTarget, 'name' | 'macAddress'>): string {
+  return t.macAddress ? `${t.name} (${t.macAddress})` : t.name;
+}
+
 export function orderTargets(ts: readonly SendTarget[]): SendTarget[] {
   return [...ts].sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
