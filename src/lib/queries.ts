@@ -408,8 +408,12 @@ export interface DeviceListItem {
   desiredDiskId: string | null; mountedDiskId: string | null;
   // The disk a human asked for, when one is asked for.
   desiredGame: string | null; desiredDiskNo: number | null; desiredDiskCount: number | null;
+  /** The org-scoped game's id behind desiredGame (null when none, or when the row names another org's game). */
+  desiredGameId: string | null;
   // The disk the device says it holds, when it says it holds one.
   mountedGame: string | null; mountedDiskNo: number | null;
+  /** The org-scoped game's id behind mountedGame (null when none, or when the row names another org's game). */
+  mountedGameId: string | null;
   /**
    * What the board's OLED was told about the mounted disk, so the card can
    * draw the same screen (live-display.ts): the disk row's label and how many
@@ -540,12 +544,14 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       desiredSha256: devices.desiredSha256, mountedSha256: devices.mountedSha256,
       desiredDiskId: devices.desiredDiskId, mountedDiskId: devices.mountedDiskId,
       desiredGame: desiredGame.title,
+      desiredGameId: desiredGame.id,
       desiredDiskNo: devices.desiredDiskNo,
       desiredDiskCount: sql<number | null>`(
         select count(*)::int from disks dc
         where dc.game_id = ${devices.desiredGameId} and dc.org_id = ${devices.orgId}
       )`,
       mountedGame: mountedGame.title,
+      mountedGameId: mountedGame.id,
       mountedDiskNo: devices.mountedDiskNo,
       mountedLabel: mountedDisk.label,
       mountedSourceFilename: mountedEnt.sourceFilename,

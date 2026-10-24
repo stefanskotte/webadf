@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ratio } from '@/lib/contrast.test-util';
 import { DISK_BODIES } from '@/lib/disk-icon';
-import { collectionDot, COLLECTION_DOTS, kindTag, stageFor, titleDiskColor } from '@/lib/library-look';
+import { collectionDot, COLLECTION_DOTS, driveDiskColor, kindTag, stageFor, titleDiskColor } from '@/lib/library-look';
 
 // Spec docs/superpowers/specs/2026-10-24-phase-c1-library-title-design.md §4. The contrast maths is shared with the
 // Phase B token test (src/lib/contrast.test-util.ts).
@@ -112,5 +112,20 @@ describe('collectionDot', () => {
   it('uses all four stripes across many ids', () => {
     const seen = new Set(Array.from({ length: 200 }, (_, i) => collectionDot(`c-${i}`)));
     expect(seen.size).toBe(4);
+  });
+});
+
+describe('driveDiskColor (Devices spec §4.3)', () => {
+  it('is cream for no disk', () => { expect(driveDiskColor(null)).toBe('cream'); });
+  it('is stable and one of the four colours', () => {
+    for (const id of ['a', 'b', 'c', 'game-123', 'x'.repeat(40)]) {
+      expect(['black', 'red', 'blue', 'green']).toContain(driveDiskColor(id));
+      expect(driveDiskColor(id)).toBe(driveDiskColor(id));
+    }
+  });
+  it('matches the library card of a typed title', () => {
+    for (const id of ['a', 'b', 'c', 'game-123']) {
+      expect(driveDiskColor(id)).toBe(titleDiskColor({ id, hasHd: false, kind: 'Game' }));
+    }
   });
 });

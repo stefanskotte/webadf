@@ -2,7 +2,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { DeviceListItem } from '@/lib/queries';
-import { secondDriveStatus, DF1_SEEN_REASON, SECOND_DRIVE_NET_FW, type SecondDriveMode } from '@/lib/second-drive';
+import { secondDriveStatus, DF1_SEEN_REASON, SECOND_DRIVE_NET_FW, secondDriveHelp, type SecondDriveMode } from '@/lib/second-drive';
 import type { NextInfo } from '@/lib/next-disk';
 import { HelpTip } from '@/components/help/help-tip';
 import { df1LineText } from '@/lib/df1-pick';
@@ -91,12 +91,7 @@ export function SecondDriveSetting({ device, next, now }: { device: DeviceListIt
       <span data-testid={`second-drive-status-${id}`}>{secondDriveStatus(device)}</span>
       {device.secondDriveCapable && (
         <span data-testid={`second-drive-help-${id}`}>
-          {shown === 'any'
-            ? `DF1 holds a disk you mount into DF1 from the library, read-only.${hasPick ? ''
-              : ' Mount one with a title’s Mount → DF1; until then DF1 holds the next disk of the set.'}`
-            : shown === 'df1' ? 'DF1 holds the next disk of the set, read-only, so a game asking for its next disk finds it.'
-            : shown === 'net' ? 'The Amiga’s network: the driver disk sits in DF1 and PaulaNET carries Ethernet over the floppy cable.'
-            : 'No second drive: the Amiga sees DF0 only.'}
+          {secondDriveHelp(shown, hasPick)}
         </span>
       )}
       {device.secondDriveReported === 'df1' && device.secondDriveCapable && (   /* m2: what the board runs */

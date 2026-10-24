@@ -59,3 +59,11 @@ export const COLLECTION_DOTS = ['#D9453A', '#EE8A2A', '#4F9D4A', '#2F6FB5'] as c
 export function collectionDot(id: string): (typeof COLLECTION_DOTS)[number] {
   return COLLECTION_DOTS[hash(id) % COLLECTION_DOTS.length];
 }
+
+/**
+ * The colour of the disk drawn in a Devices drive box (Devices spec §4.3): cream for no disk, else the same stable
+ * hash and palette as a typed title's disk, so the drive's disk matches its library card.
+ */
+export function driveDiskColor(gameId: string | null): DiskColor {
+  return gameId === null ? 'cream' : TITLE_COLORS[hash(gameId) % TITLE_COLORS.length];
+}

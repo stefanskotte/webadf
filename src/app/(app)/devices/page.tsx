@@ -49,6 +49,11 @@ export default async function DevicesPage() {
     return [t.id, cardSendLine(s, receiverRunning(t, (s?.sending ?? 0) > 0, now))];
   }));
 
+  // Whether Transfer runs on the Amiga, per sending board (spec §7): the same verdict the send line is built from.
+  const transferById: Record<string, { running: boolean }> = Object.fromEntries(sendTargets.map((t) => [
+    t.id, { running: receiverRunning(t, (summaries[t.id]?.sending ?? 0) > 0, now) },
+  ]));
+
   // Uploads from the Amiga (spec 2026-10-18 §4, §8): files stored within 24 h, or the update a Network board needs.
   const uploads = await uploadSummaries(getDb(), orgId, new Date(now));
   const uploadLineById = Object.fromEntries(devices.map((d) => [d.id,
@@ -93,7 +98,7 @@ export default async function DevicesPage() {
           </div>
         ) : (
           <DeviceList devices={devices} now={now} states={states}
-                      selectableIds={selectableIds} latest={registry.latest} nextById={nextById} sendLineById={sendLineById} uploadLineById={uploadLineById}
+                      selectableIds={selectableIds} latest={registry.latest} nextById={nextById} sendLineById={sendLineById} transferById={transferById} uploadLineById={uploadLineById}
                       skipPassword={prefs.firmware.skipPassword} />
         )}
       </div>

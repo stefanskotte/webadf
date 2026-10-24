@@ -1,3 +1,4 @@
+import { driveBoxText } from '@/lib/devices-look';
 import { deviceState, isOnline, relative } from '@/lib/device-state';
 import { firmwareLabel, updateLabel, type FirmwareState } from '@/lib/firmware-state';
 import { isDefaultDeviceName } from '@/lib/device-name';
@@ -35,7 +36,7 @@ import { ReinsertButton } from './reinsert-button';
  * screen readers either way.
  */
 export function DeviceCard(
-  { device, now, firmware, selection, onCancelUpdate, next, sendLine, uploadLine }: {
+  { device, now, firmware, selection, onCancelUpdate, next, sendLine, transfer, uploadLine }: {
     device: DeviceListItem; now: number; firmware: FirmwareState;
     /** Absent when this board cannot be updated -- no checkbox is drawn at all. */
     selection?: { selected: boolean; onToggle: (id: string) => void };
@@ -45,6 +46,8 @@ export function DeviceCard(
     next?: NextInfo | null;
     /** Send to Amiga's one line (spec §4), or null when nothing waits or happened lately. */
     sendLine?: string | null;
+    /** Whether Transfer runs on the Amiga; null for a board that cannot take files. Not drawn until Task 3. */
+    transfer?: { running: boolean } | null;
     uploadLine?: { text: string; href: boolean } | null;
   },
 ) {
@@ -65,51 +68,8 @@ export function DeviceCard(
     error: device.firmwareUpdateError,
   });
 
-  // A pending state means desired and actual differ. That is a MOUNT when a
-  // disk is desired and an EJECT when none is -- same state, opposite words.
-  // Heading "Mounting..." over detail "Ejecting" is the bug this branch avoids.
-  const ejecting = state === 'pending' && device.desiredSha256 === null;
-
-  const heading =
-    state === 'empty' ? 'No disk'
-    : state === 'converged' ? 'In the drive'
-    : state === 'pending' ? (ejecting ? 'Ejecting…' : 'Mounting…')
-    : 'Requested';
-
-  // The heading says WHAT is happening; bigText says WHICH disk (the big
-  // text option A calls for) and subText carries the rest -- split from one
-  // `detail` string so the disk's own title can get its own visual weight.
-  // Every fact the old single string carried is still here; only where it
-  // sits moved. See the per-state case below for where each piece landed.
-  const bigText =
-    state === 'empty' ? 'No disk'
-    : state === 'converged' ? (device.mountedGame ?? 'Unknown')
-    : state === 'pending'
-      ? (ejecting ? (device.mountedGame ?? 'a disk') : (device.desiredGame ?? 'Unknown'))
-    : (device.desiredGame ?? 'Unknown'); // stale: what was requested, same as before
-
-  const subText =
-    state === 'empty' ? 'Mount one from the library'
-    : state === 'converged'
-      ? `disk ${device.mountedDiskNo ?? '?'}`
-        // desiredDiskCount is a SQL count(*), so it is 0 -- never null --
-        // when nothing is desired. Compare numerically, not by truthiness, so
-        // the "0 means don't show it" intent doesn't read as a null-check.
-        // (The `?? 0` is only to satisfy the nullable column type; the value
-        // itself is never actually null.)
-        + ((device.desiredDiskCount ?? 0) > 0 ? ` of ${device.desiredDiskCount}` : '')
-    : state === 'pending'
-      ? ejecting
-        ? `Removing disk ${device.mountedDiskNo ?? '?'}`
-        : `disk ${device.desiredDiskNo ?? '?'}`
-          + (device.mountedSha256 ? ` · currently holding ${device.mountedGame ?? 'a disk'} disk ${device.mountedDiskNo ?? '?'}` : '')
-    // stale: NOT "device last seen ..." any more (fix round 1, minor 2) --
-    // every offline card now carries its own "last seen" line up in the
-    // badge row (isOnline and 'stale' share the same STALE_AFTER_MS
-    // threshold, so a stale device is always offline), and repeating the
-    // same fact here just cluttered the sub-line. The disk number is the
-    // one piece of information that line alone still carries.
-    : `disk ${device.desiredDiskNo ?? '?'}`;
+  // The disk in words (heading, title, detail): the look rules live in devices-look.ts (spec §4.2).
+  const { label: heading, title: bigText, meta: subText } = driveBoxText(device, state);
 
   // Words on screen only while the OLED shows something other than the disk
   // asked for: the old disk (pending, stale). Converged and empty: the glass

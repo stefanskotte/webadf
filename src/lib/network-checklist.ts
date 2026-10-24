@@ -40,3 +40,9 @@ export function driverBucket(seenAt: Date | null, now: number): 'talking' | 'qui
   if (!seenAt) return 'never';
   return now - seenAt.getTime() <= DRIVER_TALKING_MS ? 'talking' : 'quiet';
 }
+
+/** A checklist line split at its first ": " into a label and a detail (Devices spec §6); a line without one is all detail. */
+export function splitCheckLine(text: string): { label: string | null; detail: string } {
+  const i = text.indexOf(': ');
+  return i < 0 ? { label: null, detail: text } : { label: text.slice(0, i), detail: text.slice(i + 2) };
+}
