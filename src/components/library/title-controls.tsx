@@ -21,20 +21,34 @@ import type { GameListItem } from '@/lib/queries';
 import { type PendingHide, SET_DROP_RETURN_MS } from '@/components/collections/collection-provider';
 
 /**
- * The library with nothing in it. `testId` is the view's own (game-grid or
- * game-table), so a check for "which view is this" holds on an empty library
- * too. The cream "New box" disk is the board's empty collection (Phase B).
+ * The library with nothing in it (spec §8, board InfStates). `testId` is the view's own (game-grid or game-table), so
+ * a check for "which view is this" holds on an empty library too. `variant` is what is empty: the whole library, or
+ * one collection (the grid only; the table keeps its own note). `data-empty` names it.
  */
-export function EmptyLibrary({ testId }: { testId: string }) {
+const EMPTY_TEXT = {
+  library: {
+    set: 'Your library', title: 'Empty', heading: 'No disks yet',
+    body: 'Drop ADFs on the Upload page, or fetch one from a URL.', action: 'Add disks',
+  },
+  collection: {
+    set: 'Empty', title: 'New box', heading: 'Nothing in this collection yet',
+    body: 'Drag titles here, or move them from a title\u2019s \u22EF menu.', action: 'Upload disks',
+  },
+} as const;
+
+export function EmptyLibrary({ testId, variant = 'library' }: { testId: string; variant?: 'library' | 'collection' }) {
+  const t = EMPTY_TEXT[variant];
   return (
-    <div className="glass-card mx-4 flex flex-col items-center gap-3 p-12 text-center sm:mx-7" data-testid={testId}>
-      <DiskIcon color="cream" set="Empty" title="New box" size={96} />
-      <p className="text-lg font-semibold" style={{ color: 'var(--ink)' }}>No disks yet</p>
-      <p className="text-sm" style={{ color: 'var(--muted)' }}>
-        Drop some ADFs on the ingest page, or run <code className="font-mono">webadf push</code>.
-      </p>
-      <Link href="/ingest" className="btn-like rounded-lg px-4 py-2 text-sm font-semibold text-white"
-            style={{ background: 'var(--primary-action)' }}>Add disks</Link>
+    <div className="mx-4 flex flex-col items-center gap-3.5 px-8 py-16 text-center sm:mx-7" data-testid={testId}
+         data-empty={variant}
+         style={{ background: 'var(--surface)', border: '1px dashed var(--line-strong)', borderRadius: 20 }}>
+      <DiskIcon color="cream" set={t.set} title={t.title} size={96} />
+      <p className="text-[22px] font-bold leading-tight"
+         style={{ color: 'var(--ink)', fontFamily: 'var(--font-display)' }}>{t.heading}</p>
+      <p className="text-[14px]" style={{ color: 'var(--muted)' }}>{t.body}</p>
+      <Link href="/ingest"
+            className="btn-like inline-flex h-10 items-center rounded-[10px] px-4 text-[14px] font-semibold text-white"
+            style={{ background: 'var(--primary-action)' }}>{t.action}</Link>
     </div>
   );
 }

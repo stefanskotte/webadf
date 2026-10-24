@@ -26,7 +26,9 @@ export function GameGrid({ games, fob = null, drives = null }: {
 }) {
   const { gameIds, filteredCollectionId, previewGameId, armedGameId, pendingHide: hidden } = useCollectionsContext();
 
-  if (games.length === 0) return <EmptyLibrary testId="game-grid" />;
+  if (games.length === 0) {
+    return <EmptyLibrary testId="game-grid" variant={filteredCollectionId ? 'collection' : 'library'} />;
+  }
 
   // Filtered view: the grid is a reorderable list backed by the collection's
   // membership order, which lives as `gameIds` on the shared context

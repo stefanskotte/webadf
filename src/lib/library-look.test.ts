@@ -41,6 +41,22 @@ describe('kindTag', () => {
   });
 });
 
+// Spec §9: the pairs this phase adds, each at AA (4.5:1) for text.
+describe('Phase C1 contrast pairs', () => {
+  it('the DF0 pill text is legible on the pill', () => {
+    expect(ratio(tok('--drive-pill-fg'), tok('--drive-pill-bg'))).toBeGreaterThanOrEqual(4.5);
+  });
+  it('muted-2 is legible on a held row', () => {
+    expect(ratio(tok('--muted-2'), tok('--mounted-bg'))).toBeGreaterThanOrEqual(4.5);
+  });
+  it.each(Object.keys(DISK_BODIES) as Array<keyof typeof DISK_BODIES>)('ink is legible on the %s stage', (c) => {
+    expect(ratio(tok('--ink'), stageFor(c))).toBeGreaterThanOrEqual(4.5);
+  });
+  it('the Boot pill text clears AA on its own fill', () => {
+    expect(ratio('#8A3A0E', '#FCE6D6')).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
 describe('titleDiskColor', () => {
   const base = { id: 'g1', hasHd: false, kind: 'Game' as string | null };
   it('is grey for an HD title and for an HFE title', () => {
