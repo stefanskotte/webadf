@@ -2,7 +2,7 @@
 
 // The pieces a library title carries in BOTH views -- a grid card
 // (game-grid.tsx) and a table row (game-table.tsx): its name with the inline
-// rename, its controls in their order, the drive-state label, and the drag
+// rename, its ⋯ menu, the drive-state label, and the drag
 // and hide styles. One copy, so the two views cannot drift apart: the table is
 // the grid condensed, with the same features (operator design 2026-10-21).
 
@@ -10,14 +10,12 @@ import { Link } from '@/components/shell/link';
 import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { History, Minus } from 'lucide-react';
-import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
 import { DiskIcon } from '@/components/ui/disk-icon';
-import { FobButton, type FobContext } from '@/components/nfc/fob-button';
-import { CardMountButton, type DriveContext } from './card-mount-button';
-import { MoveToCollectionButton } from './move-to-collection';
+import type { FobContext } from '@/components/nfc/fob-button';
+import type { DriveContext } from './card-mount-button';
+import { TitleMenu } from './title-menu';
 import { holdLabel } from '@/lib/drive-holds';
-import { fromQuery, type TrailView } from '@/lib/trail';
+import type { TrailView } from '@/lib/trail';
 import { ejectMessage, isMountedReason, mountedReason } from '@/lib/mount-wording';
 import type { GameListItem } from '@/lib/queries';
 import { type PendingHide, SET_DROP_RETURN_MS } from '@/components/collections/collection-provider';
@@ -104,7 +102,7 @@ export function pendingHideStyle(pendingHide: PendingHide | null): React.CSSProp
 /**
  * The volume name of a disk made here, editable on the card.
  *
- * INSIDE the card's <a>, like the remove button above it, and safe for the
+ * INSIDE the card's <a>, like the ⋯ menu trigger (title-menu.tsx), and safe for the
  * same reason: every pointer event is stopped before it reaches the anchor or
  * dnd-kit's listeners. Without that, typing would navigate to the game and
  * a drag would start from the text cursor.
@@ -199,123 +197,6 @@ function VolumeNameField({ game: g }: { game: GameListItem }) {
   );
 }
 
-/**
- * The title controls, in the order they read (TitleControls below): history,
- * mount, write to an NFC tag (the fob button, only when the org has a
- * reader), move to a collection (A3), remove from the collection, delete. All of them are BUTTONS,
- * including the history one that is really a navigation -- the card, and a
- * table row, is itself an <a href>, and an anchor inside an anchor is invalid
- * HTML that browsers "fix" by closing the outer one early, which would break
- * the card it sits in. Every one of them stops
- * its pointer, mouse and touch-start events before they reach the card's
- * link or dnd-kit's drag listeners (stopDrag), the same way the inline
- * rename field does.
- *
- * They share one subdued resting colour (`--faint`) and take their meaning
- * from hover: destructive controls go red, the history one does not.
- */
-/** A card control's press must not reach dnd-kit's activators on the card:
- *  mousedown for the MouseSensor, touchstart for the TouchSensor. */
-const stopDrag = (e: React.SyntheticEvent) => { e.stopPropagation(); };
-
-function HistoryButton({ game: g, collectionId, view }: { game: GameListItem; collectionId?: string; view: TrailView }) {
-  const router = useRouter();
-
-  // `diskId` is a min() aggregate, so it names a real disk only on a
-  // single-disk title -- the same reason the inline rename is offered only
-  // there. "Which disk's history?" has no answer on a multi-disk set, and the
-  // card already leads to the title page where each disk is listed with its
-  // own Browse.
-  if (g.diskCount !== 1 || !g.diskId) return null;
-  const href = `/disks/${g.diskId}/files${fromQuery(collectionId, view)}#disk-history`;
-
-  return (
-    <button
-      type="button"
-      data-testid={`history-${g.id}`}
-      aria-label={`Version history for ${g.title}`}
-      title="Version history"
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        router.push(href);
-      }}
-      onPointerDown={stopDrag}
-      onMouseDown={stopDrag}
-      onTouchStart={stopDrag}
-      className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
-      style={{ color: 'var(--faint)' }}
-    >
-      <History size={14} strokeWidth={1.75} aria-hidden />
-    </button>
-  );
-}
-
-function RemoveFromCollectionButton({ game: g, collectionId }: { game: GameListItem; collectionId: string }) {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-
-  async function onRemove(e: React.MouseEvent) {
-    // Must not reach the card's own Link -- this button sits inside it, and
-    // an unstopped click would both remove the title AND navigate to it.
-    e.preventDefault();
-    e.stopPropagation();
-
-    setBusy(true);
-    try {
-      let res: Response;
-      try {
-        res = await fetch(`/api/collections/${collectionId}/games/${g.id}`, { method: 'DELETE' });
-      } catch {
-        toast.error('Could not reach the server', { description: 'The title was not removed from the collection.' });
-        return;
-      }
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        toast.error('Could not remove the title from the collection', {
-          description: typeof body.error === 'string' ? body.error : undefined,
-        });
-        return;
-      }
-    } finally {
-      setBusy(false);
-      router.refresh();
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      data-testid={`remove-from-collection-${g.id}`}
-      aria-label={`Remove ${g.title} from collection`}
-      title="Remove from collection"
-      disabled={busy}
-      onClick={onRemove}
-      onPointerDown={stopDrag}
-      onMouseDown={stopDrag}
-      onTouchStart={stopDrag}
-      className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--danger-bg)] hover:text-[var(--danger-fg)] disabled:opacity-50"
-      style={{ color: 'var(--faint)' }}
-    >
-      <Minus size={14} strokeWidth={2.25} aria-hidden />
-    </button>
-  );
-}
-
-/**
- * The fob button on a card. A single-disk title writes its one disk; a set
- * asks which disk first. `diskId` is a min() aggregate and names the disk
- * only on a single-disk title (see HistoryButton), so a set's disks come
- * from the page's own list instead.
- */
-function CardFobButton({ game: g, fob }: { game: GameListItem; fob: NonNullable<FobContext> }) {
-  const disks = g.diskCount === 1 && g.diskId
-    ? [{ id: g.diskId, diskNo: 1 }]
-    : fob.disksByGame[g.id] ?? [];
-  if (disks.length === 0) return null;
-  return <FobButton testId={`fob-${g.id}`} title={g.title} disks={disks} devices={fob.devices} />;
-}
-
 /** The title's name: the inline rename on an authored single-disk title, else plain text. */
 export function TitleName({ game: g, className }: { game: GameListItem; className: string }) {
   if (g.authored && g.diskId) return <VolumeNameField game={g} />;
@@ -330,12 +211,6 @@ export function HoldsLabel({ game: g, drives }: { game: GameListItem; drives: Dr
 }
 
 /**
- * A title's controls, in the order they read on the card and on a table row:
- * history, mount, NFC fob, remove from the collection (inside one), delete.
- * Each one stops every pointer event before it reaches the card's or row's
- * link or dnd-kit's drag listeners (see stopDrag above).
- */
-/**
  * A card's or a row's accessible name: the title, and its year when known (final review M5). Without it the link's
  * name is everything inside it -- every cell and every button's label read as one long name.
  */
@@ -343,22 +218,14 @@ export function titleLabel(g: Pick<GameListItem, 'title' | 'year'>): string {
   return g.year ? `${g.title}, ${g.year}` : g.title;
 }
 
+/**
+ * A title's controls on a card and on a table row: the ⋯ menu (title-menu.tsx, spec §2), which holds Mount / Eject,
+ * Write to NFC tag, Version history, Move to collection…, Remove from collection and Delete title in that order.
+ */
 export function TitleControls({ game: g, collectionId, fob, drives, view = null }: {
   game: GameListItem; collectionId?: string; fob: FobContext; drives: DriveContext;
   /** The library view to carry into the history link when it is not the person's default (trail.ts, final review M1). */
   view?: TrailView;
 }) {
-  return (
-    <div className="flex shrink-0 items-center">
-      <HistoryButton game={g} collectionId={collectionId} view={view} />
-      {drives && (
-        <CardMountButton gameId={g.id} title={g.title} diskCount={g.diskCount}
-                         singleDiskId={g.diskCount === 1 ? g.diskId : null} drives={drives} />
-      )}
-      {fob && <CardFobButton game={g} fob={fob} />}
-      <MoveToCollectionButton game={g} collectionId={collectionId} />
-      {collectionId && <RemoveFromCollectionButton game={g} collectionId={collectionId} />}
-      <DeleteDiskDialog kind="game" id={g.id} title={g.title} diskCount={g.diskCount} />
-    </div>
-  );
+  return <TitleMenu game={g} collectionId={collectionId} fob={fob} drives={drives} view={view} />;
 }

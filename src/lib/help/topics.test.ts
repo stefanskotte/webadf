@@ -69,7 +69,7 @@ describe('help topics say what the app really does', () => {
   });
   it('library describes the table: folders, the way up, the card controls, filing by drag, and the default view (2026-10-21)', () => {
     const b = HELP_TOPICS.library.short + bodyText('library');
-    for (const w of ['folder', '↑ Library', 'All titles', 'Library opens in', 'version history', 'mount', 'NFC',
+    for (const w of ['folder', '↑ Library', 'All titles', 'Library opens in', '⋯', 'version history', 'mount', 'NFC',
       'remove from the collection', 'delete', 'grid only']) expect(b).toContain(w);
   });
   it('preferences names the default library view', () => {

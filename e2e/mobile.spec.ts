@@ -6,7 +6,7 @@ import { games, disks } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume } from '@/lib/adffs';
-import { signUpFresh, runTag, createAdf, stagingReady } from './helpers';
+import { signUpFresh, runTag, createAdf, stagingReady, openTitleMenu } from './helpers';
 import { cleanupSeeded, seedDisk, addDisk, pairDevice, authHeader } from './device-helpers';
 import { synthDrop } from './drag-drop-helpers';
 import { zoneOf } from '@/lib/set-folder';
@@ -613,12 +613,14 @@ test('a press-and-hold inside a card\'s dialog does not drag the card behind it'
     await held.end();
   }
 
+  await openTitleMenu(page, gameId);
   await page.getByTestId(`fob-${gameId}`).tap();
   await expect(page.getByTestId('fob-waiting')).toBeVisible();
   await holdInside(page.getByTestId('fob-waiting'));
   await page.getByTestId('fob-cancel').tap();
   await expect(page.getByTestId('fob-dialog')).toHaveCount(0);
 
+  await openTitleMenu(page, gameId);
   await page.getByTestId(`delete-game-${gameId}`).tap();
   await expect(page.getByTestId('delete-dialog')).toBeVisible();
   await holdInside(page.getByTestId('delete-dialog'));

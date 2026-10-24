@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
 import { readVolume, readFile, type AdfEntry } from '@/lib/adffs';
-import { signUpFresh, runTag, createAdf } from './helpers';
+import { signUpFresh, runTag, createAdf, openTitleMenu } from './helpers';
 import { cleanupSeeded, pairDevice } from './device-helpers';
 
 /**
@@ -95,6 +95,7 @@ test('the library card reaches the history, and the wordmark leads back', async 
   // The gallery is where people start, and before this the history was only
   // reachable by opening the title, then the disk, then scrolling (operator,
   // 2026-09-21).
+  await openTitleMenu(page, disk.gameId);
   const history = page.getByTestId(`history-${disk.gameId}`);
   await expect(history).toBeVisible();
   await history.click();

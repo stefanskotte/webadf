@@ -5,7 +5,7 @@ import { getDb } from '@/db';
 import { games, blobs } from '@/db/schema/catalog';
 import { collections, collectionGames } from '@/db/schema/collections';
 import { user } from '@/db/schema/auth';
-import { signUpFresh, runTag } from './helpers';
+import { signUpFresh, runTag, openTitleMenu } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
 import { cleanupSeeded, seedDisk } from './device-helpers';
 import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
@@ -456,6 +456,7 @@ test('the per-card control removes a game from the collection, not from the libr
   await page.goto(`/library?collection=${id}`);
   await expect(page.getByTestId('game-card')).toHaveCount(2);
 
+  await openTitleMenu(page, a.gameId);
   await page.getByTestId(`remove-from-collection-${a.gameId}`).click();
   await expect(page.getByTestId('game-card')).toHaveCount(1);
   await expect(page.getByTestId('game-card')).toContainText(`Stays ${run}`);
@@ -469,6 +470,8 @@ test('the per-card control removes a game from the collection, not from the libr
 
   // The control is offered ONLY inside a collection: "remove from collection"
   // means nothing in the unfiltered library, and there is no id to remove from.
+  await openTitleMenu(page, b.gameId);
+  await expect(page.getByTestId(`move-to-collection-${b.gameId}`)).toBeVisible();
   await expect(page.getByTestId(`remove-from-collection-${b.gameId}`)).toHaveCount(0);
 });
 

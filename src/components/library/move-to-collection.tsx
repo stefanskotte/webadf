@@ -4,50 +4,21 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { FolderInput } from 'lucide-react';
 import { useCollectionsContext } from '@/components/collections/collection-provider';
 import type { GameListItem } from '@/lib/queries';
 
 const stop = (e: React.SyntheticEvent) => { e.stopPropagation(); };
 
 /**
- * "Move to collection…" on a title (A3, the approved boards' title menu): a list of the org's collections; picking
- * one files the title there. From All titles or Uncategorized that is an add (which takes it out of Uncategorized);
- * inside a collection it is a move -- added there, then removed from the one you are standing in. A title can be in
- * several collections, so "move" means leaving this one, not every other.
+ * "Move to collection…" on a title (A3; the ⋯ title menu's item, title-menu.tsx, renders this outside its popup): a
+ * list of the org's collections; picking one files the title there. From All titles or Uncategorized that is an add
+ * (which takes it out of Uncategorized); inside a collection it is a move -- added there, then removed from the one
+ * you are standing in. A title can be in several collections, so "move" means leaving this one, not every other.
  *
  * The existing routes only: POST /api/collections/[id]/games, then DELETE .../games/[gameId]. Add first, so a
  * failure between the two leaves the title in both rather than in neither.
- */
-export function MoveToCollectionButton({ game: g, collectionId }: { game: GameListItem; collectionId?: string }) {
-  const [open, setOpen] = useState(false);
-  const trigger = (
-    <button
-      type="button"
-      data-testid={`move-to-collection-${g.id}`}
-      aria-label={`Move ${g.title} to a collection`}
-      title="Move to collection…"
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(true); }}
-      onPointerDown={stop}
-      onMouseDown={stop}
-      onTouchStart={stop}
-      className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--hairline)] hover:text-[var(--ink)]"
-      style={{ color: 'var(--faint)' }}
-    >
-      <FolderInput size={14} strokeWidth={1.75} aria-hidden />
-    </button>
-  );
-  return (
-    <>
-      {trigger}
-      <MoveToCollectionDialog game={g} collectionId={collectionId} open={open} onClose={() => setOpen(false)} />
-    </>
-  );
-}
-
-/**
- * The controlled dialog behind `MoveToCollectionButton`, also rendered by the title menu (outside its popup).
- * `open` / `onClose`: the caller owns visibility; `game`, `collectionId`: as the button's. Renders nothing while closed.
+ *
+ * `open` / `onClose`: the caller owns visibility. Renders nothing while closed.
  */
 export function MoveToCollectionDialog({ game: g, collectionId, open, onClose }: {
   game: GameListItem; collectionId?: string; open: boolean; onClose: () => void;

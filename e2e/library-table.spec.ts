@@ -5,7 +5,7 @@ import { getDb } from '@/db';
 import { games } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { collections, collectionGames } from '@/db/schema/collections';
-import { signUpFresh, runTag, createAdf } from './helpers';
+import { signUpFresh, runTag, createAdf, openTitleMenu } from './helpers';
 import { cleanupSeeded, seedDisk, addDisk, pairDevice, authHeader } from './device-helpers';
 
 // The library table as the grid condensed (operator design 2026-10-21):
@@ -156,14 +156,18 @@ test('a row carries the card controls, and its delete asks first without leaving
 
   await page.goto(`/library?view=table&collection=${id}`);
   const r = row(page, t);
-  // The card's order: history, mount, (fob only with a reader), move to a collection (A3), remove, delete.
-  const controls = await r.locator('button').evaluateAll((els) => els.map((el) => el.getAttribute('data-testid')));
-  expect(controls).toEqual([`history-${gameId}`, `card-mount-${gameId}`, `move-to-collection-${gameId}`, `remove-from-collection-${gameId}`, `delete-game-${gameId}`]);
-  // No reader in this org: no fob button, as on the card.
-  await expect(r.getByTestId(`fob-${gameId}`)).toHaveCount(0);
+  // The row's only button is the ⋯ trigger; its menu has the card's items in the board's order (spec §2): mount,
+  // (fob only with a reader), history, move to a collection (A3), remove, delete.
+  expect(await r.locator('button').evaluateAll((els) => els.map((el) => el.getAttribute('data-testid'))))
+    .toEqual([`title-menu-${gameId}`]);
+  const menu = await openTitleMenu(page, gameId);
+  const controls = await menu.locator('[role=menuitem]').evaluateAll((els) => els.map((el) => el.getAttribute('data-testid')));
+  expect(controls).toEqual([`card-mount-${gameId}`, `history-${gameId}`, `move-to-collection-${gameId}`, `remove-from-collection-${gameId}`, `delete-game-${gameId}`]);
+  // No reader in this org: no fob item, as on the card.
+  await expect(page.getByTestId(`fob-${gameId}`)).toHaveCount(0);
 
   // Mount from the row: the marker goes on the row and the click stays here.
-  await r.getByTestId(`card-mount-${gameId}`).click();
+  await page.getByTestId(`card-mount-${gameId}`).click();
   await expect(page.getByText('Mount requested')).toBeVisible();
   await expect(page).toHaveURL(/\/library/);
   await expect(r).toHaveAttribute('data-drive', 'fetching');
@@ -176,15 +180,17 @@ test('a row carries the card controls, and its delete asks first without leaving
   })).status()).toBe(204);
   await page.reload();
   await expect(r).toHaveAttribute('data-drive', 'mounted');
-  await expect(r.getByTestId(`card-eject-${gameId}`)).toBeVisible();
+  await openTitleMenu(page, gameId);
+  await expect(page.getByTestId(`card-eject-${gameId}`)).toBeVisible();
 
   // Delete asks, and Cancel keeps the title.
-  await r.getByTestId(`delete-game-${gameId}`).click();
+  await page.getByTestId(`delete-game-${gameId}`).click();
   await expect(page.getByTestId('delete-dialog')).toBeVisible();
   await expect(page).toHaveURL(/\/library/);
   await page.getByTestId('delete-cancel').click();
   await expect(page.getByTestId('delete-dialog')).toHaveCount(0);
-  await r.getByTestId(`delete-game-${gameId}`).click();
+  await openTitleMenu(page, gameId);
+  await page.getByTestId(`delete-game-${gameId}`).click();
   await page.getByTestId('delete-confirm').click();
   await expect(page.getByTestId('game-row')).toHaveCount(0);
   expect(await getDb().select().from(games).where(eq(games.id, gameId))).toHaveLength(0);
@@ -199,7 +205,8 @@ test('remove from collection on a row takes it out of the collection, not the li
   await apiAddGame(page, id, gameId);
 
   await page.goto(`/library?view=table&collection=${id}`);
-  await row(page, t).getByTestId(`remove-from-collection-${gameId}`).click();
+  await openTitleMenu(page, gameId);
+  await page.getByTestId(`remove-from-collection-${gameId}`).click();
   await expect(page.getByTestId('game-row')).toHaveCount(0);
   // An emptied collection says so, rather than showing an up row alone (final review M2).
   await expect(page.getByTestId('table-empty-note')).toContainText('No titles in this collection yet');
@@ -283,9 +290,10 @@ test('with a reader in the org, a row shows the fob button in the card\'s place'
   const { gameId } = await seedDisk(u.orgId, { title: `Fob row ${run}`, diskNo: 1, sha256: sha(`fob-${run}`) });
 
   await page.goto('/library?view=table');
-  const controls = await row(page, `Fob row ${run}`).locator('button')
-    .evaluateAll((els) => els.map((el) => el.getAttribute('data-testid')));
-  expect(controls).toEqual([`history-${gameId}`, `card-mount-${gameId}`, `fob-${gameId}`, `move-to-collection-${gameId}`, `delete-game-${gameId}`]);
+  await expect(row(page, `Fob row ${run}`)).toBeVisible();
+  const menu = await openTitleMenu(page, gameId);
+  const controls = await menu.locator('[role=menuitem]').evaluateAll((els) => els.map((el) => el.getAttribute('data-testid')));
+  expect(controls).toEqual([`card-mount-${gameId}`, `fob-${gameId}`, `history-${gameId}`, `move-to-collection-${gameId}`, `delete-game-${gameId}`]);
 });
 
 // Final review fixes (2026-10-22): M1, M3, M5, M8.

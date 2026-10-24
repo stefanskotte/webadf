@@ -20,8 +20,8 @@ function GoodToKnow({ items }: { items: ReactNode[] }) {
 
 export const HELP_TOPICS = {
   // Sources: library/page.tsx (view from ?view= else prefs library.view; no overview in the table),
-  // game-table.tsx + library-table.ts (folders at the root, the up row), title-controls.tsx (the shared controls
-  // and their order), view-toggle.tsx (keeps the collection), collection-provider.tsx onDragEnd (a row files on a
+  // game-table.tsx + library-table.ts (folders at the root, the up row), title-menu.tsx (the ⋯ menu a card
+  // and a row share: its items, their order, Mount in DF0 vs Mount…), view-toggle.tsx (keeps the collection), collection-provider.tsx onDragEnd (a row files on a
   // rail drop only; reorder and card-on-card sets are the grid's), preferences-form.tsx (Library opens in, Titles per
   // page), library-pager.tsx + library-paging.ts (?page=, Per page saves the preference, a new size or sort goes to
   // page 1), library-table.ts (folders on page 1 only).
@@ -48,10 +48,9 @@ export const HELP_TOPICS = {
           page you are on. In the table, the folders are on the first page.
         </p>
         <p>
-          <strong>Controls.</strong> Rows have the card&apos;s buttons in the same order: version history, mount
-          or eject, write an NFC tag (when you have a reader), move to a collection, remove from the collection
-          (inside one) and delete. A disk in a drive is marked round its picture, and a disk you made here can be
-          renamed in place.
+          <strong>Controls.</strong> A card&apos;s or a row&apos;s <em>⋯</em> menu has, in order: mount or eject,
+          write to an NFC tag, version history, move to a collection, remove from the collection (inside one) and
+          delete. A disk in a drive shows a DF0 pill; a disk made here can be renamed in place.
         </p>
         <p>
           <strong>Filing.</strong> Drag a card or a row onto a collection in the list, or use{' '}

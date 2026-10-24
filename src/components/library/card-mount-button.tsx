@@ -1,10 +1,9 @@
 'use client';
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Eject, Play } from 'lucide-react';
 import { holdAction, holdLabel, type Hold } from '@/lib/drive-holds';
 import { df1Option, type Df1Board } from '@/lib/df1-pick';
 
@@ -55,8 +54,8 @@ type CardMountProps = {
 
 /**
  * The mount control's logic, without any markup: what the title holds, which disks it could mount, and `act` /
- * `undo` (mount, eject, cancel with the toasts and the Undo). `CardMountButton` and `CardMountDialog` use it, and
- * the title menu calls `act` directly for a one-click Mount or Eject.
+ * `undo` (mount, eject, cancel with the toasts and the Undo). `CardMountDialog` uses it, and the title menu
+ * (title-menu.tsx) calls `act` / `undo` directly for a one-click Mount or Eject.
  * `available`: false when there is no board
  * or no disk, where the control draws nothing.
  */
@@ -128,83 +127,17 @@ export function useCardMount({ gameId, diskCount, singleDiskId, drives }: Omit<C
 }
 
 /**
- * Mount or eject a title from its library card. Same look and placement as
- * the NFC, history and delete controls beside it, and the same picker as the
- * NFC button: one click when there is one disk and one board, otherwise
- * "which disk?" and "which board?". When a disk of this title is in a drive
- * the control becomes Eject for that board (or asks which, if several).
- *
- * The request is the existing one the title page uses (/api/devices/[id]/mount
- * and /eject). The board acts on its next poll; the layout's live poller is
- * what turns the dashed ring solid once it reports.
- */
-export function CardMountButton(props: CardMountProps) {
-  const { gameId, title, diskCount, drives } = props;
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const mount = useCardMount(props);
-  const { holds, disks, busy, available, ejecting, act, undo } = mount;
-  if (!available) return null;
-
-  function onClick(e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (ejecting) {
-      if (holds.length === 1) { void undo(holds[0]); return; }
-      setOpen(true);
-      return;
-    }
-    const onlyDisk = disks.length === 1 ? disks[0].id : null;
-    const onlyDevice = drives.devices.length === 1 ? drives.devices[0].id : null;
-    // A board with DF1 On always asks which drive.
-    if (onlyDisk && onlyDevice && drives.devices[0].df1 === null) { void act(onlyDevice, onlyDisk); return; }
-    setOpen(true);
-  }
-
-  const single = holds.length === 1 ? holds[0] : null;
-  const verb = single ? holdAction(single) : 'Eject';
-  const label = ejecting
-    ? `${holds.map((h) => holdLabel(h, diskCount)).join('; ')} · ${single ? verb : 'Eject or cancel'}`
-    : 'Mount';
-  const trigger = (
-    <button
-      ref={triggerRef}
-      type="button"
-      data-testid={`${ejecting ? 'card-eject' : 'card-mount'}-${gameId}`}
-      aria-label={ejecting
-        ? (single ? `${verb} ${title} — ${holdLabel(single, diskCount)}` : `Eject or cancel ${title}`)
-        : `Mount ${title}`}
-      title={label}
-      disabled={busy}
-      onClick={onClick}
-      onPointerDown={stop}
-      onMouseDown={stop}
-      onTouchStart={stop}
-      className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)] disabled:opacity-50"
-      style={{ color: ejecting ? 'var(--primary-action)' : 'var(--faint)' }}
-    >
-      {ejecting
-        ? <Eject size={14} strokeWidth={1.75} aria-hidden />
-        : <Play size={14} strokeWidth={1.75} aria-hidden />}
-    </button>
-  );
-  return (
-    <>
-      {trigger}
-      <CardMountDialog {...props} mount={mount} open={open} onClose={() => { setOpen(false); triggerRef.current?.focus(); }} />
-    </>
-  );
-}
-
-/**
- * The controlled picker behind `CardMountButton`, also rendered by the title menu (outside its popup).
+ * The mount picker, rendered by the title menu (title-menu.tsx) outside its popup: "which disk?", "which board?"
+ * and, on a board with DF1 On, "which drive?". The request is the one the title page uses
+ * (/api/devices/[id]/mount and /eject); the board acts on its next poll, and the layout's live poller is what turns
+ * the dashed ring solid once it reports.
  * `open` / `onClose`: the caller owns visibility (Close, Escape and the backdrop call `onClose`, and so does a
- * request once it starts); the rest are the button's props. Renders nothing while closed or when there is no board
+ * request once it starts); the rest say which title and which boards. Renders nothing while closed or when there is no board
  * or no disk; each opening starts with the choices cleared (or preselected when there is only one).
  */
 export function CardMountDialog(props: CardMountProps & {
   open: boolean; onClose: () => void;
-  /** The caller's own `useCardMount` result, when it has one (the button shares its busy state); else made here. */
+  /** The caller's own `useCardMount` result, when it has one (the menu shares its busy state); else made here. */
   mount?: ReturnType<typeof useCardMount>;
 }) {
   const { mount, ...rest } = props;
