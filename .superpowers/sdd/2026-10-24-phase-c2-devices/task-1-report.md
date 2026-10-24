@@ -25,3 +25,10 @@ Spec §4.2's table (which driveBoxText follows) says label `In the drive`, title
 The brief's two requirements conflict here; I followed the spec table. It is screen-reader-only text; the e2e `toContainText('No disk')` still passes.
 All other states/mode sentences are byte-identical.
 Modal note: `dismissible=false` blocks Escape/backdrop; the close button is not disabled by the Modal itself (the consumer decides in Task 6/7).
+
+## Fix round 1
+- Important 1: new `src/lib/list-devices.db.test.ts` (own database on the local dev Postgres via `pnpm db:dev start`, never production).
+  Org A device naming org B's game on both sides -> `mountedGameId`/`desiredGameId`/`mountedGame` null; own-org game -> its id; nothing named -> null.
+  Watched red first: with the two fields temporarily pointed at `devices.mountedGameId`/`devices.desiredGameId` the foreign-game test failed (1 failed, 2 passed); restored (no diff on queries.ts), 3 passed.
+- Minor 1: `modal.tsx` close button now `disabled={!dismissible}` (dimmed when disabled); doc comment corrected.
+- Runs: unit 274 files / 3212 tests passed; `tsc --noEmit` clean; db: list-devices + boot-disk 15 passed.

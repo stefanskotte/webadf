@@ -7,10 +7,9 @@ import { XIcon } from 'lucide-react';
  * The shared modal (Devices spec §10.1): Base UI's Dialog, portalled, with a header (title, subtitle, a badge, a
  * close button), a scrolling body and a footer on `--modal-foot`. Full screen below `sm`.
  *
- * `dismissible` is false while a request runs: Escape and the backdrop then do nothing (`disablePointerDismissal`
- * covers the pointer; `onOpenChange` ignores the rest), so the outcome of a request cannot be hidden under a closed
- * dialog. The close button is the caller's to disable in that state through `footer`/its own state; this component
- * only stops the dismissals it owns. Focus moves into the popup on open and returns on close to `finalFocus`, else
+ * `dismissible` is false while a request runs: Escape, the backdrop and the close button are then all inert
+ * (`disablePointerDismissal`, an `onOpenChange` gate, and `disabled` on the close button, so it also looks and
+ * announces as unavailable). Focus moves into the popup on open and returns on close to `finalFocus`, else
  * to the element focused before opening (Base UI's default).
  */
 export function Modal({
@@ -59,8 +58,8 @@ export function Modal({
                 </Dialog.Description>
               )}
             </div>
-            <Dialog.Close data-testid={closeTestId} aria-label="Close"
-                          className="flex size-9 shrink-0 items-center justify-center rounded-[10px] hover:bg-[var(--track)]"
+            <Dialog.Close data-testid={closeTestId} aria-label="Close" disabled={!dismissible}
+                          className="flex size-9 shrink-0 items-center justify-center rounded-[10px] hover:bg-[var(--track)] disabled:opacity-45"
                           style={{ color: 'var(--muted)' }}>
               <XIcon className="size-4" aria-hidden />
             </Dialog.Close>
