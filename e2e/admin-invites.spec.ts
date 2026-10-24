@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { signUpFresh } from './helpers';
+import { signUpFresh, mintInviteCode } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
 import { cleanupSeeded } from './device-helpers';
 import { ALPHABET } from '@/lib/invites';
@@ -130,4 +130,42 @@ test('an anonymous caller cannot reach the invite API at all', async ({ request 
     expect(res.status(), path).toBe(307);
     expect(res.headers()['location'], path).toContain('/sign-in');
   }
+});
+
+test.describe('copy buttons and Used by', () => {
+  test.beforeEach(async ({ context, baseURL }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: baseURL });
+  });
+
+  test('Copy link and Copy code put the sign-up link and the code on the clipboard', async ({ page, baseURL }) => {
+    await signInAsSuperAdmin(page);
+    await page.goto('/admin/invites');
+    const code = await issueCode(page);
+
+    await page.getByTestId(`invite-copy-link-${code}`).click();
+    await expect(page.getByTestId(`invite-copy-link-${code}`)).toHaveText('Copied');
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${baseURL}/sign-up?invite=${code}`);
+
+    await page.getByTestId(`invite-copy-code-${code}`).click();
+    await expect(page.getByTestId(`invite-copy-code-${code}`)).toHaveText('Copied');
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(code);
+  });
+
+  test('the Used by column shows the email of the user who signed up with the code', async ({ page, context }) => {
+    const code = await mintInviteCode();
+    const email = `usedby-${Date.now()}@example.test`;
+    const consumer = await context.browser()!.newPage();
+    await consumer.goto('/sign-up');
+    await consumer.getByLabel('Email').fill(email);
+    await consumer.getByLabel('Password').fill('correct-horse-battery-staple');
+    await consumer.getByLabel('Invite code').fill(code);
+    await consumer.getByRole('button', { name: /sign up/i }).click();
+    await expect(consumer).toHaveURL(/\/library/, { timeout: 15_000 });
+    await consumer.close();
+
+    await signInAsSuperAdmin(page);
+    await page.goto('/admin/invites');
+    await expect(page.getByTestId(`invite-used-by-${code}`)).toContainText(email);
+    await expect(page.getByTestId(`invite-${code}`)).toContainText('Used');
+  });
 });

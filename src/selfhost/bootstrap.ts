@@ -15,7 +15,7 @@ export async function ensureBootstrapInvite(url: string, adminEmail: string): Pr
   const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(user);
   if (n > 0) return null;
   const live = await db.select({ code: invites.code }).from(invites).where(and(
-    eq(invites.orgId, BOOTSTRAP_ORG), isNull(invites.consumedAt), gt(invites.expiresAt, new Date()),
+    eq(invites.orgId, BOOTSTRAP_ORG), isNull(invites.consumedAt), isNull(invites.revokedAt), gt(invites.expiresAt, new Date()),
   )).limit(1);
   let code = live[0]?.code;
   if (!code) {

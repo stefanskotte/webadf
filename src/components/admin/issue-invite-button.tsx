@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { CopyInviteButtons } from '@/components/admin/copy-invite-buttons';
 
 /**
  * Issues a code and keeps it on screen until the next issue.
@@ -51,6 +52,11 @@ export function IssueInviteButton() {
           data-testid="new-invite-code"
         >
           {code}
+        </span>
+      )}
+      {code && (
+        <span style={{ color: 'var(--on-dark)' }}>
+          <CopyInviteButtons code={code} />
         </span>
       )}
       <button

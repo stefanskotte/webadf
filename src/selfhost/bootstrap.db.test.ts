@@ -29,10 +29,19 @@ describe('ensureBootstrapInvite', () => {
     expect(n.rows[0].n).toBe(1);
   });
 
+  it('does not reuse a revoked bootstrap code', async () => {
+    const before = await ensureBootstrapInvite('https://x.lan', 'me@x.lan');
+    const oldCode = before!.slice(-8);
+    await admin(`update invites set revoked_at = now() where code = '${oldCode}'`, u.toString());
+    const after = await ensureBootstrapInvite('https://x.lan', 'me@x.lan');
+    expect(after).not.toContain(oldCode);
+    expect(after).toMatch(/sign-up\?invite=[A-Z0-9]{8}$/);
+  });
+
   it('returns null and creates nothing once a user exists', async () => {
     await admin(`insert into auth."user" (id, name, email, email_verified, created_at, updated_at) values ('u1','x','x@x.lan',false,now(),now())`, u.toString());
     expect(await ensureBootstrapInvite('https://x.lan', 'me@x.lan')).toBeNull();
     const n = await admin(`select count(*)::int as n from invites where org_id = 'bootstrap'`, u.toString());
-    expect(n.rows[0].n).toBe(1);
+    expect(n.rows[0].n).toBe(2);
   });
 });
