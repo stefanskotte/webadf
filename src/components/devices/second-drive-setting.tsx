@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState, useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { DeviceListItem } from '@/lib/queries';
 import { secondDriveStatus, DF1_SEEN_REASON, SECOND_DRIVE_NET_FW, secondDriveHelp, sel1Text, df1SeenText, type SecondDriveMode } from '@/lib/second-drive';
@@ -40,27 +40,21 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
   const [wantAny, setWantAny] = useState(false);
   const hasPick = device.df1DiskId !== null;
   const shown: Radio = device.secondDrive === 'df1' && (hasPick || wantAny) ? 'any' : device.secondDrive;
-  const groupDisabled = !device.secondDriveCapable || busy || refreshing;
-  const radioDisabled = (v: Radio) => groupDisabled || (v === 'net' && !device.secondDriveNetCapable);
-  // Arrow keys move focus AND select; the group is disabled while the save runs, so focus returns to the checked radio after.
-  const refocus = useRef(false);
-  useEffect(() => {
-    if (refocus.current && !busy && !refreshing) {
-      refocus.current = false;
-      document.querySelector<HTMLElement>(`[data-testid="second-drive-${id}-${shown}"]`)?.focus();
-    }
-  }, [busy, refreshing, shown, id]);
+  // While a save runs the radios are aria-disabled, not disabled: a disabled button drops focus to the body. Input
+  // during a save is ignored (not queued); the group is real-disabled only when the board cannot take the setting.
+  const saving = busy || refreshing;
+  const radioDisabled = (v: Radio) => !device.secondDriveCapable || (v === 'net' && !device.secondDriveNetCapable);
 
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     const dir = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
     if (!dir) return;
     e.preventDefault();
+    if (saving) return;
     const enabled = RADIOS.filter((r) => !radioDisabled(r.value));
     const at = enabled.findIndex((r) => r.value === shown);
     if (at < 0 || enabled.length < 2) return;
     const target = enabled[(at + dir + enabled.length) % enabled.length].value;
     document.querySelector<HTMLElement>(`[data-testid="second-drive-${id}-${target}"]`)?.focus();
-    refocus.current = true;
     void choose(target);
   }
 
@@ -68,7 +62,8 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
     if (value === shown) return;
     if (value === 'any') {
       setWantAny(true);
-      if (device.secondDrive !== 'df1') await save('df1');
+      // A refusal keeps Any disk shown: the override confirmation that follows saves it.
+      if (device.secondDrive !== 'df1' && (await save('df1')) === false) setWantAny(false);
       return;
     }
     setWantAny(false);
@@ -83,7 +78,7 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
     await save(value as SecondDriveMode);
   }
 
-  async function save(mode: SecondDriveMode, override = false) {
+  async function save(mode: SecondDriveMode, override = false): Promise<boolean | 'refused'> {
     setBusy(true);
     setFailed(null);
     try {
@@ -93,18 +88,20 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
       });
       if (res.status === 409) {
         const j = await res.json() as { error: string; reason: string };
-        if (j.error === 'df1_seen') { setPending(mode); setRefused(DF1_SEEN_REASON); } else setFailed(j.reason);   // m1: only df1_seen offers the override
-        return;
+        if (j.error === 'df1_seen') { setPending(mode); setRefused(DF1_SEEN_REASON); return 'refused'; } else setFailed(j.reason);   // m1: only df1_seen offers the override
+        return false;
       }
       if (!res.ok) {
         const j = await res.json().catch(() => null) as { reason?: string } | null;
         setFailed(j?.reason ?? `Could not save (HTTP ${res.status})`);
-        return;
+        return false;
       }
       setRefused(null); setStep(0);
       startRefresh(() => router.refresh());
+      return true;
     } catch {
       setFailed('Could not reach the server');
+      return false;
     } finally { setBusy(false); }
   }
 
@@ -147,9 +144,9 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
                onKeyDown={onKeyDown} className="seg seg--sm max-w-full flex-wrap">
             {RADIOS.map((r) => (
               <button key={r.value} type="button" role="radio" aria-checked={shown === r.value}
-                      tabIndex={shown === r.value ? 0 : -1} disabled={radioDisabled(r.value)}
+                      tabIndex={shown === r.value ? 0 : -1} disabled={radioDisabled(r.value)} aria-disabled={saving}
                       data-testid={`second-drive-${id}-${r.value}`}
-                      onClick={() => { refocus.current = false; void choose(r.value); }}
+                      onClick={() => { if (!saving) void choose(r.value); }}
                       className="seg-item whitespace-nowrap disabled:opacity-50">
                 {r.label}
               </button>

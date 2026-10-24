@@ -17,6 +17,13 @@ async function report(request: APIRequestContext, token: string, extra: Record<s
 }
 /** LiveRefresh polls every 3 s while the tab is in use; allow a few ticks plus the RSC refresh. */
 const LIVE = 15_000;
+/** Wait until React has hydrated the radiogroup: a key pressed before that reaches DOM with no handler. */
+async function hydrated(page: import('@playwright/test').Page, deviceId: string) {
+  await page.waitForFunction((id) => {
+    const el = document.querySelector(`[data-testid="second-drive-${id}"]`);
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$') && typeof (el as unknown as Record<string, { onKeyDown?: unknown }>)[k]?.onKeyDown === 'function');
+  }, deviceId);
+}
 const row = async (id: string) => (await getDb().select().from(devices).where(eq(devices.id, id)))[0];
 
 test('a board without DF1 support is told which firmware it needs', async ({ page, request }) => {
@@ -364,14 +371,18 @@ test('arrow keys move the DF1 selection and save it; Tab enters on the checked r
   await expect(radio('df1')).toHaveAttribute('aria-checked', 'true');
   for (const m of ['off', 'net', 'any']) await expect(radio(m)).toHaveAttribute('tabindex', '-1');
   await expect(radio('df1')).toHaveAttribute('tabindex', '0');
+  await hydrated(page, deviceId);
   await radio('df1').focus();
   await page.keyboard.press('ArrowLeft');
   await expect.poll(async () => (await row(deviceId)).secondDrive).toBe('off');
   await expect(page.getByTestId(`second-drive-${deviceId}`)).toHaveAttribute('data-value', 'off');
-  await expect(radio('off')).toBeFocused();   // focus follows the selection once the save is done
+  await expect(radio('off')).toBeFocused();   // focus moved with the arrow and stayed
+  await expect(radio('off')).toHaveAttribute('aria-disabled', 'false');   // presses during a save are ignored: wait it out
   await page.keyboard.press('ArrowRight');
   await expect.poll(async () => (await row(deviceId)).secondDrive).toBe('df1');
   await expect(radio('df1')).toBeFocused();
+  await expect(page.getByTestId(`second-drive-${deviceId}`)).toHaveAttribute('data-value', 'df1');
+  await expect(radio('df1')).toHaveAttribute('aria-disabled', 'false');
   await page.keyboard.press('ArrowRight');   // Network is disabled on 1.10.2: skipped, Any disk is next
   await expect(page.getByTestId(`second-drive-${deviceId}`)).toHaveAttribute('data-value', 'any');
   await expect(radio('any')).toBeFocused();
@@ -387,4 +398,46 @@ test('a Network board shows the Transfer box inside the DF1 box', async ({ page,
   await expect(box.getByTestId(`net-checklist-${deviceId}`)).toBeVisible({ timeout: LIVE });
   await expect(box.getByTestId(`device-transfer-${deviceId}`)).toBeVisible();
   await expect(page.getByTestId(`device-transfer-${deviceId}`)).toHaveCount(1);
+});
+
+// Fix round 1: while a save runs the radios are aria-disabled (not disabled), so focus never drops to body, and
+// finishing the save never pulls focus back to the group once the user has moved on.
+test('during a DF1 save focus stays on the radio, and moving on is not undone when the save ends', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await df1OnBoard(page, request);
+  await page.goto('/devices');
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  await page.route(`**/api/devices/${deviceId}/second-drive`, async (route) => { await held; await route.continue(); });
+  const radio = (m: string) => page.getByTestId(`second-drive-${deviceId}-${m}`);
+  await expect(radio('df1')).toHaveAttribute('aria-checked', 'true');
+  await hydrated(page, deviceId);
+  await radio('df1').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(radio('net')).toBeFocused();                       // focus did not drop while the save is held
+  await expect(radio('net')).toHaveAttribute('aria-disabled', 'true');
+  await expect(radio('net')).not.toHaveAttribute('disabled', '');
+  await page.keyboard.press('ArrowRight');                         // ignored during the save
+  await expect(radio('net')).toBeFocused();
+  const tip = page.getByTestId('help-tip-second-drive').first();
+  await tip.focus();
+  release();
+  await expect.poll(async () => (await row(deviceId)).secondDrive).toBe('net');
+  await expect(page.getByTestId(`second-drive-${deviceId}`)).toHaveAttribute('data-value', 'net');
+  await expect(radio('net')).toHaveAttribute('aria-disabled', 'false');
+  await expect(tip).toBeFocused();
+});
+
+test('a failed Any disk save does not leave Any disk shown', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await df1OnBoard(page, request);
+  expect((await page.request.patch(`/api/devices/${deviceId}/second-drive`, { data: { mode: 'off' } })).status()).toBe(200);
+  await page.goto('/devices');
+  await page.route(`**/api/devices/${deviceId}/second-drive`, (route) =>
+    route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ reason: 'Database unavailable' }) }));
+  await pickSecondDrive(page, deviceId, 'any');
+  await expect(page.getByTestId(`second-drive-error-${deviceId}`)).toHaveText('Database unavailable');
+  await expect(page.getByTestId(`second-drive-${deviceId}`)).toHaveAttribute('data-value', 'off');
+  await page.unroute(`**/api/devices/${deviceId}/second-drive`);
+  expect((await row(deviceId)).secondDrive).toBe('off');
 });
