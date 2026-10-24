@@ -193,7 +193,7 @@ test('deleting the last disk from its own page lands on the library, not a 404',
 
   // Landed on the library, and NOT on an error page.
   await expect(page).toHaveURL(/\/library/);
-  // The New disk trigger is unique to /library and visible, so this
+  // The Create ADF trigger is unique to /library and visible, so this
   // asserts the library actually RENDERED rather than that the URL merely
   // changed -- a 404 at /library would satisfy the URL check alone.
   await expect(page.getByTestId('create-adf')).toBeVisible();

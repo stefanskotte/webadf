@@ -50,32 +50,35 @@ export function LibraryPager({ page, pages, pageSize, total }: {
     }
   }
 
-  const step = 'grid h-8 min-w-8 place-items-center rounded-lg px-2 text-[12px] font-semibold';
+  // Spec 1.4: 34px steps, mono numbers, ink-filled current page; Prev/Next stay sans.
+  const step = 'grid h-[34px] min-w-[34px] place-items-center rounded-[9px] px-2 text-[13px] font-semibold';
+  const hov = 'hover:bg-[var(--track)]';
+  const num = `${step} font-mono`;
   const idle = { color: 'var(--ink)' };
   const muted = { color: 'var(--muted-2)' };
-  const current = { background: 'var(--primary-action)', color: '#fff' };
+  const current = { background: 'var(--ink)', color: 'var(--surface)' };
 
   return (
     <nav aria-label="Pages" data-testid="library-pager"
-         className="mx-4 mt-4 flex flex-wrap items-center justify-between gap-3 sm:mx-7">
+         className="mx-4 mt-6 flex flex-wrap items-center justify-between gap-3 sm:mx-7">
       {pages > 1 ? (
         <div className="flex flex-wrap items-center gap-1">
           {page > 1
-            ? <Link href={href(page - 1)} className={step} style={idle} data-testid="pager-prev" aria-label="Previous page">‹ Prev</Link>
+            ? <Link href={href(page - 1)} className={`${step} ${hov}`} style={idle} data-testid="pager-prev" aria-label="Previous page">‹ Prev</Link>
             : <span className={step} style={muted} aria-hidden="true">‹ Prev</span>}
           {pageWindow(page, pages).map((p, i) => p === 'gap'
-            ? <span key={`gap-${i}`} className={step} style={muted} aria-hidden="true">…</span>
+            ? <span key={`gap-${i}`} className={num} style={muted} aria-hidden="true">…</span>
             : p === page
-              ? <span key={p} className={step} style={current} aria-current="page" data-testid={`pager-page-${p}`}>{p}</span>
-              : <Link key={p} href={href(p)} className={step} style={idle} data-testid={`pager-page-${p}`}
+              ? <span key={p} className={num} style={current} aria-current="page" data-testid={`pager-page-${p}`}>{p}</span>
+              : <Link key={p} href={href(p)} className={`${num} ${hov}`} style={idle} data-testid={`pager-page-${p}`}
                       aria-label={`Page ${p}`}>{p}</Link>)}
           {page < pages
-            ? <Link href={href(page + 1)} className={step} style={idle} data-testid="pager-next" aria-label="Next page">Next ›</Link>
+            ? <Link href={href(page + 1)} className={`${step} ${hov}`} style={idle} data-testid="pager-next" aria-label="Next page">Next ›</Link>
             : <span className={step} style={muted} aria-hidden="true">Next ›</span>}
         </div>
       ) : <span />}
-      <span className="inline-flex items-center gap-2 text-[12px]">
-        <label htmlFor={id} className="font-semibold" style={{ color: 'var(--muted)' }}>Per page</label>
+      <span className="inline-flex items-center gap-2 text-[13px]">
+        <label htmlFor={id} className="font-medium" style={{ color: 'var(--muted)' }}>Per page</label>
         <select
           id={id}
           data-testid="pager-size"
@@ -84,8 +87,8 @@ export function LibraryPager({ page, pages, pageSize, total }: {
             const next = LIBRARY_PAGE_SIZES.find((s) => String(s) === e.target.value);
             if (next !== undefined) void change(next);
           }}
-          className="h-8 rounded-lg border px-2 text-[12px]"
-          style={{ borderColor: 'var(--hairline)', background: 'var(--input-bg)', color: 'var(--ink)' }}
+          className="h-[34px] rounded-[9px] border px-2 text-[13px]"
+          style={{ borderColor: 'var(--line)', background: 'var(--surface)', color: 'var(--ink)' }}
         >
           {LIBRARY_PAGE_SIZES.map((s) => <option key={s} value={String(s)}>{pageSizeLabel(s)}</option>)}
         </select>

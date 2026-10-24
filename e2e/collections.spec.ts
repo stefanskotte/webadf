@@ -813,3 +813,32 @@ test('All titles sits at the bottom of the rail and still shows everything', asy
   await page.getByTestId('collection-all').click();
   await expect(page.getByTestId('game-card')).toHaveCount(2);
 });
+
+test('inside a collection the heading is its name and its rail row is the current page', async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  const a = await seedDisk(u.orgId, { title: `Member ${run}`, diskNo: 1, sha256: randomUUID().replace(/-/g, '').padEnd(64, '4') });
+  const name = `Heading ${run}`;
+  const id = await apiCreateCollection(page, name);
+  await apiAddGame(page, id, a.gameId);
+
+  // The landing: "Library", and the inbox row is the current one.
+  await page.goto('/library');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Library');
+  await expect(page.getByTestId('collection-uncategorized')).toHaveAttribute('aria-current', 'page');
+
+  // In the collection: its name is the heading, a Library crumb leads back, and exactly one rail row is current --
+  // the collection's own.
+  await page.goto(`/library?collection=${id}`);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(name);
+  await expect(page.getByTestId('breadcrumb').getByRole('link', { name: 'Library' })).toHaveAttribute('href', '/library');
+  const rail = page.getByTestId('collection-rail');
+  await expect(rail.locator('[aria-current="page"]')).toHaveCount(1);
+  await expect(railRow(page, id).getByRole('link')).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByTestId('collection-uncategorized')).not.toHaveAttribute('aria-current', 'page');
+
+  // All titles names itself the same way.
+  await page.goto('/library?collection=all');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('All titles');
+  await expect(page.getByTestId('collection-all')).toHaveAttribute('aria-current', 'page');
+});

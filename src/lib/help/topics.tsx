@@ -301,7 +301,7 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          <strong>HD disks.</strong> Create one from <em>New disk</em>, or upload one. They mount only on boards that
+          <strong>HD disks.</strong> Create one from <em>Create ADF</em>, or upload one. They mount only on boards that
           can play HD; saving to them needs board firmware 1.5.0 or newer.
         </p>
         <p>

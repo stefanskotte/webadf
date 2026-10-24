@@ -45,5 +45,5 @@ export function LibrarySortPicker({ sort }: { sort: LibrarySort }) {
     }
   }
 
-  return <SortSelect options={LIBRARY_SORT_OPTIONS} value={value} onChange={(s) => void change(s)} testId="library-sort" />;
+  return <SortSelect options={LIBRARY_SORT_OPTIONS} value={value} onChange={(s) => void change(s)} testId="library-sort" toolbar />;
 }

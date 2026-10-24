@@ -113,6 +113,8 @@ test('the library grid is two columns, and nothing overflows the viewport', asyn
 
   const cards = page.getByTestId('game-card');
   await expect(cards).toHaveCount(4);
+  // Streamed cards are in the DOM before React reveals them: measure only once visible.
+  await expect(cards.nth(3)).toBeVisible();
   const a = (await cards.nth(0).boundingBox())!;
   const b = (await cards.nth(1).boundingBox())!;
   const c = (await cards.nth(2).boundingBox())!;
@@ -314,7 +316,7 @@ test('a touch drag scrolls the library, and a press-and-hold drags a card', asyn
   await held.end();
 });
 
-test('the New disk panel opens as a bottom sheet and makes a disk at a phone width', async ({ page }) => {
+test('the Create ADF panel opens as a bottom sheet and makes a disk at a phone width', async ({ page }) => {
   await signUpFresh(page);
   await page.goto('/library');
 

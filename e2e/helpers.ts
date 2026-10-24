@@ -118,7 +118,7 @@ export async function signUpFresh(page: Page) {
 }
 
 /**
- * Make a blank disk from the library header's "New disk" panel.
+ * Make a blank disk from the library header's "Create ADF" panel.
  *
  * Every caller goes through here because the trigger click alone creates
  * nothing: it opens a small form (Size, Filesystem, Create). Both switches
