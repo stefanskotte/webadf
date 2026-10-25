@@ -9,8 +9,10 @@
 //     prevents it -- so the disks join carries orgId as well as gameId. A join
 //     on gameId alone would still return the right org's games, with another
 //     tenant's disk counted in them. That is the failure that would be silent.
-//  3. Global content-addressed tables are never matched first and joined back.
-//     This file does not touch blobs, tosec_entries or openretro_images at all.
+//  3. Global content-addressed tables are never matched first and joined back. The title search itself reads none
+//     of them; the one place this answer touches blobs and tosec_entries is kindsForGames (queries.ts), which starts
+//     from this org's own disk rows (disks.orgId = the caller's org) and only then reaches the shared tables to
+//     read a set name, so no other org's disk can contribute a kind.
 //
 // collection_games has no org_id by design (D-4-5): membership is reachable
 // only through a collection, which has one. The gameCount subquery below does

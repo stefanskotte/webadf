@@ -235,12 +235,19 @@ export function SearchBox() {
   // pill on the first keystroke.
   const showPanel = trimmed !== '' && (error !== null || flat.length > 0 || showEmpty);
   const panelOpen = open && showPanel;
+  // The listbox exists only when rows are shown: not under the error or the empty line.
+  const listboxShown = panelOpen && !error && !showEmpty && flat.length > 0;
+  // Help rows are matched live, ahead of the server's answer, so the list can shrink under the highlight.
+  const active = Math.min(highlight, Math.max(flat.length - 1, 0));
+  // Only keyboard moves scroll the highlighted row into view; a hover must not make the list jump.
+  const scrollOnMove = useRef(false);
 
   // Ruling 26: the list scrolls past 620 px, so the arrows keep the highlighted option in view.
   useEffect(() => {
-    if (!panelOpen) return;
-    document.getElementById(`search-opt-${highlight}`)?.scrollIntoView({ block: 'nearest' });
-  }, [highlight, panelOpen]);
+    if (!panelOpen || !scrollOnMove.current) return;
+    scrollOnMove.current = false;
+    document.getElementById(`search-opt-${active}`)?.scrollIntoView({ block: 'nearest' });
+  }, [active, panelOpen]);
 
   function onChange(value: string) {
     setOpen(true);
@@ -272,22 +279,27 @@ export function SearchBox() {
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'ArrowDown') {
+    // An IME composition owns its keys; and a modified arrow or Enter belongs to the browser (house listbox convention).
+    if (e.nativeEvent.isComposing) return;
+    const modified = e.altKey || e.ctrlKey || e.metaKey;
+    if (e.key === 'ArrowDown' && !modified) {
       if (flat.length === 0) return;
       e.preventDefault();
       setOpen(true);
-      setHighlight((h) => (h + 1) % flat.length);
+      scrollOnMove.current = true;
+      setHighlight((h) => (Math.min(h, flat.length - 1) + 1) % flat.length);
       return;
     }
-    if (e.key === 'ArrowUp') {
+    if (e.key === 'ArrowUp' && !modified) {
       if (flat.length === 0) return;
       e.preventDefault();
       setOpen(true);
-      setHighlight((h) => (h - 1 + flat.length) % flat.length);
+      scrollOnMove.current = true;
+      setHighlight((h) => (Math.min(h, flat.length - 1) - 1 + flat.length) % flat.length);
       return;
     }
-    if (e.key === 'Enter') {
-      const entry = panelOpen ? flat[highlight] : undefined;
+    if (e.key === 'Enter' && !modified) {
+      const entry = panelOpen ? flat[active] : undefined;
       if (entry) {
         e.preventDefault();
         select(entry);
@@ -319,10 +331,10 @@ export function SearchBox() {
           // layout, and focus lingering here must not hold back live updates the way a rename field should.
           data-live-ok
           role="combobox"
-          aria-expanded={panelOpen}
-          aria-controls="search-listbox"
+          aria-expanded={listboxShown}
+          aria-controls={listboxShown ? 'search-listbox' : undefined}
           aria-autocomplete="list"
-          aria-activedescendant={panelOpen && flat.length > 0 ? `search-opt-${highlight}` : undefined}
+          aria-activedescendant={listboxShown ? `search-opt-${active}` : undefined}
           aria-label="Search titles"
           title="Search titles — press / to focus"
           placeholder="Search titles"
@@ -379,7 +391,7 @@ export function SearchBox() {
                   </div>
                   {g.rows.map(({ entry, index }) => {
                     const p = rowParts(entry);
-                    const highlighted = index === highlight;
+                    const highlighted = index === active;
                     return (
                       <Link key={`${entry.kind}-${p.id}`} href={hrefOf(entry)} role="option" id={`search-opt-${index}`}
                             aria-selected={highlighted} tabIndex={-1}

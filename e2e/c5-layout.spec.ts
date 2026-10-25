@@ -179,7 +179,7 @@ test('Settings: the firmware confirm cannot be cancelled or re-sent while its re
   let posts = 0;
   await page.route('**/api/me/prefs/firmware-skip-password', async (route) => {
     posts += 1;
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 8000));
     await route.continue();
   });
   await hydrated(page, 'fw-skip-password');
@@ -206,7 +206,7 @@ test('Settings: the password form ignores Cancel, Escape and a second submit whi
   let calls = 0;
   await page.route('**/api/auth/change-password', async (route) => {
     calls += 1;
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 8000));
     await route.continue();
   });
   await hydrated(page, 'password-change-open');
@@ -239,7 +239,7 @@ test('Settings: the delete form ignores Cancel, Escape and a second submit while
   let calls = 0;
   await page.route('**/api/me/account', async (route) => {   // answered here: nothing is ever deleted
     calls += 1;
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 8000));
     await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'bad_password' }) });
   });
   await hydrated(page, 'account-delete-open');
@@ -523,4 +523,62 @@ test('Search: at 390 px the panel stays on screen and below the box', async ({ p
   expect(b.x + b.width).toBeLessThanOrEqual(390);
   expect(b.y).toBeGreaterThanOrEqual(i.y + i.height);
   await expect(page.getByTestId('search-scrim')).toBeHidden();
+});
+
+// ---- Search, fix round 1 --------------------------------------------------------------------------------------
+
+test('Search: modified arrows and Enter and IME composition keys are ignored', async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  await seedDisk(u.orgId, { title: `Keys ${run} Alpha`, diskNo: 1, sha256: sha('k') });
+  await seedDisk(u.orgId, { title: `Keys ${run} Beta`, diskNo: 1, sha256: sha('l') });
+  const input = page.getByTestId('search-input');
+  await hydrated(page, 'search-input', 'onChange');
+  await input.fill(`Keys ${run}`);
+  await expect(page.locator('[data-testid="search-result"]')).toHaveCount(2);
+  await expect(input).toHaveAttribute('aria-activedescendant', 'search-opt-0');
+  for (const m of ['Alt', 'Control', 'Meta']) await input.press(`${m}+ArrowDown`);
+  await input.evaluate((el) => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', isComposing: true, bubbles: true })));
+  await expect(input).toHaveAttribute('aria-activedescendant', 'search-opt-0');
+  const url = page.url();
+  for (const m of ['Alt', 'Control', 'Meta']) await input.press(`${m}+Enter`);
+  await input.evaluate((el) => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true })));
+  await page.waitForTimeout(500);
+  expect(page.url()).toBe(url);
+  await expect(page.getByTestId('search-panel')).toBeVisible();
+});
+
+test('Search: the highlight is clamped when the rows shrink, and an error or empty panel claims no listbox', async ({ page }) => {
+  await signUpFresh(page);
+  const input = page.getByTestId('search-input');
+  await hydrated(page, 'search-input', 'onChange');
+  let mode: 'ok' | 'slow' | 'fail' = 'ok';
+  await page.route('**/api/search?*', async (route) => {
+    if (mode === 'slow') await new Promise((r) => setTimeout(r, 8000));
+    if (mode === 'fail') return route.fulfill({ status: 500, body: '{}' });
+    return route.fulfill({ json: { titles: [], collections: [] } });
+  });
+  // Three Help rows, then one: the help rows are matched in the browser, ahead of the (delayed) response.
+  await input.fill('disk');
+  await expect(page.locator('[data-testid="search-result"]')).toHaveCount(3);
+  await page.waitForTimeout(800);   // let the first (empty) response land: it resets the highlight to the top row
+  await input.press('ArrowDown');
+  await input.press('ArrowDown');
+  await expect(input).toHaveAttribute('aria-activedescendant', 'search-opt-2');
+  mode = 'slow';
+  await input.fill('disk hist');
+  await expect(page.locator('[data-testid="search-result"]')).toHaveCount(1);
+  await expect(input).toHaveAttribute('aria-activedescendant', 'search-opt-0');
+  await expect(page.locator('#search-opt-0')).toHaveAttribute('aria-selected', 'true');
+
+  mode = 'ok';
+  await input.fill(`Nothing Here ${runTag()}`);
+  await expect(page.getByTestId('search-empty')).toBeVisible();
+  await expect(input).not.toHaveAttribute('aria-controls', /.+/);
+  await expect(input).toHaveAttribute('aria-expanded', 'false');
+  mode = 'fail';
+  await input.fill(`Broken ${runTag()}`);
+  await expect(page.getByTestId('search-error')).toBeVisible();
+  await expect(input).not.toHaveAttribute('aria-controls', /.+/);
+  await expect(input).toHaveAttribute('aria-expanded', 'false');
 });
