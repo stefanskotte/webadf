@@ -25,7 +25,7 @@ export default async function AdminInvitesPage() {
   const live = invites.filter((i) => i.state === 'live').length;
 
   return (
-    <InviteIssueProvider>
+    <InviteIssueProvider liveCodes={invites.filter((i) => i.state === 'live').map((i) => i.code)}>
       <AdminPageHead title="Invites" subtitle={`${live} live · ${invites.length} total · invite-only`}
                      actions={<IssueInviteButton />} />
       <div className={ADMIN_BODY}>

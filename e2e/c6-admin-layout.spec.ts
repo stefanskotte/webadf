@@ -294,3 +294,41 @@ test('Invites: a dropped revoke keeps the button; a revoke leaves the row Revoke
   await expect(revoke).toHaveCount(0);
   await expect(page.locator('h1')).toBeFocused();
 });
+
+test('Invites: revoking the just-issued code clears the new-code panel and its status line', async ({ page }) => {
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/invites');
+  const button = page.getByRole('button', { name: 'Issue an invite' });
+  const panel = page.getByTestId('new-invite-panel');
+  await expect(async () => {
+    await button.click();
+    await expect(panel).toBeVisible({ timeout: 2_000 });
+  }).toPass();
+  const code = (await page.getByTestId('new-invite-code').textContent())?.trim() ?? '';
+  await page.getByTestId(`revoke-${code}`).click();
+  await expect(page.getByTestId(`invite-${code}`).locator('[data-state]')).toHaveText('Revoked');
+  await expect(panel).toHaveCount(0);
+  await expect(page.getByRole('status').filter({ hasText: `New invite code ${code}` })).toHaveCount(0);
+  // The none-live note follows the live count the subtitle shows.
+  const sub = (await page.getByText(/^\d+ live · \d+ total · invite-only$/).textContent()) ?? '';
+  const live = Number(/^(\d+) live/.exec(sub)?.[1]);
+  await expect(page.getByTestId('invites-none-live')).toHaveCount(live === 0 ? 1 : 0);
+});
+
+test('Invites: a quick second click on Revoke sends one request, even while the refresh is on its way', async ({ page }) => {
+  const code = await mintInviteCode();
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/invites');
+  const revoke = page.getByTestId(`revoke-${code}`);
+  await hydrated(page, `revoke-${code}`);
+  let deletes = 0;
+  await page.route(`**/api/admin/invites/${code}`, (r) => { deletes++; return r.continue(); });
+  // Hold the refresh's RSC payload so the row is still on screen after the 204.
+  await page.route(/\/admin\/invites\?_rsc=/, async (r) => { await new Promise((res) => setTimeout(res, 2_000)); await r.continue(); });
+  await revoke.click();
+  await expect(page.getByText(`Revoked ${code}`)).toBeVisible();
+  await expect(revoke).toHaveAttribute('aria-disabled', 'true');
+  await revoke.click({ force: true });
+  await expect(page.getByTestId(`invite-${code}`).locator('[data-state]')).toHaveText('Revoked', { timeout: 10_000 });
+  expect(deletes).toBe(1);
+});

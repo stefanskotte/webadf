@@ -4,14 +4,21 @@ import { createContext, useContext, useState } from 'react';
 import { CopyInviteButtons } from '@/components/admin/copy-invite-buttons';
 
 type InviteIssue = { code: string | null; setCode: (code: string) => void };
+
+/** The issued code, only while the server's list still has it live (revoked, used or expired elsewhere: gone). */
+export function shownInviteCode(code: string | null, liveCodes: readonly string[]): string | null {
+  return code !== null && liveCodes.includes(code) ? code : null;
+}
 const InviteIssueContext = createContext<InviteIssue | null>(null);
 
 /**
  * The just-issued code, shared by the header's Issue an invite button and the panel under the tabs (C6 spec §4.1,
  * Ruling 18). Client state survives router.refresh(), so the code stays until the next issue or a reload.
  */
-export function InviteIssueProvider({ children }: { children: React.ReactNode }) {
-  const [code, setCode] = useState<string | null>(null);
+export function InviteIssueProvider({ liveCodes, children }: { liveCodes: readonly string[]; children: React.ReactNode }) {
+  const [issued, setCode] = useState<string | null>(null);
+  // Issue sets the code inside the same transition as the refresh, so the code and the list that holds it land together.
+  const code = shownInviteCode(issued, liveCodes);
   return <InviteIssueContext.Provider value={{ code, setCode }}>{children}</InviteIssueContext.Provider>;
 }
 

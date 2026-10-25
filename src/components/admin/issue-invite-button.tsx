@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { PlusIcon } from 'lucide-react';
@@ -13,10 +13,12 @@ import { useInviteIssue } from '@/components/admin/invite-issue';
 export function IssueInviteButton() {
   const { setCode } = useInviteIssue();
   const [busy, setBusy] = useState(false);
+  const [pending, startTransition] = useTransition();
   const router = useRouter();
+  const working = busy || pending;
 
   async function onClick() {
-    if (busy) return;
+    if (busy || pending) return;
     setBusy(true);
     try {
       const res = await fetch('/api/admin/invites', { method: 'POST' });
@@ -25,8 +27,8 @@ export function IssueInviteButton() {
         return;
       }
       const body = await res.json();
-      setCode(body.code);
-      router.refresh();
+      // One transition: the code shows together with the refreshed list that lists it, and busy holds until then.
+      startTransition(() => { setCode(body.code); router.refresh(); });
     } catch {
       toast.error('Could not reach the server', { description: 'Check your connection and try again.' });
     } finally {
@@ -35,11 +37,11 @@ export function IssueInviteButton() {
   }
 
   return (
-    <button type="button" onClick={onClick} aria-disabled={busy || undefined}
+    <button type="button" onClick={onClick} aria-disabled={working || undefined}
             className="inline-flex h-[42px] items-center gap-2 rounded-[10px] px-[18px] text-[14px] font-semibold text-white aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)"
             style={{ background: 'var(--ink)', color: 'var(--surface)' }}>
       <PlusIcon aria-hidden className="size-4" />
-      {busy ? 'Issuing…' : 'Issue an invite'}
+      {working ? 'Issuing…' : 'Issue an invite'}
     </button>
   );
 }
