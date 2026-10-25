@@ -239,6 +239,7 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
 
   await page.goto(`/disks/${sysInfo.id}/files`);
   await expect(page.getByTestId('history-panel')).toBeVisible();
+  await expect(page.getByTestId('disk-card')).toBeVisible();
   await shoot(page, 'disk-files', { tall: true });
 
   await report();
