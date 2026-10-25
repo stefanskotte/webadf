@@ -28,8 +28,11 @@ export function SignUpForm({ initialInviteCode }: { initialInviteCode: string })
     const body: Parameters<typeof signUp.email>[0] & { inviteCode: string } = {
       email, password, name: email.split('@')[0], inviteCode,
     };
-    const { error: err } = await signUp.email(body);
-    setBusy(false);
+    // A dropped connection rejects instead of returning an error; the button must come back either way.
+    let err: Awaited<ReturnType<typeof signUp.email>>['error'];
+    try { ({ error: err } = await signUp.email(body)); }
+    catch { setError('Could not reach the server. Try again.'); return; }
+    finally { setBusy(false); }
     if (err) { setError(authErrorText('up', err)); return; }
     router.push('/library');
   }

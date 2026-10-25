@@ -51,8 +51,11 @@ export function AccountSecurity({ email, sessionCount }: { email: string; sessio
     if (revoking) return;
     setRevoking(true);
     setRevokeError(null);
-    const { error: err } = await authClient.revokeOtherSessions();
-    setRevoking(false);
+    // A dropped connection rejects instead of returning an error; the button must come back either way.
+    let err: unknown;
+    try { ({ error: err } = await authClient.revokeOtherSessions()); }
+    catch { setRevokeError('Could not reach the server. Try again.'); return; }
+    finally { setRevoking(false); }
     if (err) { setRevokeError("Couldn't sign out the other browsers. Try again."); return; }
     setSessions(1);
     headingRef.current?.focus();   // the focused button is about to go
@@ -65,10 +68,15 @@ export function AccountSecurity({ email, sessionCount }: { email: string; sessio
     if (next.length < MIN_PASSWORD) { setError(`The new password needs at least ${MIN_PASSWORD} characters.`); return; }
     if (next !== confirm) { setError("The new passwords don't match."); return; }
     setBusy(true);
-    const { error: err } = await authClient.changePassword({
-      currentPassword: current, newPassword: next, revokeOtherSessions: true,
-    });
-    setBusy(false);
+    // A dropped connection rejects instead of returning an error; without the finally the form stays busy and,
+    // since Cancel and Escape wait for busy, could not even be closed.
+    let err: Awaited<ReturnType<typeof authClient.changePassword>>['error'];
+    try {
+      ({ error: err } = await authClient.changePassword({
+        currentPassword: current, newPassword: next, revokeOtherSessions: true,
+      }));
+    } catch { setError('Could not reach the server. Try again.'); return; }
+    finally { setBusy(false); }
     if (err) {
       setError(err.code === 'INVALID_PASSWORD' ? 'That is not your current password.'
         : err.status === 429 ? 'Too many attempts. Wait a minute and try again.'

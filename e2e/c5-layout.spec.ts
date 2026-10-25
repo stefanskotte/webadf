@@ -233,6 +233,40 @@ test('Settings: the password form ignores Cancel, Escape and a second submit whi
   await expect(page.getByTestId('password-error')).toHaveCount(0);
 });
 
+test('Settings: a dropped connection during Change password says so and leaves the form usable', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/settings');
+  await page.route('**/api/auth/change-password', (route) => route.abort('internetdisconnected'));
+  await hydrated(page, 'password-change-open');
+  await page.getByTestId('password-change-open').click();
+  await page.getByTestId('password-current').fill('definitely-wrong-1');
+  await page.getByTestId('password-new').fill('another-long-pass-1');
+  await page.getByTestId('password-confirm').fill('another-long-pass-1');
+  await page.getByTestId('password-save').click();
+  await expect(page.getByTestId('password-error')).toHaveText('Could not reach the server. Try again.');
+  await expect(page.getByTestId('password-save')).not.toHaveAttribute('aria-disabled', 'true');
+  await page.getByTestId('password-form').getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByTestId('password-form')).toHaveCount(0);
+});
+
+test('Sign in: a dropped connection says so and the button works again', async ({ page }) => {
+  await page.goto('/sign-in');
+  await page.route('**/api/auth/sign-in/email', (route) => route.abort('internetdisconnected'));
+  await hydrated(page, 'sign-in-form', 'onSubmit');
+  await page.getByLabel('Email').fill('nobody@example.test');
+  await page.getByLabel('Password').fill('whatever-long-1');
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByTestId('auth-error')).toHaveText('Could not reach the server. Try again.');
+  await expect(page.getByRole('button', { name: 'Sign in' })).not.toHaveAttribute('aria-disabled', 'true');
+});
+
+test('Help: the filter count is a live region that is on the page before the first keystroke', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/help');
+  // A status region that only appears with its first text is often not announced; it must already be rendered.
+  await expect(page.getByTestId('help-filter-count')).toHaveCSS('display', /^(?!none$)/);
+});
+
 test('Settings: the delete form ignores Cancel, Escape and a second submit while busy, and reopens clean', async ({ page }) => {
   await signUpFresh(page);
   await page.goto('/settings');

@@ -58,7 +58,7 @@ export function HelpBrowser() {
                    className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-(--muted-2)"
                    style={{ color: 'var(--ink)' }} />
           </label>
-          <span role="status" data-testid="help-filter-count" className="px-1 text-[12px] empty:hidden" style={{ color: 'var(--muted-2)' }}>
+          <span role="status" data-testid="help-filter-count" className="px-1 text-[12px]" style={{ color: 'var(--muted-2)' }}>
             {f.active ? `${f.ids.size} of ${TOTAL} topics` : ''}
           </span>
         </div>

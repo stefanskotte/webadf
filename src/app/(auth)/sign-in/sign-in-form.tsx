@@ -19,8 +19,11 @@ export function SignInForm() {
     e.preventDefault();
     if (busy) return;
     setBusy(true); setError(null);
-    const { error: err } = await signIn.email({ email, password });
-    setBusy(false);
+    // A dropped connection rejects instead of returning an error; the button must come back either way.
+    let err: Awaited<ReturnType<typeof signIn.email>>['error'];
+    try { ({ error: err } = await signIn.email({ email, password })); }
+    catch { setError('Could not reach the server. Try again.'); return; }
+    finally { setBusy(false); }
     if (err) { setError(authErrorText('in', err)); return; }
     // "/" sends the person to their chosen start page (src/app/page.tsx).
     router.push('/');
