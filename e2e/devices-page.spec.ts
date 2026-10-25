@@ -876,8 +876,32 @@ test('Board settings: Save closes, toasts, and the row\'s bootDisk is empty', as
   await expect(page.getByTestId('board-settings-dialog')).toHaveCount(0);
   await expect(page.getByText('Disk at startup saved. The board uses it at its next start.')).toBeVisible();
   expect((await getDb().select().from(devices).where(eq(devices.id, deviceId)))[0].bootDisk).toBe('empty');
+  await page.reload();   // the draft starts from what the page holds when the modal opens
   await openBoardSettings(page, deviceId);
   await expect(page.getByTestId(`boot-disk-${deviceId}`)).toHaveAttribute('data-value', 'empty');
+});
+
+// Fix round 1: the draft is taken from the server value when the modal opens, never while it is open.
+test('Board settings: a server change while the modal is open does not overwrite the draft', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Settings Keep');
+  expect((await request.post('/api/device/status', { headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.21.1+ge2e' } })).status()).toBe(204);
+  await page.goto('/devices');
+  await openBoardSettings(page, deviceId);
+  const group = page.getByTestId(`boot-disk-${deviceId}`);
+  const save = page.getByTestId('board-settings-save');
+  // The user's choice: Last disk, while the server says Last disk.
+  await page.getByTestId(`boot-disk-${deviceId}-empty`).click();
+  await page.getByTestId(`boot-disk-${deviceId}-last`).click();
+  await expect(group).toHaveAttribute('data-value', 'last');
+  await expect(save).toBeDisabled();
+  // Another tab saves No disk; the page's live refresh brings it in. The draft keeps the user's choice, so Save turns on.
+  // (bootDisk is not in the live fingerprint, so the rename is what makes the page refresh.)
+  await setDevice(deviceId, { bootDisk: 'empty', name: 'Settings Kept' });
+  await expect(page.getByTestId(`device-name-${deviceId}`)).toHaveText('Settings Kept', { timeout: 20_000 });
+  await expect(save).toBeEnabled();
+  await expect(group).toHaveAttribute('data-value', 'last');
 });
 
 // The boot trail (fw 1.18.2): the card names where the previous start stopped -- and says nothing after a clean one.

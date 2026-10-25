@@ -40,8 +40,8 @@ export function Modal({
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-50" style={{ background: 'var(--scrim)' }} />
         <Dialog.Popup
-          data-testid={testId}
           {...attrs}
+          data-testid={testId}
           finalFocus={finalFocus}
           className="glass-card wf-modal fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-32px)] w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden max-sm:inset-0 max-sm:max-h-none max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none"
           style={{ maxWidth: width }}

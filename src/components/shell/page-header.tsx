@@ -53,12 +53,13 @@ export function PageHeader({
             would become part of the heading's accessible name. */}
         <div className="flex items-center gap-2" style={{ color: "var(--on-dark)" }}>
           <h1
+            tabIndex={-1}   // a programmatic focus target (focus after deleting the last card); not a tab stop
             // 26px below sm: at 34px a two-word title ("Disk contents") wraps
             // on a 390px screen, and leading-none makes a wrapped heading read
             // as one solid block.
-            className={lg
+            className={`focus:outline-none ${lg
               ? 'text-[30px] font-bold leading-none sm:text-[44px] sm:tracking-[-0.02em]'
-              : 'text-[26px] font-bold leading-none tracking-[-0.032em] sm:text-[34px]'}
+              : 'text-[26px] font-bold leading-none tracking-[-0.032em] sm:text-[34px]'}`}
             style={{ color: "var(--on-dark)" }}
           >
             {title}

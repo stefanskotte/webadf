@@ -21,9 +21,11 @@ import { toast } from 'sonner';
  * board gets a 401 on its next request, ejects, drops tracks it had not yet
  * uploaded, forgets its token and offers its setup network again.
  */
-export function DeleteDeviceConfirm({ deviceId, name, open, onOpenChange, cancelRef }: {
+export function DeleteDeviceConfirm({ deviceId, name, open, onOpenChange, onDeleted, cancelRef }: {
   deviceId: string; name: string; open: boolean; onOpenChange: (open: boolean) => void;
   /** The Cancel button: the safe place for focus to land when the dialog opens. */
+  /** Called once the board is deleted, before the dialog closes: the opener is about to disappear. */
+  onDeleted?: () => void;
   cancelRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const router = useRouter();
@@ -45,6 +47,7 @@ export function DeleteDeviceConfirm({ deviceId, name, open, onOpenChange, cancel
         return;
       }
       toast.success('Device deleted');
+      onDeleted?.();
       onOpenChange(false);
       router.refresh();
     } catch {

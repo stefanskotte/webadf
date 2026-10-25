@@ -403,10 +403,9 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          In the <em>Second drive (DF1)</em> box on the board&apos;s card, the choices are <em>Off</em>, <em>Next disk of the
-          set</em>, <em>Network (PaulaNET)</em> and <em>Any disk</em>. Choose <em>Next disk of the set</em> and DF1 then holds the next disk
-          of the set (empty when that is an HD disk); after <em>Next disk</em> it is empty for about five seconds while
-          the following disk is fetched.
+          Choose <em>Next disk of the set</em> under <em>Second drive (DF1)</em> on the board&apos;s card and DF1 holds the
+          next disk of the set (an HD disk leaves it empty, as do the five seconds after <em>Next disk</em>). The other
+          radios are <em>Off</em>, <em>Network (PaulaNET)</em> and <em>Any disk</em>.
         </p>
         <p>
           Or choose <em>Any disk</em> and mount a disk of your choice into DF1: press <em>DF1</em> beside <em>DF0</em> where you

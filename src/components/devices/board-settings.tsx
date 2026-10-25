@@ -31,15 +31,12 @@ export function BoardSettings({ device }: { device: DeviceListItem }) {
   const [open, setOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [draft, setDraft] = useState<BootDisk>(device.bootDisk);
-  // The server's value changed under us (our own save landing after the refresh, or another tab): the draft starts
-  // from it again. Adjusting state during render, not in an effect (React docs: "storing information from previous renders").
-  const [seenBootDisk, setSeenBootDisk] = useState(device.bootDisk);
-  if (seenBootDisk !== device.bootDisk) { setSeenBootDisk(device.bootDisk); setDraft(device.bootDisk); }
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const deleting = useRef(false);
+  const wasDeleted = useRef(false);
   // Focus returns to the opener whenever the modal or the confirmation closes; while the confirmation is the next
   // thing, the modal hands focus on to its Cancel button instead.
   const finalFocus = useMemo(() => ({
@@ -76,11 +73,31 @@ export function BoardSettings({ device }: { device: DeviceListItem }) {
     } finally { setBusy(false); }
   }
 
+  // Focus rule after a successful delete (the card is about to go): the next card's Board settings button, else the
+  // page heading, else Pair a device. Chosen now, from the DOM that still has this card, and applied once it is gone.
+  function deleted() {
+    const cards = Array.from(document.querySelectorAll<HTMLElement>('article[data-testid^="device-"]'));
+    const at = cards.findIndex((c) => c.id === `device-${id}`);
+    const nextId = at >= 0 ? cards[at + 1]?.id.replace('device-', '') : undefined;
+    const targets = [nextId ? `[data-testid="board-settings-${nextId}"]` : '', 'h1', '[data-testid="pair-device"]'].filter(Boolean);
+    wasDeleted.current = true;
+    const stale = triggerRef.current;
+    let frames = 0;
+    const tick = () => {
+      if (stale?.isConnected && frames++ < 240) return void requestAnimationFrame(tick);
+      for (const t of targets) {
+        const el = document.querySelector<HTMLElement>(t);
+        if (el) { el.focus(); return; }
+      }
+    };
+    requestAnimationFrame(tick);
+  }
+
   function deleteOpenChange(next: boolean) {
     setDeleteOpen(next);
     if (!next) {
       deleting.current = false;
-      requestAnimationFrame(() => triggerRef.current?.focus());
+      if (!wasDeleted.current) requestAnimationFrame(() => triggerRef.current?.focus());
     }
   }
 
@@ -166,7 +183,7 @@ export function BoardSettings({ device }: { device: DeviceListItem }) {
         </div>
       </Modal>
 
-      <DeleteDeviceConfirm deviceId={id} name={device.name} open={deleteOpen} onOpenChange={deleteOpenChange}
+      <DeleteDeviceConfirm deviceId={id} name={device.name} open={deleteOpen} onOpenChange={deleteOpenChange} onDeleted={deleted}
                            cancelRef={cancelRef} />
     </>
   );
