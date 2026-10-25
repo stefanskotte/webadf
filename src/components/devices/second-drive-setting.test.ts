@@ -33,8 +33,17 @@ describe('SecondDriveSetting radiogroup', () => {
   it('disables Network and shows the note on a board that cannot', () => {
     const html = render(board({ secondDriveNetCapable: false }));
     const net = html.match(/<button[^>]*second-drive-d1-net[^>]*>/)![0];
-    expect(net).toContain('disabled');
+    expect(net).toMatch(/\sdisabled=""/);
     expect(html).toContain('Network needs firmware 1.11.0 or newer');
     expect(html).toContain('second-drive-net-note-d1');
+  });
+
+  it('keeps exactly one enabled tab stop when the checked radio is disabled', () => {
+    // Stored Network, but the board is no longer net-capable.
+    const html = render(board({ secondDrive: 'net', secondDriveNetCapable: false }));
+    const rs = [...html.matchAll(/<button[^>]*role="radio"[^>]*>/g)].map((m) => m[0]);
+    expect(rs.find((b) => b.includes('second-drive-d1-net'))).toMatch(/\sdisabled=""/);
+    expect(rs.filter((b) => b.includes('tabindex="0"'))).toHaveLength(1);
+    expect(rs.filter((b) => b.includes('tabindex="0"') && !/\sdisabled=""/.test(b))).toHaveLength(1);
   });
 });

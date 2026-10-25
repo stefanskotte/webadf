@@ -105,6 +105,9 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
     } finally { setBusy(false); }
   }
 
+  // The tab stop sits on the checked radio, or on the first enabled one when the checked one is disabled.
+  const enabledRadios = RADIOS.filter((r) => !radioDisabled(r.value));
+  const stop = enabledRadios.some((r) => r.value === shown) ? shown : enabledRadios[0]?.value;
   const sel1 = device.sel1Wired !== null && device.df1Seen !== null;
   const netPanel = device.secondDriveReported === 'net' && device.secondDriveCapable;
   const hasTransfer = transfer !== null || !!sendLine || !!uploadLine;
@@ -144,7 +147,7 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
                onKeyDown={onKeyDown} className="seg seg--sm max-w-full flex-wrap">
             {RADIOS.map((r) => (
               <button key={r.value} type="button" role="radio" aria-checked={shown === r.value}
-                      tabIndex={shown === r.value ? 0 : -1} disabled={radioDisabled(r.value)} aria-disabled={saving}
+                      tabIndex={r.value === stop ? 0 : -1} disabled={radioDisabled(r.value)} aria-disabled={saving}
                       data-testid={`second-drive-${id}-${r.value}`}
                       onClick={() => { if (!saving) void choose(r.value); }}
                       className="seg-item whitespace-nowrap disabled:opacity-50">

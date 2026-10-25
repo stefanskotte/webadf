@@ -42,6 +42,10 @@ export function BootDiskSetting({ device, value, onChange, error, busy = false }
     onChange(target);
   }
 
+  // The tab stop sits on the checked radio, or on the first enabled one when the checked one is disabled.
+  const enabledRadios = RADIOS.filter((r) => !radioDisabled(r.value));
+  const stop = enabledRadios.some((r) => r.value === value) ? value : enabledRadios[0]?.value;
+
   const heading = (
     <div className="flex items-center gap-1">
       <span className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>Disk at startup</span>
@@ -81,7 +85,7 @@ export function BootDiskSetting({ device, value, onChange, error, busy = false }
              onKeyDown={onKeyDown} className="seg seg--sm">
           {RADIOS.map((r) => (
             <button key={r.value} type="button" role="radio" aria-checked={value === r.value}
-                    tabIndex={value === r.value ? 0 : -1} disabled={radioDisabled(r.value)} aria-disabled={busy}
+                    tabIndex={r.value === stop ? 0 : -1} disabled={radioDisabled(r.value)} aria-disabled={busy}
                     data-testid={`boot-disk-${id}-${r.value}`}
                     onClick={() => { if (!busy) onChange(r.value); }}
                     className="seg-item whitespace-nowrap disabled:opacity-50">

@@ -8,7 +8,6 @@ import type { DeviceListItem } from '@/lib/queries';
 import type { NextInfo } from '@/lib/next-disk';
 import { preloadText } from '@/lib/drive-chips';
 import { describeLastBoot } from '@/lib/last-boot';
-import { Link } from '@/components/shell/link';
 import { SecondDriveSetting } from './second-drive-setting';
 import { BoardSettings } from './board-settings';
 import { HelpTip } from '@/components/help/help-tip';

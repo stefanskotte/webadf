@@ -347,11 +347,11 @@ test('firmware-notice: one updatable board gets "Update <name>", which opens the
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
   await setDevice(deviceId, { name: 'Bench A500' });
-  await publishTestRelease('0.0.0+e2e71');
+  await publishTestRelease('0.0.0+e2e69');
   await publishTestRelease('0.0.0+e2e72');
   await request.post('/api/device/status', {
     headers: authHeader(token),
-    data: { mountedSha256: null, firmwareVersion: '0.0.0+e2e71', updateProtocol: 1 },
+    data: { mountedSha256: null, firmwareVersion: '0.0.0+e2e69', updateProtocol: 1 },
   });
 
   await page.goto('/devices');
@@ -820,6 +820,32 @@ test('Disk at startup: a board before 1.18.1 is told which firmware it needs, an
   const res = await page.request.patch(`/api/devices/${deviceId}/boot-disk`, { data: { mode: 'empty' } });
   expect(res.status()).toBe(409);
   expect((await res.json()).reason).toBe('Needs firmware 1.18.1 or newer');
+});
+
+// The "?" next to "Disk at startup" lives inside the modal's top layer: its popover must open there without closing the modal.
+test('Board settings: the Disk at startup help tip opens inside the modal and leaves the modal open', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Help In Modal');
+  expect((await request.post('/api/device/status', { headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.21.1+ge2e' } })).status()).toBe(204);
+  await page.goto('/devices');
+  await openBoardSettings(page, deviceId);
+  const dialog = page.getByTestId('board-settings-dialog');
+
+  const tip = dialog.getByTestId('help-tip-boards');
+  await tip.click();
+  const pop = page.getByTestId('help-pop-boards');
+  await expect(pop).toBeVisible();
+  await expect(dialog).toBeVisible();
+
+  // First Escape: record what the app does rather than assume it.
+  await page.keyboard.press('Escape');
+  await expect(pop).toHaveCount(0);
+  const dialogAfterFirstEscape = await dialog.count();
+  console.log(`after the first Escape: help popover closed, modal ${dialogAfterFirstEscape ? 'STILL OPEN' : 'CLOSED'}`);
+  expect(dialogAfterFirstEscape).toBe(1);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
 });
 
 // Board settings (spec §8.3, Ruling 20): Disk at startup is a draft that Save sends; Cancel, the X and Escape send nothing.
