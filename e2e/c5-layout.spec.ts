@@ -255,3 +255,68 @@ test('Settings: the delete form ignores Cancel, Escape and a second submit while
   await expect(page.getByTestId('account-delete-confirm')).toHaveValue('');
   await expect(page.getByTestId('account-delete-error')).toHaveCount(0);
 });
+
+// ---- Help (spec §3) -------------------------------------------------------------------------------------------
+
+const articles = (page: Page) => page.locator('article[data-testid^="help-section-"]:visible');
+
+test('Help: topics in four groups, the one arrived at marked current, each article named by its group', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await signUpFresh(page);
+  await page.goto('/help#write-protect');
+  const nav = page.getByTestId('help-nav');
+  await expect(nav).toBeVisible();
+  for (const g of ['drives', 'disks', 'network', 'server']) await expect(page.getByTestId(`help-group-${g}`)).toBeVisible();
+  await expect(page.getByTestId('help-group-drives').getByRole('link')).toHaveCount(6);
+  await expect(page.locator('#help-h-write-protect')).toBeInViewport();
+  await expect(nav.getByRole('link', { name: 'Write protection' })).toHaveAttribute('aria-current', 'true');
+  await expect(page.getByTestId('help-section-write-protect')).toContainText('Help · Drives');
+  await expect(page.getByTestId('help-section-library')).toContainText('Help · Library and disks');
+  const order = await page.locator('article[data-testid^="help-section-"]').evaluateAll((els) => els.map((e) => e.id));
+  expect(order).toHaveLength(17);
+  expect(order.slice(0, 3)).toEqual(['boards', 'display', 'second-drive']);
+  await expect(page.getByTestId('help-nav-toggle')).toBeHidden();   // the phone summary is not drawn from lg
+});
+
+test('Help: the filter keeps only matching topics, says how many, and Escape brings all 17 back', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await signUpFresh(page);
+  await page.goto('/help');
+  const filter = page.getByTestId('help-filter');
+  await hydrated(page, 'help-filter', 'onChange');
+  await filter.fill('d');
+  await expect(page.getByTestId('help-filter-count')).toHaveCount(0);
+  await expect(articles(page)).toHaveCount(17);
+  // filterHelpTopics('drive') is second-drive, boards, network, send (pinned in src/lib/help/match.test.ts).
+  await filter.fill('drive');
+  await expect(page.getByTestId('help-filter-count')).toHaveText('4 of 17 topics');
+  await expect(articles(page)).toHaveCount(4);
+  await expect(page.getByTestId('help-section-library')).toBeHidden();
+  await expect(page.getByTestId('help-group-disks')).toHaveCount(0);
+  await expect(page.getByTestId('help-nav').getByRole('link')).toHaveCount(4);
+  await filter.fill('zzqx');
+  await expect(page.getByTestId('help-filter-empty')).toHaveText('No topic matches “zzqx”. Clear the search to see all 17.');
+  await expect(articles(page)).toHaveCount(0);
+  await expect(page.getByTestId('help-filter-count')).toHaveText('0 of 17 topics');
+  await expect(page.getByTestId('help-group-server')).toBeVisible();
+  await expect(page.getByTestId('help-nav').getByRole('link')).toHaveCount(0);
+  await filter.press('Escape');
+  await expect(filter).toHaveValue('');
+  await expect(articles(page)).toHaveCount(17);
+  await expect(page.getByTestId('help-filter-empty')).toHaveCount(0);
+});
+
+test('Help at 390 px: the filter and a closed Topics disclosure sit above the articles', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signUpFresh(page);
+  await page.goto('/help');
+  await hydrated(page, 'help-filter', 'onChange');
+  const toggle = page.getByTestId('help-nav-toggle');
+  await expect(toggle).toHaveText('Topics · 17');
+  await expect(page.getByTestId('help-nav')).toBeHidden();
+  await toggle.click();
+  await expect(page.getByTestId('help-nav')).toBeVisible();
+  await page.getByTestId('help-filter').fill('drive');
+  await expect(toggle).toHaveText('Topics · 4 of 17');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});

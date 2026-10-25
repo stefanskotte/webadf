@@ -21,3 +21,12 @@ export function matchHelpTopics(raw: string, limit = HELP_HIT_LIMIT): HelpTopicI
   }
   return [...inTitle, ...inShort].slice(0, limit);
 }
+
+/**
+ * The Help page's filter (C5 spec §3.4, Ruling 15): the header search's matcher with no limit. `active` once the
+ * query has two characters (A3's rule); an active filter with no ids is a real "no topic matches" answer.
+ */
+export function filterHelpTopics(raw: string): { active: boolean; ids: ReadonlySet<HelpTopicId> } {
+  const active = raw.toLowerCase().split(/\s+/).filter(Boolean).join('').length >= 2;
+  return { active, ids: new Set(active ? matchHelpTopics(raw, Infinity) : []) };
+}

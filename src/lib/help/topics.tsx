@@ -683,7 +683,25 @@ export const HELP_TOPICS = {
 
 export type HelpTopicId = keyof typeof HELP_TOPICS;
 
-export const HELP_ORDER: readonly HelpTopicId[] = [
-  'library', 'boards', 'own-server', 'nfc', 'next-disk', 'second-drive', 'network', 'send', 'from-amiga', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
-  'cover-image', 'about', 'preferences',
+export type HelpGroupId = 'drives' | 'disks' | 'network' | 'server';
+export type HelpGroup = { id: HelpGroupId; name: string; topics: readonly HelpTopicId[] };
+
+/**
+ * The Help page's groups, in the board's order (C5 spec §3.1, Ruling 14): Library joins the disks group and Display
+ * joins Drives, the two topics the board's groups left out. HELP_ORDER is these flattened -- one source for the page,
+ * its section list and the header search's Help ranking.
+ */
+export const HELP_GROUPS: readonly HelpGroup[] = [
+  { id: 'drives', name: 'Drives', topics: ['boards', 'display', 'second-drive', 'next-disk', 'nfc', 'write-protect'] },
+  { id: 'disks', name: 'Library and disks', topics: ['library', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image'] },
+  { id: 'network', name: 'Amiga networking', topics: ['network', 'send', 'from-amiga'] },
+  { id: 'server', name: 'This server', topics: ['preferences', 'own-server', 'about'] },
 ];
+
+export const HELP_ORDER: readonly HelpTopicId[] = HELP_GROUPS.flatMap((g) => g.topics);
+
+export function helpGroupOf(id: HelpTopicId): HelpGroup {
+  const g = HELP_GROUPS.find((x) => x.topics.includes(id));
+  if (!g) throw new Error(`help topic ${id} is in no group`);
+  return g;
+}
