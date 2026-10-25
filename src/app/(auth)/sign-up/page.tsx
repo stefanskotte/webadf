@@ -1,4 +1,7 @@
+import { AuthSwitch } from '../auth-switch';
 import { SignUpForm } from './sign-up-form';
+
+export const metadata = { title: 'Create account' };
 
 /**
  * The invite code is read here, on the server, and handed to the form. A client page reading useSearchParams
@@ -7,5 +10,10 @@ import { SignUpForm } from './sign-up-form';
  */
 export default async function SignUpPage(props: PageProps<'/sign-up'>) {
   const invite = (await props.searchParams).invite;
-  return <SignUpForm initialInviteCode={(Array.isArray(invite) ? invite[0] : invite) ?? ''} />;
+  return (
+    <>
+      <AuthSwitch current="up" />
+      <SignUpForm initialInviteCode={(Array.isArray(invite) ? invite[0] : invite) ?? ''} />
+    </>
+  );
 }

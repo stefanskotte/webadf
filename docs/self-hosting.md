@@ -231,7 +231,7 @@ Start-up problems print one line starting `webadf:`; read them with `docker comp
 | `migration failed in <tag> (...); the schema is unchanged; backup: <path>` | Section 5. |
 | `backup failed (...); nothing was migrated` | Usually a full disk. Free space; the migration is retried on the next start. |
 | `requests arrive as https://x but WEBADF_URL is https://y -- uploads and sign-in will fail; set WEBADF_URL to the address you open` | You opened the site by a different name or IP than `WEBADF_URL`. It still loads (with a certificate warning for the other name), but sign-in and uploads check the origin. Set `WEBADF_URL` to the address you use and run `docker compose up -d` (logged once per host). |
-| `Too many requests. Please try again later.` at sign-up or sign-in | The sign-in endpoints allow 3 attempts per 10 seconds from one address. Wait ten seconds. |
+| `Too many attempts. Wait a minute and try again.` at sign-up or sign-in | The sign-in endpoints allow 3 attempts per 10 seconds from one address. Wait ten seconds. |
 
 **Somebody else signed up first.** The first-admin invite is for `WEBADF_ADMIN_EMAIL`, but anybody holding the link can
 use it. Once any account exists, no new bootstrap invite is made. Recover with:

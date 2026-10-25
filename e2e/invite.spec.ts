@@ -6,7 +6,7 @@ test('sign-up without an invite code is rejected', async ({ page }) => {
   await page.getByLabel('Email').fill(`no-invite-${Date.now()}@example.test`);
   await page.getByLabel('Password').fill('correct-horse-battery-staple');
   await page.getByLabel('Invite code').fill('AAAAAAAA');
-  await page.getByRole('button', { name: 'Sign up' }).click();
+  await page.getByRole('button', { name: 'Create account' }).click();
 
   await expect(page.getByRole('alert')).toBeVisible();
   await expect(page).not.toHaveURL(/\/library/);
@@ -22,7 +22,7 @@ test('an invite code cannot be used twice', async ({ page, browser }) => {
   await second.getByLabel('Email').fill(`reuse-${Date.now()}@example.test`);
   await second.getByLabel('Password').fill('correct-horse-battery-staple');
   await second.getByLabel('Invite code').fill(inviteCode);
-  await second.getByRole('button', { name: 'Sign up' }).click();
+  await second.getByRole('button', { name: 'Create account' }).click();
 
   await expect(second.getByRole('alert')).toBeVisible();
   await expect(second).not.toHaveURL(/\/library/);
@@ -78,6 +78,6 @@ test('the sign-up HTML carries the form with the invite code (no empty shell)', 
   const res = await request.get('/sign-up?invite=ABCD2345');
   expect(res.status()).toBe(200);
   const html = await res.text();
-  expect(html).toContain('Create your library');
+  expect(html).toContain('Create your account');
   expect(html).toMatch(/<input[^>]*id="invite-code"[^>]*value="ABCD2345"|<input[^>]*value="ABCD2345"[^>]*id="invite-code"/);
 });

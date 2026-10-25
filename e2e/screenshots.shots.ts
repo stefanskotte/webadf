@@ -129,7 +129,7 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   await page.getByLabel('Email').fill(DEMO_EMAIL);
   await page.getByLabel('Password').fill(DEMO_PASSWORD);
   await page.getByLabel('Invite code').fill(inviteCode);
-  await page.getByRole('button', { name: 'Sign up' }).click();
+  await page.getByRole('button', { name: 'Create account' }).click();
   await expect(page).toHaveURL(/\/library/, { timeout: 30_000 });
   const orgId = (await page.getByTestId('active-org').textContent()) ?? '';
   expect(orgId).not.toBe('');

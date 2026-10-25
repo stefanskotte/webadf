@@ -582,3 +582,48 @@ test('Search: the highlight is clamped when the rows shrink, and an error or emp
   await expect(input).not.toHaveAttribute('aria-controls', /.+/);
   await expect(input).toHaveAttribute('aria-expanded', 'false');
 });
+
+// ---- Sign in & Create account (spec §6) -----------------------------------------------------------------------
+
+test('Sign in: the split page, the switch, the heading, and the error in words with focus kept on the button', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/sign-in');
+  await expect(page).toHaveTitle('Sign in · WebFloppy');
+  await expect(page.getByTestId('auth-hero')).toBeVisible();
+  await expect(page.getByTestId('auth-hero')).toContainText('Invite-only — ask the person who runs this server for a code.');
+  await expect(page.locator('h1')).toHaveCount(1);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Welcome back');
+  const sw = page.getByTestId('auth-switch');
+  await expect(sw.getByRole('link', { name: 'Sign in' })).toHaveAttribute('aria-current', 'page');
+  await expect(sw.getByRole('link', { name: 'Create account' })).toHaveAttribute('href', '/sign-up');
+  await hydrated(page, 'sign-in-form', 'onSubmit');
+  await page.getByLabel('Email').fill(`nobody-${runTag()}@example.test`);
+  await page.getByLabel('Password').fill('not-a-real-password');
+  const submit = page.getByRole('button', { name: 'Sign in' });
+  await submit.click();
+  const err = page.getByTestId('auth-error');
+  await expect(err).toHaveText('The email or password is not right.');
+  await expect(err).toHaveAttribute('role', 'alert');
+  await expect(submit).toBeFocused();
+  await expect(page).toHaveURL(/\/sign-in$/);
+});
+
+test('Create account: invite code first with its hint, the words for a bad code, the page title', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/sign-up?invite=ABCD2345');
+  await expect(page).toHaveTitle('Create account · WebFloppy');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Create your account');
+  await expect(page.getByTestId('auth-switch').getByRole('link', { name: 'Create account' })).toHaveAttribute('aria-current', 'page');
+  const ids = await page.getByTestId('sign-up-form').locator('input').evaluateAll((els) => els.map((e) => e.id));
+  expect(ids).toEqual(['invite-code', 'email', 'password']);
+  await expect(page.getByLabel('Invite code')).toHaveValue('ABCD2345');
+  await expect(page.getByLabel('Invite code')).toHaveAccessibleDescription('Ask the person who runs this server for one. Each code works once.');
+  await expect(page.getByLabel('Password')).toHaveAccessibleDescription('At least 8 characters.');
+  await hydrated(page, 'sign-up-form', 'onSubmit');
+  await page.getByLabel('Invite code').fill('AAAAAAAA');
+  await page.getByLabel('Email').fill(`badcode-${runTag()}@example.test`);
+  await page.getByLabel('Password').fill('correct-horse-battery-staple');
+  await page.getByRole('button', { name: 'Create account' }).click();
+  await expect(page.getByTestId('auth-error')).toHaveText('That invite code is not valid, or it has been used.');
+  await expect(page).toHaveURL(/\/sign-up/);
+});

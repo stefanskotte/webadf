@@ -102,12 +102,12 @@ export async function signUpFresh(page: Page) {
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password').fill(password);
   await page.getByLabel('Invite code').fill(inviteCode);
-  await page.getByRole('button', { name: 'Sign up' }).click();
+  await page.getByRole('button', { name: 'Create account' }).click();
   if (Number(process.env.E2E_SIGNUP_GAP_MS ?? 0) > 0) {
-    const refused = page.getByText('Too many requests');
+    const refused = page.getByRole('alert').filter({ hasText: /Too many/ });
     if (await refused.waitFor({ timeout: 4_000 }).then(() => true, () => false)) {
       await paceSignUp(10_500);
-      await page.getByRole('button', { name: 'Sign up' }).click();
+      await page.getByRole('button', { name: 'Create account' }).click();
     }
   }
   await expect(page).toHaveURL(/\/library/, { timeout: 15_000 });
