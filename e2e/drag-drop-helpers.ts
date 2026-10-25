@@ -80,6 +80,12 @@ export async function synthDrop(
     const el = document.querySelector(sel);
     return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
   }, target);
+  // A drop on the file tree is forwarded to the staging area's receiver, which registers in an effect AFTER the tree
+  // is hydrated (archive-drop-folder flake, 2026-10-25: a drop in that gap is a no-op). The tree says when it is ready.
+  await page.waitForFunction((sel) => {
+    const el = document.querySelector(sel)?.closest('[data-native-drop]');
+    return !el || el.getAttribute('data-native-drop') === 'ready';
+  }, target);
   await page.evaluate(({ treeArg, targetArg }: { treeArg: DropNode[]; targetArg: string }) => {
     function makeEntry(node: DropNode): unknown {
       if (node.kind === 'dir') {

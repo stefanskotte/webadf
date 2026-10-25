@@ -130,10 +130,19 @@ export async function signUpFresh(page: Page) {
  * the Create click and leaving a panel open with no disk made.
  */
 export async function createAdf(page: Page, filesystem: 'FFS' | 'OFS' = 'FFS', density: 'dd' | 'hd' = 'dd') {
+  // A click on the server-rendered button before React has hydrated it does nothing, and the panel never opens
+  // (archive-drop-folder flake, 2026-10-25: no game card after createAdf). Hydrated nodes carry `__reactProps$…`.
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="create-adf"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  });
   await page.getByTestId('create-adf').click();
   await page.getByTestId(`create-adf-size-${density}`).click();
   await page.getByTestId(`create-adf-fs-${filesystem.toLowerCase()}`).click();
+  // Wait for the server's answer so a slow create reads as slow, not as "no game card" five seconds later.
+  const created = page.waitForResponse((r) => r.url().includes('/api/disks/create') && r.request().method() === 'POST');
   await page.getByTestId('create-adf-submit').click();
+  expect((await created).status()).toBe(200);
 }
 
 // ---- The Upload page's Staging list (A6, spec 2026-10-23 §4 "Test ids") ----

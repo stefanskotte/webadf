@@ -622,6 +622,7 @@ export function FileTree({
         className="md:max-h-[700px] md:overflow-y-auto"
         style={{ boxShadow: nativeOver === rootBlock ? 'inset 0 0 0 2px var(--accent-amber)' : undefined }}
         data-testid="file-tree"
+        data-native-drop={nativeDrop?.ready ? 'ready' : 'pending'}
         data-drop-target={rootIsOver || nativeOver === rootBlock ? 'true' : undefined}
         {...nativeDropProps(rootBlock)}
       >

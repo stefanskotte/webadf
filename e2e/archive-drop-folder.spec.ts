@@ -22,7 +22,7 @@ test.afterAll(cleanupSeeded);
 const fixture = (n: string) => [...new Uint8Array(readFileSync(join(process.cwd(), 'src/lib/archive/fixtures', n)))];
 
 async function authoredDisk(page: Page, orgId: string) {
-  await expect(page.getByTestId('game-card')).toHaveCount(1);
+  await expect(page.getByTestId('game-card')).toHaveCount(1, { timeout: 15_000 });
   const [game] = await getDb().select().from(games)
     .where(and(eq(games.orgId, orgId), eq(games.authored, true)));
   if (!game) throw new Error('no authored game after createAdf');
@@ -263,4 +263,32 @@ test('a typed rename AmigaDOS cannot hold is flagged on its row and blocks Add',
   await page.getByTestId('stage-name-0').fill('Fine.txt');
   await expect(page.getByTestId('stage-name-error-0')).toHaveCount(0);
   await expect(page.getByTestId('drop-commit')).toBeEnabled();
+});
+
+test('the tree says when it can take a drop, and its list holds only list items', async ({ page }) => {
+  test.setTimeout(60_000);
+  const u = await signUpFresh(page);
+  await page.goto('/library');
+  await createAdf(page);
+  const disk = await authoredDisk(page, u.orgId);
+  for (const name of ['Docs', 'Tools']) {
+    const mk = await page.request.post(`/api/disks/${disk.id}/files`, { multipart: { parentBlock: String(ROOT_BLOCK), name } });
+    expect(mk.ok()).toBe(true);
+  }
+  for (const name of ['a.txt', 'b.txt']) {
+    const up = await page.request.post(`/api/disks/${disk.id}/files`, {
+      multipart: { parentBlock: String(ROOT_BLOCK), name, file: { name, mimeType: 'text/plain', buffer: Buffer.from(name) } },
+    });
+    expect(up.ok()).toBe(true);
+  }
+  await page.goto(`/disks/${disk.id}/files`);
+  // The staging area registers its receiver in an effect, after the tree is already hydrated: until then a
+  // drop on the tree reaches nothing. The tree exposes the moment it can.
+  await expect(page.getByTestId('file-tree')).toHaveAttribute('data-native-drop', 'ready');
+  // Every direct child of the files list is a list item (folders and files alike).
+  const list = page.getByRole('list').filter({ has: page.locator('[data-testid="fs-entry"]') }).first();
+  await expect(list).toHaveAttribute('data-testid', 'file-tree');
+  const roles = await page.getByTestId('file-tree').evaluate((el) => [...el.children].map((c) => c.getAttribute('role')));
+  expect(roles.length).toBeGreaterThanOrEqual(4);
+  expect(roles.every((r) => r === 'listitem'), `roles: ${JSON.stringify(roles)}`).toBe(true);
 });
