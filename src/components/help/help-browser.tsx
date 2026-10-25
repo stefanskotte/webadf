@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { SearchIcon } from 'lucide-react';
 import { useMediaQuery } from '@base-ui/react/unstable-use-media-query';
 import { PageHeader } from '@/components/shell/page-header';
@@ -8,6 +8,7 @@ import { SideNav, type SideNavGroup } from '@/components/shell/side-nav';
 import { HELP_GROUPS, HELP_ORDER, HELP_TOPICS, helpGroupOf, type HelpTopicId } from '@/lib/help/topics';
 import { filterHelpTopics } from '@/lib/help/match';
 
+const noopSubscribe = () => () => {};
 const TOTAL = HELP_ORDER.length;
 const CARD = { background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' };
 /** The board's article look on the seventeen bodies, applied from the wrapper -- the bodies themselves are not edited. */
@@ -26,8 +27,12 @@ const PROSE = [
  */
 export function HelpBrowser() {
   const [q, setQ] = useState('');
-  const [navOpen, setNavOpen] = useState(false);
+  // Open on the server and on the hydrating render (no mismatch, and a usable list without JS on desktop); a phone
+  // closes it right after hydration, until the reader opens or closes it themselves.
+  const hydrated = useSyncExternalStore(noopSubscribe, () => true, () => false);
+  const [navPick, setNavPick] = useState<boolean | null>(null);
   const lg = useMediaQuery('(min-width: 1024px)', {});
+  const navOpen = navPick ?? !hydrated;
   const f = filterHelpTopics(q);
   const shown = (id: HelpTopicId) => !f.active || f.ids.has(id);
   const none = f.active && f.ids.size === 0;
@@ -42,7 +47,7 @@ export function HelpBrowser() {
 
   return (
     <div className="px-4 pb-10 pt-6 sm:px-7 lg:grid lg:grid-cols-[260px_minmax(0,720px)] lg:items-start lg:gap-8">
-      <aside className="mb-5 flex flex-col lg:sticky lg:top-6 lg:mb-0 lg:self-start">
+      <aside className="mb-5 flex flex-col lg:sticky lg:top-6 lg:mb-0 lg:max-h-[calc(100vh-3rem)] lg:self-start lg:overflow-y-auto">
         <div className="mb-2 flex flex-col gap-1">
           <label className="flex h-[38px] items-center gap-2 rounded-[10px] border px-2.5 focus-within:ring-2 focus-within:ring-(--ring)"
                  style={{ background: 'var(--surface)', borderColor: 'var(--line)' }}>
@@ -53,13 +58,12 @@ export function HelpBrowser() {
                    className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-(--muted-2)"
                    style={{ color: 'var(--ink)' }} />
           </label>
-          {f.active && (
-            <span role="status" data-testid="help-filter-count" className="px-1 text-[12px]" style={{ color: 'var(--muted-2)' }}>
-              {f.ids.size} of {TOTAL} topics
-            </span>
-          )}
+          <span role="status" data-testid="help-filter-count" className="px-1 text-[12px] empty:hidden" style={{ color: 'var(--muted-2)' }}>
+            {f.active ? `${f.ids.size} of ${TOTAL} topics` : ''}
+          </span>
         </div>
-        <details open={lg || navOpen} onToggle={(e) => { if (!lg) setNavOpen(e.currentTarget.open); }}>
+        <details open={lg || navOpen} onToggle={(e) => { if (!lg) setNavPick(e.currentTarget.open); }}
+                 onClick={(e) => { if (!lg && (e.target as HTMLElement).closest('nav a')) setNavPick(false); }}>
           <summary data-testid="help-nav-toggle" className="flex h-10 cursor-pointer items-center px-1 text-[14px] font-semibold lg:hidden"
                    style={{ color: 'var(--ink)' }}>
             {f.active ? `Topics · ${f.ids.size} of ${TOTAL}` : `Topics · ${TOTAL}`}

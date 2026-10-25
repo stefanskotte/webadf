@@ -258,6 +258,7 @@ test('Settings: the delete form ignores Cancel, Escape and a second submit while
 
 // ---- Help (spec §3) -------------------------------------------------------------------------------------------
 
+const HELP_LAST_TITLE = 'About this server';
 const articles = (page: Page) => page.locator('article[data-testid^="help-section-"]:visible');
 
 test('Help: topics in four groups, the one arrived at marked current, each article named by its group', async ({ page }) => {
@@ -285,7 +286,7 @@ test('Help: the filter keeps only matching topics, says how many, and Escape bri
   const filter = page.getByTestId('help-filter');
   await hydrated(page, 'help-filter', 'onChange');
   await filter.fill('d');
-  await expect(page.getByTestId('help-filter-count')).toHaveCount(0);
+  await expect(page.getByTestId('help-filter-count')).toHaveText('');
   await expect(articles(page)).toHaveCount(17);
   // filterHelpTopics('drive') is second-drive, boards, network, send (pinned in src/lib/help/match.test.ts).
   await filter.fill('drive');
@@ -319,4 +320,54 @@ test('Help at 390 px: the filter and a closed Topics disclosure sit above the ar
   await page.getByTestId('help-filter').fill('drive');
   await expect(toggle).toHaveText('Topics · 4 of 17');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
+// ---- Help fix round 1 -------------------------------------------------------------------------------------------
+
+test('Help at 1280x720: the sticky topic list scrolls inside itself, so the last topic is reachable', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await signUpFresh(page);
+  await page.goto('/help');
+  await hydrated(page, 'help-filter', 'onChange');
+  const last = page.getByTestId('help-nav').getByRole('link', { name: HELP_LAST_TITLE });
+  await last.scrollIntoViewIfNeeded();
+  await expect(last).toBeInViewport();
+  await last.click();
+  await expect(page.locator('#help-h-about')).toBeInViewport();
+});
+
+// The app's loading.tsx streams every page behind a "Loading…" shell that only JS reveals, so a JS-disabled browser never
+// shows /help at all; what this fix owns is the server HTML, so that is what is asserted: the topic list is in it, in a
+// <details> that is already open.
+test('Help: the server HTML carries the topic list inside an open <details>', async ({ page }) => {
+  await signUpFresh(page);
+  const res = await page.request.get('/help');
+  expect(res.status()).toBe(200);
+  const html = await res.text();
+  expect(html).toMatch(/<details[^>]*\sopen(=""|\s|>)[^>]*>\s*<summary[^>]*data-testid="help-nav-toggle"/);
+  expect(html).toContain('data-testid="help-nav"');
+  expect((html.match(/href="#[a-z-]+"/g) ?? []).length).toBeGreaterThanOrEqual(17);
+});
+
+test('Help at 390 px: the disclosure closes after hydration, and choosing a topic closes it again; no hydration warning', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('console', (m) => { if (/hydrat/i.test(m.text())) errors.push(m.text()); });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signUpFresh(page);
+  await page.goto('/help');
+  await hydrated(page, 'help-filter', 'onChange');
+  await expect(page.getByTestId('help-nav')).toBeHidden();
+  await page.getByTestId('help-nav-toggle').click();
+  await page.getByTestId('help-nav').getByRole('link', { name: 'Write protection' }).click();
+  await expect(page.getByTestId('help-nav')).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test('Help: the count is a live region that is always in the page', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await signUpFresh(page);
+  await page.goto('/help');
+  await hydrated(page, 'help-filter', 'onChange');
+  await expect(page.getByTestId('help-filter-count')).toHaveText('');
+  await expect(page.getByTestId('help-filter-count')).toHaveAttribute('role', 'status');
 });
