@@ -29,7 +29,8 @@ export interface DiskCardProps {
 export function DiskCard(p: DiskCardProps) {
   const ok = p.volume?.ok === true ? p.volume : null;
   const counts = ok ? countTree(ok.root) : null;
-  const fsLine = ok ? `${p.hd ? 'HD' : 'DD'} · ${ok.volume.filesystem}` : 'No filesystem';
+  const unreadable = p.volume === null;   // the stored bytes could not be read: not the same as a disk with no filesystem
+  const fsLine = ok ? `${p.hd ? 'HD' : 'DD'} · ${ok.volume.filesystem}` : unreadable ? 'Unreadable' : 'No filesystem';
   return (
     <section aria-label="Disk" data-testid="disk-card"
              className="flex flex-col gap-4 rounded-[20px] p-4 sm:px-6 sm:py-5 lg:flex-row lg:items-center lg:gap-6"
@@ -51,7 +52,7 @@ export function DiskCard(p: DiskCardProps) {
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2 text-[13px]" style={{ color: 'var(--muted)' }}>
-            {ok ? <Pill>{ok.volume.filesystem}</Pill> : <Pill>No filesystem</Pill>}
+            {ok ? <Pill>{ok.volume.filesystem}</Pill> : <Pill>{unreadable ? 'Unreadable' : 'No filesystem'}</Pill>}
             {ok?.volume.intl && <Pill>INTL</Pill>}
             {ok?.volume.dirc && <Pill>DIRC</Pill>}
             <Pill>{densityPill(p.rootBlock, p.sizeBytes)}</Pill>
@@ -89,7 +90,9 @@ export function DiskCard(p: DiskCardProps) {
           </div>
         ) : (
           <span className="text-[13px]" style={{ color: 'var(--muted-2)' }} data-testid="volume-usage-unknown">
-            unknown — this disk&apos;s allocation bitmap is not usable
+            {unreadable
+              ? 'unknown — the stored bytes for this disk could not be read'
+              : <>unknown — this disk&apos;s allocation bitmap is not usable</>}
           </span>
         )}
       </div>

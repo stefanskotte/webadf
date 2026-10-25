@@ -60,4 +60,14 @@ describe('DiskCard (spec §2)', () => {
     expect(h).not.toContain('data-testid="volume-header"');
     expect(h).toContain('>No filesystem<');
   });
+  it('with unreadable bytes (volume null): says so, not "No filesystem" or a bitmap fault', () => {
+    const h = html({ volume: null, usage: null, title: 'wb.adf' });
+    expect(h).not.toContain('No filesystem');
+    expect(h).not.toContain('allocation bitmap');
+    expect(h).toContain('could not be read');
+  });
+  it('with a readable disk and no bitmap usage: still names the bitmap', () => {
+    const h = html({ usage: null });
+    expect(h).toContain('allocation bitmap is not usable');
+  });
 });
