@@ -1,11 +1,5 @@
-import { MAX_ENTRIES, type AdfEntry, type VolumeResult, type VolumeUsage } from '@/lib/adffs';
-
-/**
- * KB the way an Amiga counts it: 1024 bytes, and whole numbers. A disk this
- * size has no use for a decimal place, and "880 KB" is the number printed on
- * the label of the physical thing.
- */
-const formatKb = (bytes: number) => `${Math.round(bytes / 1024)} KB`;
+import { formatKb, countTree } from '@/lib/disk-files-look';
+import { MAX_ENTRIES, type VolumeResult, type VolumeUsage } from '@/lib/adffs';
 
 /**
  * Copy for the three ways a disk can answer "no filesystem". Verbatim from
@@ -23,23 +17,6 @@ const NO_FILESYSTEM_COPY: Record<'not-adf' | 'no-dos-signature' | 'no-filesystem
   'no-filesystem':
     'No AmigaDOS filesystem — the disk has a DOS signature but no valid root block, which is normal for a cracked or copy-protected game.',
 };
-
-/** Recursively counts files and directories across the whole tree, not just the root listing. */
-function countEntries(entries: AdfEntry[]): { files: number; dirs: number } {
-  let files = 0;
-  let dirs = 0;
-  for (const entry of entries) {
-    if (entry.kind === 'dir') {
-      dirs++;
-      const nested = countEntries(entry.children);
-      files += nested.files;
-      dirs += nested.dirs;
-    } else {
-      files++;
-    }
-  }
-  return { files, dirs };
-}
 
 const Badge = ({ label }: { label: string }) => (
   <span
@@ -80,7 +57,7 @@ export function VolumeHeader({ result, filename, usage }: {
   }
 
   const { volume, root, truncated, warnings } = result;
-  const { files, dirs } = countEntries(root);
+  const { files, dirs } = countTree(root);
 
   return (
     <div className="glass-card p-5" data-testid="volume-header">

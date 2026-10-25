@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ratio } from '@/lib/contrast.test-util';
-import { MENU_ITEM_HIGHLIGHT, MENU_ITEM_RING_TOKEN } from './menu-item-look';
+import { MENU_ITEM, MENU_ITEM_HIGHLIGHT, MENU_ITEM_RING_TOKEN } from './menu-item-look';
 
 // Final review I2: the highlighted menu item needs a cue of at least 3:1 against the popup (WCAG 1.4.11 / 2.4.7).
 const css = readFileSync(join(process.cwd(), 'src/app/globals.css'), 'utf8');
@@ -26,5 +26,13 @@ describe('menu item highlight', () => {
       expect(MENU_ITEM_HIGHLIGHT).toContain(`${p}bg-[var(--track)]`);
       expect(MENU_ITEM_HIGHLIGHT).toContain(`${p}shadow-[inset_0_0_0_2px_var(${MENU_ITEM_RING_TOKEN})]`);
     }
+  });
+});
+
+describe('MENU_ITEM (C4 Task 1: moved from title-menu.tsx, unchanged)', () => {
+  it('is the 44 px / 36 px item with the shared highlight', () => {
+    expect(MENU_ITEM.startsWith('h-11 gap-2.5 rounded-lg px-2.5 py-0 text-[13px] sm:h-9 ')).toBe(true);
+    expect(MENU_ITEM).toContain('data-highlighted:bg-[var(--track)]');
+    expect(MENU_ITEM.endsWith('[&_svg:not([class*=size-])]:size-4')).toBe(true);
   });
 });

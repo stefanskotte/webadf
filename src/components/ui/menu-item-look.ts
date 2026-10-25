@@ -13,3 +13,7 @@ export const MENU_ITEM_HIGHLIGHT =
   + 'data-[variant=destructive]:data-highlighted:shadow-[inset_0_0_0_2px_var(--muted-2)] '
   + 'data-[variant=destructive]:focus:bg-[var(--track)] '
   + 'data-[variant=destructive]:focus:shadow-[inset_0_0_0_2px_var(--muted-2)]';
+
+/** A menu item's box: 44 px under `sm` (a finger), 36 px above, 13 px text, the shared highlight, 16 px glyphs. */
+export const MENU_ITEM = `h-11 gap-2.5 rounded-lg px-2.5 py-0 text-[13px] sm:h-9 ${MENU_ITEM_HIGHLIGHT} `
+  + '[&_svg:not([class*=size-])]:size-4';

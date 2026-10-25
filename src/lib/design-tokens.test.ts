@@ -47,6 +47,8 @@ describe('design tokens (globals.css)', () => {
     ['--modal-foot', '#FBF8F1'],
     ['--dash', '#C4B9A2'], ['--to-amiga-bg', '#DCE8F5'],
     ['--from-amiga-bg', '#E5F0DF'], ['--from-amiga-fg', '#2C5E24'], ['--accent-blue', '#1D4F86'],
+    ['--dir-bg', '#E9EEF4'], ['--exe-bg', '#E2F0DF'], ['--exe-fg', '#2E5B2A'], ['--viewing-bg', '#FBF3E3'],
+    ['--warning-line', '#E2C48F'], ['--on-ink-fill', '#3E3B36'],
   ])('%s is %s', (name, value) => {
     expect(tokens()[name]).toBe(value);
   });
@@ -71,6 +73,11 @@ describe('design tokens (globals.css)', () => {
     ['--success-fg', '--surface'], ['--success-fg', '--modal-foot'], ['--warning-fg', '--surface'],
     ['--warning-fg', '--modal-foot'], ['--muted', '--modal-foot'], ['--danger-fg', '--modal-foot'],
     ['--ink', '--surface-2'], ['#FFFFFF', '--danger-fg'],
+    // Disk files spec §11
+    ['--accent-blue', '--dir-bg'], ['--exe-fg', '--exe-bg'], ['--warning-fg', '--warning-bg'],
+    ['--success-fg', '--success-bg'], ['--danger-fg', '--danger-bg'], ['--muted-2', '--modal-foot'],
+    ['--amber-text', '--surface-2'], ['--amber-text', '--viewing-bg'], ['--ink', '--viewing-bg'],
+    ['--muted-2', '--viewing-bg'], ['--surface', '--on-ink-fill'], ['--fetch-dot', '--ink'], ['--danger-fg', '--surface'],
   ];
   it.each(pairs)('%s on %s clears AA (4.5:1)', (fg, bg) => {
     const read = (n: string) => (n.startsWith('#') ? n : tok(n));
