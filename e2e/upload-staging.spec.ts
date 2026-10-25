@@ -231,11 +231,12 @@ test('the Send card names its one board and whether Transfer runs, beside Choose
 });
 
 /** Dispatch a drag event with one file on a drop card; answers whether the page cancelled it (preventDefault). */
-async function dragOn(page: Page, testId: string, type: 'dragenter' | 'dragover' | 'dragleave' | 'drop', file?: { name: string; bytes: number[] }): Promise<boolean> {
+async function dragOn(page: Page, testId: string, type: 'dragenter' | 'dragover' | 'dragleave' | 'drop', file?: { name: string; bytes: number[] } | { link: string }): Promise<boolean> {
   return page.evaluate(([tid, t, f]) => {
     const el = document.querySelector(`[data-testid="${tid}"]`)!;
     const dt = new DataTransfer();
-    if (f) dt.items.add(new File([new Uint8Array(f.bytes)], f.name, { type: 'application/octet-stream' }));
+    if (f && 'link' in f) dt.setData('text/uri-list', f.link);
+    else if (f) dt.items.add(new File([new Uint8Array(f.bytes)], f.name, { type: 'application/octet-stream' }));
     const ev = new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt });
     el.dispatchEvent(ev);
     return ev.defaultPrevented;
@@ -250,7 +251,7 @@ test('a drop on the library card: dragenter lights it, a drop stages the disk, a
   await expect(page.locator('[data-testid="staging-empty"], [data-testid="staging-row"]').first()).toBeVisible({ timeout: LIVE });
   await hydrated(page, 'dropzone', 'onDrop');
   const add = page.getByTestId('dropzone');
-  await dragOn(page, 'dropzone', 'dragenter');
+  await dragOn(page, 'dropzone', 'dragenter', adfFile('over.adf'));
   await expect(add).toHaveAttribute('data-over', 'true');
   await dragOn(page, 'dropzone', 'dragleave');
   await expect(add).toHaveAttribute('data-over', 'false');
@@ -260,7 +261,7 @@ test('a drop on the library card: dragenter lights it, a drop stages the disk, a
   await page.route('**/api/ingest/check', async (route) => { await held; await route.continue(); });
   await dragOn(page, 'dropzone', 'drop', adfFile('first.adf'));
   await expect(page.getByTestId('add-browse')).toHaveText('Working…');
-  await dragOn(page, 'dropzone', 'dragenter');
+  await dragOn(page, 'dropzone', 'dragenter', adfFile('over.adf'));
   await expect(add).toHaveAttribute('data-over', 'false');          // disabled: no invitation to drop
   expect(await dragOn(page, 'dropzone', 'drop', adfFile('second.adf'))).toBe(true);   // cancelled, but ignored
   release();
@@ -275,7 +276,7 @@ test('a drop on the Send card queues the file for the paired board; keyboard rea
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/ingest');
   await hydrated(page, 'send-dropzone', 'onDrop');
-  await dragOn(page, 'send-dropzone', 'dragenter');
+  await dragOn(page, 'send-dropzone', 'dragenter', { name: 'note.txt', bytes: [1] });
   await expect(page.getByTestId('send-dropzone')).toHaveAttribute('data-over', 'true');
   await dragOn(page, 'send-dropzone', 'drop', { name: 'note.txt', bytes: [1, 2, 3] });
   await expect(page.locator('[data-testid="staging-row"][data-kind="out"]')).toHaveCount(1, { timeout: LIVE });
@@ -294,7 +295,7 @@ test('the Send card without a board is not a drop target, but still cancels a dr
   await expect(page.locator('[data-testid="staging-empty"], [data-testid="staging-row"]').first()).toBeVisible({ timeout: LIVE });
   const url = page.url();
   await expect(page.getByTestId('send-dropzone')).toHaveAttribute('data-drop', 'off');
-  expect(await dragOn(page, 'send-dropzone', 'dragover')).toBe(true);
+  expect(await dragOn(page, 'send-dropzone', 'dragover', { name: 'x.txt', bytes: [1] })).toBe(true);   // a file drag, as a real one
   expect(await dragOn(page, 'send-dropzone', 'drop', { name: 'x.txt', bytes: [1] })).toBe(true);
   await expect(page.getByTestId('send-dropzone')).toHaveAttribute('data-over', 'false');
   expect(page.url()).toBe(url);
@@ -444,6 +445,12 @@ test('after Delete removes the row, focus goes to the Staging heading', async ({
   await page.getByTestId('staging-confirm-yes').click();
   await expect(row(page, `amiga:${id}`)).toHaveCount(0, { timeout: LIVE });
   await expect(page.locator('#staging-heading')).toBeFocused();
+  // Final fix pass M6: moved there by script, the heading still shows where focus is.
+  const ring = await page.locator('#staging-heading').evaluate((el) => {
+    const c = getComputedStyle(el);
+    return { outline: c.outlineStyle !== 'none' && parseFloat(c.outlineWidth) > 0, shadow: c.boxShadow !== 'none' };
+  });
+  expect(ring.outline || ring.shadow).toBe(true);
 });
 
 test('Stop and Cancel are red; a receiving row offers Stop only; Cancel on the confirm keeps the row and returns focus', async ({ page, request }) => {
@@ -493,5 +500,87 @@ test('a focused row button whose row a refresh removes hands focus to the Stagin
   await expect(dl).toBeFocused();
   await getDb().delete(amigaUploads).where(eq(amigaUploads.id, id));
   await expect(row(page, `amiga:${id}`)).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.locator('#staging-heading')).toBeFocused();
+});
+
+// ---- Final fix pass (Phase C3 final review) ----
+
+test('at 390 px a row\'s Send to Amiga… select fits for an unnamed board and a long board name (I1)', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const a = await pairDevice(page, request);   // no name: "Device AA:BB:CC:DD:EE:FF"
+  const b = await pairDevice(page, request, 'The living room Amiga 500 with the long name');
+  await boardSays(request, a.token);
+  await boardSays(request, b.token);
+  const id = await seedUpload(orgId, a.deviceId, 'Device', { path: 'Keep.txt', status: 'stored' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/ingest');
+  const send = page.getByTestId(`staging-send-amiga:${id}`);
+  await expect(send).toBeVisible({ timeout: LIVE });
+  await expect(send.locator('option')).toHaveCount(3);
+  await expect(send.locator('option').nth(1)).toHaveText(/\([0-9A-F:]{17}\)$/);   // the full "Name (MAC)" label stays
+  const box = (await send.boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+});
+
+test('Tab between row buttons keeps the focus tracked: a later refresh removing that row hands focus to the heading (I2)', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const ids = [await seedUpload(orgId, deviceId, 'Bench', { path: 'A.txt', status: 'stored' }),
+    await seedUpload(orgId, deviceId, 'Bench', { path: 'B.txt', status: 'stored' })];
+  await page.goto('/ingest');
+  await expect(row(page, `amiga:${ids[0]}`)).toBeVisible({ timeout: LIVE });
+  await expect(row(page, `amiga:${ids[1]}`)).toBeVisible();
+  const first = page.locator('[data-testid="staging-list"] [data-testid^="staging-download-"]').first();
+  await hydrated(page, (await first.getAttribute('data-testid'))!);
+  await first.focus();
+  const keyOf = () => page.evaluate(() => document.activeElement?.closest('[data-key]')?.getAttribute('data-key') ?? null);
+  const start = await keyOf();
+  // Tab until focus is in the OTHER row: a move from one row's button to the next row's button.
+  for (let i = 0; i < 6 && (await keyOf()) === start; i++) await page.keyboard.press('Tab');
+  const now = await keyOf();
+  expect(now).not.toBe(start);
+  expect(now).toMatch(/^amiga:/);
+  await getDb().delete(amigaUploads).where(eq(amigaUploads.id, now!.slice('amiga:'.length)));
+  await expect(row(page, now!)).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.locator('#staging-heading')).toBeFocused();
+});
+
+test('a link dragged over a drop card is left alone: no highlight, no cancel, no Working… (M3)', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/ingest');
+  await hydrated(page, 'dropzone', 'onDrop');
+  await hydrated(page, 'send-dropzone', 'onDrop');
+  const link = { link: 'https://example.com/a.adf' };
+  for (const id of ['dropzone', 'send-dropzone']) {
+    expect(await dragOn(page, id, 'dragenter', link)).toBe(false);
+    expect(await dragOn(page, id, 'dragover', link)).toBe(false);
+    await expect(page.getByTestId(id)).toHaveAttribute('data-over', 'false');
+    expect(await dragOn(page, id, 'drop', link)).toBe(false);
+  }
+  await expect(page.getByTestId('add-browse')).not.toHaveText('Working…');
+  // A file drag is still taken.
+  expect(await dragOn(page, 'dropzone', 'dragover', { name: 'x.txt', bytes: [1] })).toBe(true);
+  await expect(page.getByTestId('dropzone')).toHaveAttribute('data-over', 'true');
+});
+
+test('a focused Stop whose row stays but whose button goes (the file finished arriving) hands focus to the heading (M5)', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const id = await seedUpload(orgId, deviceId, 'Bench', { path: 'Moving.bin', status: 'receiving', size: 20_000, received: 16_384 });
+  await page.goto('/ingest');
+  const stop = page.getByTestId(`staging-stop-amiga:${id}`);
+  await expect(stop).toBeVisible({ timeout: LIVE });
+  await hydrated(page, `staging-stop-amiga:${id}`);
+  await stop.focus();
+  await expect(stop).toBeFocused();
+  const at = new Date();
+  await getDb().update(amigaUploads).set({ status: 'stored', receivedBytes: 20_000, blobSha256: '0'.repeat(64), storedAt: at }).where(eq(amigaUploads.id, id));
+  await expect(page.getByTestId(`staging-download-amiga:${id}`)).toBeVisible({ timeout: 30_000 });
+  await expect(stop).toHaveCount(0);
+  await expect(row(page, `amiga:${id}`)).toHaveCount(1);
   await expect(page.locator('#staging-heading')).toBeFocused();
 });

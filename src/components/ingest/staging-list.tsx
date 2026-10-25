@@ -13,7 +13,8 @@ import { DiskIcon } from '@/components/ui/disk-icon';
 import { FILTERS, EMPTY_UNDER, filterAfterKey } from '@/lib/upload-look';
 
 /** Row actions (spec 2026-10-25-phase-c3-upload-design.md §5.3): outline buttons, destructive ones red, Retry ink. */
-const ACT = 'inline-flex h-8 shrink-0 items-center rounded-[8px] px-2.5 text-[12px] font-medium hover:bg-[var(--track)] disabled:opacity-50';
+const ACT = 'inline-flex h-8 items-center rounded-[8px] px-2.5 text-[12px] font-medium hover:bg-[var(--track)] disabled:opacity-50';
+const ACT_BTN = `${ACT} shrink-0`;
 const ACT_STYLE = { background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--ink)' } as const;
 const ACT_DANGER = { ...ACT_STYLE, color: 'var(--danger-fg)' } as const;
 const ACT_PRIMARY = { background: 'var(--ink)', color: 'var(--surface)', border: '1px solid var(--ink)' } as const;
@@ -42,13 +43,24 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
   // to <body> (spec §6.3), so it goes to the Staging heading.
   const focusedKey = useRef<string | null>(null);
   const shownKeys = view.shown.map((v) => v.key).join('\n');
+  // Rows and the actions each offers: a focused button can go while its row stays (Stop on a file that finished
+  // arriving), which drops focus to <body> just as a removed row does.
+  const shape = view.shown.map((v) => `${v.key}:${v.actions.join(',')}`).join('\n');
   useEffect(() => {
     const k = focusedKey.current;
-    if (k && !shownKeys.split('\n').includes(k)) {
+    if (!k) return;
+    if (!shownKeys.split('\n').includes(k)) {
       focusedKey.current = null;
       focusHeadingIfLost();
+      return;
     }
-  }, [shownKeys]);
+    requestAnimationFrame(() => {
+      if (focusedKey.current === k && (!document.activeElement || document.activeElement === document.body)) {
+        focusedKey.current = null;
+        document.getElementById('staging-heading')?.focus();
+      }
+    });
+  }, [shownKeys, shape]);
   const clearN = view.clearServer.length + view.clearLocal.length;
 
   const mark = (key: string, on: boolean) => setBusy((b) => {
@@ -152,19 +164,19 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
       case 'open':
         return v.gameId && (
           <Link key={a} href={`/games/${encodeURIComponent(v.gameId)}`} data-testid={id}
-                className={ACT} style={ACT_STYLE}>Open title</Link>
+                className={ACT_BTN} style={ACT_STYLE}>Open title</Link>
         );
       case 'add':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT} style={ACT_STYLE}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT_BTN} style={ACT_STYLE}
                        aria-label={`Add ${v.name} to the library`} onClick={() => void addToLibrary(v)}>Add to library</button>;
       case 'download':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT} style={ACT_STYLE}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT_BTN} style={ACT_STYLE}
                        aria-label={`Download ${v.name}`} onClick={() => void download(v)}>Download</button>;
       case 'send':
         return targets.length > 0 && (
-          <span key={a} className="relative inline-flex">
+          <span key={a} className="relative inline-flex min-w-0 max-w-full">
             <select aria-label={`Send ${v.name} to an Amiga`} data-testid={id} value="" disabled={disabled}
-                    className={`${ACT} appearance-none pr-7`} style={ACT_STYLE}
+                    className={`${ACT} max-w-full appearance-none pr-7`} style={ACT_STYLE}
                     onChange={(e) => { const t = targets.find((x) => x.id === e.target.value); if (t) void sendTo(v, t); }}>
               <option value="">Send to Amiga…</option>
               {targets.map((t) => <option key={t.id} value={t.id}>{targetLabel(t)}</option>)}
@@ -175,21 +187,21 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
           </span>
         );
       case 'delete':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT} style={ACT_DANGER}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT_BTN} style={ACT_DANGER}
                        aria-label={`Delete ${v.name}`}
                        onClick={() => setConfirm({ key: v.key, id: idOf(v), question: `Delete ${v.name}? It is the only copy.`, yes: 'Delete', what: 'Not deleted' })}>Delete</button>;
       case 'stop':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT} style={ACT_DANGER}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT_BTN} style={ACT_DANGER}
                        aria-label={`Stop receiving ${v.name}`}
                        onClick={() => setConfirm({ key: v.key, id: idOf(v), question: `Stop receiving ${v.name}? The part that arrived is deleted.`, yes: 'Stop', what: 'Not stopped', stop: true })}>Stop</button>;
       case 'cancel':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT} style={ACT_DANGER}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT_BTN} style={ACT_DANGER}
                        aria-label={`Cancel ${v.name}`} onClick={() => void cancel(v)}>Cancel</button>;
       case 'retry':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT_BTN}
                        style={ACT_PRIMARY} aria-label={`Retry ${v.name}`} onClick={() => void retry(v)}>Retry</button>;
       case 'clear':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT} style={ACT_STYLE}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT_BTN} style={ACT_STYLE}
                        aria-label={`Clear ${v.name}`}
                        onClick={() => void clear(v.row.source === 'server' ? { local: [], server: [v.key] } : { local: [v.key], server: [] }, v.key)}>Clear</button>;
     }
@@ -211,7 +223,7 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
              style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1">
-          <h2 id="staging-heading" tabIndex={-1} className="text-[16px] font-semibold focus:outline-none" style={{ color: 'var(--ink)' }}>Staging</h2>
+          <h2 id="staging-heading" tabIndex={-1} className="rounded-[6px] text-[16px] font-semibold focus:outline-2 focus:outline-offset-2 focus:outline-(--ring)" style={{ color: 'var(--ink)' }}>Staging</h2>
           <HelpTip topic="from-amiga" />
         </div>
         <div role="radiogroup" aria-label="Show" data-testid="staging-filters" data-value={filter}
@@ -238,9 +250,11 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
         <ul aria-label="Staging" data-testid="staging-list"
             onFocus={(e) => { focusedKey.current = (e.target as HTMLElement).closest('[data-key]')?.getAttribute('data-key') ?? null; }}
             onBlur={(e) => {
-              // Focus moved on by the user (the element is still there), versus the element being removed under it.
+              // Forget the row only once focus has left the list (the user went elsewhere); a Tab from one button to
+              // another inside it keeps the tracking, and an element removed under focus is not "left" either.
               const el = e.target as HTMLElement;
-              requestAnimationFrame(() => { if (el.isConnected) focusedKey.current = null; });
+              const list = e.currentTarget;
+              requestAnimationFrame(() => { if (el.isConnected && !list.contains(document.activeElement)) focusedKey.current = null; });
             }}
             className="flex flex-col md:max-h-[36rem] md:overflow-y-auto">
           {view.shown.map((v) => <StagingRow key={v.key} v={v}>{v.actions.map((a) => action(v, a))}</StagingRow>)}

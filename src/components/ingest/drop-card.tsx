@@ -15,12 +15,14 @@ export function DropCard({ testId, headingId, title, help, hint, disk, disabled,
 }) {
   const [over, setOver] = useState(false);
   const drop = !!onFiles && !disabled;
+  // Only a drag that carries files is the card's business; a dragged link belongs to the URL field (final review M3).
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
   return (
     <section aria-labelledby={headingId} data-testid={testId} data-over={String(over)} data-drop={onFiles ? 'on' : 'off'}
-      onDragEnter={(e) => { e.preventDefault(); if (drop && !over) setOver(true); }}
-      onDragOver={(e) => { e.preventDefault(); if (drop && !over) setOver(true); }}
+      onDragEnter={(e) => { if (!hasFiles(e)) return; e.preventDefault(); if (drop && !over) setOver(true); }}
+      onDragOver={(e) => { if (!hasFiles(e)) return; e.preventDefault(); if (drop && !over) setOver(true); }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false); }}
-      onDrop={(e) => { e.preventDefault(); setOver(false); if (drop) onFiles(e.dataTransfer.files); }}
+      onDrop={(e) => { if (!hasFiles(e)) return; e.preventDefault(); setOver(false); if (drop) onFiles(e.dataTransfer.files); }}
       className="relative flex min-w-0 items-center gap-4 rounded-[20px] border-[1.5px] border-dashed border-[var(--dash)] bg-[var(--surface)] p-5 hover:border-[var(--ink)] data-[over=true]:border-[var(--ink)] data-[over=true]:bg-[var(--surface-2)] sm:gap-5 sm:p-6">
       <span className="shrink-0 sm:hidden"><DiskIcon color={disk.color} size={56} /></span>
       <span className="hidden shrink-0 sm:block"><DiskIcon color={disk.color} size={84} set={disk.set} title={disk.title} /></span>
