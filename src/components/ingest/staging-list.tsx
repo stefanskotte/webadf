@@ -11,21 +11,11 @@ import { downloadName, uploadErrorText } from '@/lib/from-amiga-ui';
 import { SIGNED_OUT_TEXT, isSignedOutAnswer, mergeStaging, stagingView, type StagingFilter, type Tone, type ViewRow } from '@/lib/upload-staging';
 import { useStaging } from './staging-provider';
 import { StagingConfirm } from './staging-confirm';
+import { FILTERS, EMPTY_UNDER } from '@/lib/upload-look';
 
 const btn = 'rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50';
 const quiet = { background: 'var(--glass-strong)', color: 'var(--ink)', border: '1px solid var(--hairline-strong)' } as const;
 
-const FILTERS: { id: StagingFilter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'in', label: 'From the Amiga' },
-  { id: 'out', label: 'To the Amiga' },
-  { id: 'lib', label: 'To the library' },
-];
-const EMPTY_UNDER: Record<Exclude<StagingFilter, 'all'>, string> = {
-  lib: 'Nothing to the library right now.',
-  out: 'Nothing to the Amiga right now.',
-  in: 'Nothing from the Amiga right now.',
-};
 const PILL: Record<ViewRow['kind'], string> = { lib: '↓ To library', out: '→ To Amiga', in: '← From Amiga' };
 const DOT: Record<Tone, string> = {
   done: 'var(--success-fg)', busy: 'var(--accent-amber)', wait: 'var(--muted)', fail: 'var(--danger-fg)',

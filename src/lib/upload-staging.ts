@@ -37,7 +37,7 @@ export type StagingAction = 'open' | 'add' | 'download' | 'send' | 'delete' | 's
 export type ViewRow = {
   key: string; kind: 'lib' | 'out' | 'in'; state: string; name: string; where: string;
   size: string; status: string; tone: Tone; note: string | null; actions: StagingAction[];
-  gameId: string | null; row: StagingRowAny;
+  gameId: string | null; pct: number | null; row: StagingRowAny;
 };
 
 export function mergeStaging(server: ServerRow[], browser: (LibRow | UpRow)[]): StagingRowAny[] {
@@ -104,7 +104,8 @@ function upBody(r: UpRow): Body {
 
 function toView(r: StagingRowAny, stalled: ReadonlySet<string>): ViewRow {
   const body = r.source === 'server' ? serverBody(r, stalled) : r.source === 'lib' ? libBody(r) : upBody(r);
-  return { key: r.key, kind: r.kind, name: r.name, size: formatSize(r.sizeBytes), row: r, ...body };
+  const pct = r.source === 'server' && (r.status === 'sending' || r.status === 'receiving') ? r.pct : null;
+  return { key: r.key, kind: r.kind, name: r.name, size: formatSize(r.sizeBytes), row: r, pct, ...body };
 }
 
 export function stagingView(rows: StagingRowAny[], filter: StagingFilter, stalled: ReadonlySet<string>):
