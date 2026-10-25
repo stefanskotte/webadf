@@ -428,7 +428,7 @@ test('row actions: outline buttons, destructive ones red, Retry ink; Send to Ami
   const send = page.getByTestId(`staging-send-amiga:${stored}`);
   await expect(send).toHaveJSProperty('tagName', 'SELECT');
   await expect(send.locator('option').first()).toHaveText('Send to Amiga…');
-  await expect(send.locator('option').nth(1)).toHaveText(/^Bench( \(.+\))?$/);
+  await expect(send.locator('option').nth(1)).toHaveText(/^Bench \(.+\)$/);
   expect((await del.boundingBox())!.height).toBeGreaterThanOrEqual(31);                 // the board's 32 px
 });
 
@@ -443,5 +443,55 @@ test('after Delete removes the row, focus goes to the Staging heading', async ({
   await expect(page.getByTestId('staging-confirm-cancel')).toBeFocused();
   await page.getByTestId('staging-confirm-yes').click();
   await expect(row(page, `amiga:${id}`)).toHaveCount(0, { timeout: LIVE });
+  await expect(page.locator('#staging-heading')).toBeFocused();
+});
+
+test('Stop and Cancel are red; a receiving row offers Stop only; Cancel on the confirm keeps the row and returns focus', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const up = await seedUpload(orgId, deviceId, 'Bench', { path: 'Moving.bin', status: 'receiving', size: 20_000, received: 16_384 });
+  const queued = await seedSend(orgId, deviceId, { path: 'Wait.bin', status: 'queued' });
+  await page.goto('/ingest');
+  const stop = page.getByTestId(`staging-stop-amiga:${up}`);
+  await expect(stop).toBeVisible({ timeout: LIVE });
+  await expect(page.getByTestId(`staging-delete-amiga:${up}`)).toHaveCount(0);
+  expect(await stop.evaluate((el) => getComputedStyle(el).color)).toBe('rgb(179, 52, 31)');
+  expect(await page.getByTestId(`staging-cancel-send:${queued}`).evaluate((el) => getComputedStyle(el).color)).toBe('rgb(179, 52, 31)');
+  await hydrated(page, `staging-stop-amiga:${up}`);
+  await stop.click();
+  await page.getByTestId('staging-confirm-cancel').click();
+  await expect(page.getByTestId('staging-confirm')).toHaveCount(0);
+  await expect(row(page, `amiga:${up}`)).toHaveCount(1);
+  await expect(stop).toBeFocused();
+});
+
+test('Escape on a confirm whose row a refresh removed moves focus to the Staging heading', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const id = await seedUpload(orgId, deviceId, 'Bench', { path: 'Vanish.txt', status: 'stored' });
+  await page.goto('/ingest');
+  await expect(page.getByTestId(`staging-delete-amiga:${id}`)).toBeVisible({ timeout: LIVE });
+  await hydrated(page, `staging-delete-amiga:${id}`);
+  await page.getByTestId(`staging-delete-amiga:${id}`).click();
+  await expect(page.getByTestId('staging-confirm-cancel')).toBeFocused();
+  await getDb().delete(amigaUploads).where(eq(amigaUploads.id, id));
+  await expect(row(page, `amiga:${id}`)).toHaveCount(0, { timeout: 30_000 });
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('staging-confirm')).toHaveCount(0);
+  await expect(page.locator('#staging-heading')).toBeFocused();
+});
+
+test('a focused row button whose row a refresh removes hands focus to the Staging heading', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const id = await seedUpload(orgId, deviceId, 'Bench', { path: 'Vanish.txt', status: 'stored' });
+  await page.goto('/ingest');
+  const dl = page.getByTestId(`staging-download-amiga:${id}`);
+  await expect(dl).toBeVisible({ timeout: LIVE });
+  await hydrated(page, `staging-download-amiga:${id}`);
+  await dl.focus();
+  await expect(dl).toBeFocused();
+  await getDb().delete(amigaUploads).where(eq(amigaUploads.id, id));
+  await expect(row(page, `amiga:${id}`)).toHaveCount(0, { timeout: 30_000 });
   await expect(page.locator('#staging-heading')).toBeFocused();
 });

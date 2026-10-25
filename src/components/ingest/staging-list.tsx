@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Link } from '@/components/shell/link';
 import { HelpTip } from '@/components/help/help-tip';
@@ -37,6 +37,17 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
 
   const rows = mergeStaging(s.serverRows, [...s.libRows, ...s.upRows]);
   const view = stagingView(rows, filter, s.stalled);
+  // The key of the row that last held focus: if a refresh removes that row, its button is gone and focus would fall
+  // to <body> (spec §6.3), so it goes to the Staging heading.
+  const focusedKey = useRef<string | null>(null);
+  const shownKeys = view.shown.map((v) => v.key).join('\n');
+  useEffect(() => {
+    const k = focusedKey.current;
+    if (k && !shownKeys.split('\n').includes(k)) {
+      focusedKey.current = null;
+      focusHeadingIfLost();
+    }
+  }, [shownKeys]);
   const clearN = view.clearServer.length + view.clearLocal.length;
 
   const mark = (key: string, on: boolean) => setBusy((b) => {
@@ -223,7 +234,14 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
           Clear finished ({clearN})
         </button>
       </div>
-        <ul aria-label="Staging" data-testid="staging-list" className="flex flex-col md:max-h-[36rem] md:overflow-y-auto">
+        <ul aria-label="Staging" data-testid="staging-list"
+            onFocus={(e) => { focusedKey.current = (e.target as HTMLElement).closest('[data-key]')?.getAttribute('data-key') ?? null; }}
+            onBlur={(e) => {
+              // Focus moved on by the user (the element is still there), versus the element being removed under it.
+              const el = e.target as HTMLElement;
+              requestAnimationFrame(() => { if (el.isConnected) focusedKey.current = null; });
+            }}
+            className="flex flex-col md:max-h-[36rem] md:overflow-y-auto">
           {view.shown.map((v) => <StagingRow key={v.key} v={v}>{v.actions.map((a) => action(v, a))}</StagingRow>)}
           {view.shown.length === 0 && (rows.length > 0 || s.loaded) && (
             <li className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }} data-testid="staging-empty">
@@ -250,7 +268,7 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
         </footer>
       {confirm && (
         <StagingConfirm question={confirm.question} yes={confirm.yes} busy={busy.has(confirm.key)}
-                        onYes={() => void removeUpload(confirm)} onCancel={() => setConfirm(null)} />
+                        onYes={() => void removeUpload(confirm)} onCancel={() => { setConfirm(null); focusHeadingIfLost(); }} />
       )}
     </section>
   );
