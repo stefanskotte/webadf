@@ -1,7 +1,7 @@
 // PaulaNET Phase 4 increment 3 (spec 2026-10-16 §4, §7 e2e): the web side of sending to the Amiga. The board is
 // simulated through its own routes (status, poll, queue, chunk, done), as e2e/device-send.spec.ts does.
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
-import { signUpFresh, stagingReady } from './helpers';
+import { signUpFresh, stagingReady, openRowMenu } from './helpers';
 import { createHash } from 'node:crypto';
 import { diskStore } from '@/lib/storage';
 import { formatVolume } from '@/lib/adffs/format';
@@ -142,6 +142,7 @@ test('Browse: Send on a folder queues its files with their paths and protection'
   await boardSays(request, token, 'c');
   const { diskId, mods } = await seedSendDisk(orgId, `S${runTag().slice(0, 6)}`);
   await page.goto(`/disks/${diskId}/files`);
+  await openRowMenu(page, mods);
   await page.getByTestId(`fs-send-${mods}`).click();
   await expect(page.getByText('Queued for Bench')).toBeVisible();
   const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');

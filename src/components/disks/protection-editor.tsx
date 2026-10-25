@@ -11,8 +11,8 @@ import { useFileEdit } from './file-actions';
  * toggles read as the string does -- a lit letter is a flag that is on, so
  * "r" lit means readable, even though that bit is stored cleared.
  */
-export function ProtectionEditor({ diskId, entry, onClose }: {
-  diskId: string; entry: AdfEntry; onClose: () => void;
+export function ProtectionEditor({ diskId, entry, onClose, autoFocusFirst = false }: {
+  diskId: string; entry: AdfEntry; onClose: () => void; autoFocusFirst?: boolean;
 }) {
   const { busy, runEdit } = useFileEdit();
   const [shown, setShown] = useState(entry.protection);
@@ -31,17 +31,18 @@ export function ProtectionEditor({ diskId, entry, onClose }: {
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2 pl-[22px]" data-testid={`fs-protect-editor-${entry.block}`}>
+    <div className="flex flex-wrap items-center gap-2" data-testid={`fs-protect-editor-${entry.block}`}>
       <div className="flex gap-1" role="group" aria-label={`Protection of ${entry.name}`}>
         {PROTECTION_FLAGS.map((f, i) => {
           const on = shown[i] === f.letter;
           return (
             <button key={f.letter} type="button" aria-pressed={on} title={f.label} onClick={() => flip(i)}
+                    autoFocus={autoFocusFirst && i === 0}
                     data-testid={`fs-protect-bit-${f.letter}`}
-                    className="grid h-6 w-6 place-items-center rounded font-mono text-[11px] font-semibold"
+                    className="grid h-[30px] w-[30px] place-items-center rounded-[8px] font-mono text-[11px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-(--ring)"
                     style={on
-                      ? { background: 'var(--primary-action)', color: 'white' }
-                      : { background: 'var(--glass-strong)', color: 'var(--muted-2)' }}>
+                      ? { background: 'var(--ink)', color: 'var(--surface)' }
+                      : { background: 'var(--track)', color: 'var(--muted-2)' }}>
               {f.letter}
             </button>
           );
@@ -49,12 +50,14 @@ export function ProtectionEditor({ diskId, entry, onClose }: {
       </div>
       <button type="button" onClick={save} disabled={busy || shown === entry.protection}
               data-testid={`fs-protect-save-${entry.block}`}
-              className="rounded px-2 py-0.5 text-[11px] font-semibold text-white disabled:opacity-50"
-              style={{ background: 'var(--primary-action)' }}>
+              className="h-[30px] rounded-[8px] px-3 text-[13px] font-semibold disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-(--ring)"
+              style={{ background: 'var(--ink)', color: 'var(--surface)' }}>
         Save
       </button>
       <button type="button" onClick={onClose} disabled={busy}
-              className="rounded px-2 py-0.5 text-[11px] font-semibold disabled:opacity-50" style={{ color: 'var(--muted)' }}>
+              data-testid={`fs-protect-cancel-${entry.block}`}
+              className="h-[30px] rounded-[8px] px-3 text-[13px] font-semibold disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-(--ring)"
+              style={{ border: '1px solid var(--line)', color: 'var(--ink)' }}>
         Cancel
       </button>
     </div>

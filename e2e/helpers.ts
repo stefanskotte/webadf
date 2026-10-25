@@ -130,10 +130,19 @@ export async function signUpFresh(page: Page) {
  * the Create click and leaving a panel open with no disk made.
  */
 export async function createAdf(page: Page, filesystem: 'FFS' | 'OFS' = 'FFS', density: 'dd' | 'hd' = 'dd') {
+  // A click on the server-rendered button before React has hydrated it does nothing, and the panel never opens
+  // (archive-drop-folder flake, 2026-10-25: no game card after createAdf). Hydrated nodes carry `__reactProps$…`.
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="create-adf"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  });
   await page.getByTestId('create-adf').click();
   await page.getByTestId(`create-adf-size-${density}`).click();
   await page.getByTestId(`create-adf-fs-${filesystem.toLowerCase()}`).click();
+  // Wait for the server's answer so a slow create reads as slow, not as "no game card" five seconds later.
+  const created = page.waitForResponse((r) => r.url().includes('/api/disks/create') && r.request().method() === 'POST');
   await page.getByTestId('create-adf-submit').click();
+  expect((await created).status()).toBe(200);
 }
 
 // ---- The Upload page's Staging list (A6, spec 2026-10-23 §4 "Test ids") ----
@@ -170,4 +179,31 @@ export async function openTitleMenu(page: Page, gameId: string) {
   const panel = page.getByTestId('title-menu-panel');
   await expect(panel).toBeVisible();
   return panel;
+}
+
+/**
+ * Opens a disk file row's ⋯ menu (C4 spec §5.3) -- by block number, or by the row's name -- and returns the panel.
+ * The row actions (Download, Send to Amiga, Rename, Move to…, Protection bits…, Delete) are items in it and keep
+ * their old test ids. A tap where the page has touch, a click otherwise (same rule as openTitleMenu).
+ */
+export async function openRowMenu(page: Page, row: number | string) {
+  const trigger = typeof row === 'number'
+    ? page.getByTestId(`fs-more-${row}`)
+    : page.locator(`[data-testid="fs-entry"][data-name="${row}"] [data-testid^="fs-more-"]`);
+  // A press before hydration reaches DOM with no handler: wait for the trigger's own React props.
+  await expect.poll(() => trigger.evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps$')
+    && typeof (el as unknown as Record<string, Record<string, unknown>>)[k]?.onPointerDown === 'function'))).toBe(true);
+  const touch = await page.evaluate(() => navigator.maxTouchPoints > 0);
+  if (touch) await trigger.tap();
+  else await trigger.click();
+  const panel = page.getByTestId('fs-row-menu');
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
+/** Opens one version in a disk's History (C4 spec §7.2) unless it is open already; versions collapse by default. */
+export async function openVersion(page: Page, seq: number) {
+  const toggle = page.getByTestId(`version-toggle-${seq}`);
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+  await expect(page.getByTestId(`version-body-${seq}`)).toBeVisible();
 }

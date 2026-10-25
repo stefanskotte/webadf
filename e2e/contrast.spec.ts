@@ -22,15 +22,16 @@ import { test, expect, type Page } from '@playwright/test';
  * this repo names. Assert the composited pixels.
  */
 import { randomUUID } from 'node:crypto';
-import { signUpFresh, runTag } from './helpers';
+import { signUpFresh, runTag, createAdf, openRowMenu, openVersion } from './helpers';
 import { cleanupSeeded, seedDisk, pairDevice, authHeader, openBoardSettings, hydrated } from './device-helpers';
 import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
 import { getDb } from '@/db';
-import { blobs } from '@/db/schema/catalog';
+import { blobs, games, disks } from '@/db/schema/catalog';
+import { readVolume } from '@/lib/adffs';
 import { devices } from '@/db/schema/devices';
 import { amigaUploads } from '@/db/schema/amiga-uploads';
 import { transfers } from '@/db/schema/transfers';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { signInAsSuperAdmin } from './admin-helpers';
 
@@ -504,4 +505,78 @@ test('the Upload pairs are legible: pills, statuses, where on a hovered row, cou
   console.log(`upload    where on a hovered row   ${rw.toFixed(2)}:1`);
   expect(rw, 'where on a hovered row').toBeGreaterThan(4.5);
   await page.screenshot({ path: 'test-results/zz-upload.png', fullPage: true });
+});
+
+// Phase C4 (spec §11): the Disk files pairs, measured on the real elements of a fresh org's own disk.
+test('the Disk files pairs are legible: banner, rows, glyphs, chips, column heads, footer, History, menu, bar', async ({ page }) => {
+  test.setTimeout(90_000);   // a sign-up, a disk, four uploads and a dozen probes: over Playwright's 30 s default
+  const u = await signUpFresh(page);
+  await page.goto('/library');
+  await createAdf(page);
+  await expect(page.getByTestId('game-card')).toHaveCount(1, { timeout: 15_000 });
+  const [game] = await getDb().select().from(games).where(and(eq(games.orgId, u.orgId), eq(games.authored, true)));
+  const [disk] = await getDb().select().from(disks).where(eq(disks.gameId, game.id));
+  for (const name of ['Prog', 'Prog.info', 'Notes.txt']) {
+    expect((await page.request.post(`/api/disks/${disk.id}/files`, { multipart: { parentBlock: '880', name,
+      file: { name, mimeType: 'application/octet-stream', buffer: Buffer.from(name) } } })).status()).toBe(200);
+  }
+  expect((await page.request.post(`/api/disks/${disk.id}/files`, { multipart: { parentBlock: '880', name: 'Docs' } })).status()).toBe(200);
+  const v = readVolume(new Uint8Array(await (await page.request.get(`/api/disks/${disk.id}/adf`)).body()));
+  if (!v.ok) throw new Error('fixture');
+  const blk = Object.fromEntries(v.root.map((e) => [e.name, e.block]));
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.goto(`/disks/${disk.id}/files`);
+  const sw = page.getByTestId('fs-hide-info');
+  const was = await sw.getAttribute('aria-checked');
+  if (was !== 'true') await sw.click();                       // .info badge on Prog
+  await page.getByTestId(`fs-select-${blk['Notes.txt']}`).check();   // a selected row and the ink strip
+  const pairs: [string, string][] = [
+    ['size', `[data-testid="fs-entry"][data-name="Prog"] .font-mono > span:first-child`],
+    ['selected row date', `[data-testid="fs-entry"][data-name="Notes.txt"] .font-mono > span:last-child`],
+    ['column head', '[data-testid="fs-columns"] > span:nth-child(3)'],
+    ['footer', '[data-testid="fs-footer"]'],
+    ['.info badge', `[data-testid="fs-info-${blk.Prog}"]`],
+    ['DIR glyph', `[data-testid="fs-glyph-${blk.Docs}"]`],
+    ['EXE glyph', `[data-testid="fs-glyph-${blk.Prog}"]`],
+    ['set protection bit', `[data-testid="fs-protect-${blk.Prog}"] > span:nth-child(5)`],
+    ['clear protection bit', `[data-testid="fs-protect-${blk.Prog}"] > span:nth-child(1)`],
+    ['new in vN', `[data-testid="fs-new-${blk.Prog}"]`],
+    ['selection button', '[data-testid="fs-bulk-move"]'],
+    ['Current', '[data-testid^="current-"]'],
+    ['version time', '[data-testid^="version-toggle-"] .font-mono'],
+    ['+N chip', '[data-testid^="version-counts-"] > span:first-child'],
+    ['drop bar sub line', '[data-testid="drop-strip"] .text-\\[12px\\]'],
+    ['holder words', `[data-testid="holder-${disk.id}"]`],
+  ];
+  for (const [what, sel] of pairs) {
+    const p = await probe(page, sel);
+    expect(p, `${what}: ${sel} not found`).toBeTruthy();
+    const r = ratio(p!.fg, p!.bg);
+    console.log(`disk-files ${what.padEnd(24)} ${r.toFixed(2)}:1  "${p!.text.slice(0, 24)}"`);
+    expect(r, what).toBeGreaterThan(4.5);
+  }
+  // A hovered row (surface-2) and a hovered older version: Restore... in --amber-text.
+  await page.locator(`[data-testid="fs-entry"][data-name="Prog"]`).hover();
+  const hovered = await probe(page, `[data-testid="fs-entry"][data-name="Prog"] .font-mono > span:first-child`);
+  expect(ratio(hovered!.fg, hovered!.bg), 'size on a hovered row').toBeGreaterThan(4.5);
+  await openVersion(page, 1);
+  await page.getByTestId('version-1').hover();
+  const restore = await probe(page, '[data-testid="restore-1"]');
+  expect(ratio(restore!.fg, restore!.bg), 'Restore... on a hovered version').toBeGreaterThan(4.5);
+  // The menu's Delete.
+  await openRowMenu(page, blk.Prog);
+  const del = await probe(page, `[data-testid="fs-delete-${blk.Prog}"]`);
+  expect(ratio(del!.fg, del!.bg), 'menu Delete').toBeGreaterThan(4.5);
+  await page.keyboard.press('Escape');
+  // The banner and the version on screen (--viewing-bg).
+  await page.goto(`/disks/${disk.id}/files?version=1`);
+  for (const [what, sel] of [['banner text', '[data-testid="version-banner"] > span'],
+    ['viewed version time', '[data-testid="version-toggle-1"] .font-mono']] as const) {
+    const p = await probe(page, sel);
+    expect(p, `${what}: ${sel} not found`).toBeTruthy();
+    expect(ratio(p!.fg, p!.bg), what).toBeGreaterThan(4.5);
+  }
+  await page.goto(`/disks/${disk.id}/files`);
+  if (was !== 'true') await page.getByTestId('fs-hide-info').click();
+  await page.screenshot({ path: 'test-results/zz-disk-files.png', fullPage: true });
 });

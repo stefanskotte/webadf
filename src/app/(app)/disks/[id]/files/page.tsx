@@ -1,9 +1,9 @@
 import { nowMs } from '@/lib/clock';
 import { notFound, redirect } from 'next/navigation';
-import Link from 'next/link';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements, games, blobs } from '@/db/schema/catalog';
+import { tosecEntries } from '@/db/schema/tosec';
 import { devices } from '@/db/schema/devices';
 import { orgFilter } from '@/db/scope';
 import { findHolder } from '@/lib/disk-holder';
@@ -14,18 +14,26 @@ import { readVolume, readUsage, DD_GEOMETRY, type AdfEntry } from '@/lib/adffs';
 import { listCollections } from '@/lib/collections';
 import { listDevices } from '@/lib/queries';
 import { mountChoices, holderText } from '@/lib/mount-choice';
+import { kindFromSetName, pickKind } from '@/lib/game-kind';
+import { isHdAdf } from '@/lib/disk-format';
+import { titleDiskColor } from '@/lib/library-look';
+import { driveLight, driveBadge } from '@/lib/disk-files-look';
+import { fmtTimeUtc } from '@/lib/format';
 import { resolveFrom, libraryTrail, fromQuery, parseTrailView } from '@/lib/trail';
 import { loadEntries } from '@/lib/disk-history/store';
 import { materialise } from '@/lib/disk-history/chain';
 import { loadHistory, type HistoryVersion } from '@/lib/disk-history/history';
 import { addedIn } from '@/lib/disk-history/added-in';
-import { PageHeader } from '@/components/shell/page-header';
-import { VolumeHeader } from '@/components/disks/volume-header';
+import { Breadcrumb } from '@/components/shell/breadcrumb';
+import { DiskCard, noFilesystemCopy } from '@/components/disks/disk-card';
+import { VersionBanner } from '@/components/disks/version-banner';
 import { FileTree } from '@/components/disks/file-tree';
+import { FilesCard } from '@/components/disks/files-card';
 import { DropStaging } from '@/components/disks/drop-staging';
 import { NativeDropProvider } from '@/components/disks/native-drop';
 import { FileEditProvider, FileToolbar, type EditDisabled } from '@/components/disks/file-actions';
 import { HistoryPanel } from '@/components/disks/history-panel';
+import { RestoreProvider } from '@/components/disks/restore-dialog';
 import { MountAction } from '@/components/games/mount-action';
 import { listSendTargets } from '@/lib/send-targets';
 import { SendBoardPicker } from '@/components/send/send-button';
@@ -125,6 +133,8 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
       matchState: blobs.matchState,
       imageFormat: disks.imageFormat,
       sizeBytes: disks.sizeBytes,
+      writeProtected: disks.writeProtected,
+      authored: games.authored,
     })
     .from(disks)
     .innerJoin(entitlements, and(
@@ -153,6 +163,18 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // D2); its game page states that and offers Extract as ADF. A hand-typed
   // URL lands there instead of on an editor that would refuse everything.
   if (disk.imageFormat === 'hfe') redirect(`/games/${disk.gameId}${fromQuery(from, view)}`);
+
+  // Started here and awaited with the other late reads: an extra sequential round trip is felt on every edit refresh.
+  // Promise.resolve runs the drizzle builder exactly once (its then() executes the query on every call, so a .catch()
+  // on the builder itself would run a second query).
+  const kindRowsPromise = Promise.resolve(getDb().select({ setName: tosecEntries.setName })
+    .from(disks)
+    .innerJoin(blobs, eq(blobs.sha256, disks.sha256))
+    .innerJoin(tosecEntries, eq(tosecEntries.id, blobs.tosecEntryId))
+    .where(and(eq(disks.gameId, disk.gameId), eq(disks.orgId, orgId))));
+  // A notFound() or a throw below can leave this un-awaited; mark that branch handled so a late rejection is never
+  // unhandled. The await further down still sees the original value or rejection.
+  kindRowsPromise.catch(() => undefined);
 
   const filename = disk.tosecName ?? disk.sourceFilename ?? `${disk.sha256.slice(0, 12)}.adf`;
 
@@ -199,6 +221,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // rather than showing a figure someone might act on.
   const usage = bytes ? readUsage(bytes) : null;
   const title = volume?.ok ? volume.volume.name || filename : filename;
+  const hd = rootBlock === 1760 || isHdAdf(disk);
 
   // Same holder check applyDiskEdit runs before any write (D-W-4, findHolder): a device
   // that has this disk mounted OR merely desires it is a reason to refuse,
@@ -310,71 +333,33 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   const [sendTargets, prefs] = await Promise.all([listSendTargets(getDb(), orgId), getUserPrefs(userId)]);
   // "New in vN" marks (A5) describe the head: browsing an older version shows none.
   const addedInMarks = historicalSeq === null ? Object.fromEntries(addedIn(historyVersions)) : {};
+  const kind = pickKind((await kindRowsPromise).map((r) => kindFromSetName(r.setName)));
+  const viewedVersion = historicalSeq === null ? null : historyVersions.find((x) => x.seq === historicalSeq) ?? null;
   const send = sendTargets.length > 0 ? { targets: sendTargets, now } : null;
 
   return (
-    <>
-      <PageHeader
-        // The full chain, and the middle crumb is named for the entry rather
-        // than typed as "Game" -- the `games` table's vocabulary is simply
-        // wrong on a Workbench or utility disk, which is the exact case this
-        // browser is most useful for. That naming rule came from the back
-        // link this trail replaces; it is kept, not rediscovered.
-        //
-        // "Disk N" is a crumb rather than a duplicate of the heading: the h1
-        // here is the VOLUME's name, which is a different fact, and on a
-        // multi-disk set the number is the only thing saying which one you
-        // opened.
-        eyebrow={[
-          ...libraryTrail(resolveFrom(from, collections), view),
-          // The collection is carried onward here too, so stepping back up to
-          // the title does not silently lose it.
-          { label: disk.gameTitle ?? 'Untitled', href: `/games/${disk.gameId}${fromQuery(from, view)}` },
-          { label: `Disk ${disk.diskNo}` },
-        ]}
-        title={title}
-        subtitle={filename}
-      />
-      <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
-        {/*
-          Shown above everything else, including the blob-unavailable
-          branch below -- a person who asked for version 3 and got "could
-          not be read" still needs to know WHICH version failed and how to
-          get back, not just that something did.
-        */}
-        {historicalSeq !== null && (
-          <div
-            className="glass-card p-4 text-[13px]"
-            style={{ color: 'var(--amber-text)' }}
-            data-testid="version-banner"
-            data-version={historicalSeq}
-          >
-            Viewing version {historicalSeq} of this disk, read-only.{' '}
-            <Link
-              href={`/disks/${id}/files${fromQuery(from, view)}`}
-              className="font-semibold underline underline-offset-2"
-            >
-              Return to the current version
-            </Link>
-          </div>
-        )}
-        {/*
-          Mount always acts on the disk's CURRENT bytes, also while an older
-          version is on screen -- the version banner above says which is shown.
-          Both values in words: "Not in a drive" rather than an absent line.
-        */}
-        <div className="glass-card flex flex-wrap items-center justify-between gap-3 p-4"
-             data-testid="disk-mount-bar">
-          <span className="text-[12.5px] font-semibold"
-                style={{ color: held?.stale ? 'var(--amber-text)' : 'var(--muted)' }}
-                data-testid={`holder-${id}`}>
-            {held ? held.text : 'Not in a drive'}
-          </span>
-          <div className="flex flex-wrap items-center gap-3">
-            <SendBoardPicker ctx={send} />
-            <MountAction diskId={id} choices={choices} />
-          </div>
-        </div>
+    <div className="flex flex-col gap-5 px-4 pb-10 pt-6 sm:px-7">
+      {/* The full chain; the middle crumb is named for the entry, and "Disk N" says which disk of a set. */}
+      <Breadcrumb crumbs={[
+        ...libraryTrail(resolveFrom(from, collections), view),
+        { label: disk.gameTitle ?? 'Untitled', href: `/games/${disk.gameId}${fromQuery(from, view)}` },
+        { label: `Disk ${disk.diskNo}` },
+      ]} />
+      {/* Mount always acts on the disk's CURRENT bytes, also while an older version is on screen. */}
+      <DiskCard diskId={id} filename={filename} title={title}
+                color={titleDiskColor({ id, hasHd: hd, kind, formats: [disk.imageFormat], authored: disk.authored ?? false })}
+                hd={hd} writeProtected={disk.writeProtected} badge={driveBadge(choices)} volume={volume} usage={usage}
+                sizeBytes={disk.sizeBytes} rootBlock={rootBlock} holder={held} light={driveLight(choices)}
+                actions={<><SendBoardPicker ctx={send} /><MountAction diskId={id} choices={choices} /></>} />
+      {/* Above everything else, including the blob-unavailable branch: which version failed, and the way back. */}
+      <RestoreProvider diskId={id} viewingSeq={historicalSeq} currentHref={`/disks/${id}/files${fromQuery(from, view)}`}>
+      {historicalSeq !== null && (
+        <VersionBanner seq={historicalSeq} backHref={`/disks/${id}/files${fromQuery(from, view)}`}
+                       version={viewedVersion} mountedMessage={mountedMessage}
+                       time={viewedVersion ? fmtTimeUtc(viewedVersion.createdAt) : null} />
+      )}
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
+      <div className="flex min-w-0 flex-col gap-4">
         {volume === null ? (
           <div className="glass-card p-5 text-[13px]" style={{ color: 'var(--amber-text)' }}
                data-testid="blob-unavailable">
@@ -382,18 +367,15 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
           </div>
         ) : (
           <FileEditProvider diskId={id} disabled={disabled} tosecName={matchedTosecName} rootBlock={rootBlock}>
-            <VolumeHeader result={volume} filename={filename} usage={usage} />
-            {/*
-              Shown even when there is no filesystem to browse -- a disk
-              with nothing to add a file to still gets the toolbar, disabled
-              with that reason, rather than the controls simply not existing.
-            */}
-            <FileToolbar />
             {/* Lets a file dropped on a folder row land in the staging area below, aimed at that folder. */}
             <NativeDropProvider>
-            {volume.ok && (
+            {volume.ok ? (
               <FileTree entries={volume.root} diskId={id} send={send} sort={prefs.browse.sort}
-                        hideInfo={prefs.browse.hideInfo} addedIn={addedInMarks} />
+                        hideInfo={prefs.browse.hideInfo} addedIn={addedInMarks} toolbar={<FileToolbar />} />
+            ) : (
+              <FilesCard toolbar={<FileToolbar />}>
+                <p className="px-4 py-6 text-[13px]" style={{ color: 'var(--muted)' }} data-testid="no-filesystem">{noFilesystemCopy(volume)}</p>
+              </FilesCard>
             )}
             {/*
               Below the tree, always rendered -- even with no filesystem to
@@ -407,16 +389,20 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
               existingNamesByDir={volume.ok ? existingNamesByDir(volume.root) : {}}
               freeBlocks={usage?.freeBlocks ?? 0}
               entries={volume.ok ? volume.root : []}
+              freeBytes={usage?.freeBytes ?? null}
+              volumeName={title}
             />
             </NativeDropProvider>
           </FileEditProvider>
         )}
+      </div>
         {/*
           Rendered regardless of whether today's bytes could be read above --
           a disk whose CURRENT blob is unavailable is exactly a disk someone
           might want to restore an earlier, readable version onto, so the
           history is not hidden behind that same failure.
         */}
+        <div className="min-w-0">
         {historyUnavailable ? (
           <div className="glass-card p-4 text-[13px]" style={{ color: 'var(--amber-text)' }}
                data-testid="history-unavailable">
@@ -432,7 +418,9 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
             mountedMessage={mountedMessage}
           />
         )}
+        </div>
       </div>
-    </>
+      </RestoreProvider>
+    </div>
   );
 }

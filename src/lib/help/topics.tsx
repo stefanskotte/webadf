@@ -202,7 +202,8 @@ export const HELP_TOPICS = {
   },
 
   // Sources: history-panel.tsx (labels, Restore dialog, mounted refusal), disk-history/history.ts:98-107,
-  // HANDOFF write-back (3188-3215), restore (2975-2982), re-dating (4813-4863, volume-date.ts).
+  // HANDOFF write-back (3188-3215), restore (2975-2982), re-dating (4813-4863, volume-date.ts),
+  // restore-dialog.tsx, disk-files-look.ts (openByDefault), docs/superpowers/specs/2026-10-25-phase-c4-disk-files-design.md §7.
   'write-back': {
     title: 'Saves and the time machine',
     short:
@@ -213,6 +214,11 @@ export const HELP_TOPICS = {
           A save arrives a few seconds after the Amiga stops writing. If you eject or swap sooner, the board finishes
           sending first. Each version in the History says where it came from: <em>As uploaded</em>,{' '}
           <em>Edited in browser</em>, <em>Amiga: &lt;board&gt;</em> or <em>Restored to version N</em>.
+        </p>
+        <p>
+          Open a version in the History to see what changed. <em>Browse</em> shows that version&apos;s files,
+          read-only; above them, <em>Restore this version</em> makes it current again and <em>Back to current</em>{' '}
+          returns. <em>Restore…</em> in the History does the same and asks first.
         </p>
         <p>
           <strong>Restore</strong> adds the old version back as the newest one. Nothing is thrown away, so you can
@@ -490,7 +496,7 @@ export const HELP_TOPICS = {
         <p>
           <strong>Three ways to send.</strong> On the Upload page, drop files on <em>Send files to the
           Amiga</em>, or press <em>Choose files</em>; with more than one board, pick the board under it. On a disk&apos;s
-          Browse page, press <em>Send</em> on a file or a folder. On a title&apos;s page,
+          page, a file&apos;s or folder&apos;s ⋯ menu has <em>Send to Amiga</em>. On a title&apos;s page,
           press <em>Send .adf to Amiga</em> to send a whole disk as one file. Each shows in the <em>Staging</em> list
           under <em>To the Amiga</em>, every board&apos;s together: waiting, sending, delivered with its saved name, or
           failed, and why.

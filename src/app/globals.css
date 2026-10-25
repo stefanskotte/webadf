@@ -292,6 +292,12 @@
   --to-amiga-bg:   #DCE8F5;   /* the "To Amiga" pill; text --accent-blue 6.72:1 */
   --from-amiga-bg: #E5F0DF;   /* the "From Amiga" pill ... */
   --from-amiga-fg: #2C5E24;   /* ... and its text, 6.53:1 */
+  --dir-bg:        #E9EEF4;   /* a folder's DIR glyph; text --accent-blue 7.16:1 (Disk files spec §11) */
+  --exe-bg:        #E2F0DF;   /* a program's EXE glyph ... */
+  --exe-fg:        #2E5B2A;   /* ... and its text, 6.71:1 */
+  --viewing-bg:    #FBF3E3;   /* the History version on screen */
+  --warning-line:  #E2C48F;   /* the version banner's Back to current outline */
+  --on-ink-fill:   #3E3B36;   /* a button on the ink selection strip (12 % surface over ink); surface text 10.97:1 */
 }
 
 @theme inline {

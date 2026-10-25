@@ -11,7 +11,7 @@ import { FolderMinus } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { MENU_ITEM_HIGHLIGHT } from '@/components/ui/menu-item-look';
+import { MENU_ITEM } from '@/components/ui/menu-item-look';
 import { FobDialog, type FobContext } from '@/components/nfc/fob-button';
 import { DeleteDialog } from './delete-disk-dialog';
 import { CardMountDialog, useCardMount, type DriveContext } from './card-mount-button';
@@ -33,9 +33,6 @@ const STOP_ALL = { onPointerDown: stop, onMouseDown: stop, onTouchStart: stop, o
 const NO_DRIVES: NonNullable<DriveContext> = { devices: [], holds: {}, disksByGame: {} };
 
 type Which = null | 'mount' | 'fob' | 'move' | 'delete';
-
-const ITEM = `h-11 gap-2.5 rounded-lg px-2.5 py-0 text-[13px] sm:h-9 ${MENU_ITEM_HIGHLIGHT} `
-  + '[&_svg:not([class*=size-])]:size-4';
 
 /** The board's glyphs, 16 px, `currentColor`. */
 const Glyph = {
@@ -208,7 +205,7 @@ export function TitleMenu({ game: g, collectionId, fob, drives, view = null }: {
               title={mountTitle}
               disabled={mount.busy}
               onClick={(e) => { e.stopPropagation(); onMount(); }}
-              className={`${ITEM} font-semibold`}
+              className={`${MENU_ITEM} font-semibold`}
             >
               {mount.ejecting ? Glyph.eject : Glyph.mount}{mountText}
             </DropdownMenuItem>
@@ -218,7 +215,7 @@ export function TitleMenu({ game: g, collectionId, fob, drives, view = null }: {
               data-testid={`fob-${g.id}`}
               aria-label={`Write ${g.title} to an NFC tag`}
               onClick={(e) => { e.stopPropagation(); openDialog('fob'); }}
-              className={ITEM}
+              className={MENU_ITEM}
             >
               {Glyph.nfc}Write to NFC tag
             </DropdownMenuItem>
@@ -228,7 +225,7 @@ export function TitleMenu({ game: g, collectionId, fob, drives, view = null }: {
               data-testid={`history-${g.id}`}
               aria-label={`Version history for ${g.title}`}
               onClick={(e) => { e.stopPropagation(); router.push(historyHref); }}
-              className={ITEM}
+              className={MENU_ITEM}
             >
               {Glyph.history}Version history
             </DropdownMenuItem>
@@ -237,7 +234,7 @@ export function TitleMenu({ game: g, collectionId, fob, drives, view = null }: {
             data-testid={`move-to-collection-${g.id}`}
             aria-label={`Move ${g.title} to a collection`}
             onClick={(e) => { e.stopPropagation(); openDialog('move'); }}
-            className={ITEM}
+            className={MENU_ITEM}
           >
             {Glyph.move}Move to collection…
           </DropdownMenuItem>
@@ -247,7 +244,7 @@ export function TitleMenu({ game: g, collectionId, fob, drives, view = null }: {
               aria-label={`Remove ${g.title} from collection`}
               disabled={removing}
               onClick={(e) => { e.stopPropagation(); void onRemove(); }}
-              className={ITEM}
+              className={MENU_ITEM}
             >
               <FolderMinus strokeWidth={2} aria-hidden />Remove from collection
             </DropdownMenuItem>
@@ -258,7 +255,7 @@ export function TitleMenu({ game: g, collectionId, fob, drives, view = null }: {
             aria-label={`Delete ${g.title}`}
             variant="destructive"
             onClick={(e) => { e.stopPropagation(); openDialog('delete'); }}
-            className={`${ITEM} *:[svg]:text-[var(--danger-fg)]`}
+            className={`${MENU_ITEM} *:[svg]:text-[var(--danger-fg)]`}
             style={{ color: 'var(--danger-fg)' }}
           >
             {Glyph.delete}Delete title

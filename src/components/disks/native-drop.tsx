@@ -1,6 +1,7 @@
 'use client';
 
-import { createContext, useContext, useMemo, useRef, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
+import { toast } from 'sonner';
 
 /**
  * Lets the Browse tree hand an OS file drop to the staging area, with the
@@ -23,6 +24,8 @@ interface NativeDropValue {
   register(receiver: NativeDropReceiver | null): void;
   /** False until a staging area has registered, so the tree can leave drops alone. */
   available(): boolean;
+  /** Reactive twin of `available()`: true once a staging area has registered. The tree shows it as `data-native-drop`. */
+  ready: boolean;
   receive: NativeDropReceiver;
 }
 
@@ -30,11 +33,19 @@ const NativeDropContext = createContext<NativeDropValue | null>(null);
 
 export function NativeDropProvider({ children }: { children: ReactNode }) {
   const ref = useRef<NativeDropReceiver | null>(null);
+  const [ready, setReady] = useState(false);
   const value = useMemo<NativeDropValue>(() => ({
-    register(receiver) { ref.current = receiver; },
+    register(receiver) { ref.current = receiver; setReady(receiver !== null); },
     available() { return ref.current !== null; },
-    receive(items, block) { ref.current?.(items, block); },
-  }), []);
+    ready,
+    receive(items, block) {
+      // The receiver registers in an effect, a moment after the tree itself is interactive. A drop in that moment
+      // cannot be held back (the browser neuters the DataTransfer when the handler returns), so say so rather than
+      // do nothing.
+      if (!ref.current) { toast.error('Not ready yet', { description: 'The page is still loading. Drop the files again in a moment.' }); return; }
+      ref.current(items, block);
+    },
+  }), [ready]);
   return <NativeDropContext.Provider value={value}>{children}</NativeDropContext.Provider>;
 }
 

@@ -3,8 +3,8 @@ import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks, blobs } from '@/db/schema/catalog';
 import { readVolume, readFile, type AdfEntry } from '@/lib/adffs';
-import { signUpFresh, runTag, createAdf } from './helpers';
-import { cleanupSeeded, pairDevice } from './device-helpers';
+import { signUpFresh, runTag, createAdf, openRowMenu } from './helpers';
+import { cleanupSeeded, pairDevice, hydrated } from './device-helpers';
 
 /**
  * Task 12: prove the write routes end to end, ON THE BYTES.
@@ -89,6 +89,7 @@ test('uploading a file adds it to the disk, and it reads back byte for byte', as
   await expect(page.getByTestId('file-toolbar')).toBeVisible();
 
   const content = Buffer.from('Hello, Amiga! This file came from an e2e run.');
+  await hydrated(page, 'upload-input', 'onChange');
   await page.getByTestId('upload-input').setInputFiles({
     name: 'HELLO.TXT', mimeType: 'application/octet-stream', buffer: content,
   });
@@ -126,6 +127,7 @@ test('deleting a file changes the digest but leaves the id alone', async ({ page
 
   await page.goto(`/disks/${disk.id}/files`);
   const content = Buffer.from('to be deleted');
+  await hydrated(page, 'upload-input', 'onChange');
   await page.getByTestId('upload-input').setInputFiles({
     name: 'DOOMED', mimeType: 'application/octet-stream', buffer: content,
   });
@@ -139,6 +141,7 @@ test('deleting a file changes the digest but leaves the id alone', async ({ page
   if (!uploadedVolume.ok) return;
   const entry = findByName(uploadedVolume.root, 'DOOMED')!;
 
+  await openRowMenu(page, entry.block);
   await page.getByTestId(`fs-delete-${entry.block}`).click();
   await expect(page.getByTestId(`fs-delete-confirm-${entry.block}`)).toBeVisible();
   await page.getByTestId(`fs-delete-confirm-${entry.block}`).click();
@@ -163,6 +166,7 @@ test('renaming rewrites the entry on the bytes, not just on the page', async ({ 
 
   await page.goto(`/disks/${disk.id}/files`);
   const content = Buffer.from('rename me');
+  await hydrated(page, 'upload-input', 'onChange');
   await page.getByTestId('upload-input').setInputFiles({
     name: 'OLDNAME', mimeType: 'application/octet-stream', buffer: content,
   });
@@ -176,6 +180,7 @@ test('renaming rewrites the entry on the bytes, not just on the page', async ({ 
   const entry = findByName(uploadedVolume.root, 'OLDNAME')!;
   const block = entry.block;
 
+  await openRowMenu(page, block);
   await page.getByTestId(`fs-rename-${block}`).click();
   await page.getByTestId(`fs-rename-name-${block}`).fill('NEWNAME');
   await page.getByTestId(`fs-rename-submit-${block}`).click();

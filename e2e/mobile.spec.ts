@@ -6,7 +6,7 @@ import { games, disks } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume } from '@/lib/adffs';
-import { signUpFresh, runTag, createAdf, stagingReady, openTitleMenu } from './helpers';
+import { signUpFresh, runTag, createAdf, stagingReady, openTitleMenu, openRowMenu } from './helpers';
 import { cleanupSeeded, seedDisk, addDisk, pairDevice, authHeader } from './device-helpers';
 import { synthDrop } from './drag-drop-helpers';
 import { zoneOf } from '@/lib/set-folder';
@@ -242,16 +242,23 @@ test('a file tree row shows its name AND its download control', async ({ page })
 
   // This is the regression that mattered: the fixed columns totalled more
   // than the card was wide, so the name computed to a negative width and the
-  // Download control was clipped away entirely.
+  // row's controls were clipped away entirely. The row's actions are in its
+  // ⋯ menu now (C4): the trigger must be in view, and so must Download inside it.
   await expect(readme.getByText('README')).toBeVisible();
-  const download = readme.locator('a[data-testid^="fs-download-"]');
+  const more = readme.locator('[data-testid^="fs-more-"]');
+  await expect(more).toBeVisible();
+  let box = (await more.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  await openRowMenu(page, 'README');
+  const download = page.locator('a[data-testid^="fs-download-"]');
   await expect(download).toBeVisible();
-  const box = (await download.boundingBox())!;
+  box = (await download.boundingBox())!;
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(390);
 
-  // D-6-4 (updated by task 11): the row now legitimately holds more than
-  // one <button> -- Rename and Delete joined the directory toggle -- so
+  // D-6-4 (updated by task 11, and C4): the row now legitimately holds more than
+  // one <button> -- the grip, the protection chips and the ⋯ menu (where the row's actions are) joined the directory toggle -- so
   // "only one button in the row" is no longer the invariant to protect.
   // What still has to hold, and what this asserts, is that the toggle
   // itself is uniquely locatable by its own testid rather than ambiguous
@@ -415,6 +422,7 @@ test('the file toolbar and a row\'s controls fit a phone', async ({ page }) => {
   if (!volume.ok) return;
   const block = volume.root.find((e) => e.name === 'PHONE.TXT')!.block;
 
+  await openRowMenu(page, block);
   await page.getByTestId(`fs-rename-${block}`).tap();
   for (const id of [`fs-rename-name-${block}`, `fs-rename-submit-${block}`, `fs-rename-cancel-${block}`]) {
     box = (await page.getByTestId(id).boundingBox())!;
@@ -423,6 +431,7 @@ test('the file toolbar and a row\'s controls fit a phone', async ({ page }) => {
   }
   await page.getByTestId(`fs-rename-cancel-${block}`).tap();
 
+  await openRowMenu(page, block);
   await page.getByTestId(`fs-delete-${block}`).tap();
   for (const id of [`fs-delete-confirm-${block}`, `fs-delete-cancel-${block}`]) {
     box = (await page.getByTestId(id).boundingBox())!;
@@ -453,6 +462,10 @@ test('the file toolbar and a row\'s controls fit a phone', async ({ page }) => {
  * a grip handle, a toggle, Rename, Delete and Move to....
  */
 test('the drop strip fits a phone, and a press-and-hold drags an entry onto a folder', async ({ page }) => {
+  // This one test signs up, makes a disk, writes two files, stages a drop, then touch-drags: ~25 s warm and over
+  // the 30 s default on a cold dev-server compile of the files page. The drag itself lands (the PATCH returns
+  // 200); the old failure was the budget running out while polling for the moved entry.
+  test.setTimeout(90_000);
   const u = await signUpFresh(page);
   await page.goto('/library');
   await createAdf(page);

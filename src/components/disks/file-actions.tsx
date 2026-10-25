@@ -4,6 +4,7 @@ import { createContext, useContext, useRef, useState, type ReactNode } from 'rea
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { FolderPlus, Upload } from 'lucide-react';
 import { ejectMessage, isMountedReason } from '@/lib/mount-wording';
 import { HFE_READ_ONLY } from '@/lib/hfe/messages';
 
@@ -239,7 +240,7 @@ export function FileEditProvider({
             data-testid="identity-confirm-dialog"
             className="glass-card wf-modal w-full max-w-[440px] p-6 text-left"
           >
-            <h2 className="text-[15px] font-bold" style={{ color: 'var(--ink)' }}>
+            <h2 className="text-[20px] font-bold" style={{ fontFamily: 'var(--font-display)', color: 'var(--ink)' }}>
               This will drop the disk&apos;s TOSEC identity
             </h2>
             {/*
@@ -259,8 +260,8 @@ export function FileEditProvider({
                 type="button"
                 data-testid="identity-confirm-cancel"
                 onClick={cancelIdentityDrop}
-                className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold"
-                style={{ color: 'var(--muted)' }}
+                className="h-[38px] rounded-[10px] border px-4 text-[13px] font-medium hover:bg-[var(--track)]"
+                style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}
               >
                 Cancel
               </button>
@@ -268,8 +269,8 @@ export function FileEditProvider({
                 type="button"
                 data-testid="identity-confirm-proceed"
                 onClick={confirmIdentityDrop}
-                className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold text-white"
-                style={{ background: 'var(--primary-action)' }}
+                className="h-[38px] rounded-[10px] px-4 text-[13px] font-semibold"
+                style={{ background: 'var(--ink)', color: 'var(--surface)' }}
               >
                 Edit anyway
               </button>
@@ -344,124 +345,84 @@ export function FileToolbar() {
     cancelFolder();
   }
 
-  return (
-    <div className="glass-card flex flex-col gap-3 p-4" data-testid="file-toolbar">
-      {/*
-        The reason is stated, not just a disabled control left to speak for
-        itself -- "this disk is unusual" has to read differently from "this
-        feature is missing".
-      */}
-      {disabled && (
-        <p className="text-[12.5px] font-semibold" style={{ color: 'var(--amber-text)' }}
-           data-testid="file-edit-disabled">
-          {disabled.message}
-        </p>
-      )}
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          ref={fileInputRef}
-          type="file"
-          onChange={onFileSelected}
-          className="hidden"
-          data-testid="upload-input"
-        />
-        {uploadFile ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              value={uploadName}
-              onChange={(e) => setUploadName(e.target.value.slice(0, MAX_NAME_LENGTH))}
-              maxLength={MAX_NAME_LENGTH}
-              aria-label="Name for the uploaded file"
-              data-testid="upload-name"
-              className="rounded border bg-transparent px-2 py-1 text-[12.5px]"
-              style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
-            />
-            <button
-              type="button"
-              onClick={submitUpload}
-              disabled={busy || !uploadName.trim()}
-              data-testid="upload-submit"
-              className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50"
-              style={{ background: 'var(--primary-action)' }}
-            >
-              {busy ? 'Uploading…' : 'Upload'}
-            </button>
-            <button
-              type="button"
-              onClick={cancelUpload}
-              disabled={busy}
-              data-testid="upload-cancel"
-              className="rounded-lg border px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
-              style={{ borderColor: 'var(--hairline)', color: 'var(--muted)' }}
-            >
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={!!disabled}
-            title={disabled?.message}
-            data-testid="upload-trigger"
-            className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50"
-            style={{ background: 'var(--primary-action)' }}
-          >
-            Upload file
-          </button>
-        )}
+  const field = 'h-9 rounded-[9px] border px-2.5 text-[13px] focus-visible:outline-2 focus-visible:outline-(--ring)';
+  const fieldStyle = { background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' };
+  const ink = 'flex h-9 items-center gap-2 rounded-[9px] px-3 text-[13px] font-semibold disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)';
+  const inkStyle = { background: 'var(--ink)', color: 'var(--surface)' };
+  const outline = 'flex h-9 items-center gap-2 rounded-[9px] border px-3 text-[13px] font-medium hover:bg-[var(--track)] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-(--ring)';
+  const outlineStyle = { background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' };
 
-        {folderOpen ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              value={folderName}
-              onChange={(e) => setFolderName(e.target.value.slice(0, MAX_NAME_LENGTH))}
-              maxLength={MAX_NAME_LENGTH}
-              aria-label="New folder name"
-              data-testid="new-folder-name"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') submitFolder();
-                if (e.key === 'Escape') cancelFolder();
-              }}
-              className="rounded border bg-transparent px-2 py-1 text-[12.5px]"
-              style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
-            />
-            <button
-              type="button"
-              onClick={submitFolder}
-              disabled={busy || !folderName.trim()}
-              data-testid="new-folder-submit"
-              className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50"
-              style={{ background: 'var(--primary-action)' }}
-            >
-              {busy ? 'Creating…' : 'Create'}
-            </button>
-            <button
-              type="button"
-              onClick={cancelFolder}
-              disabled={busy}
-              data-testid="new-folder-cancel"
-              className="rounded-lg border px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
-              style={{ borderColor: 'var(--hairline)', color: 'var(--muted)' }}
-            >
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setFolderOpen(true)}
-            disabled={!!disabled}
-            title={disabled?.message}
-            data-testid="new-folder-trigger"
-            className="rounded-lg border px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
-            style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
-          >
-            New folder
+  return (
+    <div className="flex flex-wrap items-center gap-2" data-testid="file-toolbar">
+      <input
+        ref={fileInputRef}
+        type="file"
+        onChange={onFileSelected}
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        data-testid="upload-input"
+      />
+      {folderOpen ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={folderName}
+            onChange={(e) => setFolderName(e.target.value.slice(0, MAX_NAME_LENGTH))}
+            maxLength={MAX_NAME_LENGTH}
+            aria-label="New folder name"
+            data-testid="new-folder-name"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submitFolder();
+              if (e.key === 'Escape') cancelFolder();
+            }}
+            className={field}
+            style={fieldStyle}
+          />
+          <button type="button" onClick={submitFolder} disabled={busy || !folderName.trim()}
+                  data-testid="new-folder-submit" className={ink} style={inkStyle}>
+            {busy ? 'Creating…' : 'Create'}
           </button>
-        )}
-      </div>
+          <button type="button" onClick={cancelFolder} disabled={busy}
+                  data-testid="new-folder-cancel" className={outline} style={outlineStyle}>
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button type="button" onClick={() => setFolderOpen(true)} disabled={!!disabled} title={disabled?.message}
+                data-testid="new-folder-trigger" className={outline} style={outlineStyle}>
+          <FolderPlus size={15} aria-hidden />
+          New folder
+        </button>
+      )}
+
+      {uploadFile ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={uploadName}
+            onChange={(e) => setUploadName(e.target.value.slice(0, MAX_NAME_LENGTH))}
+            maxLength={MAX_NAME_LENGTH}
+            aria-label="Name for the uploaded file"
+            data-testid="upload-name"
+            className={field}
+            style={fieldStyle}
+          />
+          <button type="button" onClick={submitUpload} disabled={busy || !uploadName.trim()}
+                  data-testid="upload-submit" className={ink} style={inkStyle}>
+            {busy ? 'Uploading…' : 'Upload'}
+          </button>
+          <button type="button" onClick={cancelUpload} disabled={busy}
+                  data-testid="upload-cancel" className={outline} style={outlineStyle}>
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button type="button" onClick={() => fileInputRef.current?.click()} disabled={!!disabled} title={disabled?.message}
+                data-testid="upload-trigger" className={ink} style={inkStyle}>
+          <Upload size={15} aria-hidden />
+          Add file
+        </button>
+      )}
     </div>
   );
 }
