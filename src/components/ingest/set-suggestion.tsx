@@ -27,7 +27,7 @@ type SuggestedDisk = NonNullable<Suggestion>['disks'][number];
 // targets below `sm` for touch, the house 30px pill from `sm` up.
 const PILL =
   'inline-flex h-11 shrink-0 items-center justify-center rounded-full border px-4 text-[12.5px] font-semibold disabled:opacity-50 sm:h-[30px]';
-const PILL_STYLE = { borderColor: 'var(--hairline-strong)', background: 'var(--glass-strong)', color: 'var(--ink)' };
+const PILL_STYLE = { borderColor: 'var(--line-strong)', background: 'var(--surface)', color: 'var(--ink)' };
 const PILL_PRIMARY_STYLE = { borderColor: 'var(--primary-action)', background: 'var(--primary-action)', color: '#fff' };
 const ARROW =
   'grid h-11 w-11 shrink-0 place-items-center rounded-full border disabled:opacity-40 sm:h-8 sm:w-8';
@@ -106,14 +106,15 @@ export function SetSuggestion({ suggestion, onDone }: {
   }
 
   return (
-    <div className="glass-card flex flex-col gap-3 p-4" data-testid="set-suggestion">
+    <div className="flex flex-col gap-3 rounded-[14px] border p-4" data-testid="set-suggestion"
+         style={{ borderColor: 'var(--line)', background: 'var(--surface-2)' }}>
       <div className="flex flex-col gap-2">
         <span className="text-[13.5px] font-semibold" style={{ color: 'var(--ink)' }}>
           These {suggestion.disks.length} disks look like one set.
         </span>
         <label
           className="flex h-11 items-center gap-2 rounded-[10px] border px-3 sm:h-[34px]"
-          style={{ borderColor: 'var(--hairline-strong)', background: 'var(--glass)' }}
+          style={{ borderColor: 'var(--line-strong)', background: 'var(--surface)' }}
         >
           <span className="shrink-0 font-mono text-[10px] uppercase tracking-wide" style={{ color: 'var(--muted-2)' }}>
             Name
@@ -139,7 +140,7 @@ export function SetSuggestion({ suggestion, onDone }: {
               key={id}
               data-testid={`set-suggestion-row-${id}`}
               className="flex items-center gap-2 rounded-[10px] border px-2 py-1.5 sm:gap-3 sm:px-3"
-              style={{ borderColor: 'var(--hairline)', background: 'var(--glass)' }}
+              style={{ borderColor: 'var(--line)', background: 'var(--surface)' }}
             >
               {/* The whole row toggles the tick -- a bare 20px input would be
                   a 20px tap target below `sm`. Same pattern as
@@ -194,7 +195,7 @@ export function SetSuggestion({ suggestion, onDone }: {
           onClick={onDone}
           disabled={busy}
           className={PILL}
-          style={{ borderColor: 'var(--hairline-strong)', color: 'var(--ink)' }}
+          style={{ borderColor: 'var(--line-strong)', color: 'var(--ink)' }}
         >
           Not a set
         </button>

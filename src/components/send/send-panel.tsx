@@ -5,9 +5,7 @@ import { SEND_FILE_MAX, XFER_FW } from '@/lib/send-limits';
 import { longOffline, orderTargets, receiverLine, sendErrorText, targetState, type SendTarget } from '@/lib/send-ui';
 import { useSendBoard } from './use-send-board';
 import { HelpTip } from '@/components/help/help-tip';
-import { StatusChip } from '@/components/ui/status-chip';
-import { DropArea } from '@/components/ingest/drop-area';
-import { UploadCard } from '@/components/ingest/upload-card';
+import { DropCard, INK_LABEL, INK_STYLE } from '@/components/ingest/drop-card';
 import { useStaging } from '@/components/ingest/staging-provider';
 import { SIGNED_OUT_TEXT, isSignedOutAnswer } from '@/lib/upload-staging';
 
@@ -26,12 +24,14 @@ export function SendPanel({ targets: initialTargets, initialBoard, serverNow }: 
 
   if (targets.length === 0) {
     return (
-      <UploadCard id="send-heading" title="Send files to the Amiga" help={<HelpTip topic="send" />}>
-        <p className="text-[13px]" style={{ color: 'var(--muted)' }} data-testid="send-no-board">
-          No board can receive files yet. Sending needs a board on firmware {XFER_FW} or newer.{' '}
-          <Link href="/devices" className="font-semibold underline underline-offset-2" style={{ color: 'var(--ink)' }}>Devices</Link>
-        </p>
-      </UploadCard>
+      <DropCard testId="send-dropzone" headingId="send-heading" title="Send files to the Amiga" help={<HelpTip topic="send" />}
+        disk={{ color: 'grey', set: 'Any file · 4 MB', title: 'To the Amiga' }}
+        hint={
+          <p data-testid="send-no-board">
+            No board can receive files yet. Sending needs a board on firmware {XFER_FW} or newer.{' '}
+            <Link href="/devices" className="font-semibold underline underline-offset-2" style={{ color: 'var(--ink)' }}>Devices</Link>
+          </p>
+        } />
     );
   }
 
@@ -80,50 +80,52 @@ export function SendPanel({ targets: initialTargets, initialBoard, serverNow }: 
   }
 
   const single = targets.length === 1 ? (current ?? targets[0]) : null;
-  const meta = (
-    <>
-      {single && (
-        <p className="text-[12.5px]" style={{ color: 'var(--muted)' }} data-testid="send-board">
-          To <strong style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>{single.name}</strong> · {targetState(single, now)}
-        </p>
-      )}
-      {line && (
-        <span role="status" data-testid="send-receiver" data-ok={String(line.ok)}>
-          <StatusChip kind={line.ok ? 'green' : 'amber'}>{line.ok ? '✓ ' : '• '}{line.text}</StatusChip>
-        </span>
-      )}
-    </>
-  );
-
   return (
-    <UploadCard id="send-heading" title="Send files to the Amiga" help={<HelpTip topic="send" />} meta={meta}>
+    <DropCard testId="send-dropzone" headingId="send-heading" title="Send files to the Amiga" help={<HelpTip topic="send" />}
+      disk={{ color: 'blue', set: 'Any file · 4 MB', title: 'To the Amiga' }}
+      hint="Any file up to 4 MB. It waits here until Transfer on the Amiga takes it, into the folder Transfer saves to."
+      onFiles={(f) => void handleFiles(f)}>
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
+        <label htmlFor="send-file-input" data-testid="send-browse" className={INK_LABEL} style={INK_STYLE}>
+          Choose files
+          <input id="send-file-input" type="file" multiple className="sr-only" data-testid="send-file-input"
+                 onChange={(e) => { const f = e.target.files; if (f) void handleFiles(f); e.target.value = ''; }} />
+        </label>
+        {single && (
+          <span className="text-[13px]" data-testid="send-board" style={{ color: 'var(--muted)' }}>
+            To <strong className="font-semibold" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>{single.name}</strong> · {targetState(single, now)}
+          </span>
+        )}
+        {line && (
+          <span role="status" data-testid="send-receiver" data-ok={String(line.ok)} className="text-[13px] font-medium"
+                style={{ color: line.ok ? 'var(--success-fg)' : 'var(--warning-fg)' }}>
+            {line.ok ? '✓ ' : '• '}{line.text}
+          </span>
+        )}
+      </div>
       {!single && (
-        <fieldset className="flex flex-col gap-1 rounded-xl p-3" data-testid="send-board-picker"
-                  style={{ border: '1px solid var(--hairline-strong)', background: 'var(--glass-subtle)' }}>
+        <fieldset className="flex flex-col gap-1 rounded-[12px] p-2.5" data-testid="send-board-picker"
+                  style={{ background: 'var(--surface-2)' }}>
           <legend className="sr-only">Board to send to</legend>
           {shown.map((t) => (
-            <label key={t.id} className="flex min-w-0 items-center gap-2 text-[12.5px]" data-testid={`send-board-${t.id}`}>
-              <input type="radio" name="send-board" checked={t.id === board} onChange={() => setBoard(t.id)} />
+            <label key={t.id} className="flex min-h-8 min-w-0 items-center gap-2 text-[13px]" data-testid={`send-board-${t.id}`}>
+              <input type="radio" name="send-board" checked={t.id === board} onChange={() => setBoard(t.id)}
+                     style={{ accentColor: 'var(--ink)' }} />
               <span className="min-w-0 flex-1 font-semibold" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>{t.name}</span>
-              <span className="shrink-0 text-[11.5px]" style={{ color: t.online ? 'var(--success-fg)' : 'var(--muted)' }}>{targetState(t, now)}</span>
+              <span className="shrink-0 text-[12px]" style={{ color: t.online ? 'var(--success-fg)' : 'var(--muted-2)' }}>{targetState(t, now)}</span>
               {t.defaultName && (
-                <Link href={`/devices#device-${t.id}`} className="shrink-0 text-[11.5px] underline" style={{ color: 'var(--muted)' }}>Name it</Link>
+                <Link href={`/devices#device-${t.id}`} className="shrink-0 text-[12px] underline" style={{ color: 'var(--muted)' }}>Name it</Link>
               )}
             </label>
           ))}
           {hidden > 0 && (
-            <button type="button" onClick={() => setShowOffline(true)} className="self-start text-[11.5px] underline"
+            <button type="button" onClick={() => setShowOffline(true)} className="self-start text-[12px] underline"
                     style={{ color: 'var(--muted)' }} data-testid="send-show-offline">
               Show offline ({hidden})
             </button>
           )}
         </fieldset>
       )}
-
-      <DropArea testId="send-dropzone" inputTestId="send-file-input" resetAfterPick
-                title="Drop any file here, or choose one"
-                hint="Up to 4 MB each. It waits in Staging until the Amiga takes it."
-                onFiles={(f) => void handleFiles(f)} />
-    </UploadCard>
+    </DropCard>
   );
 }

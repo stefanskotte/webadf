@@ -13,7 +13,7 @@ import { isHfeFilename } from '@/lib/disk-format';
 import type { Suggestion } from '@/lib/disk-set-suggest';
 import { SetSuggestion } from './set-suggestion';
 import { UrlFetch, type FetchedRow } from './url-fetch';
-import { DropArea } from './drop-area';
+import { DropCard, INK_LABEL, INK_STYLE } from './drop-card';
 import { useStaging } from './staging-provider';
 import { upsertLibRows, type LibRow, type LibState } from '@/lib/upload-staging';
 
@@ -421,24 +421,23 @@ export function Dropzone() {
   }
 
   return (
-    // The Add-to-library card's body (src/app/(app)/ingest/page.tsx): drop zone, URL fetch and the set suggestion.
+    // The Add-to-library card (src/app/(app)/ingest/page.tsx): drop zone, URL fetch and the set suggestion.
     // What each file did shows in the Staging list below both cards.
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <DropArea
-        testId="dropzone"
-        inputTestId="file-input"
-        title="Drop ADF, ADZ, DMS, DMZ, HFE"
-        hint="Hashed in your browser before upload."
-        accept=".adf,.dsk,.adz,.dms,.dmz,.hfe"
-        disabled={busy}
-        onFiles={(f) => void handleFiles(f)}
-      />
-
-      <UrlFetch busy={busy} setBusy={setBusy} onRows={addFetchedRows} />
-
-      {suggestion && (
-        <SetSuggestion suggestion={suggestion} onDone={() => setSuggestion(null)} />
-      )}
-    </div>
+    <DropCard testId="dropzone" headingId="add-heading" title="Add disks to the library"
+      hint="ADF, ADZ, DMS, DMZ or HFE. Hashed in your browser first — only missing disks upload."
+      disk={{ color: 'black', set: 'ADF · ADZ · DMS · HFE', title: 'Add to library' }}
+      disabled={busy} onFiles={(f) => void handleFiles(f)}>
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <label htmlFor="add-file-input" data-testid="add-browse" aria-disabled={busy || undefined}
+               className={INK_LABEL} style={INK_STYLE}>
+          {busy ? 'Working…' : 'Browse files'}
+          <input id="add-file-input" type="file" multiple accept=".adf,.dsk,.adz,.dms,.dmz,.hfe" className="sr-only"
+                 data-testid="file-input" disabled={busy}
+                 onChange={(e) => { const f = e.target.files; if (f) void handleFiles(f); }} />
+        </label>
+        <UrlFetch busy={busy} setBusy={setBusy} onRows={addFetchedRows} />
+      </div>
+      {suggestion && <SetSuggestion suggestion={suggestion} onDone={() => setSuggestion(null)} />}
+    </DropCard>
   );
 }

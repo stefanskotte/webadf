@@ -197,7 +197,7 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
 
   return (
     // id: a device card's "N files from the Amiga" link lands here (/ingest?from=<board>#from-amiga), on that filter.
-    <section id="from-amiga" className="mx-4 pb-10 sm:mx-7">
+    <section id="from-amiga">
       <UploadCard id="staging-heading" title="Staging" help={<HelpTip topic="from-amiga" />} meta={meta}>
         <div role="group" aria-label="Show" className="flex flex-wrap gap-1 self-start rounded-xl p-1"
              style={{ border: '1px solid var(--hairline-strong)', background: 'var(--glass-subtle)' }}>

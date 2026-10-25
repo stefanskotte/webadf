@@ -469,7 +469,7 @@ export const HELP_TOPICS = {
     ),
   },
 
-  // Sources: spec docs/superpowers/specs/2026-10-16-paulanet-phase4-send-to-amiga-design.md §1 (D4 limits, D8 never
+  // Sources: spec docs/superpowers/specs/2026-10-25-phase-c3-upload-design.md §2.2; docs/superpowers/specs/2026-10-16-paulanet-phase4-send-to-amiga-design.md §1 (D4 limits, D8 never
   // overwrite, D9 accepted risk), §4 (the Upload page column, Browse Send, Send .adf), §5 (Receive, now Transfer, and Install);
   // src/lib/send-limits.ts (XFER_FW, limits), src/lib/send-ui.ts (the words), tools/paulanet-disk/Install;
   // plan 2026-10-17 rulings R1 (1.15.0), R9 (Cancel while sending), R10 (Retry);
@@ -488,8 +488,9 @@ export const HELP_TOPICS = {
           Save. The default folder is RAM:.
         </p>
         <p>
-          <strong>Three ways to send.</strong> On the Upload page, drop files under <em>Send files to the
-          Amiga</em>. On a disk&apos;s Browse page, press <em>Send</em> on a file or a folder. On a title&apos;s page,
+          <strong>Three ways to send.</strong> On the Upload page, drop files on <em>Send files to the
+          Amiga</em>, or press <em>Choose files</em>; with more than one board, pick the board under it. On a disk&apos;s
+          Browse page, press <em>Send</em> on a file or a folder. On a title&apos;s page,
           press <em>Send .adf to Amiga</em> to send a whole disk as one file. Each shows in the <em>Staging</em> list
           under <em>To the Amiga</em>, every board&apos;s together: waiting, sending, delivered with its saved name, or
           failed, and why.

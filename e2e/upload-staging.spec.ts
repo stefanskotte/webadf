@@ -193,3 +193,38 @@ test('the list keeps refreshing while a file for the Amiga is still going up', a
   await expect(page.locator('[data-testid="staging-row"][data-key^="up:"]')).toHaveCount(0, { timeout: LIVE });
   await expect(page.locator('[data-testid="staging-row"][data-kind="out"]')).toContainText('Slow.bin');
 });
+
+test('the drop cards: whole-card drop targets with Browse files, the inline URL field, and Working… while busy', async ({ page }) => {
+  await signUpFresh(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/ingest');
+  await expect(page.locator('[data-testid="staging-empty"], [data-testid="staging-row"]').first()).toBeVisible({ timeout: LIVE });
+  const add = page.getByTestId('dropzone');
+  const send = page.getByTestId('send-dropzone');
+  await expect(add).toHaveJSProperty('tagName', 'SECTION');
+  await expect(send).toHaveJSProperty('tagName', 'SECTION');
+  const a = (await add.boundingBox())!, s = (await send.boundingBox())!;
+  expect(Math.abs(a.y - s.y)).toBeLessThan(2);                         // side by side from lg (Ruling 3)
+  await expect(page.getByTestId('add-browse')).toHaveText('Browse files');
+  await expect(page.getByLabel('Or fetch from a URL')).toHaveAttribute('placeholder', 'or paste a URL…');
+  // Hold /check so the drop stays busy: Browse files says so (Ruling 7).
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  await page.route('**/api/ingest/check', async (route) => { await held; await route.continue(); });
+  await page.getByTestId('file-input').setInputFiles({ name: 'busy.adf', mimeType: 'application/octet-stream', buffer: fakeAdf() });
+  await expect(page.getByTestId('add-browse')).toHaveText('Working…');
+  await expect(page.getByTestId('add-browse')).toHaveAttribute('aria-disabled', 'true');
+  release();
+  await expect(page.getByTestId('add-browse')).toHaveText('Browse files', { timeout: 30_000 });
+});
+
+test('the Send card names its one board and whether Transfer runs, beside Choose files', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  await page.goto('/ingest');
+  await expect(page.getByTestId('send-browse')).toHaveText('Choose files');
+  await expect(page.getByTestId('send-board')).toHaveText(/^To Bench · /);
+  await expect(page.getByTestId('send-receiver')).toHaveText(/^[✓•] /);
+  await expect(page.getByTestId('help-tip-send')).toBeVisible();
+});
