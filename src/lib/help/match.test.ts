@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { matchHelpTopics } from './match';
+import { matchHelpTopics, filterHelpTopics } from './match';
 
 // Header search's Help group (A3): help topics found by title and short description, in the browser.
 describe('matchHelpTopics', () => {
@@ -23,5 +23,20 @@ describe('matchHelpTopics', () => {
     expect(matchHelpTopics('')).toEqual([]);
     expect(matchHelpTopics('  ')).toEqual([]);
     expect(matchHelpTopics('a')).toEqual([]);
+  });
+});
+
+describe('filterHelpTopics (C5 spec §3.4, Ruling 15)', () => {
+  it('is inactive under two characters, and filters nothing', () => {
+    expect(filterHelpTopics('')).toEqual({ active: false, ids: new Set() });
+    expect(filterHelpTopics(' d ').active).toBe(false);
+  });
+  it('matches every word in title or short text, with no limit', () => {
+    // e2e/c5-layout.spec.ts's filter test relies on this exact set.
+    expect(filterHelpTopics('drive')).toEqual({ active: true, ids: new Set(['second-drive', 'boards', 'network', 'send']) });
+    expect(filterHelpTopics('disk').ids.size).toBeGreaterThan(3);   // more than the header's three
+  });
+  it('active with no match is a real answer: zero topics', () => {
+    expect(filterHelpTopics('zzqx')).toEqual({ active: true, ids: new Set() });
   });
 });

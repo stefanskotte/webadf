@@ -3,15 +3,30 @@ import { requireOrg } from '@/lib/session';
 import { auth } from '@/lib/auth';
 import { getUserPrefs } from '@/lib/user-prefs';
 import { PageHeader } from '@/components/shell/page-header';
+import { SideNav, type SideNavGroup } from '@/components/shell/side-nav';
 import { PreferencesForm } from '@/components/prefs/preferences-form';
 import { FirmwarePasswordSetting } from '@/components/prefs/firmware-password-setting';
 import { AccountSecurity } from '@/components/prefs/account-security';
 import { DeleteAccount } from '@/components/prefs/delete-account';
 
+export const metadata = { title: 'Settings' };
+
+// The board's section list (C5 spec §2.1, Ruling 2): in-page anchors, About this server as a route.
+const SECTIONS: SideNavGroup[] = [{
+  label: 'Your account',
+  items: [
+    { href: '#prefs', label: 'Preferences', focusId: 'prefs-heading' },
+    { href: '#account', label: 'Sign-in & password', focusId: 'account-heading' },
+    { href: '#firmware', label: 'Firmware updates', focusId: 'firmware-heading' },
+    { href: '/about', label: 'About this server' },
+    { href: '#danger', label: 'Delete account', focusId: 'danger-heading', tone: 'danger' },
+  ],
+}];
+
 /**
- * The person's own settings, in the approved board's order (A2): Preferences (start page, sort orders), Sign-in &
- * password, Firmware updates (skip the password prompt), Delete account. All of it belongs to the signed-in user --
- * not the org, not a board -- and follows them to any browser.
+ * The person's own settings (A2; layout C5, board InfSettings): Preferences, Sign-in & password, Firmware updates,
+ * Delete account. All of it belongs to the signed-in user -- not the org, not a board -- and follows them to any
+ * browser. From lg a sticky section list sits beside the cards; below lg the cards stand alone.
  */
 export default async function SettingsPage() {
   const { userId, email } = await requireOrg();
@@ -20,14 +35,17 @@ export default async function SettingsPage() {
     auth.api.listSessions({ headers: await headers() }),
   ]);
   return (
-    <>
-      <PageHeader eyebrow="Your account" title="Settings" help="preferences" />
-      <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
+    <div className="px-4 pb-10 pt-6 sm:px-7 lg:grid lg:grid-cols-[240px_minmax(0,860px)] lg:items-start lg:gap-8">
+      <aside className="hidden lg:sticky lg:top-6 lg:block lg:self-start">
+        <SideNav label="Settings sections" testId="settings-nav" groups={SECTIONS} />
+      </aside>
+      <div className="flex min-w-0 flex-col gap-5">
+        <PageHeader flush size="lg" eyebrow="Your account" title="Settings" help="preferences" />
         <PreferencesForm prefs={prefs} />
         <AccountSecurity email={email} sessionCount={sessions.length} />
         <FirmwarePasswordSetting skipPassword={prefs.firmware.skipPassword} />
         <DeleteAccount />
       </div>
-    </>
+    </div>
   );
 }

@@ -36,7 +36,7 @@ export async function signInAsSuperAdmin(page: Page) {
     await page.getByLabel('Email').fill(SUPERADMIN_EMAIL);
     await page.getByLabel('Password').fill(PASSWORD);
     await page.getByLabel('Invite code').fill(code);
-    await page.getByRole('button', { name: /sign up/i }).click();
+    await page.getByRole('button', { name: /create account/i }).click();
     await expect(page).toHaveURL(/\/library/, { timeout: 15_000 });
   }
   return { email: SUPERADMIN_EMAIL };

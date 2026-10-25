@@ -56,7 +56,7 @@ You need a host with Docker and Compose v2, the board, a USB cable and a phone.
 1. Install the stack, as [docs/self-hosting.md](docs/self-hosting.md#2-install) describes: download
    `compose.yaml` and `.env.example` (as `.env`) from the newest `web-X.Y.Z` tag, set `WEBADF_URL`
    (for example `https://192.168.1.10`) and `WEBADF_ADMIN_EMAIL` in `.env`, then run
-   `docker compose up -d`. Sign up with the link from `docker compose logs app | grep 'first admin'`.
+   `docker compose up -d`. Create the account with the link from `docker compose logs app | grep 'first admin'`.
 2. Install the firmware as in steps 1-2 of Path A.
 3. **Override the server.** The firmware points at the hosted app by default. Open the board's
    USB serial console (any serial terminal, firmware 1.13.0 or newer) and type:

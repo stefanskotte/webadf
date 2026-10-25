@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { signUpFresh, runTag } from './helpers';
-import { cleanupSeeded } from './device-helpers';
+import { cleanupSeeded, hydrated } from './device-helpers';
 
 // Per-user preferences (HANDOFF §4 "Per-user web app settings"): the start
 // page and the library sort, stored server-side so they follow the user.
@@ -39,7 +39,8 @@ test('the chosen start page is where the root URL and sign-in land', async ({ pa
   await page.getByTestId('settings-link').click();
   await expect(page).toHaveURL(/\/settings/);
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
-  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-start-page').selectOption('devices')]);
+  await hydrated(page, 'pref-start-page-devices');
+  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-start-page-devices').click()]);
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
 
   await page.goto('/');
@@ -52,7 +53,8 @@ test('the chosen start page is where the root URL and sign-in land', async ({ pa
 
   // And Upload, whose route is /ingest.
   await page.goto('/settings');
-  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-start-page').selectOption('upload')]);
+  await hydrated(page, 'pref-start-page-upload');
+  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-start-page-upload').click()]);
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
   await page.goto('/');
   await expect(page).toHaveURL(/\/ingest/);
@@ -64,7 +66,8 @@ test('saving Preferences does not put back a sort changed elsewhere since the pa
   // Another tab changes the library sort after this form loaded.
   const res = await page.request.patch('/api/me/prefs', { data: { library: { sort: { key: 'year', dir: 'asc' } } } });
   expect(res.status()).toBe(200);
-  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-start-page').selectOption('devices')]);
+  await hydrated(page, 'pref-start-page-devices');
+  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-start-page-devices').click()]);
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
   const prefs = await (await page.request.get('/api/me/prefs')).json();
   expect(prefs.startPage).toBe('devices');

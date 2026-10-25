@@ -6,7 +6,7 @@ import { games } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { user } from '@/db/schema/auth';
 import { signUpFresh, runTag } from './helpers';
-import { seedDisk, pairDevice, authHeader, cleanupSeeded } from './device-helpers';
+import { seedDisk, pairDevice, authHeader, cleanupSeeded, hydrated } from './device-helpers';
 
 // A2 Settings / account (roadmap 2026-10-23): Preferences save as they change, change password, sign out everywhere
 // else, delete your own account.
@@ -27,10 +27,11 @@ test('a preference saves as it changes, with no Save button, and survives a relo
   await signUpFresh(page);
   await page.goto('/settings');
   await expect(page.getByTestId('prefs-save')).toHaveCount(0);
-  await Promise.all([prefsSaved(page), page.getByTestId('pref-library-view').selectOption('table')]);
+  await hydrated(page, 'pref-library-view-table');
+  await Promise.all([prefsSaved(page), page.getByTestId('pref-library-view-table').click()]);
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
   await page.reload();
-  await expect(page.getByTestId('pref-library-view')).toHaveValue('table');
+  await expect(page.getByTestId('pref-library-view')).toHaveAttribute('data-value', 'table');
 });
 
 test('a preference that fails to save says so and shows what is stored', async ({ page }) => {
@@ -38,9 +39,10 @@ test('a preference that fails to save says so and shows what is stored', async (
   await page.goto('/settings');
   await page.route('**/api/me/prefs', (route) =>
     route.request().method() === 'PATCH' ? route.fulfill({ status: 500, body: '{}' }) : route.continue());
-  await page.getByTestId('pref-library-view').selectOption('table');
+  await hydrated(page, 'pref-library-view-table');
+  await page.getByTestId('pref-library-view-table').click();
   await expect(page.getByTestId('prefs-state')).toHaveText("Couldn't save. Try again");
-  await expect(page.getByTestId('pref-library-view')).toHaveValue('grid');
+  await expect(page.getByTestId('pref-library-view')).toHaveAttribute('data-value', 'grid');
 });
 
 test('changing the password: the old one stops working and the new one signs in', async ({ page }) => {

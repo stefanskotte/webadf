@@ -51,7 +51,7 @@ test('a live code is exactly what the sign-up gate accepts', async ({ page, cont
   await consumer.getByLabel('Email').fill(`invited-${Date.now()}@example.test`);
   await consumer.getByLabel('Password').fill('correct-horse-battery-staple');
   await consumer.getByLabel('Invite code').fill(code);
-  await consumer.getByRole('button', { name: /sign up/i }).click();
+  await consumer.getByRole('button', { name: /create account/i }).click();
   await expect(consumer).toHaveURL(/\/library/, { timeout: 15_000 });
   await consumer.close();
 });
@@ -72,8 +72,8 @@ test('a revoked code shows as Revoked with no Revoke button and no longer works 
   await page.getByLabel('Email').fill(`revoked-${Date.now()}@example.test`);
   await page.getByLabel('Password').fill('correct-horse-battery-staple');
   await page.getByLabel('Invite code').fill(code);
-  await page.getByRole('button', { name: /sign up/i }).click();
-  await expect(page.getByText(/invalid or already used/i)).toBeVisible();
+  await page.getByRole('button', { name: /create account/i }).click();
+  await expect(page.getByText('That invite code is not valid, or it has been used.')).toBeVisible();
 });
 
 test('a consumed code cannot be revoked', async ({ page, context }) => {
@@ -86,7 +86,7 @@ test('a consumed code cannot be revoked', async ({ page, context }) => {
   await consumer.getByLabel('Email').fill(`consumer-${Date.now()}@example.test`);
   await consumer.getByLabel('Password').fill('correct-horse-battery-staple');
   await consumer.getByLabel('Invite code').fill(code);
-  await consumer.getByRole('button', { name: /sign up/i }).click();
+  await consumer.getByRole('button', { name: /create account/i }).click();
   await expect(consumer).toHaveURL(/\/library/, { timeout: 15_000 });
   await consumer.close();
 
@@ -163,7 +163,7 @@ test.describe('copy buttons and Used by', () => {
       await consumer.getByLabel('Email').fill(email);
       await consumer.getByLabel('Password').fill('correct-horse-battery-staple');
       await consumer.getByLabel('Invite code').fill(code);
-      await consumer.getByRole('button', { name: /sign up/i }).click();
+      await consumer.getByRole('button', { name: /create account/i }).click();
       await expect(consumer).toHaveURL(/\/library/, { timeout: 15_000 });
     } finally {
       await consumer.close();

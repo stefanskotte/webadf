@@ -35,7 +35,7 @@ has() { grep -qF -- "$1" <<<"$2"; }
 
 dc up -d --wait || fail "stack did not become healthy"
 logs=$(dc logs app 2>&1)
-has "Sign up as the first admin (use smoke@example.org): https://localhost:$PORT/sign-up?invite=" "$logs" || fail "no first-admin line"
+has "Create account as the first admin (use smoke@example.org): https://localhost:$PORT/sign-up?invite=" "$logs" || fail "no first-admin line"
 has "migrations: applied" "$logs" || fail "first start applied no migrations"
 curl -skf "https://localhost:$PORT/api/health" | grep -q ok || fail "/api/health through caddy"
 # Another name for this host (SNI and Host other.test) still reaches the app, which logs once that it is not WEBADF_URL.

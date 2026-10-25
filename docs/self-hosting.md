@@ -48,8 +48,8 @@ docker compose up -d
 docker compose logs app | grep 'first admin'
 ```
 
-The log line is `webadf: Sign up as the first admin (use you@example.org): https://192.168.1.10/sign-up?invite=ABCD2345`.
-Open that link and sign up **with exactly that email address**. That is what makes the account the super-admin. Registration is
+The log line is `webadf: Create account as the first admin (use you@example.org): https://192.168.1.10/sign-up?invite=ABCD2345`.
+Open that link and create the account **with exactly that email address**. That is what makes the account the super-admin. Registration is
 by invitation only; the super-admin invites everybody else from `/admin`.
 
 The first start creates the data folder (`./data`, or `WEBADF_DATA_DIR`) with:
@@ -231,7 +231,7 @@ Start-up problems print one line starting `webadf:`; read them with `docker comp
 | `migration failed in <tag> (...); the schema is unchanged; backup: <path>` | Section 5. |
 | `backup failed (...); nothing was migrated` | Usually a full disk. Free space; the migration is retried on the next start. |
 | `requests arrive as https://x but WEBADF_URL is https://y -- uploads and sign-in will fail; set WEBADF_URL to the address you open` | You opened the site by a different name or IP than `WEBADF_URL`. It still loads (with a certificate warning for the other name), but sign-in and uploads check the origin. Set `WEBADF_URL` to the address you use and run `docker compose up -d` (logged once per host). |
-| `Too many requests. Please try again later.` at sign-up or sign-in | The sign-in endpoints allow 3 attempts per 10 seconds from one address. Wait ten seconds. |
+| `Too many attempts. Wait a minute and try again.` at sign-up or sign-in | The sign-in endpoints allow 3 attempts per 10 seconds from one address, so waiting ten seconds is enough. |
 
 **Somebody else signed up first.** The first-admin invite is for `WEBADF_ADMIN_EMAIL`, but anybody holding the link can
 use it. Once any account exists, no new bootstrap invite is made. Recover with:

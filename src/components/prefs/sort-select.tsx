@@ -9,7 +9,7 @@ import { sortOptionId, sortFromOptionId, type SortDir, type SortOption } from '@
  * the caller's (LibrarySortPicker, the Browse list, the Preferences form).
  */
 export function SortSelect<S extends { key: string; dir: SortDir }>({
-  label = 'Sort', options, value, onChange, disabled = false, testId, describedBy, toolbar = false,
+  label = 'Sort', options, value, onChange, disabled = false, testId, describedBy, toolbar = false, bare = false, labelledBy,
 }: {
   label?: string;
   options: readonly SortOption<S>[];
@@ -21,8 +21,32 @@ export function SortSelect<S extends { key: string; dir: SortDir }>({
   describedBy?: string;
   /** The library toolbar's look (40px, surface, line border); other callers keep the compact form field. */
   toolbar?: boolean;
+  /** Only the select: the caller labels it (Settings' rows, C5 spec §1.4). */
+  bare?: boolean;
+  labelledBy?: string;
 }) {
   const id = useId();
+  if (bare) {
+    return (
+      <select
+        data-testid={testId}
+        aria-labelledby={labelledBy}
+        aria-describedby={describedBy}
+        value={sortOptionId(value)}
+        disabled={disabled}
+        onChange={(e) => {
+          const next = sortFromOptionId(options, e.target.value);
+          if (next) onChange(next);
+        }}
+        className="h-9 w-full min-w-[180px] rounded-[10px] border px-3 text-[13px] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring) sm:w-auto"
+        style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}
+      >
+        {options.map((o) => (
+          <option key={sortOptionId(o.sort)} value={sortOptionId(o.sort)}>{o.label}</option>
+        ))}
+      </select>
+    );
+  }
   return (
     <span className={toolbar ? 'inline-flex items-center gap-2 text-[13px]' : 'inline-flex items-center gap-2 text-[12px]'}>
       <label htmlFor={id} className="font-semibold" style={{ color: 'var(--muted)' }}>{label}</label>

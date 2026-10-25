@@ -1,9 +1,10 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { savePrefs } from '@/lib/user-prefs-client';
+import { CARD_STYLE, FIELD, FIELD_STYLE, INK_BTN, INK_STYLE, OUTLINE_BTN, OUTLINE_STYLE, SETTINGS_CARD, SETTINGS_H2, SETTINGS_ROW } from '@/lib/settings-look';
 
 /**
  * Settings > Firmware updates: "Don't ask for my password when updating board
@@ -20,7 +21,7 @@ import { savePrefs } from '@/lib/user-prefs-client';
  */
 export function FirmwarePasswordSetting({ skipPassword }: { skipPassword: boolean }) {
   const router = useRouter();
-  const boxId = useId();
+  const labelId = useId();
   const pwId = useId();
   const warnId = useId();
   const [on, setOn] = useState(skipPassword);
@@ -29,6 +30,15 @@ export function FirmwarePasswordSetting({ skipPassword }: { skipPassword: boolea
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const switchRef = useRef<HTMLButtonElement>(null);
+  /** Cancel, Escape, and a successful turn-on all close the confirm form: focus goes back to the switch (spec §2.6). */
+  function closeConfirm() { disarm(); switchRef.current?.focus(); }
+  function onSwitch() {
+    if (busy) return;
+    if (!on && !arming) { setArming(true); return; }
+    if (arming) { closeConfirm(); return; }
+    void turnOff();
+  }
   function disarm() {
     setArming(false);
     setPassword('');
@@ -77,7 +87,7 @@ export function FirmwarePasswordSetting({ skipPassword }: { skipPassword: boolea
       if (res.status === 401) { setError('That password was not right.'); return; }
       if (!res.ok) { setError("Couldn't save that. Nothing was changed."); return; }
       setOn(true);
-      disarm();
+      closeConfirm();
       toast.success('Firmware updates will no longer ask for your password.');
       router.refresh();
     } catch {
@@ -87,52 +97,62 @@ export function FirmwarePasswordSetting({ skipPassword }: { skipPassword: boolea
     }
   }
 
+  const checked = on || arming;
   return (
-    <section className="glass-card flex flex-col gap-3 p-5" data-testid="firmware-prefs">
-      <h2 className="text-[13px] font-semibold">Firmware updates</h2>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="inline-flex items-center gap-2 text-[13px]">
-          <input id={boxId} type="checkbox" data-testid="fw-skip-password" aria-describedby={warnId}
-                 checked={on || arming} disabled={busy}
-                 onChange={(e) => {
-                   if (e.target.checked) { setArming(true); return; }
-                   if (arming) { disarm(); return; }
-                   void turnOff();
-                 }} />
-          <label htmlFor={boxId}>Don&apos;t ask for my password when updating board firmware</label>
-        </span>
-        <span className="text-[12px] font-semibold" data-testid="fw-password-state" role="status" aria-live="polite"
-              style={{ color: on ? 'var(--amber-text)' : 'var(--muted)' }}>
-          {on ? 'Password not asked' : 'Password asked'}
-        </span>
-      </div>
-      <p id={warnId} className="text-[12px]" style={{ color: 'var(--muted)' }}>
-        With this on, anyone using your signed-in browser can update your boards&apos; firmware.
-      </p>
-      {arming && (
-        // A <form>, so Enter in the password field confirms.
-        <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); void turnOn(); }}>
-          <label htmlFor={pwId} className="flex flex-col gap-1 text-[12px]" style={{ color: 'var(--muted)' }}>
-            Confirm with your password
-            <input id={pwId} type="password" data-testid="fw-skip-password-input" value={password}
-                   autoFocus autoComplete="current-password"
-                   onChange={(e) => setPassword(e.target.value)}
-                   className="rounded-lg px-3 py-2 text-[13px]"
-                   style={{ background: 'var(--input-bg)', color: 'var(--ink)' }} />
-          </label>
-          <button type="submit" data-testid="fw-skip-password-confirm" disabled={busy || password.length === 0}
-                  className="btn-like rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-                  style={{ background: 'var(--primary-action)' }}>
-            {busy ? 'Checking…' : 'Turn off the password'}
+    <section id="firmware" aria-labelledby="firmware-heading" data-testid="firmware-prefs" className={SETTINGS_CARD} style={CARD_STYLE}>
+      <div className={SETTINGS_ROW}>
+        <div className="flex min-w-0 flex-col gap-[3px]">
+          <h2 id="firmware-heading" tabIndex={-1} className={`${SETTINGS_H2} justify-self-start`} style={{ color: 'var(--ink)' }}>
+            Firmware updates
+          </h2>
+          <span id={labelId} className="text-[14px] font-medium" style={{ color: 'var(--ink)' }}>
+            Don&apos;t ask for my password when updating board firmware
+          </span>
+          <p id={warnId} className="text-[13px]" style={{ color: 'var(--muted-2)' }}>
+            With this on, anyone using your signed-in browser can update your boards&apos; firmware.
+          </p>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span data-testid="fw-password-state" role="status" aria-live="polite" className="text-[12px] font-semibold"
+                style={{ color: on ? 'var(--amber-text)' : 'var(--muted)' }}>
+            {on ? 'Password not asked' : 'Password asked'}
+          </span>
+          {/* Ruling 10: on = the password is NOT asked (A2's stored meaning). The off track carries a --muted-2 border
+              (5.58:1 on the card) so "off" is visible as well as said. */}
+          <button ref={switchRef} type="button" role="switch" aria-checked={checked} aria-labelledby={labelId}
+                  aria-describedby={warnId} aria-disabled={busy} data-testid="fw-skip-password" onClick={onSwitch}
+                  className="flex h-[26px] w-11 shrink-0 rounded-full border p-[3px] aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)"
+                  style={checked
+                    ? { background: 'var(--ink)', borderColor: 'var(--ink)' }
+                    : { background: 'var(--line-strong)', borderColor: 'var(--muted-2)' }}>
+            <span aria-hidden className={`size-[18px] rounded-full ${checked ? 'ml-auto' : ''}`}
+                  style={{ background: 'var(--surface)', boxShadow: '0 1px 2px rgb(0 0 0 / .25)' }} />
           </button>
-          <button type="button" onClick={disarm} disabled={busy} className="py-2 text-[13px] disabled:opacity-50"
-                  style={{ color: 'var(--muted)' }}>Cancel</button>
-          {error && (
-            <span className="basis-full text-[12px]" data-testid="fw-skip-password-error" role="alert"
-                  style={{ color: 'var(--amber-text)' }}>{error}</span>
-          )}
-        </form>
-      )}
+        </div>
+        {arming && (
+          // A <form>, so Enter in the password field confirms.
+          <form className="col-span-full flex flex-wrap items-end gap-2.5"
+                onSubmit={(e) => { e.preventDefault(); void turnOn(); }}
+                onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); if (!busy) closeConfirm(); } }}>
+            <label htmlFor={pwId} className="flex flex-col gap-1.5 text-[13px] font-medium" style={{ color: 'var(--ink)' }}>
+              Confirm with your password
+              <input id={pwId} type="password" data-testid="fw-skip-password-input" value={password}
+                     autoFocus autoComplete="current-password"
+                     onChange={(e) => setPassword(e.target.value)} className={`${FIELD} sm:w-[260px]`} style={FIELD_STYLE} />
+            </label>
+            <button type="submit" data-testid="fw-skip-password-confirm" aria-disabled={busy || password.length === 0}
+                    className={INK_BTN} style={INK_STYLE}>
+              {busy ? 'Checking…' : 'Turn off the password'}
+            </button>
+            <button type="button" aria-disabled={busy} onClick={() => { if (!busy) closeConfirm(); }}
+                    className={OUTLINE_BTN} style={OUTLINE_STYLE}>Cancel</button>
+            {error && (
+              <span className="basis-full text-[13px]" data-testid="fw-skip-password-error" role="alert"
+                    style={{ color: 'var(--danger-fg)' }}>{error}</span>
+            )}
+          </form>
+        )}
+      </div>
     </section>
   );
 }

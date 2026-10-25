@@ -298,6 +298,13 @@
   --viewing-bg:    #FBF3E3;   /* the History version on screen */
   --warning-line:  #E2C48F;   /* the version banner's Back to current outline */
   --on-ink-fill:   #3E3B36;   /* a button on the ink selection strip (12 % surface over ink); surface text 10.97:1 */
+  --danger-line:   #F2C9BF;   /* the Delete account card's ring and its button's border; decoration (C5 spec §1.5) */
+  --danger-strong: #9A2A1C;   /* the Delete account h2, the sign-in error: 7.59 surface / 6.17 danger-bg */
+  --prose:         #3E392F;   /* help article body text: 11.28 surface */
+  --on-ink-2:      #E8E1D2;   /* the "?" popover's text, the sign-in hero's sub line: 12.33 on ink */
+  --on-ink-muted:  #A39B8B;   /* the sign-in hero's footer line: 5.82 on ink */
+  --on-ink-accent: #EE8A2A;   /* the popover's link: 6.35 on ink */
+  --search-scrim:  rgb(36 33 27 / 0.12);   /* the light scrim under the open search panel; decoration */
 }
 
 @theme inline {

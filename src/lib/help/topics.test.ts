@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { HELP_TOPICS, HELP_ORDER, type HelpTopicId } from './topics';
+import { HELP_TOPICS, HELP_ORDER, HELP_GROUPS, helpGroupOf, type HelpTopicId } from './topics';
 
 const IDS: HelpTopicId[] = ['library', 'boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'from-amiga', 'cover-image', 'about', 'preferences'];
 // Internal words a reader of the help should never meet (spec §5).
@@ -310,5 +310,25 @@ describe('boards explains the stuck-start line (fw 1.18.2 boot trail)', () => {
     const t = bodyText('boards');
     expect(t).toMatch(/Previous start stopped at/);
     expect(t).toMatch(/1\.18\.2/);
+  });
+});
+
+describe('help groups (C5 spec §3.1, Ruling 14)', () => {
+  it("are the board's four, in its order, with these topics", () => {
+    expect(HELP_GROUPS.map((g) => [g.id, g.name])).toEqual([
+      ['drives', 'Drives'], ['disks', 'Library and disks'], ['network', 'Amiga networking'], ['server', 'This server'],
+    ]);
+    expect(HELP_GROUPS[0].topics).toEqual(['boards', 'display', 'second-drive', 'next-disk', 'nfc', 'write-protect']);
+    expect(HELP_GROUPS[1].topics).toEqual(['library', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image']);
+    expect(HELP_GROUPS[2].topics).toEqual(['network', 'send', 'from-amiga']);
+    expect(HELP_GROUPS[3].topics).toEqual(['preferences', 'own-server', 'about']);
+  });
+  it('put every topic in exactly one group, and HELP_ORDER is the groups flattened', () => {
+    const all = HELP_GROUPS.flatMap((g) => g.topics);
+    expect([...all].sort()).toEqual([...IDS].sort());
+    expect(new Set(all).size).toBe(17);
+    expect(HELP_ORDER).toEqual(all);
+    expect(helpGroupOf('library').name).toBe('Library and disks');
+    expect(helpGroupOf('write-protect').id).toBe('drives');
   });
 });

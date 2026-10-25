@@ -6,7 +6,7 @@ import { games } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { collections, collectionGames } from '@/db/schema/collections';
 import { signUpFresh, runTag, createAdf, openTitleMenu } from './helpers';
-import { cleanupSeeded, seedDisk, addDisk, pairDevice, authHeader } from './device-helpers';
+import { cleanupSeeded, seedDisk, addDisk, pairDevice, authHeader, hydrated } from './device-helpers';
 
 // The library table as the grid condensed (operator design 2026-10-21):
 // collections as folder rows at the root with an up row back, the card's
@@ -271,7 +271,8 @@ test('Library opens in Table: /library opens in the table, and ?view=grid still 
 
   await page.goto('/settings');
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
-  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-library-view').selectOption('table')]);
+  await hydrated(page, 'pref-library-view-table');
+  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-library-view-table').click()]);
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
   expect((await (await page.request.get('/api/me/prefs')).json()).library.view).toBe('table');
 

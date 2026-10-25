@@ -5,7 +5,7 @@ import { getDb } from '@/db';
 import { collectionGames } from '@/db/schema/collections';
 import { ARM_DELAY_MS } from '@/lib/set-folder';
 import { signUpFresh, runTag, createAdf } from './helpers';
-import { seedDisk, cleanupSeeded } from './device-helpers';
+import { seedDisk, cleanupSeeded, hydrated } from './device-helpers';
 
 // Library paging (operator 2026-10-22): a page at a time in the grid and the table, the size a per-user setting
 // (library.pageSize: 24/48/96/192/all, default 48) set in Preferences or by the pager's Per page.
@@ -111,8 +111,9 @@ test('Titles per page in Preferences: All shows every title on one page, with no
   const { orgId } = await signUpFresh(page);
   await seedTitles(page, orgId, 'Prefs', 30);
   await page.goto('/settings');
-  await expect(page.getByTestId('pref-library-page-size')).toHaveValue('24');
-  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-library-page-size').selectOption('all')]);
+  await expect(page.getByTestId('pref-library-page-size')).toHaveAttribute('data-value', '24');
+  await hydrated(page, 'pref-library-page-size-all');
+  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-library-page-size-all').click()]);
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
   expect((await prefs(page)).pageSize).toBe('all');
 

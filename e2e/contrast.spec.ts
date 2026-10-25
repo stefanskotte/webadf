@@ -131,6 +131,17 @@ function ratio(fg: number[], bg: number[]) {
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
 
+/** C5: probe each [name, selector] and require AA. The selector must find a painted element; never loosen 4.5. */
+async function legible(page: Page, area: string, pairs: ReadonlyArray<readonly [string, string]>) {
+  for (const [name, sel] of pairs) {
+    const p = await probe(page, sel);
+    expect(p, `${area}: ${name} (${sel}) not found or transparent`).toBeTruthy();
+    const r = ratio(p!.fg, p!.bg);
+    console.log(`${area.padEnd(9)} ${name.padEnd(36)} ${r.toFixed(2)}:1  "${p!.text.slice(0, 32)}"`);
+    expect(r, `${area}: ${name}`).toBeGreaterThan(4.5);
+  }
+}
+
 for (const path of ['/sign-in', '/sign-up']) {
   test(`${path} text is legible on the ground`, async ({ page }) => {
     await page.goto(path);
@@ -257,10 +268,9 @@ test('the search panel metadata line is legible while its row is highlighted', a
   await page.getByTestId('search-input').fill('Contrast Row');
   await expect(page.getByTestId('search-result').first()).toBeVisible();
 
-  // The metadata line is the second (last) span in the top result's button
-  // -- querySelector returns the first DOM match, which is that top,
-  // highlighted-by-default row.
-  const p = await probe(page, '[data-testid="search-result"] span:last-child');
+  // The sub line of the top, highlighted-by-default row (the DiskIcon now comes first in the row, so span:last-child
+  // would land on its label).
+  const p = await probe(page, '[data-testid="search-result-sub"]');
   expect(p, 'search result metadata line not found').toBeTruthy();
   const r = ratio(p!.fg, p!.bg);
   console.log(`search    metadata line                  ${r.toFixed(2)}:1  "${p!.text.slice(0, 40)}"`);
@@ -579,4 +589,97 @@ test('the Disk files pairs are legible: banner, rows, glyphs, chips, column head
   await page.goto(`/disks/${disk.id}/files`);
   if (was !== 'true') await page.getByTestId('fs-hide-info').click();
   await page.screenshot({ path: 'test-results/zz-disk-files.png', fullPage: true });
+});
+
+// Phase C5 spec §11: the "?" and its open popover (the ink card).
+test('the "?" and its open popover are legible: glyph on the track, title, text and link on ink', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/settings');
+  await hydrated(page, 'help-tip-preferences');
+  await page.mouse.move(0, 0);
+  await legible(page, 'help tip', [['"?" glyph (idle, on the track)', '[data-testid="help-tip-preferences"] > span']]);
+  await page.getByTestId('help-tip-preferences').click();
+  await expect(page.getByTestId('help-pop-preferences')).toBeVisible();
+  await legible(page, 'popover', [
+    ['"?" glyph (open, surface on ink)', '[data-testid="help-tip-preferences"] > span'],
+    ['title', '[data-testid="help-pop-preferences"] h2'],
+    ['text', '[data-testid="help-pop-preferences"] p'],
+    ['Read the full topic', '[data-testid="help-more-preferences"]'],
+  ]);
+});
+
+// Phase C5 spec §11, measured on real elements.
+test('the Settings pairs are legible: hint, intro, radios, save line, state words, nav, Delete account', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await signUpFresh(page);
+  await page.goto('/settings');
+  await hydrated(page, 'pref-start-page', 'onKeyDown');
+  await page.mouse.move(0, 0);
+  const hint = await page.getByTestId('pref-start-page').getAttribute('aria-describedby');
+  await legible(page, 'settings', [
+    ['row hint', `[id="${hint}"]`],
+    ['intro', '[data-testid="preferences"] > p'],
+    ['checked radio', '[data-testid="pref-start-page-library"]'],
+    ['unchecked radio', '[data-testid="pref-start-page-devices"]'],
+    ['save line', '[data-testid="prefs-state"]'],
+    ['firmware state words', '[data-testid="fw-password-state"]'],
+    ['nav item (current)', '[data-testid="settings-nav"] a[aria-current="true"]'],
+    ['nav item', '[data-testid="settings-nav"] a:not([aria-current])'],
+    ['Delete account h2', '#danger-heading'],
+    ['Delete account… button', '[data-testid="account-delete-open"]'],
+    ['email', '[data-testid="account-email"]'],
+  ]);
+});
+
+test('the Help pairs are legible: eyebrow, body, body link, nav item and the current one, filter count', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await signUpFresh(page);
+  await page.goto('/help#network');
+  await page.mouse.move(0, 0);
+  await legible(page, 'help', [
+    ['eyebrow', '[data-testid="help-section-network"] > span:first-child'],
+    ['body paragraph', '[data-testid="help-section-network"] > div p'],
+    ['body link', '[data-testid="help-section-network"] > div a'],
+    ['nav item (current)', '[data-testid="help-nav"] a[aria-current="true"]'],
+    ['nav item', '[data-testid="help-nav"] a:not([aria-current])'],
+    ['group label', '[data-testid="help-group-drives"] > span'],
+  ]);
+  await hydrated(page, 'help-filter', 'onChange');
+  await page.getByTestId('help-filter').fill('drive');
+  await legible(page, 'help', [['filter count', '[data-testid="help-filter-count"]']]);
+});
+
+test('the Search panel pairs are legible: title, sub line on the highlighted row, group label, footer', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const run = runTag();
+  const u = await signUpFresh(page);
+  await seedDisk(u.orgId, { title: `Panel Pairs ${run}`, diskNo: 1, sha256: randomUUID().replace(/-/g, '').padEnd(64, 'e') });
+  await page.getByTestId('search-input').fill(`Panel Pairs ${run}`);
+  await expect(page.getByTestId('search-result').first()).toBeVisible();
+  await legible(page, 'search', [
+    ['title name', '[data-testid="search-result"] span:has(> [data-testid="search-result-sub"]) > span:first-child'],
+    ['sub line (highlighted row)', '[data-testid="search-result-sub"]'],
+    ['group label', '[data-testid="search-group-title"]'],
+    ['key footer', '[data-testid="search-keys"] > span'],
+  ]);
+});
+
+test('the Sign-in and Create account pairs are legible: switch, error, hint, and the hero at 1280', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/sign-in');
+  await legible(page, 'sign-in', [
+    ['switch (current)', '[data-testid="auth-switch"] a[aria-current="page"]'],
+    ['switch (other)', '[data-testid="auth-switch"] a:not([aria-current])'],
+    ['hero tagline', '[data-hero="tagline"]'],
+    ['hero sub line', '[data-hero="sub"]'],
+    ['hero footer', '[data-hero="foot"]'],
+  ]);
+  await hydrated(page, 'sign-in-form', 'onSubmit');
+  await page.getByLabel('Email').fill(`nobody-${runTag()}@example.test`);
+  await page.getByLabel('Password').fill('not-a-real-password');
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByTestId('auth-error')).toBeVisible();
+  await legible(page, 'sign-in', [['error', '[data-testid="auth-error"]']]);
+  await page.goto('/sign-up');
+  await legible(page, 'sign-up', [['invite hint', '#invite-code-hint'], ['password hint', '#password-hint']]);
 });
