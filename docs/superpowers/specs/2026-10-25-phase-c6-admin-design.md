@@ -620,7 +620,7 @@ are decoration beside the numbers and words that carry the state.
 19. **Invite rows take the board's order (Used by after the dates) and keep A7's Copy code / Copy link beside Revoke.**
     State pills are sentence case (`Revoked`, `Used` are pinned), coloured per state. — A7 shipped the copy buttons on
     rows and `admin-invites` uses them. — cost if wrong: a 240 px action column instead of the board's 120.
-20. **Revoke and Run now stay without a confirm, as shipped.** — the task keeps guards and confirmations as they are;
+20. **Revoke and Run now stay without a confirm, as shipped.** (Operator confirmed 2026-10-25: "skip the confirm, its fine".) — the task keeps guards and confirmations as they are;
     adding one would be behaviour, and `admin-invites` / `admin-scan` click straight through. A revoked code can be
     replaced by issuing another; a scan is bounded and resumable. — cost if wrong: a mis-click revokes a live code.
 21. **Run now keeps its words after a run** (the board's `Run again` is not used). — `admin-scan` waits for `Run now`
