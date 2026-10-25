@@ -1,52 +1,21 @@
+import { Fragment } from 'react';
+import { Link } from '@/components/shell/link';
 import {
   adminCounts, adminBoardCounts, adminFirmwareDistribution, adminAttentionCandidates,
 } from '@/lib/admin-queries';
 import { readCurrentRelease } from '@/lib/firmware-releases';
 import { needsAttention, orderDistribution, versionLabel } from '@/lib/admin-board-health';
 import { nowMs } from '@/lib/clock';
-import { AdminPageHead } from '@/components/admin/admin-page-head';
+import { overviewTiles, serverAttention, ATTENTION_DOT, REASON_FG } from '@/lib/admin-overview-look';
+import { AdminPageHead, ADMIN_BODY } from '@/components/admin/admin-page-head';
 
-// Counts are read live on every render; nothing here is cached. cacheComponents
-// stays off in this project (see next.config.ts), and an operator looking at a
-// database overview wants the number as it is now, not as it was.
+// Counts are read live on every render; nothing here is cached. cacheComponents stays off in this project (see
+// next.config.ts), and an operator looking at a database overview wants the number as it is now.
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Admin · Overview' };
 
-const TILES = [
-  { key: 'users', label: 'Users' },
-  { key: 'orgs', label: 'Organizations' },
-  { key: 'games', label: 'Games' },
-  { key: 'disks', label: 'Disks' },
-  { key: 'blobs', label: 'Blobs' },
-  { key: 'liveInvites', label: 'Live invites' },
-] as const;
-
-const BOARD_TILES = [
-  { key: 'paired', id: 'boardsPaired', label: 'Paired' },
-  { key: 'online', id: 'boardsOnline', label: 'Online now' },
-  { key: 'seen7d', id: 'boardsSeen7d', label: 'Seen in 7 days' },
-] as const;
-
-function Tile({ label, value, testId }: { label: string; value: number; testId: string }) {
-  return (
-    <div className="glass-card p-5">
-      <div className="text-[12.5px] font-semibold" style={{ color: 'var(--muted)' }}>
-        {label}
-      </div>
-      <div className="mt-1 text-[30px] font-bold leading-none tracking-[-0.03em]" data-testid={testId}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <h2 className="px-4 pb-2 pt-2 text-[15px] font-semibold sm:px-7" style={{ color: 'var(--ink)' }}>
-      {children}
-    </h2>
-  );
-}
+const CARD = { background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' } as const;
+const RING = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)';
 
 export default async function AdminOverviewPage() {
   // One `now` for every rule on the page, read once per request (Ruling 3), so the tiles, the distribution and the
@@ -58,98 +27,145 @@ export default async function AdminOverviewPage() {
   ]);
   const attention = needsAttention(candidates, current, now);
   const distribution = orderDistribution(dist, current?.sequence ?? null);
+  const tiles = overviewTiles(counts, boards);
+  const server = serverAttention(counts);
   return (
     <>
       <AdminPageHead
         title="Overview"
-        subtitle="Every organization, unscoped — these numbers cross the tenant boundary"
+        subtitleFont="sans"
+        subtitle="Every organization at once. These numbers cross the tenant boundary — only server admins see this area."
       />
-      <div className="grid grid-cols-2 gap-3 px-4 pb-6 sm:px-7 md:grid-cols-3">
-        {TILES.map((tile) => (
-          <Tile key={tile.key} label={tile.label} value={counts[tile.key]} testId={`count-${tile.key}`} />
-        ))}
-      </div>
-
-      <SectionTitle>Boards</SectionTitle>
-      <div className="grid grid-cols-2 gap-3 px-4 pb-6 sm:px-7 md:grid-cols-3">
-        {BOARD_TILES.map((tile) => (
-          <Tile key={tile.key} label={tile.label} value={boards[tile.key]} testId={`count-${tile.id}`} />
-        ))}
-      </div>
-
-      <SectionTitle>Boards by firmware (seen in the last 7 days)</SectionTitle>
-      <div className="px-4 pb-6 sm:px-7">
-        <div className="glass-card flex flex-col gap-2 p-5" data-testid="fw-dist">
-          {distribution.length === 0 ? (
-            <div className="text-[13px]" style={{ color: 'var(--muted)' }} data-testid="fw-dist-empty">
-              No board has been seen in the last 7 days.
-            </div>
-          ) : distribution.map((row) => (
-            <div
-              key={row.version ?? '\u0000null'}
-              className="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_auto] items-center gap-3 text-[13px]"
-              data-testid="fw-dist-row"
-              data-version={row.version ?? ''}
-              data-count={row.count}
+      <div className={ADMIN_BODY}>
+        {/* Six tiles, each a link (Ruling 13). The value span holds only the digits: admin-guard reads ^\d+$. */}
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+          {tiles.map((t) => (
+            <Link
+              key={t.id}
+              href={t.href}
+              data-warn={t.warn ? 'true' : 'false'}
+              // Shadows as classes, not inline: an inline shadow would beat the hover.
+              className={`flex flex-col gap-2.5 rounded-[16px] bg-(--surface) p-[18px] shadow-[0_0_0_1px_var(--line)] hover:shadow-[0_0_0_1px_var(--dash),0_12px_24px_-14px_rgb(36_33_27/0.3)] ${RING}`}
             >
-              <span className="flex min-w-0 items-baseline gap-2">
-                <span className="truncate font-mono" style={{ color: 'var(--ink)' }} title={row.version ?? undefined}>
-                  {versionLabel(row.version)}
-                </span>
-                {row.current && (
-                  <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--accent-blue)' }}>
-                    Current
-                  </span>
-                )}
-                {!row.recognised && row.version !== null && (
-                  <span className="text-[11px]" style={{ color: 'var(--muted)' }}>unrecognised</span>
-                )}
+              <span className="text-[13px] font-medium" style={{ color: 'var(--muted-2)' }}>{t.label}</span>
+              <span
+                data-testid={t.id}
+                className="text-[40px] font-bold leading-none tabular-nums"
+                style={{ fontFamily: 'var(--font-display)', color: t.warn ? 'var(--amber-text)' : 'var(--ink)' }}
+              >
+                {t.value}
               </span>
-              <span className="h-2 rounded-full" style={{ background: 'var(--hairline)' }}>
-                <span
-                  className="block h-2 rounded-full"
-                  style={{ width: `${Math.max(2, row.share * 100)}%`, background: 'var(--accent-blue)' }}
-                />
+              <span className="text-[12px] [overflow-wrap:anywhere]"
+                    style={{ color: t.warn ? 'var(--amber-text)' : 'var(--muted-2)' }}>
+                {t.note.map((p, i) => (typeof p === 'string'
+                  ? <Fragment key={i}>{p}</Fragment>
+                  : <span key={i} data-testid={p.id}>{p.value}</span>))}
               </span>
-              <span className="tabular-nums" style={{ color: 'var(--ink)' }}>{row.count}</span>
-            </div>
+            </Link>
           ))}
         </div>
-      </div>
 
-      <SectionTitle>Needs attention</SectionTitle>
-      <div className="px-4 pb-10 sm:px-7">
-        <div className="glass-card flex flex-col divide-y p-0" style={{ borderColor: 'var(--hairline)' }} data-testid="attention">
-          {attention.length === 0 ? (
-            <div className="p-5 text-[13px]" style={{ color: 'var(--muted)' }} data-testid="attention-empty">
-              Nothing needs attention.
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_440px] lg:items-start">
+          {/* Boards by firmware (Ruling 15): A7's facts with the board's dots and bars. */}
+          <section aria-labelledby="fw-dist-heading" className="flex flex-col gap-3 rounded-[20px] p-5" style={CARD}>
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <h2 id="fw-dist-heading" className="text-[15px] font-semibold" style={{ color: 'var(--ink)' }}>
+                Boards by firmware
+              </h2>
+              <Link href="/admin/firmware"
+                    className={`text-[13px] font-semibold text-(--amber-text) hover:underline ${RING}`}>
+                Firmware registry
+              </Link>
             </div>
-          ) : attention.map((row) => (
-            <div
-              key={row.deviceId}
-              className="flex flex-col gap-1 px-5 py-3 text-[13px]"
-              style={{ borderColor: 'var(--hairline)' }}
-              data-testid="attention-row"
-              data-device-id={row.deviceId}
-            >
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-                <span className="font-semibold" style={{ color: 'var(--ink)' }}>{row.name}</span>
-                <span className="break-all" style={{ color: 'var(--muted)' }}>{row.ownerEmail ?? '—'}</span>
-              </div>
-              <ul className="flex flex-col gap-0.5">
-                {row.reasons.map((reason) => (
-                  <li
-                    key={reason.kind}
-                    className="break-words"
-                    data-kind={reason.kind}
-                    style={{ color: reason.kind === 'error' ? 'var(--danger-fg)' : reason.kind === 'behind' ? 'var(--amber-text)' : 'var(--muted)' }}
-                  >
-                    {reason.text}
-                  </li>
-                ))}
-              </ul>
+            <div data-testid="fw-dist" className="flex flex-col gap-2.5">
+              {distribution.length === 0 ? (
+                <div className="text-[13px]" style={{ color: 'var(--muted)' }} data-testid="fw-dist-empty">
+                  No board has been seen in the last 7 days.
+                </div>
+              ) : distribution.map((row) => (
+                <div
+                  key={row.version ?? '\u0000null'}
+                  className="grid grid-cols-[minmax(0,200px)_minmax(0,1fr)_60px] items-center gap-3.5 text-[13px]"
+                  data-testid="fw-dist-row"
+                  data-version={row.version ?? ''}
+                  data-count={row.count}
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span aria-hidden className="size-[7px] shrink-0 rounded-full"
+                          style={{ background: row.current ? 'var(--online-dot)' : 'var(--dash)' }} />
+                    <span className="min-w-0 font-mono [overflow-wrap:anywhere]" style={{ color: 'var(--ink)' }}
+                          title={row.version ?? undefined}>
+                      {versionLabel(row.version)}
+                    </span>
+                    {row.current && (
+                      <span data-dist="current" className="shrink-0 text-[12px]" style={{ color: 'var(--success-fg)' }}>
+                        {' · current'}
+                      </span>
+                    )}
+                    {!row.recognised && row.version !== null && (
+                      <span className="shrink-0 text-[12px]" style={{ color: 'var(--muted-2)' }}>{' · unrecognised'}</span>
+                    )}
+                  </span>
+                  <span aria-hidden className="h-2 overflow-hidden rounded-full" style={{ background: 'var(--track)' }}>
+                    <span className="block h-2"
+                          style={{ width: `${Math.max(2, row.share * 100)}%`, background: row.current ? 'var(--bar-ok)' : 'var(--dash)' }} />
+                  </span>
+                  <span className="text-right font-mono tabular-nums" style={{ color: 'var(--muted)' }}>{row.count}</span>
+                </div>
+              ))}
             </div>
-          ))}
+            <p className="text-[12px]" style={{ color: 'var(--muted-2)' }}>
+              Boards that reported in the last 7 days: <span data-testid="count-boardsSeen7d">{boards.seen7d}</span>.
+            </p>
+          </section>
+
+          {/* Needs attention (Ruling 16): server items first, as links; then A7's board rows, not links. */}
+          <section aria-labelledby="attention-heading" className="flex flex-col gap-2.5 rounded-[20px] p-5" style={CARD}>
+            <h2 id="attention-heading" className="mb-1 text-[15px] font-semibold" style={{ color: 'var(--ink)' }}>
+              Needs attention
+            </h2>
+            <ul data-testid="attention" className="flex flex-col gap-2.5">
+              {server.map((s) => (
+                <li key={s.id}>
+                  <Link href={s.href} data-testid={s.id}
+                        className={`flex items-start gap-3 rounded-[12px] px-3.5 py-3 hover:shadow-[0_0_0_1px_var(--dash)] ${RING}`}
+                        style={{ background: s.bg }}>
+                    <span aria-hidden className="mt-[5px] size-2 shrink-0 rounded-full" style={{ background: s.dot }} />
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span data-attn="title" className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>{s.title}</span>
+                      <span data-attn="text" className="text-[13px] [overflow-wrap:anywhere]" style={{ color: 'var(--muted)' }}>{s.text}</span>
+                    </span>
+                  </Link>
+                </li>
+              ))}
+              {attention.map((row) => (
+                <li key={row.deviceId} data-testid="attention-row" data-device-id={row.deviceId}
+                    className="flex items-start gap-3 rounded-[12px] px-3.5 py-3" style={{ background: 'var(--surface-2)' }}>
+                  <span aria-hidden className="mt-[5px] size-2 shrink-0 rounded-full"
+                        style={{ background: ATTENTION_DOT[row.reasons[0]?.kind ?? 'offline'] }} />
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <span data-attn="title" className="text-[14px] font-semibold [overflow-wrap:anywhere]" style={{ color: 'var(--ink)' }}>
+                      {row.name}
+                    </span>
+                    <span className="text-[13px] [overflow-wrap:anywhere]" style={{ color: 'var(--muted)' }}>{row.ownerEmail ?? '—'}</span>
+                    <ul className="flex flex-col gap-0.5">
+                      {row.reasons.map((reason) => (
+                        <li key={reason.kind} data-kind={reason.kind} className="text-[13px] [overflow-wrap:anywhere]"
+                            style={{ color: REASON_FG[reason.kind] }}>
+                          {reason.text}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </li>
+              ))}
+              {server.length === 0 && attention.length === 0 && (
+                <li className="text-[13px]" style={{ color: 'var(--muted)' }} data-testid="attention-empty">
+                  Nothing needs attention.
+                </li>
+              )}
+            </ul>
+          </section>
         </div>
       </div>
     </>

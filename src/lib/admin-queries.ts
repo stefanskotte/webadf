@@ -24,6 +24,10 @@ import {
 export interface AdminCounts {
   users: number; orgs: number; games: number; disks: number;
   blobs: number; liveInvites: number;
+  /** The newest account's creation date, `YYYY-MM-DD` (UTC), or null with no users (C6 Ruling 14). */
+  newestUserAt: string | null;
+  /** Blobs the identity scan has not checked yet: scanStatus()'s exact `unchecked` predicate (C6 Ruling 14). */
+  blobsUnchecked: number;
 }
 
 export interface AdminUserRow {
@@ -40,7 +44,7 @@ export interface AdminInviteRow {
 }
 
 /**
- * Six count(*) reads in one round trip -- the admin dashboard's headline
+ * Seven count(*) reads and the newest sign-up date in one round trip -- the admin dashboard's headline
  * numbers. `getDb().execute()` on the neon-http driver resolves to an object
  * with a `.rows` array (see NeonHttpQueryResult in drizzle-orm/neon-http),
  * not to the rows themselves, so the row is pulled off `.rows[0]`. Every
@@ -52,6 +56,7 @@ export async function adminCounts(): Promise<AdminCounts> {
   const { rows } = await getDb().execute<{
     users: number; orgs: number; games: number; disks: number;
     blobs: number; live_invites: number;
+    newest_user_at: string | null; blobs_unchecked: number;
   }>(sql`
     select
       (select count(*)::int from auth."user")                       as users,
@@ -61,13 +66,20 @@ export async function adminCounts(): Promise<AdminCounts> {
       (select count(*)::int from blobs)                             as blobs,
       (select count(*)::int from invites
         where consumed_at is null and revoked_at is null
-          and expires_at > now())                                  as live_invites
+          and expires_at > now())                                  as live_invites,
+      -- A string, not a timestamp: created_at has no time zone, and the page only shows the date.
+      (select to_char(max(created_at), 'YYYY-MM-DD') from auth."user") as newest_user_at,
+      -- scanStatus()'s unchecked predicate, word for word (tosec-sweep.ts): a restore's re-dated copy is never a blob to scan.
+      (select count(*)::int from blobs where match_checked_at is null
+        and derived_from_sha256 is null)                             as blobs_unchecked
   `);
   const row = rows[0];
   return {
     users: Number(row.users), orgs: Number(row.orgs), games: Number(row.games),
     disks: Number(row.disks), blobs: Number(row.blobs),
     liveInvites: Number(row.live_invites),
+    newestUserAt: row.newest_user_at ?? null,
+    blobsUnchecked: Number(row.blobs_unchecked),
   };
 }
 

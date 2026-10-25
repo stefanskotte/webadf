@@ -103,3 +103,72 @@ test('at 390px the admin header fits: no horizontal overflow, gear and Sign out 
   expect(Math.abs((search.y + search.height / 2) - (out.y + out.height / 2)), 'search and Sign out share a line').toBeLessThan(8);
   await expect(header.getByTestId('admin-email')).toBeHidden();
 });
+
+// ---- Overview (spec §2, Rulings 13–16) --------------------------------------------------------------------
+
+test('Overview: six tiles that are links, the nested figures digits only, the firmware card and its footnote', async ({ page }) => {
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin');
+  const TILES = [
+    ['count-users', 'Users', '/admin/users'], ['count-orgs', 'Organizations', '/admin/users'],
+    ['count-games', 'Titles', '/admin/scan'], ['count-blobs', 'Blobs', '/admin/scan'],
+    ['count-boardsOnline', 'Boards online', '/admin/firmware'], ['count-liveInvites', 'Live invites', '/admin/invites'],
+  ] as const;
+  for (const [id, label, href] of TILES) {
+    const tile = page.locator(`a:has(> [data-testid="${id}"])`);
+    await expect(tile).toHaveAttribute('href', href);
+    await expect(tile.locator(':scope > span').first()).toHaveText(label);
+    await expect(page.getByTestId(id)).toHaveText(/^\d+$/);
+    await expect(tile).toHaveAttribute('data-warn', /^(true|false)$/);
+  }
+  for (const id of ['count-disks', 'count-boardsPaired', 'count-boardsSeen7d']) {
+    await expect(page.getByTestId(id)).toHaveText(/^\d+$/);
+  }
+  await expect(page.locator('a:has(> [data-testid="count-users"]) > span:last-child'))
+    .toHaveText(/^(newest \d{4}-\d{2}-\d{2}|none yet)$/);
+  await expect(page.locator('a:has(> [data-testid="count-games"])')).toContainText(/\d+ disks?$/);
+  await expect(page.locator('a:has(> [data-testid="count-boardsOnline"])')).toContainText(/of \d+ paired$/);
+  // Both values of the warning: it follows the number.
+  const live = Number(await page.getByTestId('count-liveInvites').textContent());
+  await expect(page.locator('a:has(> [data-testid="count-liveInvites"])'))
+    .toHaveAttribute('data-warn', live === 0 ? 'true' : 'false');
+
+  await expect(page.getByRole('heading', { name: 'Boards by firmware' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Firmware registry' })).toHaveAttribute('href', '/admin/firmware');
+  await expect(page.getByText(/^Boards that reported in the last 7 days: \d+\.$/)).toBeVisible();
+  await expect(page.getByRole('heading', { name: /overview/i })).toHaveCount(1);
+
+  await page.locator('a:has(> [data-testid="count-users"])').click();
+  await expect(page).toHaveURL(/\/admin\/users$/);
+});
+
+test('Needs attention: the server items follow the tile numbers and come first, then the boards', async ({ page }) => {
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin');
+  const live = Number(await page.getByTestId('count-liveInvites').textContent());
+  const invites = page.getByTestId('attention-invites');
+  if (live === 0) {
+    await expect(invites).toHaveAttribute('href', '/admin/invites');
+    await expect(invites).toContainText('No live invite codes');
+  } else {
+    await expect(invites).toHaveCount(0);
+  }
+  const note = (await page.locator('a:has(> [data-testid="count-blobs"]) > span:last-child').textContent()) ?? '';
+  const scan = page.getByTestId('attention-scan');
+  const unchecked = /^(\d+) not yet scanned$/.exec(note)?.[1];
+  if (unchecked) {
+    await expect(scan).toHaveAttribute('href', '/admin/scan');
+    await expect(scan.locator('[data-attn="title"]')).toHaveText(new RegExp(`^${unchecked} blobs? not yet scanned$`));
+  } else {
+    expect(note).toBe('all scanned');
+    await expect(scan).toHaveCount(0);
+  }
+  // Order: server items, then board rows; "Nothing needs attention." only when there is nothing else.
+  const order = await page.getByTestId('attention').locator(':scope > li').evaluateAll((lis) =>
+    lis.map((li) => li.getAttribute('data-testid') ?? li.firstElementChild?.getAttribute('data-testid') ?? ''));
+  const firstRow = order.indexOf('attention-row');
+  const lastServer = Math.max(order.lastIndexOf('attention-invites'), order.lastIndexOf('attention-scan'));
+  if (firstRow !== -1) expect(lastServer).toBeLessThan(firstRow);
+  expect(order.includes('attention-empty')).toBe(order.every((id) => id === 'attention-empty'));
+  expect(order.length).toBeGreaterThan(0);
+});
