@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Link } from '@/components/shell/link';
-import { currentSection } from '@/lib/side-nav';
+import { currentSection, sectionForHash } from '@/lib/side-nav';
 
 export type SideNavItem = { href: string; label: string; focusId?: string; tone?: 'danger' };
 export type SideNavGroup = { label?: string; testId?: string; items: SideNavItem[] };
@@ -47,6 +47,17 @@ export function SideNav({ label, testId, groups, size = 'md' }: {
     const onScroll = () => { scrolled = true; };
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => { io.disconnect(); window.removeEventListener('scroll', onScroll); };
+  }, [key]);
+
+  // Back and Forward change the hash without a click: the mark follows the URL.
+  useEffect(() => {
+    const list = key ? key.split(' ') : [];
+    const onHash = () => {
+      const next = sectionForHash(list, window.location.hash);
+      if (next) { lockUntil.current = performance.now() + CLICK_LOCK_MS; setCurrent(next); }
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
   }, [key]);
 
   const shown = current ?? ids[0] ?? null;

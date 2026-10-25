@@ -11,3 +11,9 @@ export function currentSection(ids: readonly string[], visible: ReadonlySet<stri
   }
   return ids.find((id) => visible.has(id)) ?? null;
 }
+
+/** The section a URL hash names, if it is one of `ids`; null otherwise (a hashchange to anything else changes nothing). */
+export function sectionForHash(ids: readonly string[], hash: string): string | null {
+  const target = hash.replace(/^#/, '');
+  return ids.includes(target) ? target : null;
+}

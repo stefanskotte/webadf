@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { currentSection } from '@/lib/side-nav';
+import { currentSection, sectionForHash } from '@/lib/side-nav';
 
 const IDS = ['prefs', 'account', 'firmware', 'danger'];
 
@@ -17,5 +17,14 @@ describe('currentSection (C5 spec §1.2, Ruling 2)', () => {
   it('nothing in view keeps what was current (null); an empty list has none', () => {
     expect(currentSection(IDS, new Set(), '#danger')).toBeNull();
     expect(currentSection([], null, '#x')).toBeNull();
+  });
+});
+
+describe('sectionForHash (Back/Forward moves the mark)', () => {
+  it('is the hash target when it is one of the ids, else null', () => {
+    expect(sectionForHash(IDS, '#firmware')).toBe('firmware');
+    expect(sectionForHash(IDS, 'danger')).toBe('danger');
+    expect(sectionForHash(IDS, '')).toBeNull();
+    expect(sectionForHash(IDS, '#elsewhere')).toBeNull();
   });
 });
