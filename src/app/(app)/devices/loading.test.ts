@@ -15,7 +15,7 @@ describe('DevicesLoading (spec 9.2)', () => {
     expect(html).toContain('rounded-[20px]');
     expect(html).toMatch(/h-\[176px\]/);
     expect(html).toMatch(/w-\[340px\]/);
-    expect(html).toMatch(/h-7/);
+    expect(html).toMatch(/class="[^"]*\bh-7\b/);
     expect(html).toMatch(/h-\[96px\]/);
     expect(html.match(/data-skeleton-cell/g)?.length).toBe(4);
   });
@@ -29,7 +29,7 @@ describe('DevicesLoading (spec 9.2)', () => {
   });
 
   it('uses a 44 px heading bone and a subtitle bone before the card', () => {
-    expect(html).toMatch(/h-11/);
-    expect(html.indexOf('h-11')).toBeLessThan(html.indexOf('rounded-[20px]'));
+    expect(html).toMatch(/class="[^"]*\bh-11\b/);
+    expect(html.search(/\bh-11\b/)).toBeLessThan(html.indexOf('rounded-[20px]'));
   });
 });

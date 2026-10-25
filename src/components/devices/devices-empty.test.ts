@@ -23,7 +23,7 @@ describe('DevicesEmpty (spec 9.1)', () => {
     expect(svg).toBeLessThan(head);
     expect(head).toBeLessThan(sub);
     expect(sub).toBeLessThan(btn);
-    expect(html).toContain('120');
+    expect(html).toContain('width="120" height="52"');
     expect(html).toContain('aria-hidden="true"');
   });
 
