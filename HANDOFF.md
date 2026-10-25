@@ -1480,11 +1480,25 @@ separately.
 
 **Current order (re-checked 2026-10-24):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f**; next C3 Upload) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
+**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423**; next C4 Disk files) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **Phase C3 Upload -- SHIPPED 2026-10-25** (merge 05dc423; spec `docs/superpowers/specs/2026-10-25-phase-c3-upload-design.md`
+  (33 rulings), plan `docs/superpowers/plans/2026-10-25-phase-c3-upload.md`). Page header + two drop cards (`drop-card.tsx`; whole
+  card is the drop target, only drags carrying Files are handled, no-board card cancels file drops), staging section with a
+  radiogroup filter (aria-checked, roving tab stop, Alt/Ctrl/Meta ignored), refresh/unreadable-first-read states in words,
+  Clear finished always shown, `staging-row.tsx` (one line from xl, stacked below; names/paths wrap), row actions (Stop/Delete/
+  Cancel red, Retry filled, arriving = Stop only), in-app confirm focusing Cancel, focus to the Staging heading (visible ring)
+  when a focused row/button vanishes, upload loading/empty states, Upload contrast pairs in e2e (lowest 4.69), upload.png.
+  e2e from-amiga "Send to an Amiga queues" had been red on master since d701666 (MAC labels; only upload-staging was run then)
+  -- fixed here. Rulings worth a look: drop cards side by side only from lg; empty card space no longer opens the picker;
+  Fetch button 44 px; help word cap 280. Deferred minors: drop-allowed cursor on no-board/busy cards; Clear finished keeps ink
+  text while clearing; staging-reading 12.5px/px-4 vs 13/px-2; garbled comment topics.tsx:483; empty actions span gap; row/
+  loading/empty unit tests don't assert colours/sizes/icon; row wrap e2e only at 1100; null-pct arriving reads "0 %" without
+  a bar; focus tests wait up to 30 s for live refresh; ACT_PRIMARY keeps a 1px border; Safari dragleave blink; hover and real
+  drag unverified in a real browser. Pre-existing: mobile.spec.ts:455 (disk-page drop strip touch drag) red on master (C4).
 - **Phase C2 Devices -- SHIPPED 2026-10-25** (merge 3d12b1f; spec `docs/superpowers/specs/2026-10-24-phase-c2-devices-design.md`,
   plan `docs/superpowers/plans/2026-10-24-phase-c2-devices.md`; 35 spec rulings). Modern card: DriveArt SVG + DriveGlass (the
   live display.wasm OLED is the button that opens the display editor), drive box / Transfer box, DF1 radiogroup (Off / Next disk
