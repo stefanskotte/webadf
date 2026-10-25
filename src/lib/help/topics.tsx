@@ -349,16 +349,16 @@ export const HELP_TOPICS = {
           upside down; the preview and the card&rsquo;s screen stay upright.
         </p>
         <p>
-          The <em>track</em> counter reads cylinder, a side arrow, then the last cylinder, as{' '}
-          <em>42↑79</em> or <em>42↓79</em>: up is side 1, down is side 0. The <em>nfc</em> element, hidden until you tick it, shows
+          The <em>Track</em> counter reads cylinder, a side arrow, then the last cylinder, as{' '}
+          <em>42↑79</em> or <em>42↓79</em>: up is side 1, down side 0. The <em>NFC</em> element, hidden until you tick it, shows
           the NFC reader (struck through when none is found, inverted while a tag write waits).
         </p>
         <p>
-          The <em>status</em> shows <em>as</em> a word or a small icon: an empty or filled floppy, filling while
+          The <em>Status</em> shows <em>as</em> a word or an icon: an empty or filled floppy, filling while
           downloading, blinking arcs while connecting, a blinking triangle on error.
         </p>
         <p>
-          After <em>Save</em> it reads <em>Waiting for the board</em>, then <em>Applied on the board</em> or why the
+          After <em>Save to board</em> it reads <em>Waiting for the board</em>, then <em>Applied on the board</em> or why the
           board refused it. <em>Cancel</em> discards unsaved changes;{' '}
           <em>Reset to default</em> restores the standard layout and keeps the rotation.
         </p>

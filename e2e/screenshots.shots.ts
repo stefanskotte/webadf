@@ -242,8 +242,9 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   await shoot(page, 'devices');
 
   await page.getByTestId(`display-toggle-${deviceId}`).click();
+  await expect(page.getByTestId(`display-drawer-${deviceId}`)).toBeVisible();
   await expect(page.getByTestId(`display-canvas-${deviceId}`)).toBeVisible();
-  await shoot(page, 'display-editor', { tall: true });
+  await shoot(page, 'display-editor');   // a modal is viewport-fixed: no full-page shot
 
   await page.goto('/help');
   await shoot(page, 'help');

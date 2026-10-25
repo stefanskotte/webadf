@@ -7,7 +7,7 @@ import { devices, pairingCodes } from '@/db/schema/devices';
 import { disks } from '@/db/schema/catalog';
 import { signUpFresh, runTag } from './helpers';
 import { decodeLayout, encodeLayout } from '@/lib/display-layout';
-import { pairDevice, seedDisk, cleanupSeeded, authHeader, publishTestRelease, cleanupTestReleases, openBoardSettings } from './device-helpers';
+import { pairDevice, seedDisk, cleanupSeeded, authHeader, publishTestRelease, cleanupTestReleases, openBoardSettings, hydrated } from './device-helpers';
 
 // The releases first (firmware_releases is global), then the seeded rows.
 test.afterAll(async () => {
@@ -309,6 +309,13 @@ test('three paired devices stack, each card the full content width, and no card 
   }
   expect(a.width).toBeGreaterThan(700);
   await expect(page.getByTestId('pair-another-card')).toHaveCount(0);
+
+  // Opening one board's display modal leaves every card's height unchanged (it is a modal, not a drawer).
+  await hydrated(page, `display-toggle-${idB}`);
+  await page.getByTestId(`display-toggle-${idB}`).click();
+  await expect(page.getByTestId(`display-drawer-${idB}`)).toBeVisible();
+  const after = await Promise.all([idA, idB, idC].map((id) => page.getByTestId(`device-${id}`).boundingBox()));
+  after.forEach((box, i) => expect(Math.abs(box!.height - boxes[i]!.height)).toBeLessThan(1));
 });
 
 test('pair-another: with one board the aside opens the header pairing form, with two the aside is gone', async ({ page, request }) => {
@@ -615,15 +622,21 @@ test('the protection switch flips the disk, the disk title links to its title, a
   await expect(page.getByTestId(`device-disk-title-${idEmpty}`)).toHaveCount(0);
 });
 
-test('pressing the bezel display opens the display drawer', async ({ page, request }) => {
+test('pressing the bezel display opens the display modal; Escape closes it and focus returns to the screen', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId } = await pairDevice(page, request);
   await page.goto('/devices');
 
   await expect(page.getByTestId(`display-drawer-${deviceId}`)).toHaveCount(0);
+  await hydrated(page, `device-oled-${deviceId}`);
   await page.getByTestId(`device-oled-${deviceId}`).click();
-  await expect(page.getByTestId(`display-drawer-${deviceId}`)).toBeVisible();
+  const modal = page.getByTestId(`display-drawer-${deviceId}`);
+  await expect(modal).toBeVisible();
+  await expect(modal).toHaveAttribute('role', 'dialog');
   await expect(page.getByTestId(`display-toggle-${deviceId}`)).toHaveText('Change display');
+  await page.keyboard.press('Escape');
+  await expect(modal).toHaveCount(0);
+  await expect(page.getByTestId(`device-oled-${deviceId}`)).toBeFocused();
 });
 
 // Pillock, 2026-10-19: the bezel drew the board's screen upside down at
