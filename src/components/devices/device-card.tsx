@@ -7,23 +7,21 @@ import { NET_PICK_FW } from '@/lib/paulanet-disk';
 import type { DeviceListItem } from '@/lib/queries';
 import type { NextInfo } from '@/lib/next-disk';
 import { preloadText } from '@/lib/drive-chips';
-import { describeI2cScan } from '@/lib/i2c-scan';
 import { describeLastBoot } from '@/lib/last-boot';
 import { Link } from '@/components/shell/link';
 import { SecondDriveSetting } from './second-drive-setting';
-import { BootDiskSetting } from './boot-disk-setting';
+import { BoardSettings } from './board-settings';
 import { HelpTip } from '@/components/help/help-tip';
 import { DeviceAlias } from './device-alias';
 import { DriveFront } from './drive-front';
-import { DeleteDeviceDialog } from './delete-device-dialog';
 import { DriveBox } from './drive-box';
 import { TransferBox } from './transfer-box';
 
 /**
  * The Devices card (spec §2): the drive tile and the info column on top, then the offline strip, the drive box (DF0
  * in words, its protection switch and actions), the last error and stuck-start strips, a standalone Transfer box,
- * and the settings that Tasks 4-6 still replace. The disk is always named in words in the drive box; the glass is a
- * canvas.
+ * and the DF1 box. Board settings (Disk at startup, NFC reader, Delete device) is a button in the heading row that
+ * opens a modal. The disk is always named in words in the drive box; the glass is a canvas.
  */
 export function DeviceCard(
   { device, now, firmware, selection, onCancelUpdate, next, sendLine, transfer, uploadLine }: {
@@ -43,11 +41,8 @@ export function DeviceCard(
 ) {
   const state = deviceState(device, now);
   const online = isOnline(device.lastSeenAt, now);
-  // The boot I2C scan in words (fw 1.17.0+); null from older firmware, which keeps the card as it was. The version
-  // decides whether a PN532 at 0x24 is a reader (1.18.0+) or a module that needs the update.
   // The boot trail (fw 1.18.2): only when the previous boot stopped where it should not have; null otherwise.
   const lastBoot = describeLastBoot(device.lastBoot);
-  const i2c = describeI2cScan(device.nfcReader, device.i2cAddrs, device.firmwareVersion);
 
   // An update in flight REPLACES the firmware line: there is no value in
   // telling someone watching a download that they are two releases behind.
@@ -88,6 +83,7 @@ export function DeviceCard(
                            isDefault={isDefaultDeviceName(device.name, device.macAddress)} />
             </div>
             <span className="flex-1" />
+            <BoardSettings device={device} />
             {/* Both values of "is this device online" are words in a pill, never an absent icon (Ruling 10). */}
             <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-semibold"
                   style={{ background: pill.bg, color: pill.fg }}
@@ -205,26 +201,6 @@ export function DeviceCard(
                             transfer={inNetwork ? transfer ?? null : null}
                             sendLine={inNetwork ? sendLine ?? null : null}
                             uploadLine={inNetwork ? uploadLine ?? null : null} />
-      </div>
-
-      <div className="mx-3 mb-3 flex flex-col gap-2">
-      {/* BOTTOM: write protection, firmware, and every existing action. */}
-      <div className="flex flex-col gap-2">
-        <BootDiskSetting device={device} />
-        {i2c && (
-          <span className="flex min-w-0 items-start gap-1" data-testid={`device-nfc-${device.id}`} data-ok={i2c.ok}>
-            <span className="flex min-w-0 flex-col text-[11px]" style={{ overflowWrap: 'anywhere' }}>
-              <span style={{ color: 'var(--ink)' }}>{i2c.line}</span>
-              {i2c.seen && <span style={{ color: 'var(--muted)' }} data-testid={`device-i2c-${device.id}`}>{i2c.seen}</span>}
-            </span>
-            <HelpTip topic="nfc" className="-mt-1" />
-          </span>
-        )}
-        <div className="flex items-center justify-end gap-2">
-          <DeleteDeviceDialog deviceId={device.id} name={device.name} />
-        </div>
-      </div>
-
       </div>
     </article>
   );

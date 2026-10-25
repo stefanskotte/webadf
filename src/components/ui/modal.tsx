@@ -13,7 +13,7 @@ import { XIcon } from 'lucide-react';
  * to the element focused before opening (Base UI's default).
  */
 export function Modal({
-  open, onOpenChange, title, subtitle, badge, footer, width, testId, dismissible, closeTestId, finalFocus, children,
+  open, onOpenChange, title, subtitle, badge, footer, width, testId, dismissible, closeTestId, finalFocus, attrs, children,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -27,6 +27,8 @@ export function Modal({
   dismissible: boolean;
   closeTestId: string;
   finalFocus?: RefObject<HTMLElement | null>;
+  /** Extra data attributes on the popup, e.g. `data-device-id`. */
+  attrs?: Record<`data-${string}`, string>;
   children: ReactNode;
 }) {
   return (
@@ -39,6 +41,7 @@ export function Modal({
         <Dialog.Backdrop className="fixed inset-0 z-50" style={{ background: 'var(--scrim)' }} />
         <Dialog.Popup
           data-testid={testId}
+          {...attrs}
           finalFocus={finalFocus}
           className="glass-card wf-modal fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-32px)] w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden max-sm:inset-0 max-sm:max-h-none max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none"
           style={{ maxWidth: width }}

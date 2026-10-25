@@ -5,7 +5,7 @@ import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { PAULANET_DISK_SHA256 } from '@/lib/paulanet-disk';
 import { signUpFresh, runTag } from './helpers';
-import { pairDevice, authHeader, cleanupSeeded, seedDisk, df1OnBoard, pickSecondDrive } from './device-helpers';
+import { pairDevice, authHeader, cleanupSeeded, seedDisk, df1OnBoard, pickSecondDrive, hydrated as hydratedTestId } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
 
@@ -17,13 +17,8 @@ async function report(request: APIRequestContext, token: string, extra: Record<s
 }
 /** LiveRefresh polls every 3 s while the tab is in use; allow a few ticks plus the RSC refresh. */
 const LIVE = 15_000;
-/** Wait until React has hydrated the radiogroup: a key pressed before that reaches DOM with no handler. */
-async function hydrated(page: import('@playwright/test').Page, deviceId: string) {
-  await page.waitForFunction((id) => {
-    const el = document.querySelector(`[data-testid="second-drive-${id}"]`);
-    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$') && typeof (el as unknown as Record<string, { onKeyDown?: unknown }>)[k]?.onKeyDown === 'function');
-  }, deviceId);
-}
+const hydrated = (page: import('@playwright/test').Page, deviceId: string) =>
+  hydratedTestId(page, `second-drive-${deviceId}`, 'onKeyDown');
 const row = async (id: string) => (await getDb().select().from(devices).where(eq(devices.id, id)))[0];
 
 test('a board without DF1 support is told which firmware it needs', async ({ page, request }) => {

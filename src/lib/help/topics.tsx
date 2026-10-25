@@ -64,7 +64,7 @@ export const HELP_TOPICS = {
 
   // Sources: pair-button.tsx, devices/page.tsx:58-68, device-state.ts:19 (60 s),
   // firmware-state.ts:107-148, HANDOFF trial/revert (5546-5577) and "waits for eject" (2064, 5148).
-  // Deleting a board: delete-device-dialog.tsx + api/devices/[id] DELETE; the board's side (401 -> token erased ->
+  // Deleting a board: delete-device-dialog.tsx (DeleteDeviceConfirm, opened from board-settings.tsx) + api/devices/[id] DELETE; the board's side (401 -> token erased ->
   // setup portal, same already-used code rejected, so a fresh code is asked for) is wifi-floppy/firmware/src/main.c
   // DC_HALTED branch; disk history kept because disk_versions.device_id has no FK (db/schema/disk-history.ts).
   // Address note: plan 2026-10-12 ruling 4 -- 1.11.0 sends the board's own DHCP client-id.
@@ -91,19 +91,20 @@ export const HELP_TOPICS = {
           <strong>Firmware updates.</strong> Press <em>Update &lt;name&gt;</em> in the banner or tick <em>Select for update</em>,{' '}
           then confirm with your password (unless you turned that off in Settings). The card shows <em>update queued</em>,{' '}
           <em>downloading</em> and <em>applying — do not power off</em>. A new version runs on trial: if it doesn&apos;t
-          check in within 5 minutes, the board goes back to its old version and the card says <em>update failed</em>.
+          check in within 5 minutes, the board goes back and the card says <em>update failed</em>.
         </p>
         <p>
-          <strong>Disk at startup.</strong> <em>Last disk</em> (the default) puts the board&apos;s disk back at power-up.{' '}
-          <em>No disk</em> leaves the drive empty: the Amiga waits at its insert-disk screen until you tap a card or
-          mount one. A firmware update or a Wi-Fi drop keeps the disk. Needs firmware 1.18.1.
+          <strong>Disk at startup.</strong> In <em>Board settings</em>, <em>Last disk</em> (the default) puts the
+          board&apos;s disk back at power-up; <em>No disk</em> leaves the drive empty: the Amiga waits at its
+          insert-disk screen until you tap a card or mount one. Press <em>Save to board</em>. A firmware update or a
+          Wi-Fi drop keeps the disk. Needs firmware 1.18.1.
         </p>
         <p>
-          <strong>Stuck start?</strong> The card then says where, e.g.{' '}
-          <em>Previous start stopped at: I2C scan</em> (firmware 1.18.2). Include it in reports.
+          <strong>Stuck start?</strong> The card says where, e.g.{' '}
+          <em>Previous start stopped at: I2C scan</em> (firmware 1.18.2).
         </p>
         <p>
-          <strong>Deleting a board.</strong> The trash icon removes a board from your account. Your disks and their history stay.
+          <strong>Deleting a board.</strong> <em>Delete device…</em> in <em>Board settings</em> removes a board from your account; your disks stay.
         </p>
         <p>
           <strong>Your own server.</strong> Running your own copy? See{' '}
@@ -138,8 +139,8 @@ export const HELP_TOPICS = {
           there when you started.
         </p>
         <p>
-          <strong>Tapping.</strong> Tapping a tag mounts its disk. Tapping the disk that is already in the drive does
-          nothing. The tag stores which disk it is, so it keeps working after the Amiga has saved to that disk.
+          <strong>Tapping.</strong> Tapping a tag mounts its disk; tapping the disk already in the drive does
+          nothing. The tag keeps working after the Amiga has saved to that disk.
         </p>
         <p>
           <strong>Next-disk card.</strong> Write one with <em>Write a Next-disk card</em> on the Devices page. Tapping
@@ -150,13 +151,12 @@ export const HELP_TOPICS = {
           and still being tested; restart the board after connecting one. With both fitted, the Si512 is used.
         </p>
         <p>
-          <strong>No reader found?</strong> Each board card says whether the board found its reader when it
-          started, and what else answered: the display, or nothing at all. Check the reader&apos;s wires, then
-          restart the board.
+          <strong>No reader found?</strong> <em>Board settings</em> on the board&apos;s card says what answered at
+          start-up; an amber dot on its button means no reader. Check the wires, then restart the board.
         </p>
         <GoodToKnow items={[
           'Next-disk cards need board firmware 1.6.0 or newer.',
-          'The reader line on the card needs firmware 1.17.0 or newer.',
+          'The reader line in Board settings needs firmware 1.17.0 or newer.',
           'A PN532 reader needs firmware 1.18.0 or newer.',
           'NTAG stickers need firmware 1.18.1 or newer.',
         ]} />

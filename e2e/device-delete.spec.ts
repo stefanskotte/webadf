@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { signUpFresh } from './helpers';
-import { pairDevice, authHeader, cleanupSeeded } from './device-helpers';
+import { pairDevice, authHeader, cleanupSeeded, openBoardSettings } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
 
@@ -18,6 +18,7 @@ test('Cancel keeps the device; Delete removes the card and the row, and the toke
   await expect(page.getByTestId(`device-${deviceId}`)).toBeVisible();
 
   // Cancel leaves everything as it was.
+  await openBoardSettings(page, deviceId);
   await page.getByTestId(`device-delete-${deviceId}`).click();
   await expect(page.getByTestId('device-delete-dialog')).toBeVisible();
   // The modal radius (20px, .wf-modal) beats the card's 16px (.glass-card):
@@ -25,9 +26,11 @@ test('Cancel keeps the device; Delete removes the card and the row, and the toke
   await expect(page.getByTestId('device-delete-dialog')).toHaveCSS('border-top-left-radius', '20px');
   await page.getByTestId('device-delete-cancel').click();
   await expect(page.getByTestId('device-delete-dialog')).toHaveCount(0);
+  await expect(page.getByTestId(`board-settings-${deviceId}`)).toBeFocused();   // focus returns to the opener
   expect(await rowCount(deviceId)).toBe(1);
 
   // Delete.
+  await openBoardSettings(page, deviceId);
   await page.getByTestId(`device-delete-${deviceId}`).click();
   await Promise.all([
     page.waitForResponse((r) =>

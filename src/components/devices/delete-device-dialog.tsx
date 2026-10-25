@@ -1,7 +1,5 @@
 'use client';
-import { Trash2 } from 'lucide-react';
-
-import { useState } from 'react';
+import { useEffect, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -12,6 +10,9 @@ import { toast } from 'sonner';
  * can be paired again, so what the dialog owes the person is the list of what
  * actually happens, not a hurdle.
  *
+ * Controlled (Board settings opens it from its footer, spec §8.3, Ruling 23). Escape and Cancel close it unless
+ * the request runs; the opener takes focus back through `onOpenChange`.
+ *
  * Portalled to document.body for the same reason as DeleteDiskDialog: the
  * card is .glass-card (backdrop-filter), which would otherwise become the
  * containing block of the fixed overlay.
@@ -20,10 +21,20 @@ import { toast } from 'sonner';
  * board gets a 401 on its next request, ejects, drops tracks it had not yet
  * uploaded, forgets its token and offers its setup network again.
  */
-export function DeleteDeviceDialog({ deviceId, name }: { deviceId: string; name: string }) {
+export function DeleteDeviceConfirm({ deviceId, name, open, onOpenChange, cancelRef }: {
+  deviceId: string; name: string; open: boolean; onOpenChange: (open: boolean) => void;
+  /** The Cancel button: the safe place for focus to land when the dialog opens. */
+  cancelRef?: RefObject<HTMLButtonElement | null>;
+}) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open || busy) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onOpenChange(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, busy, onOpenChange]);
 
   async function confirm() {
     setBusy(true);
@@ -34,7 +45,7 @@ export function DeleteDeviceDialog({ deviceId, name }: { deviceId: string; name:
         return;
       }
       toast.success('Device deleted');
-      setOpen(false);
+      onOpenChange(false);
       router.refresh();
     } catch {
       toast.error('Could not reach the server');
@@ -43,17 +54,7 @@ export function DeleteDeviceDialog({ deviceId, name }: { deviceId: string; name:
     }
   }
 
-  if (!open) {
-    return (
-      <button type="button" data-testid={`device-delete-${deviceId}`}
-              aria-label={`Delete ${name}`} title={`Delete ${name}`}
-              onClick={() => setOpen(true)}
-              className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--danger-bg)] hover:text-[var(--danger-fg)]"
-              style={{ color: 'var(--faint)' }}>
-        <Trash2 size={14} strokeWidth={1.75} aria-hidden />
-      </button>
-    );
-  }
+  if (!open) return null;
 
   return createPortal((
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -72,8 +73,8 @@ export function DeleteDeviceDialog({ deviceId, name }: { deviceId: string; name:
           <li>Your disks and their history are kept.</li>
         </ul>
         <div className="mt-5 flex items-center justify-end gap-2">
-          <button type="button" data-testid="device-delete-cancel" disabled={busy}
-                  onClick={() => setOpen(false)}
+          <button type="button" ref={cancelRef} data-testid="device-delete-cancel" disabled={busy}
+                  onClick={() => onOpenChange(false)}
                   className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold disabled:opacity-50"
                   style={{ color: 'var(--muted)' }}>
             Cancel

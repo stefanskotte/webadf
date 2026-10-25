@@ -7,7 +7,7 @@ import { devices, pairingCodes } from '@/db/schema/devices';
 import { disks } from '@/db/schema/catalog';
 import { signUpFresh, runTag } from './helpers';
 import { decodeLayout, encodeLayout } from '@/lib/display-layout';
-import { pairDevice, seedDisk, cleanupSeeded, authHeader, publishTestRelease, cleanupTestReleases } from './device-helpers';
+import { pairDevice, seedDisk, cleanupSeeded, authHeader, publishTestRelease, cleanupTestReleases, openBoardSettings } from './device-helpers';
 
 // The releases first (firmware_releases is global), then the seeded rows.
 test.afterAll(async () => {
@@ -688,13 +688,27 @@ test('the card says what the board found on its I2C bus', async ({ page, request
   expect((await report(t3, { firmwareVersion: '1.16.0+ge2e', nfcReader: 'absent' })).status()).toBe(204);
 
   await page.goto('/devices');
+  // The reader line lives in Board settings; a board with no reader carries an attention dot on its button.
+  await expect(page.getByTestId(`device-${older}`)).toBeVisible();
+  await expect(page.getByTestId(`board-settings-attention-${noReader}`)).toBeVisible();
+  await expect(page.getByTestId(`board-settings-attention-${withReader}`)).toHaveCount(0);
+  await expect(page.getByTestId(`board-settings-attention-${older}`)).toHaveCount(0);
+  await openBoardSettings(page, noReader);
   const absent = page.getByTestId(`device-nfc-${noReader}`);
   await expect(absent).toContainText('No NFC reader found — nothing at 0x28');
   await expect(page.getByTestId(`device-i2c-${noReader}`)).toHaveText('I2C devices seen: 0x3c (display)');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('board-settings-dialog')).toHaveCount(0);
+  await openBoardSettings(page, withReader);
   await expect(page.getByTestId(`device-nfc-${withReader}`)).toContainText('NFC reader at 0x28');
   await expect(page.getByTestId(`device-i2c-${withReader}`)).toHaveCount(0);
-  await expect(page.getByTestId(`device-${older}`)).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('board-settings-dialog')).toHaveCount(0);
+  // Firmware that sends no scan: a sentence saying so (Ruling 22), not an empty section.
+  await openBoardSettings(page, older);
   await expect(page.getByTestId(`device-nfc-${older}`)).toHaveCount(0);
+  await expect(page.getByTestId(`device-nfc-unknown-${older}`))
+    .toHaveText('This firmware does not report its reader (needs 1.17.0 or newer).');
 });
 
 // fw 1.18.0 drives a PN532 at 0x24 too (nfc_reader.h): a working one is a reader, and on older firmware the card
@@ -709,8 +723,12 @@ test('the card names a PN532 reader at 0x24, and the firmware it needs', async (
   expect((await report(t2, { firmwareVersion: '1.17.0+ge2e', nfcReader: 'absent', i2c: [0x24, 0x3c] })).status()).toBe(204);
 
   await page.goto('/devices');
+  await openBoardSettings(page, pn);
   await expect(page.getByTestId(`device-nfc-${pn}`)).toContainText('NFC reader at 0x24');
   await expect(page.getByTestId(`device-nfc-${pn}`)).toHaveAttribute('data-ok', 'true');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('board-settings-dialog')).toHaveCount(0);
+  await openBoardSettings(page, oldPn);
   await expect(page.getByTestId(`device-nfc-${oldPn}`)).toContainText('the PN532 at 0x24 needs firmware 1.18.0 or newer');
   await expect(page.getByTestId(`device-i2c-${oldPn}`)).toHaveText('I2C devices seen: 0x24 (NFC reader, PN532), 0x3c (display)');
 });
@@ -735,12 +753,15 @@ test('Disk at startup: No disk empties DF0 at the board\'s boot, and a reconnect
     { headers: authHeader(token) })).status()).toBe(200);
 
   await page.goto('/devices');
-  const select = page.getByTestId(`boot-disk-${deviceId}`);
-  await expect(select).toHaveValue('last');
+  await openBoardSettings(page, deviceId);
+  const group = page.getByTestId(`boot-disk-${deviceId}`);
+  await expect(group).toHaveAttribute('data-value', 'last');
   await expect(page.getByTestId(`boot-disk-note-${deviceId}`)).toHaveCount(0);
+  await page.getByTestId(`boot-disk-${deviceId}-empty`).click();
+  await expect(group).toHaveAttribute('data-value', 'empty');
   await Promise.all([
     page.waitForResponse((r) => r.url().includes(`/api/devices/${deviceId}/boot-disk`) && r.status() === 200),
-    select.selectOption('empty'),
+    page.getByTestId('board-settings-save').click(),
   ]);
   expect((await getDb().select().from(devices).where(eq(devices.id, deviceId)))[0].bootDisk).toBe('empty');
 
@@ -755,7 +776,8 @@ test('Disk at startup: No disk empties DF0 at the board\'s boot, and a reconnect
   const card = page.getByTestId(`device-${deviceId}`);
   await expect(card).toHaveAttribute('data-state', 'empty');
   await expect(card).toContainText('No disk');
-  await expect(page.getByTestId(`boot-disk-${deviceId}`)).toHaveValue('empty');
+  await openBoardSettings(page, deviceId);
+  await expect(page.getByTestId(`boot-disk-${deviceId}`)).toHaveAttribute('data-value', 'empty');
 
   // A tag is tapped (the disk is desired again), then Wi-Fi drops and the board polls again in the SAME boot.
   await setDevice(deviceId, {
@@ -772,12 +794,90 @@ test('Disk at startup: a board before 1.18.1 is told which firmware it needs, an
   expect((await request.post('/api/device/status', { headers: authHeader(token),
     data: { mountedSha256: null, firmwareVersion: '1.18.0+ge2e' } })).status()).toBe(204);
   await page.goto('/devices');
+  await openBoardSettings(page, deviceId);
   await expect(page.getByTestId(`boot-disk-fixed-${deviceId}`)).toHaveText('Disk at startup: Last disk');
   await expect(page.getByTestId(`boot-disk-note-${deviceId}`)).toHaveText('— needs firmware 1.18.1 or newer');
   await expect(page.getByTestId(`boot-disk-${deviceId}`)).toHaveCount(0);   // nothing to choose on this firmware
   const res = await page.request.patch(`/api/devices/${deviceId}/boot-disk`, { data: { mode: 'empty' } });
   expect(res.status()).toBe(409);
   expect((await res.json()).reason).toBe('Needs firmware 1.18.1 or newer');
+});
+
+// Board settings (spec §8.3, Ruling 20): Disk at startup is a draft that Save sends; Cancel, the X and Escape send nothing.
+test('Board settings: Save is disabled until a choice changes; Cancel and Escape send nothing and return focus', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Settings Draft');
+  expect((await request.post('/api/device/status', { headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.21.1+ge2e' } })).status()).toBe(204);
+  const bootDiskRequests: string[] = [];
+  await page.route(`**/api/devices/${deviceId}/boot-disk`, (route) => {
+    bootDiskRequests.push(route.request().method());
+    return route.continue();
+  });
+  await page.goto('/devices');
+  const opener = page.getByTestId(`board-settings-${deviceId}`);
+  const dialog = page.getByTestId('board-settings-dialog');
+
+  await openBoardSettings(page, deviceId);
+  await expect(dialog).toHaveAttribute('data-device-id', deviceId);
+  await expect(dialog).toContainText(`Settings Draft · nothing changes until you save.`);
+  const save = page.getByTestId('board-settings-save');
+  const group = page.getByTestId(`boot-disk-${deviceId}`);
+  await expect(save).toBeDisabled();
+  await expect(page.getByTestId(`boot-disk-hint-${deviceId}`)).toHaveText('The board puts the last disk back in DF0 when it starts.');
+
+  // A change enables Save; changing it back disables it again.
+  await page.getByTestId(`boot-disk-${deviceId}-empty`).click();
+  await expect(group).toHaveAttribute('data-value', 'empty');
+  await expect(page.getByTestId(`boot-disk-hint-${deviceId}`)).toHaveText('The board starts with DF0 empty.');
+  await expect(save).toBeEnabled();
+  await page.getByTestId(`boot-disk-${deviceId}-last`).click();
+  await expect(save).toBeDisabled();
+
+  // Keyboard: an arrow moves focus and the draft, as in a WAI-ARIA radiogroup.
+  await page.getByTestId(`boot-disk-${deviceId}-last`).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByTestId(`boot-disk-${deviceId}-empty`)).toBeFocused();
+  await expect(group).toHaveAttribute('data-value', 'empty');
+
+  // Cancel discards the draft and sends nothing; focus returns to the opener.
+  await page.getByTestId('board-settings-cancel').click();
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+
+  // Reopened, the draft starts from the board's value again. Escape closes without a request too.
+  await openBoardSettings(page, deviceId);
+  await expect(group).toHaveAttribute('data-value', 'last');
+  await page.getByTestId(`boot-disk-${deviceId}-empty`).click();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+  await openBoardSettings(page, deviceId);
+  await expect(group).toHaveAttribute('data-value', 'last');
+  await page.getByTestId('board-settings-close').click();
+  await expect(dialog).toHaveCount(0);
+  expect(bootDiskRequests).toEqual([]);
+  expect((await getDb().select().from(devices).where(eq(devices.id, deviceId)))[0].bootDisk).toBe('last');
+});
+
+test('Board settings: Save closes, toasts, and the row\'s bootDisk is empty', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Settings Save');
+  expect((await request.post('/api/device/status', { headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.21.1+ge2e' } })).status()).toBe(204);
+  await page.goto('/devices');
+  await openBoardSettings(page, deviceId);
+  await page.getByTestId(`boot-disk-${deviceId}-empty`).click();
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes(`/api/devices/${deviceId}/boot-disk`)
+      && r.request().method() === 'PATCH' && r.status() === 200),
+    page.getByTestId('board-settings-save').click(),
+  ]);
+  await expect(page.getByTestId('board-settings-dialog')).toHaveCount(0);
+  await expect(page.getByText('Disk at startup saved. The board uses it at its next start.')).toBeVisible();
+  expect((await getDb().select().from(devices).where(eq(devices.id, deviceId)))[0].bootDisk).toBe('empty');
+  await openBoardSettings(page, deviceId);
+  await expect(page.getByTestId(`boot-disk-${deviceId}`)).toHaveAttribute('data-value', 'empty');
 });
 
 // The boot trail (fw 1.18.2): the card names where the previous start stopped -- and says nothing after a clean one.
