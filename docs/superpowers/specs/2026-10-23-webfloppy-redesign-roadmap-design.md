@@ -59,7 +59,8 @@ which the restyle keeps.
 6. Admin (Overview, Users, Invites, Scan, Firmware).
 7. Phone layouts (390 px) — a pass over everything; to iterate later.
 8. Header drive menu, simple version (operator 2026-10-25, after C7): each board's existing header chip and menu take
-   the board's look -- the chip shows the board name, its disk, the `WP` tag and an "n/N" count; the menu opens as a
+   the board's look -- the chip shows the board name, its disk and the `WP` tag (no "n/N" count -- operator 2026-10-25: it makes no
+   sense, leave it out); the menu opens as a
    panel with "Controlling" and "Manage devices" (to /devices), one card with the disk icon, "<board> · DF0", the
    disk name and "disk n of N", an Online/Offline pill, a Write-protect switch, Eject and a board-settings gear. No
    "current drive" concept: each chip's menu is that board's card. Existing functions only (go to disk, write
