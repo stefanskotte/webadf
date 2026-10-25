@@ -4,8 +4,8 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, inArray } from 'drizzle-orm';
-import { signUpFresh } from './helpers';
-import { pairDevice, authHeader, cleanupSeeded } from './device-helpers';
+import { signUpFresh, libRows } from './helpers';
+import { pairDevice, authHeader, cleanupSeeded, hydrated } from './device-helpers';
 import { getDb } from '@/db';
 import { transfers } from '@/db/schema/transfers';
 import { amigaUploads } from '@/db/schema/amiga-uploads';
@@ -114,7 +114,8 @@ test('Clear finished removes what is finished and keeps a stored file from the A
   await page.getByTestId('staging-clear-finished').click();
   await expect(page.getByTestId('staging-row')).toHaveCount(1, { timeout: LIVE });
   await expect(page.getByTestId('staging-row')).toHaveAttribute('data-key', `amiga:${kept}`);
-  await expect(page.getByTestId('staging-clear-finished')).toHaveCount(0);
+  await expect(page.getByTestId('staging-clear-finished')).toHaveText('Clear finished (0)');
+  await expect(page.getByTestId('staging-clear-finished')).toBeDisabled();
   await page.waitForTimeout(11_000);   // one idle poll later the server agrees (Review Focus 2)
   await expect(page.getByTestId('staging-row')).toHaveCount(1);
   await expect(page.getByTestId('staging-row')).toHaveAttribute('data-key', `amiga:${kept}`);
@@ -192,4 +193,394 @@ test('the list keeps refreshing while a file for the Amiga is still going up', a
   release();
   await expect(page.locator('[data-testid="staging-row"][data-key^="up:"]')).toHaveCount(0, { timeout: LIVE });
   await expect(page.locator('[data-testid="staging-row"][data-kind="out"]')).toContainText('Slow.bin');
+});
+
+test('the drop cards: whole-card drop targets with Browse files, the inline URL field, and Working… while busy', async ({ page }) => {
+  await signUpFresh(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/ingest');
+  await expect(page.locator('[data-testid="staging-empty"], [data-testid="staging-row"]').first()).toBeVisible({ timeout: LIVE });
+  const add = page.getByTestId('dropzone');
+  const send = page.getByTestId('send-dropzone');
+  await expect(add).toHaveJSProperty('tagName', 'SECTION');
+  await expect(send).toHaveJSProperty('tagName', 'SECTION');
+  const a = (await add.boundingBox())!, s = (await send.boundingBox())!;
+  expect(Math.abs(a.y - s.y)).toBeLessThan(2);                         // side by side from lg (Ruling 3)
+  await expect(page.getByTestId('add-browse')).toHaveText('Browse files');
+  await expect(page.getByLabel('Or fetch from a URL')).toHaveAttribute('placeholder', 'or paste a URL…');
+  // Hold /check so the drop stays busy: Browse files says so (Ruling 7).
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  await page.route('**/api/ingest/check', async (route) => { await held; await route.continue(); });
+  await page.getByTestId('file-input').setInputFiles({ name: 'busy.adf', mimeType: 'application/octet-stream', buffer: fakeAdf() });
+  await expect(page.getByTestId('add-browse')).toHaveText('Working…');
+  await expect(page.getByTestId('add-browse').locator('input')).toBeDisabled();
+  release();
+  await expect(page.getByTestId('add-browse')).toHaveText('Browse files', { timeout: 30_000 });
+});
+
+test('the Send card names its one board and whether Transfer runs, beside Choose files', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  await page.goto('/ingest');
+  await expect(page.getByTestId('send-browse')).toHaveText('Choose files');
+  await expect(page.getByTestId('send-board')).toHaveText(/^To Bench · /);
+  await expect(page.getByTestId('send-receiver')).toHaveText(/^[✓•] /);
+  await expect(page.getByTestId('help-tip-send')).toBeVisible();
+});
+
+/** Dispatch a drag event with one file on a drop card; answers whether the page cancelled it (preventDefault). */
+async function dragOn(page: Page, testId: string, type: 'dragenter' | 'dragover' | 'dragleave' | 'drop', file?: { name: string; bytes: number[] } | { link: string }): Promise<boolean> {
+  return page.evaluate(([tid, t, f]) => {
+    const el = document.querySelector(`[data-testid="${tid}"]`)!;
+    const dt = new DataTransfer();
+    if (f && 'link' in f) dt.setData('text/uri-list', f.link);
+    else if (f) dt.items.add(new File([new Uint8Array(f.bytes)], f.name, { type: 'application/octet-stream' }));
+    const ev = new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt });
+    el.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  }, [testId, type, file] as const);
+}
+const adfFile = (name: string) => ({ name, bytes: Array.from(fakeAdf()) });
+
+test('a drop on the library card: dragenter lights it, a drop stages the disk, a drop while busy adds nothing', async ({ page }) => {
+  await signUpFresh(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/ingest');
+  await expect(page.locator('[data-testid="staging-empty"], [data-testid="staging-row"]').first()).toBeVisible({ timeout: LIVE });
+  await hydrated(page, 'dropzone', 'onDrop');
+  const add = page.getByTestId('dropzone');
+  await dragOn(page, 'dropzone', 'dragenter', adfFile('over.adf'));
+  await expect(add).toHaveAttribute('data-over', 'true');
+  await dragOn(page, 'dropzone', 'dragleave');
+  await expect(add).toHaveAttribute('data-over', 'false');
+  // Hold /check: the first drop stays busy, so the second is ignored and does not light the card.
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  await page.route('**/api/ingest/check', async (route) => { await held; await route.continue(); });
+  await dragOn(page, 'dropzone', 'drop', adfFile('first.adf'));
+  await expect(page.getByTestId('add-browse')).toHaveText('Working…');
+  await dragOn(page, 'dropzone', 'dragenter', adfFile('over.adf'));
+  await expect(add).toHaveAttribute('data-over', 'false');          // disabled: no invitation to drop
+  expect(await dragOn(page, 'dropzone', 'drop', adfFile('second.adf'))).toBe(true);   // cancelled, but ignored
+  release();
+  await expect(libRows(page).first()).toHaveAttribute('data-state', 'done', { timeout: 30_000 });
+  await expect(libRows(page)).toHaveCount(1);
+});
+
+test('a drop on the Send card queues the file for the paired board; keyboard reaches both pickers', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/ingest');
+  await hydrated(page, 'send-dropzone', 'onDrop');
+  await dragOn(page, 'send-dropzone', 'dragenter', { name: 'note.txt', bytes: [1] });
+  await expect(page.getByTestId('send-dropzone')).toHaveAttribute('data-over', 'true');
+  await dragOn(page, 'send-dropzone', 'drop', { name: 'note.txt', bytes: [1, 2, 3] });
+  await expect(page.locator('[data-testid="staging-row"][data-kind="out"]')).toHaveCount(1, { timeout: LIVE });
+  // Tab reaches the hidden input inside each Browse label.
+  await page.getByTestId('add-browse').locator('input').focus();
+  await expect(page.getByTestId('add-browse').locator('input')).toBeFocused();
+  await page.keyboard.press('Tab');                                  // the next stop after Browse files is the URL field
+  await expect(page.getByTestId('url-input')).toBeFocused();
+  await page.getByTestId('send-browse').locator('input').focus();
+  await expect(page.getByTestId('send-file-input')).toBeFocused();
+});
+
+test('the Send card without a board is not a drop target, but still cancels a drop so the tab never navigates', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/ingest');
+  await expect(page.locator('[data-testid="staging-empty"], [data-testid="staging-row"]').first()).toBeVisible({ timeout: LIVE });
+  const url = page.url();
+  await expect(page.getByTestId('send-dropzone')).toHaveAttribute('data-drop', 'off');
+  expect(await dragOn(page, 'send-dropzone', 'dragover', { name: 'x.txt', bytes: [1] })).toBe(true);   // a file drag, as a real one
+  expect(await dragOn(page, 'send-dropzone', 'drop', { name: 'x.txt', bytes: [1] })).toBe(true);
+  await expect(page.getByTestId('send-dropzone')).toHaveAttribute('data-over', 'false');
+  expect(page.url()).toBe(url);
+});
+
+test('the filter is a radiogroup: arrows move and select, the tab stop follows the checked one', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  await seedUpload(orgId, deviceId, 'Bench', { path: 'In.txt', status: 'stored' });
+  await page.goto('/ingest');
+  const group = page.getByTestId('staging-filters');
+  await expect(group).toHaveAttribute('role', 'radiogroup');
+  await expect(page.getByTestId('staging-filter-all')).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByTestId('staging-filter-all')).toHaveAttribute('tabindex', '0');
+  await expect(page.getByTestId('staging-filter-in')).toHaveAttribute('tabindex', '-1');
+  await hydrated(page, 'staging-filters', 'onKeyDown');
+  await page.getByTestId('staging-filter-all').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByTestId('staging-filter-in')).toBeFocused();
+  await expect(page.getByTestId('staging-filter-in')).toHaveAttribute('aria-checked', 'true');
+  await expect(group).toHaveAttribute('data-value', 'in');
+  // Exactly one radio is a tab stop, and it is the checked one.
+  const tabStops = async (checked: string) => {
+    for (const id of ['all', 'in', 'out', 'lib']) {
+      await expect(page.getByTestId(`staging-filter-${id}`)).toHaveAttribute('tabindex', id === checked ? '0' : '-1');
+      await expect(page.getByTestId(`staging-filter-${id}`)).toHaveAttribute('aria-checked', id === checked ? 'true' : 'false');
+    }
+  };
+  await tabStops('in');
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.getByTestId('staging-filter-all')).toBeFocused();
+  await tabStops('all');
+  await page.keyboard.press('ArrowLeft');                            // wraps to the last
+  await expect(page.getByTestId('staging-filter-lib')).toBeFocused();
+  await tabStops('lib');
+  await page.keyboard.press('ArrowRight');                           // and forward to the first
+  await expect(page.getByTestId('staging-filter-all')).toBeFocused();
+  await tabStops('all');
+  // A browser shortcut (Alt+ArrowLeft is Back) is not swallowed.
+  await page.keyboard.press('Alt+ArrowRight');
+  await expect(group).toHaveAttribute('data-value', 'all');
+  await page.keyboard.press('End');
+  await expect(page.getByTestId('staging-filter-lib')).toHaveAttribute('aria-checked', 'true');
+  await tabStops('lib');
+  await expect(page.getByTestId('staging-empty')).toContainText('Nothing to the library right now.');
+});
+
+test('Clear finished is shown at (0), disabled, and the refresh state reads Up to date', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/ingest');
+  await expect(page.getByTestId('staging-empty')).toBeVisible({ timeout: LIVE });
+  await expect(page.getByTestId('staging-clear-finished')).toHaveText('Clear finished (0)');
+  await expect(page.getByTestId('staging-clear-finished')).toBeDisabled();
+  await expect(page.getByTestId('staging-refresh')).toHaveAttribute('data-state', 'ok');
+  await expect(page.getByTestId('staging-refresh')).toHaveText('Up to date');
+});
+
+test('a first read that fails says so instead of reading forever, then the list arrives', async ({ page }) => {
+  await signUpFresh(page);
+  let failed = 0;
+  await page.route('**/api/staging', async (route) => {
+    if (failed++ === 0) return route.fulfill({ status: 503, body: 'down' });
+    return route.continue();
+  });
+  await page.goto('/ingest');
+  await expect(page.getByTestId('staging-reading')).toHaveAttribute('data-state', 'failed', { timeout: LIVE });
+  await expect(page.getByTestId('staging-reading')).toHaveText("Couldn't read the list. It tries again every few seconds.");
+  await expect(page.getByTestId('staging-empty')).toBeVisible({ timeout: 20_000 });   // the 10 s idle poll
+  await expect(page.getByTestId('staging-reading')).toHaveCount(0);
+});
+
+test('the board keys sit in the footer beside the 30-day note', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token, 'ab12');
+  await page.goto('/ingest');
+  const key = page.getByTestId('from-amiga-key');
+  await expect(key).toHaveText('Bench: board key AB12', { timeout: LIVE });
+  const note = page.getByText('Files from the Amiga are kept 30 days.', { exact: false });
+  const k = (await key.boundingBox())!, n = (await note.boundingBox())!;
+  expect(k.y).toBeGreaterThan((await page.getByTestId('staging-list').boundingBox())!.y);
+  expect(Math.abs(k.y - n.y)).toBeLessThan(40);
+});
+
+test('a row at 1440 px is one line: disk, pill, name and where, size, status with its bar, actions', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const id = await seedUpload(orgId, deviceId, 'Bench', { path: 'Moving.bin', status: 'receiving', size: 20_000, received: 16_384 });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/ingest');
+  const key = `amiga:${id}`;
+  await expect(page.getByTestId(`staging-status-${key}`)).toContainText('Arriving · 81 %', { timeout: LIVE });
+  await expect(page.getByTestId(`staging-dir-${key}`)).toHaveText('←From Amiga');
+  await expect(page.getByTestId(`staging-where-${key}`)).toHaveText('from Bench');
+  await expect(page.getByTestId(`staging-size-${key}`)).toContainText('KB');
+  const bar = page.getByTestId(`staging-progress-${key}`).locator('span');
+  expect(await bar.evaluate((el) => el.style.width)).toBe('81%');
+  const mid = async (sel: string) => { const b = (await page.getByTestId(sel).boundingBox())!; return b.y + b.height / 2; };
+  const y = await mid(`staging-dir-${key}`);
+  for (const sel of [`staging-size-${key}`, `staging-actions-${key}`]) expect(Math.abs((await mid(sel)) - y)).toBeLessThan(12);
+});
+
+test('below xl the row stacks: the actions sit under the name', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const id = await seedUpload(orgId, deviceId, 'Bench', { path: 'Keep.txt', status: 'stored' });
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await page.goto('/ingest');
+  const key = `amiga:${id}`;
+  await expect(page.getByTestId(`staging-actions-${key}`)).toBeVisible({ timeout: LIVE });
+  const where = (await page.getByTestId(`staging-where-${key}`).boundingBox())!;
+  const acts = (await page.getByTestId(`staging-actions-${key}`).boundingBox())!;
+  expect(acts.y).toBeGreaterThan(where.y + where.height - 1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+});
+
+test('row actions: outline buttons, destructive ones red, Retry ink; Send to Amiga… is a select named by board and MAC', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);   // an online send target, or the row has no Send select
+  const stored = await seedUpload(orgId, deviceId, 'Bench', { path: 'Keep.txt', status: 'stored' });
+  const failedSend = await seedSend(orgId, deviceId, { path: 'Bad.bin', status: 'failed' });
+  await page.goto('/ingest');
+  const del = page.getByTestId(`staging-delete-amiga:${stored}`);
+  await expect(del).toBeVisible({ timeout: LIVE });
+  const color = (l: typeof del) => l.evaluate((el) => getComputedStyle(el).color);
+  expect(await color(del)).toBe('rgb(179, 52, 31)');                                     // --danger-fg
+  expect(await color(page.getByTestId(`staging-download-amiga:${stored}`))).toBe('rgb(36, 33, 27)');   // ink
+  const retry = page.getByTestId(`staging-retry-send:${failedSend}`);
+  expect(await retry.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(36, 33, 27)');
+  const send = page.getByTestId(`staging-send-amiga:${stored}`);
+  await expect(send).toHaveJSProperty('tagName', 'SELECT');
+  await expect(send.locator('option').first()).toHaveText('Send to Amiga…');
+  await expect(send.locator('option').nth(1)).toHaveText(/^Bench \(.+\)$/);
+  expect((await del.boundingBox())!.height).toBeGreaterThanOrEqual(31);                 // the board's 32 px
+});
+
+test('after Delete removes the row, focus goes to the Staging heading', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const id = await seedUpload(orgId, deviceId, 'Bench', { path: 'Gone.txt', status: 'stored' });
+  await page.goto('/ingest');
+  await expect(page.getByTestId(`staging-delete-amiga:${id}`)).toBeVisible({ timeout: LIVE });
+  await hydrated(page, `staging-delete-amiga:${id}`);
+  await page.getByTestId(`staging-delete-amiga:${id}`).click();
+  await expect(page.getByTestId('staging-confirm-cancel')).toBeFocused();
+  await page.getByTestId('staging-confirm-yes').click();
+  await expect(row(page, `amiga:${id}`)).toHaveCount(0, { timeout: LIVE });
+  await expect(page.locator('#staging-heading')).toBeFocused();
+  // Final fix pass M6: moved there by script, the heading still shows where focus is.
+  const ring = await page.locator('#staging-heading').evaluate((el) => {
+    const c = getComputedStyle(el);
+    return { outline: c.outlineStyle !== 'none' && parseFloat(c.outlineWidth) > 0, shadow: c.boxShadow !== 'none' };
+  });
+  expect(ring.outline || ring.shadow).toBe(true);
+});
+
+test('Stop and Cancel are red; a receiving row offers Stop only; Cancel on the confirm keeps the row and returns focus', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const up = await seedUpload(orgId, deviceId, 'Bench', { path: 'Moving.bin', status: 'receiving', size: 20_000, received: 16_384 });
+  const queued = await seedSend(orgId, deviceId, { path: 'Wait.bin', status: 'queued' });
+  await page.goto('/ingest');
+  const stop = page.getByTestId(`staging-stop-amiga:${up}`);
+  await expect(stop).toBeVisible({ timeout: LIVE });
+  await expect(page.getByTestId(`staging-delete-amiga:${up}`)).toHaveCount(0);
+  expect(await stop.evaluate((el) => getComputedStyle(el).color)).toBe('rgb(179, 52, 31)');
+  expect(await page.getByTestId(`staging-cancel-send:${queued}`).evaluate((el) => getComputedStyle(el).color)).toBe('rgb(179, 52, 31)');
+  await hydrated(page, `staging-stop-amiga:${up}`);
+  await stop.click();
+  await page.getByTestId('staging-confirm-cancel').click();
+  await expect(page.getByTestId('staging-confirm')).toHaveCount(0);
+  await expect(row(page, `amiga:${up}`)).toHaveCount(1);
+  await expect(stop).toBeFocused();
+});
+
+test('Escape on a confirm whose row a refresh removed moves focus to the Staging heading', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const id = await seedUpload(orgId, deviceId, 'Bench', { path: 'Vanish.txt', status: 'stored' });
+  await page.goto('/ingest');
+  await expect(page.getByTestId(`staging-delete-amiga:${id}`)).toBeVisible({ timeout: LIVE });
+  await hydrated(page, `staging-delete-amiga:${id}`);
+  await page.getByTestId(`staging-delete-amiga:${id}`).click();
+  await expect(page.getByTestId('staging-confirm-cancel')).toBeFocused();
+  await getDb().delete(amigaUploads).where(eq(amigaUploads.id, id));
+  await expect(row(page, `amiga:${id}`)).toHaveCount(0, { timeout: 30_000 });
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('staging-confirm')).toHaveCount(0);
+  await expect(page.locator('#staging-heading')).toBeFocused();
+});
+
+test('a focused row button whose row a refresh removes hands focus to the Staging heading', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const id = await seedUpload(orgId, deviceId, 'Bench', { path: 'Vanish.txt', status: 'stored' });
+  await page.goto('/ingest');
+  const dl = page.getByTestId(`staging-download-amiga:${id}`);
+  await expect(dl).toBeVisible({ timeout: LIVE });
+  await hydrated(page, `staging-download-amiga:${id}`);
+  await dl.focus();
+  await expect(dl).toBeFocused();
+  await getDb().delete(amigaUploads).where(eq(amigaUploads.id, id));
+  await expect(row(page, `amiga:${id}`)).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.locator('#staging-heading')).toBeFocused();
+});
+
+// ---- Final fix pass (Phase C3 final review) ----
+
+test('at 390 px a row\'s Send to Amiga… select fits for an unnamed board and a long board name (I1)', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const a = await pairDevice(page, request);   // no name: "Device AA:BB:CC:DD:EE:FF"
+  const b = await pairDevice(page, request, 'The living room Amiga 500 with the long name');
+  await boardSays(request, a.token);
+  await boardSays(request, b.token);
+  const id = await seedUpload(orgId, a.deviceId, 'Device', { path: 'Keep.txt', status: 'stored' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/ingest');
+  const send = page.getByTestId(`staging-send-amiga:${id}`);
+  await expect(send).toBeVisible({ timeout: LIVE });
+  await expect(send.locator('option')).toHaveCount(3);
+  await expect(send.locator('option').nth(1)).toHaveText(/\([0-9A-F:]{17}\)$/);   // the full "Name (MAC)" label stays
+  const box = (await send.boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+});
+
+test('Tab between row buttons keeps the focus tracked: a later refresh removing that row hands focus to the heading (I2)', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const ids = [await seedUpload(orgId, deviceId, 'Bench', { path: 'A.txt', status: 'stored' }),
+    await seedUpload(orgId, deviceId, 'Bench', { path: 'B.txt', status: 'stored' })];
+  await page.goto('/ingest');
+  await expect(row(page, `amiga:${ids[0]}`)).toBeVisible({ timeout: LIVE });
+  await expect(row(page, `amiga:${ids[1]}`)).toBeVisible();
+  const first = page.locator('[data-testid="staging-list"] [data-testid^="staging-download-"]').first();
+  await hydrated(page, (await first.getAttribute('data-testid'))!);
+  await first.focus();
+  const keyOf = () => page.evaluate(() => document.activeElement?.closest('[data-key]')?.getAttribute('data-key') ?? null);
+  const start = await keyOf();
+  // Tab until focus is in the OTHER row: a move from one row's button to the next row's button.
+  for (let i = 0; i < 6 && (await keyOf()) === start; i++) await page.keyboard.press('Tab');
+  const now = await keyOf();
+  expect(now).not.toBe(start);
+  expect(now).toMatch(/^amiga:/);
+  await getDb().delete(amigaUploads).where(eq(amigaUploads.id, now!.slice('amiga:'.length)));
+  await expect(row(page, now!)).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.locator('#staging-heading')).toBeFocused();
+});
+
+test('a link dragged over a drop card is left alone: no highlight, no cancel, no Working… (M3)', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/ingest');
+  await hydrated(page, 'dropzone', 'onDrop');
+  await hydrated(page, 'send-dropzone', 'onDrop');
+  const link = { link: 'https://example.com/a.adf' };
+  for (const id of ['dropzone', 'send-dropzone']) {
+    expect(await dragOn(page, id, 'dragenter', link)).toBe(false);
+    expect(await dragOn(page, id, 'dragover', link)).toBe(false);
+    await expect(page.getByTestId(id)).toHaveAttribute('data-over', 'false');
+    expect(await dragOn(page, id, 'drop', link)).toBe(false);
+  }
+  await expect(page.getByTestId('add-browse')).not.toHaveText('Working…');
+  // A file drag is still taken.
+  expect(await dragOn(page, 'dropzone', 'dragover', { name: 'x.txt', bytes: [1] })).toBe(true);
+  await expect(page.getByTestId('dropzone')).toHaveAttribute('data-over', 'true');
+});
+
+test('a focused Stop whose row stays but whose button goes (the file finished arriving) hands focus to the heading (M5)', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const id = await seedUpload(orgId, deviceId, 'Bench', { path: 'Moving.bin', status: 'receiving', size: 20_000, received: 16_384 });
+  await page.goto('/ingest');
+  const stop = page.getByTestId(`staging-stop-amiga:${id}`);
+  await expect(stop).toBeVisible({ timeout: LIVE });
+  await hydrated(page, `staging-stop-amiga:${id}`);
+  await stop.focus();
+  await expect(stop).toBeFocused();
+  const at = new Date();
+  await getDb().update(amigaUploads).set({ status: 'stored', receivedBytes: 20_000, blobSha256: '0'.repeat(64), storedAt: at }).where(eq(amigaUploads.id, id));
+  await expect(page.getByTestId(`staging-download-amiga:${id}`)).toBeVisible({ timeout: 30_000 });
+  await expect(stop).toHaveCount(0);
+  await expect(row(page, `amiga:${id}`)).toHaveCount(1);
+  await expect(page.locator('#staging-heading')).toBeFocused();
 });

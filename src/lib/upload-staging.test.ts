@@ -208,3 +208,14 @@ describe('isSignedOutAnswer', () => {
     expect(isSignedOutAnswer(res({ status: 204, type: null, redirected: true }))).toBe(true);
   });
 });
+
+describe('pct (C3 spec §3)', () => {
+  it('is the server percent while sending or receiving, else null', () => {
+    expect(one(send({ status: 'sending', pct: 40 })).pct).toBe(40);
+    expect(one(amiga({ status: 'receiving', pct: 81 })).pct).toBe(81);
+    expect(one(send({ status: 'delivered', pct: null })).pct).toBeNull();
+    expect(one(amiga({ status: 'stored', pct: 99 })).pct).toBeNull();
+    expect(one(lib({ state: 'uploading' })).pct).toBeNull();
+    expect(one(up({ state: 'uploading' })).pct).toBeNull();
+  });
+});

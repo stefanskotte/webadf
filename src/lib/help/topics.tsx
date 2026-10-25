@@ -469,7 +469,7 @@ export const HELP_TOPICS = {
     ),
   },
 
-  // Sources: spec docs/superpowers/specs/2026-10-16-paulanet-phase4-send-to-amiga-design.md §1 (D4 limits, D8 never
+  // Sources: spec docs/superpowers/specs/2026-10-25-phase-c3-upload-design.md §2.2; docs/superpowers/specs/2026-10-16-paulanet-phase4-send-to-amiga-design.md §1 (D4 limits, D8 never
   // overwrite, D9 accepted risk), §4 (the Upload page column, Browse Send, Send .adf), §5 (Receive, now Transfer, and Install);
   // src/lib/send-limits.ts (XFER_FW, limits), src/lib/send-ui.ts (the words), tools/paulanet-disk/Install;
   // plan 2026-10-17 rulings R1 (1.15.0), R9 (Cancel while sending), R10 (Retry);
@@ -488,8 +488,9 @@ export const HELP_TOPICS = {
           Save. The default folder is RAM:.
         </p>
         <p>
-          <strong>Three ways to send.</strong> On the Upload page, drop files under <em>Send files to the
-          Amiga</em>. On a disk&apos;s Browse page, press <em>Send</em> on a file or a folder. On a title&apos;s page,
+          <strong>Three ways to send.</strong> On the Upload page, drop files on <em>Send files to the
+          Amiga</em>, or press <em>Choose files</em>; with more than one board, pick the board under it. On a disk&apos;s
+          Browse page, press <em>Send</em> on a file or a folder. On a title&apos;s page,
           press <em>Send .adf to Amiga</em> to send a whole disk as one file. Each shows in the <em>Staging</em> list
           under <em>To the Amiga</em>, every board&apos;s together: waiting, sending, delivered with its saved name, or
           failed, and why.
@@ -508,7 +509,7 @@ export const HELP_TOPICS = {
   },
   // Sources: spec docs/superpowers/specs/2026-10-18-amiga-to-web-upload-design.md §1 (U2 the ways to send, U4 resume,
   // U5 limits, U6 the area, U7 trust), §2 (Receive, now Transfer), §4 (Add to library, attachments), §6 (the key digits);
-  // spec 2026-10-23-upload-staging-design.md decision 2 + §2 (the Staging list, Clear finished keeps stored files, Stop,
+  // spec 2026-10-23-upload-staging-design.md decision 2 + §2 (the Staging list, Phase C3 spec §4 (header, filter, footer), Clear finished keeps stored files, Stop,
   // Open title), src/lib/upload-staging.ts (the status words);
   // src/lib/amiga-upload-limits.ts (UPLOAD_FW, limits), src/lib/from-amiga-ui.ts, tools/receive/amiga/gui.c.
   'from-amiga': {
@@ -525,19 +526,20 @@ export const HELP_TOPICS = {
         <p>
           <strong>Your board, and only yours.</strong> Transfer trusts the first board it meets: it saves that
           board&apos;s key and shows four of its digits, such as <em>Trusted board AB12</em>. The same four digits appear
-          on this page, so check they match your board. Transfer sends only to that board; if another one connects it
+          under the Staging list on the Upload page, so check they match your board. Transfer sends only to that board; if another one connects it
           stops, and <em>Trust this board</em> (or <em>TRUST</em> in the Shell) accepts the new one.
         </p>
         <p>
           <strong>In the list.</strong> <em>Add to library</em> puts a stored disk image in your library; then{' '}
-          <em>Open title</em> goes to it. <em>Stop</em> ends a file still arriving and deletes what arrived.
+          <em>Open title</em> goes to it. <em>Stop</em> ends a file still arriving and deletes what arrived. <em>Show</em> picks which rows the list holds: All,
+          From the Amiga, To the Amiga or To the library.
         </p>
         <GoodToKnow items={[
           'Up to 4 MB a file. The area holds up to 500 files or 256 MB for your organization, and keeps each file 30 days.',
           'A file cut off by a reset or a lost connection continues where it stopped when you send it again within 24 hours. A stopped file can be sent again in that time, or ended with Stop.',
           'Add to library is offered for ADF, DSK, ADZ, DMS, DMZ and HFE files; nothing is added on its own.',
           'Clear finished never removes a stored file; only Delete does.',
-          'Download always saves the file: a web page sent from the Amiga is never opened in the browser.',
+          'Download always saves the file; a web page is never opened in the browser.',
         ]} />
       </>
     ),

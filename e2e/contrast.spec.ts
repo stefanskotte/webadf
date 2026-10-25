@@ -28,11 +28,19 @@ import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
 import { getDb } from '@/db';
 import { blobs } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
-import { eq } from 'drizzle-orm';
+import { amigaUploads } from '@/db/schema/amiga-uploads';
+import { transfers } from '@/db/schema/transfers';
+import { eq, inArray } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { signInAsSuperAdmin } from './admin-helpers';
 
-test.afterAll(async () => { await cleanupTosec(); await cleanupSeeded(); });
+// Upload test rows: all belong to that test's own fresh org; amiga_uploads are removed by id here (the org's other
+// rows go with its teardown), transfers cascade with the paired device in cleanupSeeded().
+const uploadIdsToDelete: string[] = [];
+test.afterAll(async () => {
+  if (uploadIdsToDelete.length) await getDb().delete(amigaUploads).where(inArray(amigaUploads.id, uploadIdsToDelete)).catch(() => undefined);
+  await cleanupTosec(); await cleanupSeeded();
+});
 
 /**
  * The element's own rendered colour, over what is actually composited
@@ -429,4 +437,71 @@ test('the Devices pairs are legible: drive box, tile caption, offline strip, pil
     console.log(`devices   ${what.padEnd(24)} ${r.toFixed(2)}:1  "${p!.text.slice(0, 24)}"`);
     expect(r, what).toBeGreaterThan(4.5);
   }
+});
+
+// Phase C3 (spec §8): the Upload pairs, measured on the real elements of a seeded org -- a stored, a receiving and a
+// failed Amiga file, a queued send, and one library row from a real drop. Every row belongs to this test's own org.
+test('the Upload pairs are legible: pills, statuses, where on a hovered row, counts, footnote, receiver, Delete, Browse, hint', async ({ page, request }) => {
+  const u = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, `Up ${runTag().slice(0, 6)}`);
+  expect((await request.post('/api/device/status', { headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.19.0+gabc1234', secondDrive: 'net', driveVersion: 0, upKey: 'ab12' } })).status()).toBe(204);
+  const now = Date.now();
+  const ids = { stored: randomUUID(), moving: randomUUID(), failed: randomUUID(), queued: randomUUID() };
+  await getDb().insert(amigaUploads).values([
+    { id: ids.stored, orgId: u.orgId, deviceId, deviceName: 'Up', path: 'Keep.txt', sizeBytes: 11, amigaDate: '17000.600.0',
+      status: 'stored', receivedBytes: 11, blobSha256: '0'.repeat(64), createdAt: new Date(now), storedAt: new Date(now), expiresAt: new Date(now + 30 * 86_400_000) },
+    { id: ids.moving, orgId: u.orgId, deviceId, deviceName: 'Up', path: 'Moving.bin', sizeBytes: 20_000, amigaDate: '17000.600.0',
+      status: 'receiving', receivedBytes: 16_384, createdAt: new Date(now - 1000), expiresAt: new Date(now + 86_400_000) },
+    { id: ids.failed, orgId: u.orgId, deviceId, deviceName: 'Up', path: 'Bad.txt', sizeBytes: 11, amigaDate: '17000.600.0',
+      status: 'failed', receivedBytes: 11, errorCode: 'crc', createdAt: new Date(now - 2000), expiresAt: new Date(now + 86_400_000) },
+  ]);
+  uploadIdsToDelete.push(ids.stored, ids.moving, ids.failed);
+  await getDb().insert(transfers).values([
+    { id: ids.queued, orgId: u.orgId, deviceId, createdByUserId: 'e2e-contrast', path: 'Wait.bin', sizeBytes: 11, crc32: 0,
+      blobSha256: '0'.repeat(64), status: 'queued', createdAt: new Date(now - 3000), expiresAt: new Date(now + 7 * 86_400_000) },
+  ]);
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.goto('/ingest');
+  const k = (p: string, id: string) => `[data-testid="${p}-${id}"]`;
+  await expect(page.locator(k('staging-status', `amiga:${ids.moving}`))).toContainText('Arriving', { timeout: 15_000 });
+
+  // A library row from a real drop into this org (a fake ADF whose first bytes are unique to this run).
+  const adf = Buffer.alloc(901_120);
+  adf.write(`DOS\0contrast-${runTag()}`, 0);
+  const libSha = createHash('sha256').update(adf).digest('hex');
+  await page.getByTestId('file-input').setInputFiles({ name: 'contrast.adf', mimeType: 'application/octet-stream', buffer: adf });
+  await expect(page.locator(`[data-testid="staging-row"][data-key="lib:${libSha}"]`)).toHaveAttribute('data-state', 'done', { timeout: 30_000 });
+
+  const pairs: [string, string][] = [
+    ['From Amiga pill', k('staging-dir', `amiga:${ids.stored}`)],
+    ['To Amiga pill', k('staging-dir', `send:${ids.queued}`)],
+    ['To library pill', k('staging-dir', `lib:${libSha}`)],
+    ['done status', k('staging-status', `amiga:${ids.stored}`)],
+    ['moving status', k('staging-status', `amiga:${ids.moving}`)],
+    ['waiting status', k('staging-status', `send:${ids.queued}`)],
+    ['failed status', k('staging-status', `amiga:${ids.failed}`)],
+    ['size', k('staging-size', `amiga:${ids.stored}`)],
+    ['unchecked filter count', '[data-testid="staging-filter-in"] > span'],
+    ['footnote', '#from-amiga footer > span:first-child'],
+    ['receiver line', '[data-testid="send-receiver"]'],
+    ['Delete', k('staging-delete', `amiga:${ids.stored}`)],
+    ['Browse files', '[data-testid="add-browse"]'],
+    ['drop-card hint', '[data-testid="dropzone-hint"]'],
+  ];
+  for (const [what, sel] of pairs) {
+    const p = await probe(page, sel);
+    expect(p, `${what}: ${sel} not found`).toBeTruthy();
+    const r = ratio(p!.fg, p!.bg);
+    console.log(`upload    ${what.padEnd(24)} ${r.toFixed(2)}:1  "${p!.text.slice(0, 24)}"`);
+    expect(r, what).toBeGreaterThan(4.5);
+  }
+  // A hovered row sits on --modal-foot; its where line is --muted-2.
+  await page.locator(`[data-testid="staging-row"][data-key="amiga:${ids.stored}"]`).hover();
+  const where = await probe(page, k('staging-where', `amiga:${ids.stored}`));
+  expect(where, 'where line not found').toBeTruthy();
+  const rw = ratio(where!.fg, where!.bg);
+  console.log(`upload    where on a hovered row   ${rw.toFixed(2)}:1`);
+  expect(rw, 'where on a hovered row').toBeGreaterThan(4.5);
+  await page.screenshot({ path: 'test-results/zz-upload.png', fullPage: true });
 });

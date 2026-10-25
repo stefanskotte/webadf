@@ -35,7 +35,7 @@ test('uploading a disk shows it in the library', async ({ page }) => {
   // overlay, once as the caption underneath -- see Cover in
   // src/components/library/cover.tsx), so a plain getByText hits Playwright's
   // strict-mode ambiguity. .first() is enough to prove the title landed.
-  await expect(page.getByText('Test Game').first()).toBeVisible();
+  await expect(page.getByText('Test Game').filter({ visible: true }).first()).toBeVisible();
 });
 
 test('re-uploading the same bytes dedupes instead of uploading again', async ({ page }) => {

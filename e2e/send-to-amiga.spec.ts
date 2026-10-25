@@ -148,7 +148,7 @@ test('Browse: Send on a folder queues its files with their paths and protection'
   expect(q).toMatch(/^NEXT \S+ 5 [0-9a-f]+ 40 10:mods\/a\.txt 0:\n/);
   await page.getByRole('button', { name: 'See queue' }).click();
   await expect(page).toHaveURL(/\/ingest\?board=/);
-  await expect(page.getByTestId('staging-filter-out')).toHaveAttribute('aria-pressed', 'true');   // the queue: To the Amiga
+  await expect(page.getByTestId('staging-filter-out')).toHaveAttribute('aria-checked', 'true');   // the queue: To the Amiga
   await expect(sendRows(page, 'queued')).toContainText('mods/a.txt', { timeout: LIVE });
 });
 
@@ -178,7 +178,7 @@ test('the board\'s card says what waits and whether Transfer runs, and links to 
   await page.getByTestId(`device-send-${deviceId}`).click();
   await expect(page).toHaveURL(new RegExp(`/ingest\\?board=${deviceId}$`));
   await expect(page.getByTestId('send-board')).toContainText('Bench');
-  await expect(page.getByTestId('staging-filter-out')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('staging-filter-out')).toHaveAttribute('aria-checked', 'true');
 });
 
 test('a long queue: the waiting file is first, and Clear finished removes the finished rows while it stays', async ({ page, request }) => {
@@ -214,7 +214,8 @@ test('a long queue: the waiting file is first, and Clear finished removes the fi
   await clear.click();
   await expect(sendRows(page)).toHaveCount(1, { timeout: LIVE });
   await expect(sendRow(page, waiting)).toHaveAttribute('data-state', 'queued');
-  await expect(clear).toHaveCount(0);
+  await expect(clear).toHaveText('Clear finished (0)');
+  await expect(clear).toBeDisabled();
   const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');
   expect(q).toMatch(new RegExp(`^NEXT ${waiting} `));
 });

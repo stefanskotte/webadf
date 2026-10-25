@@ -1,35 +1,30 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Link } from '@/components/shell/link';
-import { HdTag } from '@/components/disks/hd-tag';
-import { UploadCard } from '@/components/ingest/upload-card';
 import { HelpTip } from '@/components/help/help-tip';
-import { adfDensity, isHfeFilename } from '@/lib/disk-format';
 import { sendErrorText, targetLabel, type SendTarget } from '@/lib/send-ui';
 import { downloadName, uploadErrorText } from '@/lib/from-amiga-ui';
-import { SIGNED_OUT_TEXT, isSignedOutAnswer, mergeStaging, stagingView, type StagingFilter, type Tone, type ViewRow } from '@/lib/upload-staging';
+import { SIGNED_OUT_TEXT, isSignedOutAnswer, mergeStaging, stagingView, type StagingFilter, type ViewRow } from '@/lib/upload-staging';
 import { useStaging } from './staging-provider';
 import { StagingConfirm } from './staging-confirm';
+import { StagingRow } from './staging-row';
+import { DiskIcon } from '@/components/ui/disk-icon';
+import { FILTERS, EMPTY_UNDER, filterAfterKey } from '@/lib/upload-look';
 
-const btn = 'rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50';
-const quiet = { background: 'var(--glass-strong)', color: 'var(--ink)', border: '1px solid var(--hairline-strong)' } as const;
+/** Row actions (spec 2026-10-25-phase-c3-upload-design.md §5.3): outline buttons, destructive ones red, Retry ink. */
+const ACT = 'inline-flex h-8 items-center rounded-[8px] px-2.5 text-[12px] font-medium hover:bg-[var(--track)] disabled:opacity-50';
+const ACT_BTN = `${ACT} shrink-0`;
+const ACT_STYLE = { background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--ink)' } as const;
+const ACT_DANGER = { ...ACT_STYLE, color: 'var(--danger-fg)' } as const;
+const ACT_PRIMARY = { background: 'var(--ink)', color: 'var(--surface)', border: '1px solid var(--ink)' } as const;
 
-const FILTERS: { id: StagingFilter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'in', label: 'From the Amiga' },
-  { id: 'out', label: 'To the Amiga' },
-  { id: 'lib', label: 'To the library' },
-];
-const EMPTY_UNDER: Record<Exclude<StagingFilter, 'all'>, string> = {
-  lib: 'Nothing to the library right now.',
-  out: 'Nothing to the Amiga right now.',
-  in: 'Nothing from the Amiga right now.',
-};
-const PILL: Record<ViewRow['kind'], string> = { lib: '↓ To library', out: '→ To Amiga', in: '← From Amiga' };
-const DOT: Record<Tone, string> = {
-  done: 'var(--success-fg)', busy: 'var(--accent-amber)', wait: 'var(--muted)', fail: 'var(--danger-fg)',
-};
+/** A removed row takes its button with it; focus must not fall to <body> (spec §6.3), so it goes to the Staging heading. */
+const focusHeadingIfLost = () => requestAnimationFrame(() => {
+  if (!document.activeElement || document.activeElement === document.body) {
+    document.getElementById('staging-heading')?.focus();
+  }
+});
 
 /** `stop`: the file is still arriving; the delete then holds only while it is (`?only=receiving`). */
 type Confirm = { key: string; id: string; question: string; yes: string; what: string; stop?: boolean };
@@ -44,6 +39,28 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
 
   const rows = mergeStaging(s.serverRows, [...s.libRows, ...s.upRows]);
   const view = stagingView(rows, filter, s.stalled);
+  // The key of the row that last held focus: if a refresh removes that row, its button is gone and focus would fall
+  // to <body> (spec §6.3), so it goes to the Staging heading.
+  const focusedKey = useRef<string | null>(null);
+  const shownKeys = view.shown.map((v) => v.key).join('\n');
+  // Rows and the actions each offers: a focused button can go while its row stays (Stop on a file that finished
+  // arriving), which drops focus to <body> just as a removed row does.
+  const shape = view.shown.map((v) => `${v.key}:${v.actions.join(',')}`).join('\n');
+  useEffect(() => {
+    const k = focusedKey.current;
+    if (!k) return;
+    if (!shownKeys.split('\n').includes(k)) {
+      focusedKey.current = null;
+      focusHeadingIfLost();
+      return;
+    }
+    requestAnimationFrame(() => {
+      if (focusedKey.current === k && (!document.activeElement || document.activeElement === document.body)) {
+        focusedKey.current = null;
+        document.getElementById('staging-heading')?.focus();
+      }
+    });
+  }, [shownKeys, shape]);
   const clearN = view.clearServer.length + view.clearLocal.length;
 
   const mark = (key: string, on: boolean) => setBusy((b) => {
@@ -101,7 +118,7 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
       if (!c.stop || res.status !== 409) return false;
       toast.info('It finished arriving; it was kept.');
       return true;
-    }).finally(() => setConfirm(null));
+    }).finally(() => { setConfirm(null); focusHeadingIfLost(); });
 
   // A fetch first, so a 404 is a toast and not a saved file called "not found"; the bytes then save under the Amiga name.
   async function download(v: ViewRow) {
@@ -133,6 +150,7 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
   /** Clear the rows by key: the browser's own go at once; the server's go by their keys, and only if still finished. */
   async function clear(keys: { local: string[]; server: string[] }, busyKey: string) {
     s.removeLocal([...keys.local, ...keys.server]);
+    focusHeadingIfLost();
     if (keys.server.length === 0) return;
     await run(busyKey, 'Could not clear',
       () => fetch('/api/staging/clear', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keys: keys.server }) }),
@@ -146,105 +164,129 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
       case 'open':
         return v.gameId && (
           <Link key={a} href={`/games/${encodeURIComponent(v.gameId)}`} data-testid={id}
-                className="text-[12px] font-semibold underline underline-offset-2" style={{ color: 'var(--ink)' }}>Open title</Link>
+                className={ACT_BTN} style={ACT_STYLE}>Open title</Link>
         );
       case 'add':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={btn} style={quiet}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT_BTN} style={ACT_STYLE}
                        aria-label={`Add ${v.name} to the library`} onClick={() => void addToLibrary(v)}>Add to library</button>;
       case 'download':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={btn} style={quiet}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT_BTN} style={ACT_STYLE}
                        aria-label={`Download ${v.name}`} onClick={() => void download(v)}>Download</button>;
       case 'send':
         return targets.length > 0 && (
-          <select key={a} aria-label={`Send ${v.name} to an Amiga`} data-testid={id} value="" disabled={disabled}
-                  className="rounded-lg px-2 py-1 text-[12px]" style={quiet}
-                  onChange={(e) => { const t = targets.find((x) => x.id === e.target.value); if (t) void sendTo(v, t); }}>
-            <option value="">Send to Amiga…</option>
-            {targets.map((t) => <option key={t.id} value={t.id}>{targetLabel(t)}</option>)}
-          </select>
+          <span key={a} className="relative inline-flex min-w-0 max-w-full">
+            <select aria-label={`Send ${v.name} to an Amiga`} data-testid={id} value="" disabled={disabled}
+                    className={`${ACT} max-w-full appearance-none pr-7`} style={ACT_STYLE}
+                    onChange={(e) => { const t = targets.find((x) => x.id === e.target.value); if (t) void sendTo(v, t); }}>
+              <option value="">Send to Amiga…</option>
+              {targets.map((t) => <option key={t.id} value={t.id}>{targetLabel(t)}</option>)}
+            </select>
+            <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2">
+              <path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="var(--muted)" strokeWidth="1.5" />
+            </svg>
+          </span>
         );
       case 'delete':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={btn} style={quiet}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT_BTN} style={ACT_DANGER}
                        aria-label={`Delete ${v.name}`}
                        onClick={() => setConfirm({ key: v.key, id: idOf(v), question: `Delete ${v.name}? It is the only copy.`, yes: 'Delete', what: 'Not deleted' })}>Delete</button>;
       case 'stop':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={btn} style={quiet}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT_BTN} style={ACT_DANGER}
                        aria-label={`Stop receiving ${v.name}`}
                        onClick={() => setConfirm({ key: v.key, id: idOf(v), question: `Stop receiving ${v.name}? The part that arrived is deleted.`, yes: 'Stop', what: 'Not stopped', stop: true })}>Stop</button>;
       case 'cancel':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={btn} style={quiet}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT_BTN} style={ACT_DANGER}
                        aria-label={`Cancel ${v.name}`} onClick={() => void cancel(v)}>Cancel</button>;
       case 'retry':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={`${btn} text-white`}
-                       style={{ background: 'var(--primary-action)' }} aria-label={`Retry ${v.name}`} onClick={() => void retry(v)}>Retry</button>;
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT_BTN}
+                       style={ACT_PRIMARY} aria-label={`Retry ${v.name}`} onClick={() => void retry(v)}>Retry</button>;
       case 'clear':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={btn} style={quiet}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT_BTN} style={ACT_STYLE}
                        aria-label={`Clear ${v.name}`}
                        onClick={() => void clear(v.row.source === 'server' ? { local: [], server: [v.key] } : { local: [v.key], server: [] }, v.key)}>Clear</button>;
     }
   }
 
-  const meta = (
-    <>
-      {s.boards.filter((b) => b.key).map((b) => (
-        <span key={b.id} className="text-[12px]" style={{ color: 'var(--muted)', overflowWrap: 'anywhere' }} data-testid="from-amiga-key">
-          {b.name}: board key <strong style={{ color: 'var(--ink)' }}>{b.key}</strong>
-        </span>
-      ))}
-      {s.refreshFailed && (
-        <span role="status" className="text-[12px] font-semibold" style={{ color: 'var(--danger-fg)' }} data-testid="staging-refresh-failed">
-          Couldn&apos;t refresh
-        </span>
-      )}
-      {clearN > 0 && (
-        <button type="button" data-testid="staging-clear-finished" disabled={busy.has('clear-finished')} className={btn} style={quiet}
-                onClick={() => void clear({ local: view.clearLocal, server: view.clearServer }, 'clear-finished')}>
-          Clear finished ({clearN})
-        </button>
-      )}
-    </>
-  );
+  function onFilterKey(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;   // Alt+ArrowLeft is the browser's Back
+    const next = filterAfterKey(filter, e.key);
+    if (!next) return;
+    e.preventDefault();
+    setFilter(next);
+    e.currentTarget.querySelector<HTMLElement>(`[data-testid="staging-filter-${next}"]`)?.focus();
+  }
 
   return (
     // id: a device card's "N files from the Amiga" link lands here (/ingest?from=<board>#from-amiga), on that filter.
-    <section id="from-amiga" className="mx-4 pb-10 sm:mx-7">
-      <UploadCard id="staging-heading" title="Staging" help={<HelpTip topic="from-amiga" />} meta={meta}>
-        <div role="group" aria-label="Show" className="flex flex-wrap gap-1 self-start rounded-xl p-1"
-             style={{ border: '1px solid var(--hairline-strong)', background: 'var(--glass-subtle)' }}>
+    // Spec 2026-10-25-phase-c3-upload-design.md §4: header, filter, refresh state, Clear finished, footer.
+    <section id="from-amiga" aria-labelledby="staging-heading" className="flex scroll-mt-24 flex-col gap-3 rounded-[20px] p-4 sm:p-5"
+             style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-1">
+          <h2 id="staging-heading" tabIndex={-1} className="rounded-[6px] text-[16px] font-semibold focus:outline-2 focus:outline-offset-2 focus:outline-(--ring)" style={{ color: 'var(--ink)' }}>Staging</h2>
+          <HelpTip topic="from-amiga" />
+        </div>
+        <div role="radiogroup" aria-label="Show" data-testid="staging-filters" data-value={filter}
+             className="seg seg--sm flex-wrap" onKeyDown={onFilterKey}>
           {FILTERS.map((f) => {
             const on = filter === f.id;
             return (
-              <button key={f.id} type="button" aria-pressed={on} data-testid={`staging-filter-${f.id}`} onClick={() => setFilter(f.id)}
-                      className="rounded-lg px-3 py-1 text-[12px] font-semibold"
-                      style={on ? { background: 'var(--ink)', color: 'var(--glass-strong)' } : { color: 'var(--muted)' }}>
-                {f.label} <span className="font-mono">{view.counts[f.id]}</span>
+              <button key={f.id} type="button" role="radio" aria-checked={on} tabIndex={on ? 0 : -1}
+                      data-testid={`staging-filter-${f.id}`} className="seg-item gap-1.5" onClick={() => setFilter(f.id)}>
+                {f.label}<span className="font-mono text-[11px]" style={{ color: 'var(--muted-2)' }}>{view.counts[f.id]}</span>
               </button>
             );
           })}
         </div>
-
+        <span className="flex-1" />
+        <RefreshState loaded={s.loaded} failed={s.refreshFailed} />
+        <button type="button" data-testid="staging-clear-finished" disabled={clearN === 0 || busy.has('clear-finished')}
+                className="h-[34px] rounded-[9px] px-3 text-[13px] font-medium hover:bg-[var(--track)] disabled:cursor-default disabled:hover:bg-transparent"
+                style={{ border: '1px solid var(--line)', color: clearN === 0 ? 'var(--muted-2)' : 'var(--ink)' }}
+                onClick={() => void clear({ local: view.clearLocal, server: view.clearServer }, 'clear-finished')}>
+          Clear finished ({clearN})
+        </button>
+      </div>
         <ul aria-label="Staging" data-testid="staging-list"
-            className="flex flex-col overflow-hidden rounded-xl md:max-h-[36rem] md:overflow-y-auto" style={{ border: '1px solid var(--hairline-strong)', background: 'var(--glass-subtle)' }}>
-          {view.shown.map((v) => <Row key={v.key} v={v}>{v.actions.map((a) => action(v, a))}</Row>)}
+            onFocus={(e) => { focusedKey.current = (e.target as HTMLElement).closest('[data-key]')?.getAttribute('data-key') ?? null; }}
+            onBlur={(e) => {
+              // Forget the row only once focus has left the list (the user went elsewhere); a Tab from one button to
+              // another inside it keeps the tracking, and an element removed under focus is not "left" either.
+              const el = e.target as HTMLElement;
+              const list = e.currentTarget;
+              requestAnimationFrame(() => { if (el.isConnected && !list.contains(document.activeElement)) focusedKey.current = null; });
+            }}
+            className="flex flex-col md:max-h-[36rem] md:overflow-y-auto">
+          {view.shown.map((v) => <StagingRow key={v.key} v={v}>{v.actions.map((a) => action(v, a))}</StagingRow>)}
           {view.shown.length === 0 && (rows.length > 0 || s.loaded) && (
-            <li className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }} data-testid="staging-empty">
-              {filter === 'all' || rows.length === 0
-                ? 'Nothing here yet. Drop disks for the library, or files for the Amiga.'
-                : EMPTY_UNDER[filter]}
+            <li data-testid="staging-empty" className="flex flex-col items-center gap-2.5 py-10 text-center">
+              <span aria-hidden="true"><DiskIcon color="cream" size={48} /></span>
+              <span className="text-[14px]" style={{ color: 'var(--muted)' }}>
+                {filter === 'all' || rows.length === 0
+                  ? 'Nothing here yet. Drop disks for the library, or files for the Amiga.'
+                  : EMPTY_UNDER[filter]}
+              </span>
             </li>
           )}
           {view.shown.length === 0 && rows.length === 0 && !s.loaded && (
-            <li className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }}>Reading the list…</li>
+            <li data-testid="staging-reading" data-state={s.refreshFailed ? 'failed' : 'reading'}
+                className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }}>
+              {s.refreshFailed ? "Couldn't read the list. It tries again every few seconds." : 'Reading the list…'}
+            </li>
           )}
         </ul>
-        <p className="text-[12px]" style={{ color: 'var(--muted)' }}>
-          Files from the Amiga are kept 30 days. Anything here can go on to another place: a file from the Amiga into the
-          library, a library disk to the Amiga.
-        </p>
-      </UploadCard>
+        <footer className="flex flex-wrap gap-x-4 gap-y-1 text-[12px]" style={{ color: 'var(--muted-2)' }}>
+          <span>Files from the Amiga are kept 30 days. Anything here can go on to another place: a file from the Amiga into
+            the library, a library disk to the Amiga.</span>
+          {s.boards.filter((b) => b.key).map((b) => (
+            <span key={b.id} data-testid="from-amiga-key" style={{ overflowWrap: 'anywhere' }}>
+              {b.name}: board key <strong className="font-semibold" style={{ color: 'var(--ink)' }}>{b.key}</strong>
+            </span>
+          ))}
+        </footer>
       {confirm && (
         <StagingConfirm question={confirm.question} yes={confirm.yes} busy={busy.has(confirm.key)}
-                        onYes={() => void removeUpload(confirm)} onCancel={() => setConfirm(null)} />
+                        onYes={() => void removeUpload(confirm)} onCancel={() => { setConfirm(null); focusHeadingIfLost(); }} />
       )}
     </section>
   );
@@ -253,37 +295,13 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
 /** A server row's id (send or Amiga file); the actions that take one only appear on server rows. */
 const idOf = (v: ViewRow): string => (v.row.source === 'server' ? v.row.id : '');
 
-function Row({ v, children }: { v: ViewRow; children: React.ReactNode }) {
-  const hd = v.kind === 'lib' && !isHfeFilename(v.name) && adfDensity(v.row.sizeBytes) === 'hd';
-  // A refused library file says why in its status ("Failed · No disk images inside"); the reason keeps ingest-note.
-  const failNote = v.row.source === 'lib' && v.row.state === 'failed' && v.row.note ? v.row.note : null;
+function RefreshState({ loaded, failed }: { loaded: boolean; failed: boolean }) {
+  const state = failed ? 'failed' : loaded ? 'ok' : 'reading';
   return (
-    <li data-testid="staging-row" data-kind={v.kind} data-state={v.state} data-key={v.key}
-        className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5" style={{ borderBottom: '1px solid var(--hairline)' }}>
-      <span className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold"
-            style={{ background: 'var(--glass-strong)', border: '1px solid var(--hairline-strong)', color: 'var(--ink)' }}>
-        {PILL[v.kind]}
-      </span>
-      <span className="min-w-0 flex-1" style={{ overflowWrap: 'anywhere' }}>
-        <span className="font-mono text-[12px]" style={{ color: 'var(--ink)' }}>{v.name}</span>
-        {v.note && (
-          // Not a tooltip: "this .adf came out of a .dms" needs to be seen.
-          <span className="ml-2 text-[11.5px]" data-testid="ingest-note" style={{ color: 'var(--muted)' }}>{v.note}</span>
-        )}
-      </span>
-      <span className="flex shrink-0 items-center gap-1 font-mono text-[11.5px]" style={{ color: 'var(--muted)' }}>
-        {v.size}
-        {hd && <HdTag testId="ingest-hd-tag" />}
-      </span>
-      <span className="flex min-w-0 basis-full flex-wrap items-center gap-2">
-        <span className="min-w-0 text-[12px]" style={{ color: 'var(--muted)', overflowWrap: 'anywhere' }}>{v.where}</span>
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[12px]" data-testid={`staging-status-${v.key}`}
-              style={{ color: v.tone === 'fail' ? 'var(--danger-fg)' : 'var(--ink)', overflowWrap: 'anywhere' }}>
-          <span aria-hidden className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: DOT[v.tone] }} />
-          {failNote ? <span>Failed · <span data-testid="ingest-note">{failNote}</span></span> : v.status}
-        </span>
-        {children}
-      </span>
-    </li>
+    <span data-testid="staging-refresh" data-state={state} className="text-[12px]" style={{ color: 'var(--muted-2)' }}>
+      {state === 'failed'
+        ? <span role="status" data-testid="staging-refresh-failed" className="font-semibold" style={{ color: 'var(--danger-fg)' }}>Couldn&apos;t refresh</span>
+        : state === 'reading' ? 'Reading…' : 'Up to date'}
+    </span>
   );
 }

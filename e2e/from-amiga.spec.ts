@@ -122,7 +122,8 @@ test('Clear finished clears a failed file and keeps the stored ones and one stil
   await expect(row(page, b)).toBeVisible();
   await expect(row(page, moving)).toBeVisible();
   await expect(row(page, late)).toBeVisible({ timeout: LIVE });
-  await expect(page.getByTestId('staging-clear-finished')).toHaveCount(0);
+  await expect(page.getByTestId('staging-clear-finished')).toHaveText('Clear finished (0)');
+  await expect(page.getByTestId('staging-clear-finished')).toBeDisabled();
   // A file still arriving can be stopped (a stalled one is otherwise stuck for 24 h); the board then hears gone.
   await act(page, 'stop', moving).click();
   await expect(page.getByTestId('staging-confirm')).toContainText('Stop receiving Moving.bin? The part that arrived is deleted.');
@@ -139,7 +140,9 @@ test('Send to an Amiga queues the file for another board', async ({ page, reques
   await boardSays(request, token); await boardSays(request, den, '1.19.0+gabc1234', 'cd34');
   const id = await boardUploads(request, token, 'Docs/Note.txt', Buffer.from('note'));
   await page.goto('/ingest');
-  await act(page, 'send', id).selectOption({ label: 'Den' });
+  // The menu names each board with its MAC in parentheses ("Den (…)", targetLabel in send-ui.ts).
+  const denOption = await act(page, 'send', id).locator('option', { hasText: /^Den \(/ }).getAttribute('value');
+  await act(page, 'send', id).selectOption(denOption!);
   await expect(page.getByText('Queued for Den')).toBeVisible({ timeout: LIVE });
   const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(den) })).body()).toString('latin1');
   expect(q).toMatch(/^NEXT \S+ 4 [0-9a-f]+ 0 13:Docs\/Note\.txt /);
@@ -159,13 +162,13 @@ test("every board's files show with their board, the device card's line, and the
   await page.goto('/ingest');
   await expect(row(page, fromBench)).toContainText('from Bench', { timeout: LIVE });
   await expect(row(page, fromDen)).toContainText('from Den');
-  await expect(page.getByTestId('staging-filter-all')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('staging-filter-all')).toHaveAttribute('aria-checked', 'true');
   await page.goto('/devices');
   await expect(page.getByTestId(`device-upload-${bench.deviceId}`)).toHaveText('1 file from the Amiga');
   await expect(page.getByTestId(`device-upload-${old.deviceId}`)).toHaveText('Update to 1.19.0 to send files from the Amiga');
   await page.getByTestId(`device-upload-${bench.deviceId}`).click();
   await expect(page).toHaveURL(new RegExp(`/ingest\\?from=${bench.deviceId}#from-amiga`));
-  await expect(page.getByTestId('staging-filter-in')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('staging-filter-in')).toHaveAttribute('aria-checked', 'true');
   await expect(row(page, fromBench)).toBeVisible({ timeout: LIVE });
   await expect(row(page, fromDen)).toBeVisible();
 });

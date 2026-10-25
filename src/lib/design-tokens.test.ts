@@ -45,6 +45,8 @@ describe('design tokens (globals.css)', () => {
     ['--ring', '#7A7262'],
     ['--fw-line', '#F1D3A4'],
     ['--modal-foot', '#FBF8F1'],
+    ['--dash', '#C4B9A2'], ['--to-amiga-bg', '#DCE8F5'],
+    ['--from-amiga-bg', '#E5F0DF'], ['--from-amiga-fg', '#2C5E24'], ['--accent-blue', '#1D4F86'],
   ])('%s is %s', (name, value) => {
     expect(tokens()[name]).toBe(value);
   });
@@ -64,6 +66,11 @@ describe('design tokens (globals.css)', () => {
     // Devices spec §12
     ['--muted', '--danger-bg'], ['--ink', '--danger-bg'], ['--muted', '--track'], ['--muted-2', '--modal-foot'],
     ['--surface', '--ink'],
+    // Upload spec §8
+    ['--accent-blue', '--to-amiga-bg'], ['--from-amiga-fg', '--from-amiga-bg'],
+    ['--success-fg', '--surface'], ['--success-fg', '--modal-foot'], ['--warning-fg', '--surface'],
+    ['--warning-fg', '--modal-foot'], ['--muted', '--modal-foot'], ['--danger-fg', '--modal-foot'],
+    ['--ink', '--surface-2'], ['#FFFFFF', '--danger-fg'],
   ];
   it.each(pairs)('%s on %s clears AA (4.5:1)', (fg, bg) => {
     const read = (n: string) => (n.startsWith('#') ? n : tok(n));

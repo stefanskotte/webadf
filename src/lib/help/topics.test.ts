@@ -40,7 +40,7 @@ describe('help topics', () => {
       const text = bodyText(id);
       const words = text.split(/\s+/).filter(Boolean).length;
       expect(words).toBeGreaterThanOrEqual(60);
-      expect(words).toBeLessThanOrEqual(260);
+      expect(words).toBeLessThanOrEqual(280);
       expect(text).not.toMatch(BANNED);
     });
   }

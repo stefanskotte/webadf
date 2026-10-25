@@ -288,6 +288,10 @@
   --drive-pill-bg: #14201A;  /* the "in DF0" pill: dark ground ... */
   --drive-pill-fg: #9BEA9F;  /* ... and its text */
   --fetch-dot:    #E9A23B;   /* the amber dot of a fetch in progress */
+  --dash:          #C4B9A2;   /* the Upload drop cards' dashed border, the waiting dot (Upload spec §7) */
+  --to-amiga-bg:   #DCE8F5;   /* the "To Amiga" pill; text --accent-blue 6.72:1 */
+  --from-amiga-bg: #E5F0DF;   /* the "From Amiga" pill ... */
+  --from-amiga-fg: #2C5E24;   /* ... and its text, 6.53:1 */
 }
 
 @theme inline {

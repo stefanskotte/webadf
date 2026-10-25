@@ -64,50 +64,49 @@ export function UrlFetch({
   const color = status?.tone === 'danger' ? 'var(--danger-fg)' : status?.tone === 'ok' ? 'var(--success-fg)' : 'var(--muted-2)';
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-2 rounded-xl p-3.5" data-testid="url-fetch-form" noValidate
-          style={{ border: '1px solid var(--hairline-strong)', background: 'var(--glass-subtle)' }}>
-      <label htmlFor="ingest-url" className="text-[13.5px] font-semibold" style={{ color: 'var(--ink)' }}>
-        Or fetch from a URL
-      </label>
-      <div className="flex flex-col gap-2 sm:flex-row">
+    <>
+      <form onSubmit={submit} data-testid="url-fetch-form" noValidate
+            className="flex h-[46px] w-full min-w-0 items-center gap-1.5 rounded-[10px] border px-2.5 sm:h-[38px] sm:w-auto sm:min-w-[220px] sm:flex-1"
+            style={{ borderColor: 'var(--line)', background: 'var(--surface-2)' }}>
         <input
           id="ingest-url"
           type="url"
           inputMode="url"
           autoComplete="off"
           spellCheck={false}
-          placeholder="https://…/Game.adf"
+          placeholder="or paste a URL…"
+          aria-label="Or fetch from a URL"
           data-testid="url-input"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           disabled={busy}
           aria-describedby="ingest-url-hint ingest-url-status"
-          className="h-11 w-full min-w-0 rounded-[10px] sm:w-auto sm:flex-1 border px-3 text-[13px] outline-none focus-visible:ring-2 sm:h-[34px]"
-          style={{ borderColor: 'var(--hairline-strong)', background: 'var(--input-bg)', color: 'var(--ink)' }}
+          className="h-full min-w-0 flex-1 border-0 bg-transparent text-[13px] outline-none placeholder:text-[var(--muted-2)]"
+          style={{ color: 'var(--ink)' }}
         />
         <button
           type="submit"
           data-testid="url-fetch"
           disabled={busy || url.trim() === ''}
-          className="h-11 shrink-0 rounded-lg px-4 text-[13px] font-medium disabled:opacity-50 sm:h-[34px]"
-          style={{ background: 'var(--surface-2)', border: '1px solid var(--line)', boxShadow: 'var(--shadow-card)', color: 'var(--ink)' }}
+          className="h-11 shrink-0 rounded-[8px] border px-2.5 text-[12px] font-semibold disabled:opacity-50 sm:h-7"
+          style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}
         >
           {busy ? 'Working…' : 'Fetch'}
         </button>
-      </div>
-      <span id="ingest-url-hint" className="text-[12px]" style={{ color: 'var(--muted)' }}>
-        ADF, ADZ, DMS, DMZ, HFE or a .zip or .lha of them, up to 20 MB, from a public http(s) address
+      </form>
+      <span id="ingest-url-hint" className="basis-full text-[12px]" style={{ color: 'var(--muted-2)' }}>
+        A URL can also be a .zip or .lha of them, up to 20 MB, from a public http(s) address.
       </span>
       <p
         id="ingest-url-status"
         role="status"
         aria-live="polite"
         data-testid="url-status"
-        className="min-h-[1em] text-[12px]"
+        className="min-h-[1em] basis-full text-[12px]"
         style={{ color }}
       >
         {status?.text ?? ''}
       </p>
-    </form>
+    </>
   );
 }
