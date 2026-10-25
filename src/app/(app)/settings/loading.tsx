@@ -15,7 +15,7 @@ export default function SettingsLoading() {
         </div>
         <div className="flex min-w-0 flex-col gap-5">
           <div className="flex flex-col gap-1">
-            <Bone className="h-[13px] w-24" />
+            <Bone className="h-5 w-24" />
             <Bone className="h-[30px] w-48 sm:h-[44px]" />
           </div>
           {[0, 1, 2, 3].map((c) => (

@@ -133,7 +133,7 @@ export function FirmwarePasswordSetting({ skipPassword }: { skipPassword: boolea
           // A <form>, so Enter in the password field confirms.
           <form className="col-span-full flex flex-wrap items-end gap-2.5"
                 onSubmit={(e) => { e.preventDefault(); void turnOn(); }}
-                onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeConfirm(); } }}>
+                onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); if (!busy) closeConfirm(); } }}>
             <label htmlFor={pwId} className="flex flex-col gap-1.5 text-[13px] font-medium" style={{ color: 'var(--ink)' }}>
               Confirm with your password
               <input id={pwId} type="password" data-testid="fw-skip-password-input" value={password}
@@ -144,7 +144,8 @@ export function FirmwarePasswordSetting({ skipPassword }: { skipPassword: boolea
                     className={INK_BTN} style={INK_STYLE}>
               {busy ? 'Checking…' : 'Turn off the password'}
             </button>
-            <button type="button" onClick={closeConfirm} className={OUTLINE_BTN} style={OUTLINE_STYLE}>Cancel</button>
+            <button type="button" aria-disabled={busy} onClick={() => { if (!busy) closeConfirm(); }}
+                    className={OUTLINE_BTN} style={OUTLINE_STYLE}>Cancel</button>
             {error && (
               <span className="basis-full text-[13px]" data-testid="fw-skip-password-error" role="alert"
                     style={{ color: 'var(--danger-fg)' }}>{error}</span>

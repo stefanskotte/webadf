@@ -29,7 +29,10 @@ export function DeleteAccount() {
   useEffect(() => {
     if (!open && refocus.current) { refocus.current = false; openerRef.current?.focus(); }
   }, [open]);
-  function close() { refocus.current = true; setOpen(false); setPassword(''); setConfirm(''); setError(null); }
+  function close() {
+    if (busy) return;   // the request is out: its answer needs this form
+    refocus.current = true; setOpen(false); setPassword(''); setConfirm(''); setError(null);
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -90,7 +93,7 @@ export function DeleteAccount() {
                       style={{ background: 'var(--danger-fg)', color: '#FFFFFF' }}>
                 {busy ? 'Deleting…' : 'Delete my account'}
               </button>
-              <button type="button" onClick={close} className={OUTLINE_BTN} style={OUTLINE_STYLE}>Cancel</button>
+              <button type="button" aria-disabled={busy} onClick={close} className={OUTLINE_BTN} style={OUTLINE_STYLE}>Cancel</button>
             </div>
           </form>
         )}

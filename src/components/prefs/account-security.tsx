@@ -41,7 +41,11 @@ export function AccountSecurity({ email, sessionCount }: { email: string; sessio
     if (!open && refocus.current) { refocus.current = false; openerRef.current?.focus(); }
   }, [open]);
 
-  function closeForm() { refocus.current = true; setOpen(false); setError(null); }
+  // Not while the request is out: closing then would strand its answer on a closed form. Clears what was typed.
+  function closeForm() {
+    if (busy) return;
+    refocus.current = true; setOpen(false); setError(null); setCurrent(''); setNext(''); setConfirm('');
+  }
 
   async function revokeOthers() {
     if (revoking) return;
@@ -122,7 +126,7 @@ export function AccountSecurity({ email, sessionCount }: { email: string; sessio
               <button type="submit" aria-disabled={busy} data-testid="password-save" className={INK_BTN} style={INK_STYLE}>
                 {busy ? 'Changing…' : 'Change password'}
               </button>
-              <button type="button" onClick={closeForm} className={OUTLINE_BTN} style={OUTLINE_STYLE}>Cancel</button>
+              <button type="button" aria-disabled={busy} onClick={closeForm} className={OUTLINE_BTN} style={OUTLINE_STYLE}>Cancel</button>
             </div>
           </form>
         )}

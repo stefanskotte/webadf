@@ -163,3 +163,95 @@ test('Settings: arrow keys and Home/End on the Start page radiogroup move and sa
   await expect(group).toHaveAttribute('data-value', 'library');
   expect((await (await page.request.get('/api/me/prefs')).json()).startPage).toBe('library');
 });
+
+// ---- Settings: forms while a request is in flight (fix round 1) -------------------------------------------------
+
+test('Settings: the firmware confirm cannot be cancelled or re-sent while its request is in flight', async ({ page }) => {
+  const { password } = await signUpFresh(page);
+  await page.goto('/settings');
+  let posts = 0;
+  await page.route('**/api/me/prefs/firmware-skip-password', async (route) => {
+    posts += 1;
+    await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  });
+  await hydrated(page, 'fw-skip-password');
+  await page.getByTestId('fw-skip-password').click();
+  const input = page.getByTestId('fw-skip-password-input');
+  await input.fill(password);
+  const confirmBtn = page.getByTestId('fw-skip-password-confirm');
+  await confirmBtn.click();
+  await expect(confirmBtn).toHaveAttribute('aria-disabled', 'true');
+  await confirmBtn.click({ force: true });   // Playwright treats aria-disabled as unclickable
+  await input.press('Enter');
+  await input.press('Escape');
+  await page.getByTestId('firmware-prefs').getByRole('button', { name: 'Cancel' }).click({ force: true });
+  await expect(input).toHaveCount(1);                       // still open: Cancel and Escape are ignored while busy
+  await expect(page.getByTestId('fw-password-state')).toHaveText('Password not asked');
+  await expect(input).toHaveCount(0);
+  await expect(page.getByTestId('fw-skip-password')).toBeFocused();
+  expect(posts).toBe(1);
+});
+
+test('Settings: the password form ignores Cancel, Escape and a second submit while busy, and reopens clean', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/settings');
+  let calls = 0;
+  await page.route('**/api/auth/change-password', async (route) => {
+    calls += 1;
+    await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  });
+  await hydrated(page, 'password-change-open');
+  await page.getByTestId('password-change-open').click();
+  await page.getByTestId('password-current').fill('definitely-wrong-1');
+  await page.getByTestId('password-new').fill('another-long-pass-1');
+  await page.getByTestId('password-confirm').fill('another-long-pass-1');
+  const save = page.getByTestId('password-save');
+  await save.click();
+  await expect(save).toHaveAttribute('aria-disabled', 'true');
+  await save.click({ force: true });
+  await page.getByTestId('password-confirm').press('Enter');
+  await page.getByTestId('password-confirm').press('Escape');
+  await page.getByTestId('password-form').getByRole('button', { name: 'Cancel' }).click({ force: true });
+  await expect(page.getByTestId('password-form')).toHaveCount(1);
+  await expect(page.getByTestId('password-error')).toHaveText('That is not your current password.');
+  expect(calls).toBe(1);
+  await page.getByTestId('password-form').getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByTestId('password-form')).toHaveCount(0);
+  await page.getByTestId('password-change-open').click();
+  await expect(page.getByTestId('password-current')).toHaveValue('');
+  await expect(page.getByTestId('password-new')).toHaveValue('');
+  await expect(page.getByTestId('password-confirm')).toHaveValue('');
+  await expect(page.getByTestId('password-error')).toHaveCount(0);
+});
+
+test('Settings: the delete form ignores Cancel, Escape and a second submit while busy, and reopens clean', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/settings');
+  let calls = 0;
+  await page.route('**/api/me/account', async (route) => {   // answered here: nothing is ever deleted
+    calls += 1;
+    await new Promise((r) => setTimeout(r, 1500));
+    await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'bad_password' }) });
+  });
+  await hydrated(page, 'account-delete-open');
+  await page.getByTestId('account-delete-open').click();
+  await page.getByTestId('account-delete-password').fill('not-my-password');
+  await page.getByTestId('account-delete-confirm').fill('DELETE');
+  const submit = page.getByTestId('account-delete-submit');
+  await submit.click();
+  await expect(submit).toHaveAttribute('aria-disabled', 'true');
+  await submit.click({ force: true });
+  await page.getByTestId('account-delete-confirm').press('Enter');
+  await page.getByTestId('account-delete-confirm').press('Escape');
+  await page.getByTestId('delete-account').getByRole('button', { name: 'Cancel' }).click({ force: true });
+  await expect(page.getByTestId('account-delete-password')).toHaveCount(1);
+  await expect(page.getByTestId('account-delete-error')).toHaveText('That is not your password.');
+  expect(calls).toBe(1);
+  await page.getByTestId('delete-account').getByRole('button', { name: 'Cancel' }).click();
+  await page.getByTestId('account-delete-open').click();
+  await expect(page.getByTestId('account-delete-password')).toHaveValue('');
+  await expect(page.getByTestId('account-delete-confirm')).toHaveValue('');
+  await expect(page.getByTestId('account-delete-error')).toHaveCount(0);
+});
