@@ -17,4 +17,13 @@ describe('DiskFilesLoading (spec 8.1)', () => {
     expect(html.indexOf('data-skeleton-disk')).toBeLessThan(html.indexOf('data-skeleton-row'));
     expect(html.indexOf('data-skeleton-row')).toBeLessThan(html.indexOf('data-skeleton-version'));
   });
+  it('has no page header bones: the real page starts at its breadcrumb, so nothing jumps when it lands', () => {
+    // PageSkeleton's HeaderSkeleton (eyebrow, 34 px title, subtitle) has no counterpart on the disk page.
+    expect(html).not.toContain('h-[26px]');
+    expect(html).not.toContain('sm:h-[34px]');
+    expect(html.match(/pt-6/g)?.length).toBe(1);   // only the page body's own top padding
+  });
+  it('uses the page\'s base single column below xl, so a long row cannot widen it', () => {
+    expect(html).toContain('grid-cols-[minmax(0,1fr)]');
+  });
 });

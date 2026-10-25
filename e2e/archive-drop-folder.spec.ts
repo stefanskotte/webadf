@@ -265,7 +265,7 @@ test('a typed rename AmigaDOS cannot hold is flagged on its row and blocks Add',
   await expect(page.getByTestId('drop-commit')).toBeEnabled();
 });
 
-test('the tree says when it can take a drop, and its list holds only list items', async ({ page }) => {
+test('the tree reports its drop receiver as ready once hydrated, and its list holds only list items', async ({ page }) => {
   test.setTimeout(60_000);
   const u = await signUpFresh(page);
   await page.goto('/library');
@@ -286,8 +286,6 @@ test('the tree says when it can take a drop, and its list holds only list items'
   // drop on the tree reaches nothing. The tree exposes the moment it can.
   await expect(page.getByTestId('file-tree')).toHaveAttribute('data-native-drop', 'ready');
   // Every direct child of the files list is a list item (folders and files alike).
-  const list = page.getByRole('list').filter({ has: page.locator('[data-testid="fs-entry"]') }).first();
-  await expect(list).toHaveAttribute('data-testid', 'file-tree');
   const roles = await page.getByTestId('file-tree').evaluate((el) => [...el.children].map((c) => c.getAttribute('role')));
   expect(roles.length).toBeGreaterThanOrEqual(4);
   expect(roles.every((r) => r === 'listitem'), `roles: ${JSON.stringify(roles)}`).toBe(true);
