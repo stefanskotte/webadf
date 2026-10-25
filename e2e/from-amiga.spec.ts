@@ -140,7 +140,9 @@ test('Send to an Amiga queues the file for another board', async ({ page, reques
   await boardSays(request, token); await boardSays(request, den, '1.19.0+gabc1234', 'cd34');
   const id = await boardUploads(request, token, 'Docs/Note.txt', Buffer.from('note'));
   await page.goto('/ingest');
-  await act(page, 'send', id).selectOption({ label: 'Den' });
+  // The menu names each board with its MAC in parentheses ("Den (…)", targetLabel in send-ui.ts).
+  const denOption = await act(page, 'send', id).locator('option', { hasText: /^Den \(/ }).getAttribute('value');
+  await act(page, 'send', id).selectOption(denOption!);
   await expect(page.getByText('Queued for Den')).toBeVisible({ timeout: LIVE });
   const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(den) })).body()).toString('latin1');
   expect(q).toMatch(/^NEXT \S+ 4 [0-9a-f]+ 0 13:Docs\/Note\.txt /);
