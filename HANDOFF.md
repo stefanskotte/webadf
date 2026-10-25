@@ -1480,11 +1480,30 @@ separately.
 
 **Current order (re-checked 2026-10-24):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423**; next C4 Disk files) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
+**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d**; next C5 Settings/Help/Search/Sign in) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **Phase C4 Disk files -- SHIPPED 2026-10-25** (merge a7cbd5d; spec `docs/superpowers/specs/2026-10-25-phase-c4-disk-files-design.md`
+  (35 rulings), plan `docs/superpowers/plans/2026-10-25-phase-c4-disk-files.md`). Disk card + version banner (volume-header.tsx
+  gone), FilesCard with the tree kept (R2), an always-visible row ⋯ menu incl. Send (R11), eight protection bits (R13), selection
+  bar, History panel that collapses (R24), one shared restore confirm (`restore-dialog.tsx`, Modal 440, darker amber, R27; restore
+  returns to current, R7; 503/generic keep it open, 409/404 close it; a 409 mounted refusal sends focus to #history-heading), drop
+  bar under the list without Browse (R18/R19), loading skeleton, Disk files contrast pairs (lowest 4.69), disk-files.png. The
+  mounted-disk write guard is unchanged on every write path (final review checked each). Found and fixed on the way: a drizzle
+  query's `.catch` re-ran the query (wrap in Promise.resolve); the archive-drop-folder flake was real -- the tree's native drop
+  receiver registers in an effect after hydration, so an early drop was a silent no-op (25/25 probe); now the tree carries
+  `data-native-drop=ready|pending`, an early drop toasts "Not ready yet" (a DataTransfer cannot be queued), synthDrop waits for
+  the marker; mobile:455 was a >30 s test, not a bug. Final fix pass: focus no longer drops to body after selection-bar Cancel or
+  staging Clear. Open flake: "a plain file dropped on a folder row" twice "no game card after createAdf", cause unproven
+  (createAdf now waits for hydration + the create response; green since). Deferred minors: help text says only History's
+  Restore… asks first; history load-failure card lacks the History heading; row menu Send accessible name differs from its
+  visible words; an open rename/move/delete form stays open when the page turns read-only (pre-existing, writes still refused);
+  skeleton stacks the disk icon below lg (~90 px phone jump, C7); VersionBanner unused restore prop; protection-chips test covers
+  one bit string; disk-card/banner unit gaps; selection done() focuses before refresh; 390 check measures the row not the name;
+  edit-guard e2e gaps; banner h1 focus before router.replace; drop bar volume name / "Free space unknown" unasserted; DropStaging
+  effect has no deps; contrast test hardcodes parentBlock 880.
 - **Phase C3 Upload -- SHIPPED 2026-10-25** (merge 05dc423; spec `docs/superpowers/specs/2026-10-25-phase-c3-upload-design.md`
   (33 rulings), plan `docs/superpowers/plans/2026-10-25-phase-c3-upload.md`). Page header + two drop cards (`drop-card.tsx`; whole
   card is the drop target, only drags carrying Files are handled, no-board card cancels file drops), staging section with a
