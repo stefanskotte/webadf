@@ -9,6 +9,7 @@ import { SIGNED_OUT_TEXT, isSignedOutAnswer, mergeStaging, stagingView, type Sta
 import { useStaging } from './staging-provider';
 import { StagingConfirm } from './staging-confirm';
 import { StagingRow } from './staging-row';
+import { DiskIcon } from '@/components/ui/disk-icon';
 import { FILTERS, EMPTY_UNDER, filterAfterKey } from '@/lib/upload-look';
 
 /** Row actions (spec 2026-10-25-phase-c3-upload-design.md §5.3): outline buttons, destructive ones red, Retry ink. */
@@ -244,10 +245,13 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
             className="flex flex-col md:max-h-[36rem] md:overflow-y-auto">
           {view.shown.map((v) => <StagingRow key={v.key} v={v}>{v.actions.map((a) => action(v, a))}</StagingRow>)}
           {view.shown.length === 0 && (rows.length > 0 || s.loaded) && (
-            <li className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }} data-testid="staging-empty">
-              {filter === 'all' || rows.length === 0
-                ? 'Nothing here yet. Drop disks for the library, or files for the Amiga.'
-                : EMPTY_UNDER[filter]}
+            <li data-testid="staging-empty" className="flex flex-col items-center gap-2.5 py-10 text-center">
+              <span aria-hidden="true"><DiskIcon color="cream" size={48} /></span>
+              <span className="text-[14px]" style={{ color: 'var(--muted)' }}>
+                {filter === 'all' || rows.length === 0
+                  ? 'Nothing here yet. Drop disks for the library, or files for the Amiga.'
+                  : EMPTY_UNDER[filter]}
+              </span>
             </li>
           )}
           {view.shown.length === 0 && rows.length === 0 && !s.loaded && (

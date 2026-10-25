@@ -339,7 +339,7 @@ test('the filter is a radiogroup: arrows move and select, the tab stop follows t
   await page.keyboard.press('End');
   await expect(page.getByTestId('staging-filter-lib')).toHaveAttribute('aria-checked', 'true');
   await tabStops('lib');
-  await expect(page.getByTestId('staging-empty')).toHaveText('Nothing to the library right now.');
+  await expect(page.getByTestId('staging-empty')).toContainText('Nothing to the library right now.');
 });
 
 test('Clear finished is shown at (0), disabled, and the refresh state reads Up to date', async ({ page }) => {

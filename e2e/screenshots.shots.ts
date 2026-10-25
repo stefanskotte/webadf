@@ -150,6 +150,11 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
     await setAccept.click();
     await expect(page.getByTestId('set-suggestion')).toHaveCount(0, { timeout: 15_000 });
   }
+  // The Upload page itself, at the width the C3 design was drawn for.
+  const beforeUpload = page.viewportSize();
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await shoot(page, 'upload');
+  if (beforeUpload) await page.setViewportSize(beforeUpload);
 
   // --- the app's own identification -----------------------------------------
   // Upload ends with an after() sweep (src/lib/ingest-complete.ts) that
