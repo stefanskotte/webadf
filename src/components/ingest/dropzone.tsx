@@ -428,7 +428,7 @@ export function Dropzone() {
       disk={{ color: 'black', set: 'ADF · ADZ · DMS · HFE', title: 'Add to library' }}
       disabled={busy} onFiles={(f) => void handleFiles(f)}>
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-        <label htmlFor="add-file-input" data-testid="add-browse" aria-disabled={busy || undefined}
+        <label htmlFor="add-file-input" data-testid="add-browse"
                className={INK_LABEL} style={INK_STYLE}>
           {busy ? 'Working…' : 'Browse files'}
           <input id="add-file-input" type="file" multiple accept=".adf,.dsk,.adz,.dms,.dmz,.hfe" className="sr-only"

@@ -4,8 +4,8 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, inArray } from 'drizzle-orm';
-import { signUpFresh } from './helpers';
-import { pairDevice, authHeader, cleanupSeeded } from './device-helpers';
+import { signUpFresh, libRows } from './helpers';
+import { pairDevice, authHeader, cleanupSeeded, hydrated } from './device-helpers';
 import { getDb } from '@/db';
 import { transfers } from '@/db/schema/transfers';
 import { amigaUploads } from '@/db/schema/amiga-uploads';
@@ -213,7 +213,7 @@ test('the drop cards: whole-card drop targets with Browse files, the inline URL 
   await page.route('**/api/ingest/check', async (route) => { await held; await route.continue(); });
   await page.getByTestId('file-input').setInputFiles({ name: 'busy.adf', mimeType: 'application/octet-stream', buffer: fakeAdf() });
   await expect(page.getByTestId('add-browse')).toHaveText('Working…');
-  await expect(page.getByTestId('add-browse')).toHaveAttribute('aria-disabled', 'true');
+  await expect(page.getByTestId('add-browse').locator('input')).toBeDisabled();
   release();
   await expect(page.getByTestId('add-browse')).toHaveText('Browse files', { timeout: 30_000 });
 });
@@ -227,4 +227,74 @@ test('the Send card names its one board and whether Transfer runs, beside Choose
   await expect(page.getByTestId('send-board')).toHaveText(/^To Bench · /);
   await expect(page.getByTestId('send-receiver')).toHaveText(/^[✓•] /);
   await expect(page.getByTestId('help-tip-send')).toBeVisible();
+});
+
+/** Dispatch a drag event with one file on a drop card; answers whether the page cancelled it (preventDefault). */
+async function dragOn(page: Page, testId: string, type: 'dragenter' | 'dragover' | 'dragleave' | 'drop', file?: { name: string; bytes: number[] }): Promise<boolean> {
+  return page.evaluate(([tid, t, f]) => {
+    const el = document.querySelector(`[data-testid="${tid}"]`)!;
+    const dt = new DataTransfer();
+    if (f) dt.items.add(new File([new Uint8Array(f.bytes)], f.name, { type: 'application/octet-stream' }));
+    const ev = new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt });
+    el.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  }, [testId, type, file] as const);
+}
+const adfFile = (name: string) => ({ name, bytes: Array.from(fakeAdf()) });
+
+test('a drop on the library card: dragenter lights it, a drop stages the disk, a drop while busy adds nothing', async ({ page }) => {
+  await signUpFresh(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/ingest');
+  await expect(page.locator('[data-testid="staging-empty"], [data-testid="staging-row"]').first()).toBeVisible({ timeout: LIVE });
+  await hydrated(page, 'dropzone', 'onDrop');
+  const add = page.getByTestId('dropzone');
+  await dragOn(page, 'dropzone', 'dragenter');
+  await expect(add).toHaveAttribute('data-over', 'true');
+  await dragOn(page, 'dropzone', 'dragleave');
+  await expect(add).toHaveAttribute('data-over', 'false');
+  // Hold /check: the first drop stays busy, so the second is ignored and does not light the card.
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  await page.route('**/api/ingest/check', async (route) => { await held; await route.continue(); });
+  await dragOn(page, 'dropzone', 'drop', adfFile('first.adf'));
+  await expect(page.getByTestId('add-browse')).toHaveText('Working…');
+  await dragOn(page, 'dropzone', 'dragenter');
+  await expect(add).toHaveAttribute('data-over', 'false');          // disabled: no invitation to drop
+  expect(await dragOn(page, 'dropzone', 'drop', adfFile('second.adf'))).toBe(true);   // cancelled, but ignored
+  release();
+  await expect(libRows(page).first()).toHaveAttribute('data-state', 'done', { timeout: 30_000 });
+  await expect(libRows(page)).toHaveCount(1);
+});
+
+test('a drop on the Send card queues the file for the paired board; keyboard reaches both pickers', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/ingest');
+  await hydrated(page, 'send-dropzone', 'onDrop');
+  await dragOn(page, 'send-dropzone', 'dragenter');
+  await expect(page.getByTestId('send-dropzone')).toHaveAttribute('data-over', 'true');
+  await dragOn(page, 'send-dropzone', 'drop', { name: 'note.txt', bytes: [1, 2, 3] });
+  await expect(page.locator('[data-testid="staging-row"][data-kind="out"]')).toHaveCount(1, { timeout: LIVE });
+  // Tab reaches the hidden input inside each Browse label.
+  await page.getByTestId('add-browse').locator('input').focus();
+  await expect(page.getByTestId('add-browse').locator('input')).toBeFocused();
+  await page.keyboard.press('Tab');                                  // the next stop after Browse files is the URL field
+  await expect(page.getByTestId('url-input')).toBeFocused();
+  await page.getByTestId('send-browse').locator('input').focus();
+  await expect(page.getByTestId('send-file-input')).toBeFocused();
+});
+
+test('the Send card without a board is not a drop target, but still cancels a drop so the tab never navigates', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/ingest');
+  await expect(page.locator('[data-testid="staging-empty"], [data-testid="staging-row"]').first()).toBeVisible({ timeout: LIVE });
+  const url = page.url();
+  await expect(page.getByTestId('send-dropzone')).toHaveAttribute('data-drop', 'off');
+  expect(await dragOn(page, 'send-dropzone', 'dragover')).toBe(true);
+  expect(await dragOn(page, 'send-dropzone', 'drop', { name: 'x.txt', bytes: [1] })).toBe(true);
+  await expect(page.getByTestId('send-dropzone')).toHaveAttribute('data-over', 'false');
+  expect(page.url()).toBe(url);
 });
