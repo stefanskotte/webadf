@@ -8,10 +8,12 @@ export default function AdminLoading() {
   return (
     <div role="status" aria-busy="true" data-testid="page-skeleton">
       <span className="sr-only">Loading…</span>
-      <div className="flex flex-col gap-2 px-4 pb-5 pt-6 sm:px-7">
-        <Bone className="h-[13px] w-40" />
+      {/* The heights are PageHeader's lg head: two 19.5 px text lines (13 px at line-height 1.5), the heading,
+          gap-1 between them and mt-1 above the subtitle, so the tabs do not move when the page lands. */}
+      <div className="flex flex-col gap-1 px-4 pb-5 pt-6 sm:px-7">
+        <Bone className="h-[19.5px] w-40" />
         <Bone className="h-[30px] w-56 sm:h-[44px]" />
-        <Bone className="h-[13px] w-72 max-w-full" />
+        <Bone className="mt-1 h-[19.5px] w-72 max-w-full" />
       </div>
       <div className="px-4 pb-6 sm:px-7">
         <Bone className="h-[42px] w-[420px] max-w-full" style={{ borderRadius: 12 }} />

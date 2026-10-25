@@ -226,6 +226,16 @@ test('the library card and row pairs are legible: type pill, DF0 pill, count lin
   }
 });
 
+test('the admin sans subtitle (--muted on the ground) is legible', async ({ page }) => {
+  // No admin page sets subtitleFont="sans" until C6 Tasks 2 and 5. So take the live subtitle element of
+  // /admin/invites (real ground behind it) and give it exactly what the sans variant gives it: --muted.
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/invites');
+  const sub = 'div:has(> h1) + span';
+  await page.locator(sub).evaluate((el) => { (el as HTMLElement).style.color = 'var(--muted)'; });
+  await legible(page, 'admin', [['sans subtitle, --muted', sub]]);
+});
+
 test('a toast description is legible', async ({ page }) => {
   await signUpFresh(page);
   await signInAsSuperAdmin(page);

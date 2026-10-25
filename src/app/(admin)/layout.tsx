@@ -79,7 +79,7 @@ export default async function AdminLayout({
           </div>
           {/* Wraps onto its own full-width line below sm; ml-auto is inert
               there and still does the work at sm and up. */}
-          <div className="ml-auto flex w-full flex-wrap items-center gap-3 sm:w-auto sm:shrink-0 sm:flex-nowrap sm:gap-4">
+          <div className="ml-auto flex w-full items-center gap-2 sm:w-auto sm:shrink-0 sm:gap-4">
             <SearchBox />
             {/* Hidden from sm until xl: with it, the bar has no room for the
                 pill between the wordmark and the search box (the pill would
@@ -87,7 +87,7 @@ export default async function AdminLayout({
                 viewport). It is a label, not a control; below sm it has its
                 own wrapped line again. */}
             <span
-              className="max-w-[180px] truncate font-mono text-[11.5px] sm:hidden xl:block"
+              className="hidden max-w-[180px] truncate font-mono text-[11.5px] xl:block"
               style={{ color: 'var(--muted)' }}
               data-testid="admin-email"
             >

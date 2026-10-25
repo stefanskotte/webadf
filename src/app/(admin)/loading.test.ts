@@ -13,6 +13,7 @@ describe('AdminLoading (C6 spec §1.7, Ruling 37)', () => {
   });
   it("draws the admin frame: an lg head, the tabs bone, one card of six rows", () => {
     expect(html).toContain('h-[30px] w-56 sm:h-[44px]');
+    expect(html.match(/h-\[19\.5px\]/g)?.length).toBe(2);
     expect(html).toContain('h-[42px] w-[420px] max-w-full');
     expect(html).toContain('rounded-[16px]');
     expect(html.match(/data-skeleton-row/g)?.length).toBe(6);
