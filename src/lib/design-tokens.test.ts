@@ -49,6 +49,8 @@ describe('design tokens (globals.css)', () => {
     ['--from-amiga-bg', '#E5F0DF'], ['--from-amiga-fg', '#2C5E24'], ['--accent-blue', '#1D4F86'],
     ['--dir-bg', '#E9EEF4'], ['--exe-bg', '#E2F0DF'], ['--exe-fg', '#2E5B2A'], ['--viewing-bg', '#FBF3E3'],
     ['--warning-line', '#E2C48F'], ['--on-ink-fill', '#3E3B36'],
+    ['--danger-line', '#F2C9BF'], ['--danger-strong', '#9A2A1C'], ['--prose', '#3E392F'], ['--on-ink-2', '#E8E1D2'],
+    ['--on-ink-muted', '#A39B8B'], ['--on-ink-accent', '#EE8A2A'],
   ])('%s is %s', (name, value) => {
     expect(tokens()[name]).toBe(value);
   });
@@ -78,6 +80,11 @@ describe('design tokens (globals.css)', () => {
     ['--success-fg', '--success-bg'], ['--danger-fg', '--danger-bg'], ['--muted-2', '--modal-foot'],
     ['--amber-text', '--surface-2'], ['--amber-text', '--viewing-bg'], ['--ink', '--viewing-bg'],
     ['--muted-2', '--viewing-bg'], ['--surface', '--on-ink-fill'], ['--fetch-dot', '--ink'], ['--danger-fg', '--surface'],
+    // Settings / Help / Search / Sign in spec §11
+    ['--ink', '--surface-2'], ['--muted', '--ground'], ['--muted', '--surface-2'], ['--muted-2', '--surface'],
+    ['--muted-2', '--ground'], ['--success-fg', '--surface'], ['--danger-fg', '--ground'], ['--danger-fg', '--track'],
+    ['--danger-strong', '--surface'], ['--danger-strong', '--danger-bg'], ['--prose', '--surface'],
+    ['--on-ink-2', '--ink'], ['--on-ink-accent', '--ink'], ['--on-ink-muted', '--ink'],
   ];
   it.each(pairs)('%s on %s clears AA (4.5:1)', (fg, bg) => {
     const read = (n: string) => (n.startsWith('#') ? n : tok(n));
@@ -89,6 +96,14 @@ describe('design tokens (globals.css)', () => {
   // contrast.spec's focus test measures on the page.
   it.each(grounds)('--ring on %s clears 3:1 (WCAG 1.4.11)', (bg) => {
     expect(ratio(tok('--ring'), tok(bg))).toBeGreaterThanOrEqual(3);
+  });
+
+  // The switch's off track border is the non-text indicator of "off" (C5 spec §11): 3:1 on the card.
+  it('--muted-2 (the switch\'s off border) clears 3:1 on --surface', () => {
+    expect(ratio(tok('--muted-2'), tok('--surface'))).toBeGreaterThanOrEqual(3);
+  });
+  it('--search-scrim is the 12 % ink scrim (C5 spec §1.5)', () => {
+    expect(css).toMatch(/--search-scrim:\s*rgb\(36 33 27 \/ 0\.12\)/);
   });
 
   it('no gradient token remains', () => {

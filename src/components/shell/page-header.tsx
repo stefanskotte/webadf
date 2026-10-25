@@ -9,6 +9,7 @@ export function PageHeader({
   actions,
   help,
   size = 'md',
+  flush = false,
 }: {
   /**
    * A plain label for a page that is not a drill-down ("Admin", "Hardware"),
@@ -28,6 +29,8 @@ export function PageHeader({
    * Phase C step, so two heading sizes coexist for a while on purpose.
    */
   size?: 'md' | 'lg';
+  /** Drops the outer gutter: the page's own column supplies it (Settings, Help; C5 spec §1.3). */
+  flush?: boolean;
 }) {
   const lg = size === 'lg';
   return (
@@ -37,7 +40,7 @@ export function PageHeader({
     // actions to the bottom of whatever height the row happened to have,
     // rather than keeping them under the title. px-4 there per spec D-6-9:
     // px-7 is 14% of a 390px screen.
-    <div className="flex flex-col items-start gap-3 px-4 pb-5 pt-6 sm:flex-row sm:items-end sm:justify-between sm:gap-0 sm:px-7">
+    <div className={`flex flex-col items-start gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-0 ${flush ? '' : 'px-4 pb-5 pt-6 sm:px-7'}`}>
       <div className="flex flex-col gap-1">
         {Array.isArray(eyebrow) ? (
           <Breadcrumb crumbs={eyebrow} />
