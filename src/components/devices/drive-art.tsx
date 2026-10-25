@@ -6,13 +6,27 @@ import { useId } from 'react';
  * only the LED follows the tokens (online / danger). Nothing on it is interactive: the board's screen is
  * `DriveGlass`, placed over it in percentages.
  *
- * `tall`: the 128x64 panel. The case is drawn 21 units taller (viewBox height 153) and everything from the bezel down
- * moves 21 units, so the taller glass fits in the top band. Gradient ids carry a per-instance suffix: an SVG id is
+ * The glass is drawn GLASS_W (180) of the art's 304 units wide -- twice the design's 90, which the operator found too
+ * small to read (2026-10-25). The case grows to fit it: 23 units taller for the 128x32 panel (viewBox 304 x 155), 68
+ * for the 128x64 one (`tall`, 304 x 200), and everything from the bezel down moves by that much, so the glass sits in
+ * the top band above the bezel. Gradient ids carry a per-instance suffix: an SVG id is
  * document-wide and two cards on a page must not share one.
  */
 export const ART_W = 304;
 export const ART_H = 132;
-export const ART_TALL_EXTRA = 21;
+export const GLASS_W = 180;
+const EXTRA = 23;
+const TALL_EXTRA = 68;
+
+/** The glass's height in art units: the panel at GLASS_W wide plus its 1-unit frame top and bottom. */
+export function glassHeight(tall: boolean): number {
+  return (GLASS_W * (tall ? 64 : 32)) / 128 + 2;
+}
+
+/** The art's viewBox height for the panel. */
+export function artHeight(tall: boolean): number {
+  return ART_H + (tall ? TALL_EXTRA : EXTRA);
+}
 
 export function DriveArt({ name, online, hasDisk, tall }: {
   name: string; online: boolean; hasDisk: boolean; tall: boolean;
@@ -21,7 +35,7 @@ export function DriveArt({ name, online, hasDisk, tall }: {
   const caseId = `mdCase${uid}`;
   const bezelId = `mdBezel${uid}`;
   const glowId = `mdGlow${uid}`;
-  const dy = tall ? ART_TALL_EXTRA : 0;
+  const dy = artHeight(tall) - ART_H;
   const led = online ? 'var(--online-dot)' : 'var(--danger-fg)';
   const aria = `${name}, ${online ? 'online' : 'offline'}, ${hasDisk ? 'disk in drive' : 'drive empty'}`;
   return (
