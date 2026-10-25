@@ -410,3 +410,38 @@ test('below xl the row stacks: the actions sit under the name', async ({ page, r
   expect(acts.y).toBeGreaterThan(where.y + where.height - 1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 });
+
+test('row actions: outline buttons, destructive ones red, Retry ink; Send to Amiga… is a select named by board and MAC', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);   // an online send target, or the row has no Send select
+  const stored = await seedUpload(orgId, deviceId, 'Bench', { path: 'Keep.txt', status: 'stored' });
+  const failedSend = await seedSend(orgId, deviceId, { path: 'Bad.bin', status: 'failed' });
+  await page.goto('/ingest');
+  const del = page.getByTestId(`staging-delete-amiga:${stored}`);
+  await expect(del).toBeVisible({ timeout: LIVE });
+  const color = (l: typeof del) => l.evaluate((el) => getComputedStyle(el).color);
+  expect(await color(del)).toBe('rgb(179, 52, 31)');                                     // --danger-fg
+  expect(await color(page.getByTestId(`staging-download-amiga:${stored}`))).toBe('rgb(36, 33, 27)');   // ink
+  const retry = page.getByTestId(`staging-retry-send:${failedSend}`);
+  expect(await retry.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(36, 33, 27)');
+  const send = page.getByTestId(`staging-send-amiga:${stored}`);
+  await expect(send).toHaveJSProperty('tagName', 'SELECT');
+  await expect(send.locator('option').first()).toHaveText('Send to Amiga…');
+  await expect(send.locator('option').nth(1)).toHaveText(/^Bench( \(.+\))?$/);
+  expect((await del.boundingBox())!.height).toBeGreaterThanOrEqual(31);                 // the board's 32 px
+});
+
+test('after Delete removes the row, focus goes to the Staging heading', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const id = await seedUpload(orgId, deviceId, 'Bench', { path: 'Gone.txt', status: 'stored' });
+  await page.goto('/ingest');
+  await expect(page.getByTestId(`staging-delete-amiga:${id}`)).toBeVisible({ timeout: LIVE });
+  await hydrated(page, `staging-delete-amiga:${id}`);
+  await page.getByTestId(`staging-delete-amiga:${id}`).click();
+  await expect(page.getByTestId('staging-confirm-cancel')).toBeFocused();
+  await page.getByTestId('staging-confirm-yes').click();
+  await expect(row(page, `amiga:${id}`)).toHaveCount(0, { timeout: LIVE });
+  await expect(page.locator('#staging-heading')).toBeFocused();
+});

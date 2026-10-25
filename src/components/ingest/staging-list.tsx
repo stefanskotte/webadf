@@ -11,8 +11,18 @@ import { StagingConfirm } from './staging-confirm';
 import { StagingRow } from './staging-row';
 import { FILTERS, EMPTY_UNDER, filterAfterKey } from '@/lib/upload-look';
 
-const btn = 'rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50';
-const quiet = { background: 'var(--glass-strong)', color: 'var(--ink)', border: '1px solid var(--hairline-strong)' } as const;
+/** Row actions (spec 2026-10-25-phase-c3-upload-design.md §5.3): outline buttons, destructive ones red, Retry ink. */
+const ACT = 'inline-flex h-8 shrink-0 items-center rounded-[8px] px-2.5 text-[12px] font-medium hover:bg-[var(--track)] disabled:opacity-50';
+const ACT_STYLE = { background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--ink)' } as const;
+const ACT_DANGER = { ...ACT_STYLE, color: 'var(--danger-fg)' } as const;
+const ACT_PRIMARY = { background: 'var(--ink)', color: 'var(--surface)', border: '1px solid var(--ink)' } as const;
+
+/** A removed row takes its button with it; focus must not fall to <body> (spec §6.3), so it goes to the Staging heading. */
+const focusHeadingIfLost = () => requestAnimationFrame(() => {
+  if (!document.activeElement || document.activeElement === document.body) {
+    document.getElementById('staging-heading')?.focus();
+  }
+});
 
 /** `stop`: the file is still arriving; the delete then holds only while it is (`?only=receiving`). */
 type Confirm = { key: string; id: string; question: string; yes: string; what: string; stop?: boolean };
@@ -84,7 +94,7 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
       if (!c.stop || res.status !== 409) return false;
       toast.info('It finished arriving; it was kept.');
       return true;
-    }).finally(() => setConfirm(null));
+    }).finally(() => { setConfirm(null); focusHeadingIfLost(); });
 
   // A fetch first, so a 404 is a toast and not a saved file called "not found"; the bytes then save under the Amiga name.
   async function download(v: ViewRow) {
@@ -116,6 +126,7 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
   /** Clear the rows by key: the browser's own go at once; the server's go by their keys, and only if still finished. */
   async function clear(keys: { local: string[]; server: string[] }, busyKey: string) {
     s.removeLocal([...keys.local, ...keys.server]);
+    focusHeadingIfLost();
     if (keys.server.length === 0) return;
     await run(busyKey, 'Could not clear',
       () => fetch('/api/staging/clear', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keys: keys.server }) }),
@@ -129,39 +140,44 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
       case 'open':
         return v.gameId && (
           <Link key={a} href={`/games/${encodeURIComponent(v.gameId)}`} data-testid={id}
-                className="text-[12px] font-semibold underline underline-offset-2" style={{ color: 'var(--ink)' }}>Open title</Link>
+                className={ACT} style={ACT_STYLE}>Open title</Link>
         );
       case 'add':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={btn} style={quiet}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT} style={ACT_STYLE}
                        aria-label={`Add ${v.name} to the library`} onClick={() => void addToLibrary(v)}>Add to library</button>;
       case 'download':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={btn} style={quiet}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT} style={ACT_STYLE}
                        aria-label={`Download ${v.name}`} onClick={() => void download(v)}>Download</button>;
       case 'send':
         return targets.length > 0 && (
-          <select key={a} aria-label={`Send ${v.name} to an Amiga`} data-testid={id} value="" disabled={disabled}
-                  className="rounded-lg px-2 py-1 text-[12px]" style={quiet}
-                  onChange={(e) => { const t = targets.find((x) => x.id === e.target.value); if (t) void sendTo(v, t); }}>
-            <option value="">Send to Amiga…</option>
-            {targets.map((t) => <option key={t.id} value={t.id}>{targetLabel(t)}</option>)}
-          </select>
+          <span key={a} className="relative inline-flex">
+            <select aria-label={`Send ${v.name} to an Amiga`} data-testid={id} value="" disabled={disabled}
+                    className={`${ACT} appearance-none pr-7`} style={ACT_STYLE}
+                    onChange={(e) => { const t = targets.find((x) => x.id === e.target.value); if (t) void sendTo(v, t); }}>
+              <option value="">Send to Amiga…</option>
+              {targets.map((t) => <option key={t.id} value={t.id}>{targetLabel(t)}</option>)}
+            </select>
+            <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2">
+              <path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="var(--muted)" strokeWidth="1.5" />
+            </svg>
+          </span>
         );
       case 'delete':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={btn} style={quiet}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT} style={ACT_DANGER}
                        aria-label={`Delete ${v.name}`}
                        onClick={() => setConfirm({ key: v.key, id: idOf(v), question: `Delete ${v.name}? It is the only copy.`, yes: 'Delete', what: 'Not deleted' })}>Delete</button>;
       case 'stop':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={btn} style={quiet}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT} style={ACT_DANGER}
                        aria-label={`Stop receiving ${v.name}`}
                        onClick={() => setConfirm({ key: v.key, id: idOf(v), question: `Stop receiving ${v.name}? The part that arrived is deleted.`, yes: 'Stop', what: 'Not stopped', stop: true })}>Stop</button>;
       case 'cancel':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={btn} style={quiet}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT} style={ACT_DANGER}
                        aria-label={`Cancel ${v.name}`} onClick={() => void cancel(v)}>Cancel</button>;
       case 'retry':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={`${btn} text-white`}
-                       style={{ background: 'var(--primary-action)' }} aria-label={`Retry ${v.name}`} onClick={() => void retry(v)}>Retry</button>;
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT}
+                       style={ACT_PRIMARY} aria-label={`Retry ${v.name}`} onClick={() => void retry(v)}>Retry</button>;
       case 'clear':
-        return <button key={a} type="button" data-testid={id} disabled={disabled} className={btn} style={quiet}
+        return <button key={a} type="button" data-testid={id} disabled={disabled} className={ACT} style={ACT_STYLE}
                        aria-label={`Clear ${v.name}`}
                        onClick={() => void clear(v.row.source === 'server' ? { local: [], server: [v.key] } : { local: [v.key], server: [] }, v.key)}>Clear</button>;
     }

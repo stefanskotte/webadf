@@ -43,13 +43,15 @@ export function StagingConfirm({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'var(--scrim)' }}>
       <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} data-testid="staging-confirm"
            className="glass-card wf-modal w-full max-w-[440px] p-6 text-left outline-none">
-        <h2 id={titleId} className="text-[15px] font-bold" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>{question}</h2>
-        <div className="mt-5 flex items-center justify-end gap-2">
+        <h2 id={titleId} className="text-[20px] font-bold" style={{ color: 'var(--ink)', fontFamily: 'var(--font-display)', overflowWrap: 'anywhere' }}>{question}</h2>
+        <div className="mt-5 flex justify-end gap-2.5">
           <button type="button" ref={cancelBtn} data-testid="staging-confirm-cancel" disabled={busy} onClick={onCancel}
-                  className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold disabled:opacity-50" style={{ color: 'var(--muted)' }}>Cancel</button>
+                  className="h-[38px] rounded-[10px] px-4 text-[13px] font-semibold disabled:opacity-50"
+                  style={{ background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--ink)' }}>Cancel</button>
           {/* The dialog takes focus before the buttons disable, so focus does not fall out to the page while busy. */}
           <button type="button" data-testid="staging-confirm-yes" disabled={busy} onClick={() => { dialog.current?.focus(); onYes(); }}
-                  className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-50" style={{ background: 'var(--danger-fg)' }}>
+                  className="h-[38px] rounded-[10px] px-4 text-[13px] font-semibold text-white disabled:opacity-50"
+                  style={{ background: 'var(--danger-fg)', border: '1px solid var(--danger-fg)' }}>
             {yes}
           </button>
         </div>
