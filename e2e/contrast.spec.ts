@@ -131,6 +131,17 @@ function ratio(fg: number[], bg: number[]) {
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
 
+/** C5: probe each [name, selector] and require AA. The selector must find a painted element; never loosen 4.5. */
+async function legible(page: Page, area: string, pairs: ReadonlyArray<readonly [string, string]>) {
+  for (const [name, sel] of pairs) {
+    const p = await probe(page, sel);
+    expect(p, `${area}: ${name} (${sel}) not found or transparent`).toBeTruthy();
+    const r = ratio(p!.fg, p!.bg);
+    console.log(`${area.padEnd(9)} ${name.padEnd(36)} ${r.toFixed(2)}:1  "${p!.text.slice(0, 32)}"`);
+    expect(r, `${area}: ${name}`).toBeGreaterThan(4.5);
+  }
+}
+
 for (const path of ['/sign-in', '/sign-up']) {
   test(`${path} text is legible on the ground`, async ({ page }) => {
     await page.goto(path);
@@ -579,4 +590,21 @@ test('the Disk files pairs are legible: banner, rows, glyphs, chips, column head
   await page.goto(`/disks/${disk.id}/files`);
   if (was !== 'true') await page.getByTestId('fs-hide-info').click();
   await page.screenshot({ path: 'test-results/zz-disk-files.png', fullPage: true });
+});
+
+// Phase C5 spec §11: the "?" and its open popover (the ink card).
+test('the "?" and its open popover are legible: glyph on the track, title, text and link on ink', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/settings');
+  await hydrated(page, 'help-tip-preferences');
+  await page.mouse.move(0, 0);
+  await legible(page, 'help tip', [['"?" glyph (idle, on the track)', '[data-testid="help-tip-preferences"] > span']]);
+  await page.getByTestId('help-tip-preferences').click();
+  await expect(page.getByTestId('help-pop-preferences')).toBeVisible();
+  await legible(page, 'popover', [
+    ['"?" glyph (open, surface on ink)', '[data-testid="help-tip-preferences"] > span'],
+    ['title', '[data-testid="help-pop-preferences"] h2'],
+    ['text', '[data-testid="help-pop-preferences"] p'],
+    ['Read the full topic', '[data-testid="help-more-preferences"]'],
+  ]);
 });

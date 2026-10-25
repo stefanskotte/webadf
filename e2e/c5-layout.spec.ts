@@ -371,3 +371,28 @@ test('Help: the count is a live region that is always in the page', async ({ pag
   await expect(page.getByTestId('help-filter-count')).toHaveText('');
   await expect(page.getByTestId('help-filter-count')).toHaveAttribute('role', 'status');
 });
+
+// ---- The "?" (spec §4) ----------------------------------------------------------------------------------------
+
+test('the "?" popover: a 24 px round trigger, the ink card, and a uniquely named link to the topic', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/settings');
+  const tip = page.getByTestId('help-tip-preferences');
+  await expect(tip).toHaveAccessibleName('About Preferences');
+  const box = (await tip.boundingBox())!;
+  expect(Math.round(box.width)).toBe(24);
+  expect(Math.round(box.height)).toBe(24);
+  await expect(tip.locator('svg')).toHaveCount(0);
+  await hydrated(page, 'help-tip-preferences');
+  await tip.click();
+  await expect(tip).toHaveAttribute('data-popup-open', '');
+  const pop = page.getByTestId('help-pop-preferences');
+  await expect(pop).toBeVisible();
+  await expect(pop).toBeInViewport({ ratio: 1 });
+  const more = page.getByTestId('help-more-preferences');
+  await expect(more).toHaveAccessibleName('Read the full topic: Preferences');
+  await expect(more).toHaveAttribute('href', '/help#preferences');
+  await page.keyboard.press('Escape');
+  await expect(pop).toBeHidden();
+  await expect(tip).toBeFocused();
+});
