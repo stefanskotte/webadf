@@ -19,6 +19,7 @@ import { sameName } from '@/lib/adffs/write';
 // one about what counts as a directory or how it's labelled).
 import { collectDirectories, type DirectoryOption } from './file-tree';
 import { useFileEdit, MAX_NAME_LENGTH } from './file-actions';
+import { formatKb } from '@/lib/disk-files-look';
 
 /** Split a dropped path into its parent directory key and its own name -- the identical rule `staging.ts` uses internally, needed again here to walk a renamed ancestor chain when building the disk path a batch actually writes to (see `diskPathFor` below). */
 function splitPath(path: string): { dir: string; name: string } {
@@ -50,7 +51,7 @@ interface LiveRow {
 }
 
 export function DropStaging({
-  filesystem, intl, existingNamesByDir, freeBlocks, entries,
+  filesystem, intl, existingNamesByDir, freeBlocks, entries, freeBytes, volumeName,
 }: {
   filesystem: Filesystem;
   intl: boolean;
@@ -72,6 +73,10 @@ export function DropStaging({
    * `<select>` needing a stable value per option.
    */
   entries: AdfEntry[];
+  /** The disk's free bytes for the bar's second line, or null when the usage could not be read. */
+  freeBytes: number | null;
+  /** The volume's name, shown in the bar's mono run. */
+  volumeName: string;
 }) {
   const { diskId, disabled, busy, runEdit, rootBlock } = useFileEdit();
 
@@ -414,20 +419,17 @@ export function DropStaging({
     runEdit(
       () => fetch(`/api/disks/${diskId}/files/batch`, { method: 'POST', body: form }),
       `Added ${manifest.length} item${manifest.length === 1 ? '' : 's'}`,
-      clearStaged,
+      // The list and its commit button vanish on success, so focus goes to the Files heading (spec §9).
+      () => { clearStaged(); document.getElementById('files-heading')?.focus(); },
       { undoable: true },
     );
   }
 
   return (
-    <div ref={cardRef} className="glass-card flex flex-col gap-3 p-4" data-testid="drop-staging">
-      {disabled && (
-        <p className="text-[12.5px] font-semibold" style={{ color: 'var(--amber-text)' }}
-           data-testid="drop-disabled">
-          {disabled.message}
-        </p>
-      )}
-
+    <section ref={cardRef} aria-label="Add files to this disk" data-testid="drop-staging"
+             className="flex flex-col gap-3 rounded-[16px] p-3 pl-4"
+             style={{ background: 'var(--surface)',
+                      border: rows.length === 0 ? '1.5px dashed var(--dash)' : '1px solid var(--line)' }}>
       {/*
         Always visible, per the design doc: this is what advertises that the
         page accepts a drop at all, whether or not anything has been
@@ -440,17 +442,42 @@ export function DropStaging({
         onDrop={handleDrop}
         data-testid="drop-strip"
         aria-disabled={!!disabled}
-        className="rounded-lg border-2 border-dashed px-4 py-3 text-center text-[12.5px] transition-colors"
+        className="flex min-h-[44px] items-center gap-3.5 rounded-[12px]"
         style={{
-          borderColor: dragOver ? 'var(--primary-action)' : 'var(--hairline)',
-          color: 'var(--muted)',
-          opacity: disabled ? 0.5 : 1,
+          background: dragOver ? 'var(--surface-2)' : undefined,
+          outline: dragOver ? '1.5px solid var(--ink)' : undefined,
+          opacity: disabled ? 0.6 : 1,
           pointerEvents: disabled ? 'none' : 'auto',
         }}
       >
-        {rows.length === 0
-          ? 'Drag files, a folder or an .lha/.lzh/.zip here (or onto a folder above) to add them to this disk.'
-          : `${rows.length} item${rows.length === 1 ? '' : 's'} staged below — drop more to add to the same batch.`}
+        <span aria-hidden className="grid h-10 w-10 shrink-0 place-items-center rounded-[12px]"
+              style={{ background: 'var(--track)', color: 'var(--ink)' }}>
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7"
+               strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10 13V4M6.5 7.5 10 4l3.5 3.5M4 13v2.5A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5V13" />
+          </svg>
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          {disabled ? (
+            <p className="text-[13px] font-semibold" style={{ color: 'var(--amber-text)' }} data-testid="drop-disabled">
+              {disabled.message}
+            </p>
+          ) : rows.length === 0 ? (
+            <>
+              <span className="text-[14px] font-semibold [overflow-wrap:anywhere]" style={{ color: 'var(--ink)' }}>
+                Drop files, folders or an .lha / .lzh / .zip here or on a folder to add them to{' '}
+                <span className="font-mono">{volumeName}</span>
+              </span>
+              <span className="text-[12px]" style={{ color: 'var(--muted-2)' }}>
+                {freeBytes === null ? 'Free space unknown' : `${formatKb(freeBytes)} free on this disk`} · every change is saved as a new version
+              </span>
+            </>
+          ) : (
+            <span className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>
+              {rows.length} item{rows.length === 1 ? '' : 's'} staged below — drop more to add to the same batch.
+            </span>
+          )}
+        </div>
       </div>
 
       {rows.length > 0 && (
@@ -474,8 +501,8 @@ export function DropStaging({
                 data-testid="drop-destination-select"
                 value={destinationBlock}
                 onChange={(e) => changeDestination(Number(e.target.value))}
-                className="rounded border bg-transparent px-1.5 py-0.5 text-[11px]"
-                style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
+                className="h-[30px] rounded-[8px] border bg-transparent px-1.5 text-[11px]"
+                style={{ borderColor: 'var(--line)', color: 'var(--ink)' }}
               >
                 {directoryOptions.map((opt) => (
                   <option key={opt.block} value={opt.block}>{opt.label}</option>
@@ -531,7 +558,7 @@ export function DropStaging({
             </p>
           )}
 
-          <div className="flex flex-col gap-2 divide-y" style={{ borderColor: 'var(--hairline)' }}>
+          <div className="flex flex-col gap-2 divide-y" style={{ borderColor: 'var(--line)' }}>
             {rows.map((row, i) => {
               const resolved = row.resolution !== null;
               // Still an open collision needing a decision -- once resolved
@@ -564,8 +591,8 @@ export function DropStaging({
                           data-testid={`stage-include-${i}`}
                           aria-pressed={!isExcluded}
                           title={isExcluded ? 'Not being added — click to include' : 'Will be added — click to leave out'}
-                          className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold"
-                          style={{ border: '1px solid var(--hairline-strong)',
+                          className="grid h-7 min-w-7 shrink-0 place-items-center rounded-[8px] px-1.5 text-[11px] font-semibold"
+                          style={{ border: '1px solid var(--line)',
                                    color: isExcluded ? 'var(--muted)' : 'var(--ink)' }}>
                     {isExcluded ? '☐' : '☑'}
                   </button>
@@ -581,8 +608,8 @@ export function DropStaging({
                       maxLength={MAX_NAME_LENGTH}
                       aria-label={`Name to write "${row.entry.path}" under`}
                       data-testid={`stage-name-${i}`}
-                      className="rounded border bg-transparent px-2 py-0.5 text-[11.5px]"
-                      style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
+                      className="h-[30px] rounded-[8px] border bg-transparent px-2 text-[12px]"
+                      style={{ borderColor: 'var(--line)', color: 'var(--ink)' }}
                     />
                   ) : (
                     <span data-testid={`stage-name-${i}`} style={{ color: 'var(--ink)' }}>
@@ -624,15 +651,15 @@ export function DropStaging({
                         </span>
                         <button type="button" onClick={() => setResolution(row.entry.path, 'skip')}
                                 data-testid={`stage-skip-${i}`}
-                                className="rounded px-2 py-0.5 text-[11px] font-semibold"
-                                style={{ borderColor: 'var(--hairline)', color: 'var(--muted)' }}>
+                                className="h-7 rounded-[8px] border px-2.5 text-[11px] font-semibold"
+                                style={{ borderColor: 'var(--line)', color: 'var(--muted)' }}>
                           {isFolderMerge ? 'Use existing folder' : 'Skip'}
                         </button>
                         {row.entry.kind === 'file' && row.collidesWith === 'existing'
                           && row.existingKind === 'file' && (
                           <button type="button" onClick={() => setResolution(row.entry.path, 'replace')}
                                   data-testid={`stage-replace-${i}`}
-                                  className="rounded px-2 py-0.5 text-[11px] font-semibold text-white"
+                                  className="h-7 rounded-[8px] px-2.5 text-[11px] font-semibold text-white"
                                   style={{ background: 'var(--primary-action)' }}>
                             Replace
                           </button>
@@ -661,7 +688,7 @@ export function DropStaging({
                         </span>
                         <button type="button" onClick={() => clearResolution(row.entry.path)}
                                 data-testid={`stage-undo-${i}`}
-                                className="text-[11px] underline-offset-2 hover:underline"
+                                className="h-7 text-[11px] underline-offset-2 hover:underline"
                                 style={{ color: 'var(--muted)' }}>
                           Undo
                         </button>
@@ -679,7 +706,7 @@ export function DropStaging({
               onClick={commit}
               disabled={commitDisabled}
               data-testid="drop-commit"
-              className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50"
+              className="h-9 rounded-[10px] px-4 text-[12.5px] font-semibold text-white disabled:opacity-50"
               style={{ background: 'var(--primary-action)' }}
             >
               {busy ? 'Writing…' : `Add ${nonSkipped.length} item${nonSkipped.length === 1 ? '' : 's'}`}
@@ -689,14 +716,14 @@ export function DropStaging({
               onClick={clearStaged}
               disabled={busy}
               data-testid="drop-clear"
-              className="rounded-lg border px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
-              style={{ borderColor: 'var(--hairline)', color: 'var(--muted)' }}
+              className="h-9 rounded-[10px] border px-4 text-[12.5px] font-semibold disabled:opacity-50"
+              style={{ borderColor: 'var(--line)', color: 'var(--muted)' }}
             >
               Clear
             </button>
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 }

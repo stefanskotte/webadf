@@ -5,6 +5,7 @@ import { games, disks } from '@/db/schema/catalog';
 import { readVolume, type AdfEntry } from '@/lib/adffs';
 import { signUpFresh, createAdf, openRowMenu, openVersion } from './helpers';
 import { cleanupSeeded, hydrated, pairDevice } from './device-helpers';
+import { synthDrop } from './drag-drop-helpers';
 
 /**
  * Phase C4: the disk page in the ModernDiskFiles layout (spec 2026-10-25-phase-c4-disk-files-design.md). Every disk
@@ -238,4 +239,25 @@ test('Restore this version from the banner lands on the current version, focus o
   await expect(page.getByTestId('version-3')).toContainText('Restored to version 1', AFTER_EDIT);
   await expect(page.locator('[data-testid="fs-entry"][data-name="TWO.TXT"]')).toHaveCount(0);
   await expect(page.locator('h1')).toBeFocused();
+});
+
+test('the drop bar: the board words with free space, staged rows under it, and the reason when editing is off', async ({ page }) => {
+  const { disk } = await freshDisk(page, [{ name: 'ONE.TXT' }]);
+  await page.goto(`/disks/${disk.id}/files`);
+  await hydrated(page, 'drop-strip', 'onDrop');
+  const strip = page.getByTestId('drop-strip');
+  await expect(strip).toContainText('Drop files, folders or an .lha / .lzh / .zip here or on a folder to add them to');
+  await expect(strip).toContainText(/\d+ KB free on this disk · every change is saved as a new version/);
+  await expect(page.getByTestId('drop-staging')).toHaveAttribute('aria-label', 'Add files to this disk');
+  // In flow under the Files card (Ruling 19).
+  const files = (await page.getByTestId('files-card').boundingBox())!;
+  expect((await strip.boundingBox())!.y).toBeGreaterThan(files.y + files.height - 1);
+  await synthDrop(page, [{ name: 'NEW.TXT', kind: 'file', content: 'new' }]);
+  await expect(strip).toContainText('1 item staged below — drop more to add to the same batch.');
+  await expect(page.getByTestId('drop-staging-list')).toBeVisible();
+  await page.getByTestId('drop-commit').click();
+  await expect(page.locator('[data-testid="fs-entry"][data-name="NEW.TXT"]')).toBeVisible(AFTER_EDIT);
+  await expect(page.locator('#files-heading')).toBeFocused();
+  await page.goto(`/disks/${disk.id}/files?version=0`);
+  await expect(page.getByTestId('drop-strip').getByTestId('drop-disabled')).toContainText('read-only');
 });

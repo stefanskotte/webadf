@@ -389,6 +389,8 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
               existingNamesByDir={volume.ok ? existingNamesByDir(volume.root) : {}}
               freeBlocks={usage?.freeBlocks ?? 0}
               entries={volume.ok ? volume.root : []}
+              freeBytes={usage?.freeBytes ?? null}
+              volumeName={title}
             />
             </NativeDropProvider>
           </FileEditProvider>

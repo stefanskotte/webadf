@@ -462,6 +462,10 @@ test('the file toolbar and a row\'s controls fit a phone', async ({ page }) => {
  * a grip handle, a toggle, Rename, Delete and Move to....
  */
 test('the drop strip fits a phone, and a press-and-hold drags an entry onto a folder', async ({ page }) => {
+  // This one test signs up, makes a disk, writes two files, stages a drop, then touch-drags: ~25 s warm and over
+  // the 30 s default on a cold dev-server compile of the files page. The drag itself lands (the PATCH returns
+  // 200); the old failure was the budget running out while polling for the moved entry.
+  test.setTimeout(90_000);
   const u = await signUpFresh(page);
   await page.goto('/library');
   await createAdf(page);
