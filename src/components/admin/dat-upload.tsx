@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
-export function DatUpload() {
+export function DatUpload({ labelledBy }: { labelledBy: string }) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -17,6 +17,7 @@ export function DatUpload() {
   // this keeps it manual without making it tedious. Sequential, not parallel:
   // each import is a large parse and the route is not worth stampeding.
   async function onChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (busy) return;
     const files = [...(e.target.files ?? [])];
     if (files.length === 0) return;
     setBusy(true);
@@ -74,26 +75,30 @@ export function DatUpload() {
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <label htmlFor="dat-file" className="text-[12.5px] font-semibold">
-        Import a TOSEC DAT
-      </label>
+    <div className="flex flex-col gap-2.5">
+      {/* Hidden, not a tab stop: the Choose button is (C6 spec §5.4, Ruling 25). setInputFiles still reaches it. */}
       <input
-        id="dat-file"
         ref={input}
         type="file"
         accept=".dat,.xml"
         multiple
-        disabled={busy}
         onChange={onChange}
         data-testid="dat-upload"
-        className="text-[13px]"
+        className="sr-only"
+        tabIndex={-1}
+        aria-labelledby={labelledBy}
       />
-      <span className="text-[12px]" style={{ color: 'var(--muted)' }}>
-        {busy
-          ? `Importing ${progress ?? '…'}`
-          : 'Select one or more .dat files. ClrMamePro or XML; re-importing a set updates it in place.'}
-      </span>
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" data-testid="dat-choose" aria-disabled={busy || undefined}
+                onClick={() => { if (!busy) input.current?.click(); }}
+                className="h-10 rounded-[10px] border border-(--line) bg-(--surface) px-4 text-[14px] font-medium text-(--ink) hover:bg-(--track) aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)">
+          {busy ? 'Importing…' : 'Choose .dat files'}
+        </button>
+        {/* A live region from the first paint, empty while idle. */}
+        <span role="status" className="text-[13px]" style={{ color: 'var(--muted)' }}>
+          {busy ? `Importing ${progress ?? '…'}` : ''}
+        </span>
+      </div>
     </div>
   );
 }

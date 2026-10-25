@@ -332,3 +332,51 @@ test('Invites: a quick second click on Revoke sends one request, even while the 
   await expect(page.getByTestId(`invite-${code}`).locator('[data-state]')).toHaveText('Revoked', { timeout: 10_000 });
   expect(deletes).toBe(1);
 });
+
+// ---- Scan (spec §5, Rulings 21–26) ------------------------------------------------------------------------
+
+test('Scan: three source cards with every count, the status lines, Choose buttons over hidden inputs, the sets card', async ({ page }) => {
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/scan');
+  await expect(page.getByTestId('run-scan')).toHaveText('Run now');
+  const identity = page.getByTestId('scan-identity');
+  await expect(identity.getByRole('heading', { name: 'Identity' })).toBeVisible();
+  await expect(identity.locator('[data-source]')).toHaveText(/^TOSEC · \d+ entries$/);
+  await expect(identity).toContainText(/(\d+% recognised|— nothing decided yet)/);
+  for (const id of ['scan-blobs', 'scan-hashed', 'scan-matched', 'scan-none', 'scan-ambiguous', 'scan-unreadable', 'scan-unchecked']) {
+    await expect(identity.getByTestId(id)).toHaveText(/^\d+$/);
+  }
+  const details = page.getByTestId('scan-details');
+  await expect(details.getByTestId('scan-openretroEntries')).toHaveText(/^\d+$/);
+  for (const id of ['scan-enriched', 'scan-enrichNone', 'scan-enrichAmbiguous', 'scan-enrichUnchecked', 'scan-imagesStored']) {
+    await expect(details.getByTestId(id)).toHaveText(/^\d+$/);
+  }
+  await expect(details.getByTestId('scan-imageMb')).toHaveText(/^\d+\.\d MB$/);
+  await expect(page.getByTestId('scan-demos').getByTestId('demozoo-status')).toHaveText(/^Demozoo:/);
+
+  // The status lines follow the counts on the page (both values of "anything left to do").
+  const notes = page.getByTestId('scan-notes');
+  await expect(notes).toHaveAttribute('role', 'status');
+  const kinds = await notes.getByTestId('scan-note').evaluateAll((els) => els.map((e) => e.getAttribute('data-kind')));
+  const unchecked = Number(await page.getByTestId('scan-unchecked').textContent());
+  const unreadable = Number(await page.getByTestId('scan-unreadable').textContent());
+  expect(kinds.includes('unchecked')).toBe(unchecked > 0);
+  expect(kinds.includes('unreadable')).toBe(unreadable > 0);
+  expect(kinds.includes('done')).toBe(kinds.length === 1 && kinds[0] === 'done');
+
+  // The Choose buttons are the tab stops; the inputs are not.
+  await expect(page.getByTestId('dat-upload')).toHaveAttribute('tabindex', '-1');
+  await expect(page.getByTestId('openretro-upload')).toHaveAttribute('tabindex', '-1');
+  await expect(page.getByTestId('dat-choose')).toHaveText('Choose .dat files');
+  await expect(page.getByTestId('openretro-choose')).toHaveText('Choose Amiga.sqlite');
+  await hydrated(page, 'dat-choose');
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByTestId('dat-choose').click();
+  expect((await chooser).isMultiple()).toBe(true);
+  await expect(page.getByTestId('tosec-fetch-status')).toContainText('TOSEC:');
+  await expect(page.getByTestId('openretro-hint')).toContainText('Run FS-UAE Launcher once');
+
+  await expect(page.getByRole('heading', { name: 'TOSEC sets' })).toBeVisible();
+  await expect(page.locator('section[aria-labelledby="sets-heading"] th')).toHaveText(['Set', 'Version', 'Entries']);
+  await expect(page.getByRole('heading', { name: /scan/i })).toHaveCount(1);
+});
