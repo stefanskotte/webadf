@@ -7,7 +7,7 @@ import { BLOCK_BYTES, ROOT_BLOCK } from '@/lib/adffs/constants';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { formatVolume } from '@/lib/adffs/format';
 import { recheck } from '@/lib/adffs/write-blocks';
-import { signUpFresh } from './helpers';
+import { signUpFresh, openRowMenu } from './helpers';
 import { cleanupSeeded } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
@@ -204,9 +204,8 @@ test('a single file downloads with the right bytes', async ({ page }) => {
   const row = await ingestDisk(page, adf, `data-${tag}.adf`);
 
   await page.goto(`/disks/${row.id}/files`);
-  const link = page.locator(
-    '[data-testid="fs-entry"][data-name="DATA.BIN"] a[data-testid^="fs-download-"]',
-  );
+  await openRowMenu(page, 'DATA.BIN');
+  const link = page.locator('a[data-testid^="fs-download-"]');
   const href = await link.getAttribute('href');
   expect(href).toBeTruthy();
 
@@ -242,9 +241,8 @@ test('another tenant gets 404 from both the file route and the page, not the own
     expect(ownRes?.status()).toBe(200);
     await expect(pageA.getByTestId('volume-header')).toBeVisible();
 
-    const ownerLink = pageA.locator(
-      '[data-testid="fs-entry"][data-name="SECRET.TXT"] a[data-testid^="fs-download-"]',
-    );
+    await openRowMenu(pageA, 'SECRET.TXT');
+    const ownerLink = pageA.locator('a[data-testid^="fs-download-"]');
     const href = await ownerLink.getAttribute('href');
     expect(href).toBeTruthy();
     expect((await pageA.request.get(href!)).status()).toBe(200);

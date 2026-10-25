@@ -490,7 +490,7 @@ export const HELP_TOPICS = {
         <p>
           <strong>Three ways to send.</strong> On the Upload page, drop files on <em>Send files to the
           Amiga</em>, or press <em>Choose files</em>; with more than one board, pick the board under it. On a disk&apos;s
-          Browse page, press <em>Send</em> on a file or a folder. On a title&apos;s page,
+          page, a file&apos;s or folder&apos;s ⋯ menu has <em>Send to Amiga</em>. On a title&apos;s page,
           press <em>Send .adf to Amiga</em> to send a whole disk as one file. Each shows in the <em>Staging</em> list
           under <em>To the Amiga</em>, every board&apos;s together: waiting, sending, delivered with its saved name, or
           failed, and why.

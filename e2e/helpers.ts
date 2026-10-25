@@ -171,3 +171,23 @@ export async function openTitleMenu(page: Page, gameId: string) {
   await expect(panel).toBeVisible();
   return panel;
 }
+
+/**
+ * Opens a disk file row's ⋯ menu (C4 spec §5.3) -- by block number, or by the row's name -- and returns the panel.
+ * The row actions (Download, Send to Amiga, Rename, Move to…, Protection bits…, Delete) are items in it and keep
+ * their old test ids. A tap where the page has touch, a click otherwise (same rule as openTitleMenu).
+ */
+export async function openRowMenu(page: Page, row: number | string) {
+  const trigger = typeof row === 'number'
+    ? page.getByTestId(`fs-more-${row}`)
+    : page.locator(`[data-testid="fs-entry"][data-name="${row}"] [data-testid^="fs-more-"]`);
+  // A press before hydration reaches DOM with no handler: wait for the trigger's own React props.
+  await expect.poll(() => trigger.evaluate((el) => Object.keys(el).some((k) => k.startsWith('__reactProps$')
+    && typeof (el as unknown as Record<string, Record<string, unknown>>)[k]?.onPointerDown === 'function'))).toBe(true);
+  const touch = await page.evaluate(() => navigator.maxTouchPoints > 0);
+  if (touch) await trigger.tap();
+  else await trigger.click();
+  const panel = page.getByTestId('fs-row-menu');
+  await expect(panel).toBeVisible();
+  return panel;
+}

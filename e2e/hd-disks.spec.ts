@@ -8,7 +8,7 @@ import { diskStore } from '@/lib/storage';
 import { formatVolume } from '@/lib/adffs/format';
 import { readVolume } from '@/lib/adffs';
 import { HD_TRACK_DATA_BYTES } from '@/lib/adfmfm';
-import { signUpFresh, runTag, createAdf, libRows, stagingReady } from './helpers';
+import { signUpFresh, runTag, createAdf, libRows, stagingReady, openRowMenu } from './helpers';
 import { seedDisk, cleanupSeeded, pairDevice, authHeader } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
@@ -315,6 +315,7 @@ test('a blank HD disk is made, edited in the browser, and its history lists and 
   const v = readVolume(new Uint8Array(await (await page.request.get(`/api/disks/${disk.id}/adf`)).body()));
   if (!v.ok) throw new Error(`expected a volume, got ${v.reason}`);
   const block = v.root.find((e) => e.name === 'HELLO.TXT')!.block;
+  await openRowMenu(page, block);
   await page.getByTestId(`fs-rename-${block}`).click();
   await page.getByTestId(`fs-rename-name-${block}`).fill('NEWNAME.TXT');
   await page.getByTestId(`fs-rename-submit-${block}`).click();

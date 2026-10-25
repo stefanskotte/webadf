@@ -6,7 +6,7 @@ import {
   readVolume, readFile, readUsage, blocksForPlan, type AdfEntry, type CostItem,
 } from '@/lib/adffs';
 import { ROOT_BLOCK } from '@/lib/adffs/constants';
-import { signUpFresh, createAdf } from './helpers';
+import { signUpFresh, createAdf, openRowMenu } from './helpers';
 import { cleanupSeeded } from './device-helpers';
 import { synthDrop, manyEmptyFilesTree, type DropNode } from './drag-drop-helpers';
 
@@ -412,6 +412,7 @@ test('a move by keyboard through "Move to…" leaves the entry\'s block number u
   const movedBlock = moved.block;
 
   await page.goto(`/disks/${disk.id}/files`);
+  await openRowMenu(page, movedBlock);
   await page.getByTestId(`fs-move-${movedBlock}`).click();
   const select = page.getByTestId(`fs-move-target-${movedBlock}`);
   await expect(select).toBeVisible();
@@ -470,6 +471,7 @@ test('moving a folder into its own child is refused, on the bytes and in the men
   // (file-tree.tsx's `subtreeBlocks`) -- a drop the UI visibly accepted
   // and then rejected would be worse than one it never offered.
   await page.goto(`/disks/${disk.id}/files`);
+  await openRowMenu(page, parent.block);
   await page.getByTestId(`fs-move-${parent.block}`).click();
   const select = page.getByTestId(`fs-move-target-${parent.block}`);
   await expect(select).toBeVisible();

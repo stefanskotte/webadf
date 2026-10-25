@@ -25,8 +25,9 @@ import { useNativeDrop, isFileDrag } from './native-drop';
 import { SelectionBar } from './selection-bar';
 import { FilesCard } from './files-card';
 import { DiskIcon } from '@/components/ui/disk-icon';
-import { countInfo, plural } from '@/lib/disk-files-look';
+import { countInfo, entryGlyph, infoCompanions, plural, protectionChips } from '@/lib/disk-files-look';
 import { ProtectionEditor } from './protection-editor';
+import { FileRowMenu } from './file-row-menu';
 import { filterTree } from '@/lib/file-filter';
 import { underSelected } from '@/lib/disk-entries';
 
@@ -215,9 +216,9 @@ export function collectDirectories(entries: AdfEntry[], parentPath = ''): Direct
 }
 
 /** Reserved on the left of every row for the drag handle, so the handle can be absolutely positioned in that gutter without disturbing any of the existing `pl-[22px]` alignment the metadata/action lines below the name already depend on. */
-const GRIP_GUTTER = 22;
+
 /** Room for the selection checkbox (A5), left of the grip, when rows are selectable. */
-const SELECT_GUTTER = 20;
+
 
 export function FileTree({
   entries, diskId, toolbar, send = null, sort: initialSort = DEFAULT_PREFS.browse.sort,
@@ -269,6 +270,7 @@ export function FileTree({
     });
   }
   const filtered = useMemo(() => filterTree(entries, { query, hideInfo }), [entries, query, hideInfo]);
+  const companions = useMemo(() => infoCompanions(entries), [entries]);
   const shownBlocks = useMemo(() => allBlocks(filtered.entries), [filtered]);
 
   // Multi-select (A5). A refresh after an edit renumbers nothing it did not
@@ -365,7 +367,14 @@ export function FileTree({
     setRenameValue(entry.name.slice(0, MAX_NAME_LENGTH));
   }
 
+  // Every Cancel, Escape and submit hands focus back to the row's ⋯ (never to <body>).
+  function focusMore(block: number | null) {
+    if (block === null) return;
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-testid="fs-more-${block}"]`)?.focus());
+  }
+
   function cancelRename() {
+    focusMore(renameBlock);
     setRenameBlock(null);
     setRenameValue('');
   }
@@ -389,15 +398,24 @@ export function FileTree({
   }
 
   function cancelDelete() {
+    focusMore(deleteBlock);
     setDeleteBlock(null);
   }
 
+  function closeProtect() {
+    focusMore(protectBlock);
+    setProtectBlock(null);
+  }
+
+  // The confirm is unmounted at once, so focus moves to the ⋯ first; once the row is gone it lands on the heading.
   function submitDelete(block: number) {
+    document.querySelector<HTMLElement>(`[data-testid="fs-more-${block}"]`)?.focus();
     runEdit(
       () => fetch(`/api/disks/${diskId}/files/${block}`, { method: 'DELETE' }),
       'Deleted',
+      () => document.getElementById('files-heading')?.focus(),
     );
-    cancelDelete();
+    setDeleteBlock(null);
   }
 
   function startProtect(entry: AdfEntry) {
@@ -416,6 +434,7 @@ export function FileTree({
   }
 
   function cancelMove() {
+    focusMore(moveBlock);
     setMoveBlock(null);
     setMoveTarget('');
   }
@@ -438,7 +457,7 @@ export function FileTree({
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ toParent }),
-    }), `Moved "${name}"`);
+    }), `Moved "${name}"`, () => document.getElementById('files-heading')?.focus());
     cancelMove();
   }
 
@@ -602,7 +621,7 @@ export function FileTree({
           </div>
         )}
       <div
-        role="list"
+        role={rows.length > 0 ? 'list' : undefined}
         ref={setRootDropRef}
         className="md:max-h-[700px] md:overflow-y-auto"
         style={{ boxShadow: nativeOver === rootBlock ? 'inset 0 0 0 2px var(--accent-amber)' : undefined }}
@@ -624,13 +643,13 @@ export function FileTree({
             {query.trim() ? `No files match "${query.trim()}".` : 'Every file here is a .info icon file.'}
           </p>
         )}
-        {rows.map(({ entry, depth, open, path }, i) => (
+        {rows.map(({ entry, depth, open, path }) => (
           <FileRow
             key={entry.block}
             entry={entry}
             depth={depth}
             open={open}
-            striped={i % 2 === 1}
+            hasInfo={hideInfo && companions.has(entry.block)}
             editDisabled={disabled}
             busy={busy}
             renameBlock={renameBlock}
@@ -667,7 +686,7 @@ export function FileTree({
             addedInSeq={addedIn[path] ?? null}
             protectOpen={protectBlock === entry.block}
             startProtect={startProtect}
-            closeProtect={() => setProtectBlock(null)}
+            closeProtect={closeProtect}
           />
         ))}
       </div>
@@ -686,7 +705,8 @@ interface FileRowProps {
   entry: AdfEntry;
   depth: number;
   open: boolean;
-  striped: boolean;
+  /** Hide .info is on and `<name>.info` sits beside this entry: the `.info` badge. */
+  hasInfo: boolean;
   editDisabled: EditDisabled | null;
   busy: boolean;
   renameBlock: number | null;
@@ -735,7 +755,7 @@ interface FileRowProps {
 }
 
 function FileRow({
-  entry, depth, open, striped, editDisabled, busy,
+  entry, depth, open, hasInfo, editDisabled, busy,
   renameBlock, renameValue, deleteBlock, moveBlock, moveTarget, directoryOptions, currentParent,
   forbiddenBlocks, diskId, canSend, sendBusy, onSend,
   toggle, startRename, cancelRename, submitRename, setRenameValue,
@@ -744,7 +764,6 @@ function FileRow({
   selectable, selected, onSelect, addedInSeq, protectOpen, startProtect, closeProtect,
 }: FileRowProps) {
   const isDir = entry.kind === 'dir';
-  const selectGutter = selectable ? SELECT_GUTTER : 0;
 
   // The "Move to…" menu's own options -- this row's exclusion of
   // `directoryOptions`, computed the same way `forbiddenBlocks` is computed
@@ -801,387 +820,159 @@ function FileRow({
     </span>
   );
 
+  const glyph = entryGlyph(entry);
+  const chips = protectionChips(entry.protection).map((c) => (
+    <span key={c.letter} title={c.label} className="grid h-[18px] w-[14px] place-items-center rounded-[4px]"
+          style={c.on ? { background: 'var(--track)', color: 'var(--ink)' } : { color: 'var(--muted-2)' }}>
+      {c.on ? c.letter : '-'}
+    </span>
+  ));
+  const glyphChip = (
+    <span aria-hidden data-testid={`fs-glyph-${entry.block}`}
+          className="grid h-[22px] w-[22px] shrink-0 place-items-center rounded-[6px] font-mono text-[9px] font-bold"
+          style={{ background: glyph.bg, color: glyph.fg }}>{glyph.label}</span>
+  );
+  const nameBits = (
+    <>
+      {glyphChip}
+      <span className={`text-[14px] [overflow-wrap:anywhere] ${isDir ? 'font-semibold' : ''}`} style={{ color: 'var(--ink)' }}>{entry.name}</span>
+      {hasInfo && (
+        <span className="shrink-0 rounded-[5px] px-1.5 font-mono text-[10px] font-semibold"
+              style={{ background: 'var(--track)', color: 'var(--muted-2)' }}
+              data-testid={`fs-info-${entry.block}`}>.info</span>
+      )}
+      {newMark}
+    </>
+  );
+
+  // The inline forms (A5's, opened from the ⋯ menu): one at a time, a full-width line under the row.
+  const field = 'h-[30px] rounded-[8px] border px-2.5 text-[13px]';
+  const fieldStyle = { background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' } as const;
+  const btn = 'h-[30px] rounded-[8px] px-3 text-[13px] font-semibold disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-(--ring)';
+  const primary = { background: 'var(--ink)', color: 'var(--surface)' } as const;
+  const outline = { border: '1px solid var(--line)', color: 'var(--ink)' } as const;
+  const formOpen = protectOpen || renameBlock === entry.block || deleteBlock === entry.block || moveBlock === entry.block;
+  function cancelForm() {
+    if (protectOpen) closeProtect();
+    else if (renameBlock === entry.block) cancelRename();
+    else if (deleteBlock === entry.block) cancelDelete();
+    else if (moveBlock === entry.block) cancelMove();
+  }
+
   const row = (
     <div
       ref={setDragRef}
-      // Two lines on a phone, one line from `sm` up. The metadata
-      // columns total ~312px of fixed width inside a card that is only
-      // ~310px wide at 390px, so the name column computes NEGATIVE at
-      // depth 0 and worse at every level of nesting, and the card's
-      // own overflow-hidden clips whatever is left. Scrolling the row
-      // sideways is not the alternative: Download is the row's only
-      // action, so it would be the first thing pushed out of reach.
-      className="relative flex flex-col gap-1 py-1.5 text-[12.5px] sm:flex-row sm:items-center sm:gap-3"
-      style={{
-        paddingLeft: `${depth * 18 + 8 + selectGutter + GRIP_GUTTER}px`,
-        paddingRight: '8px',
-        background: striped ? 'rgb(255 255 255 / 0.5)' : 'transparent',
-        // Rounded so the wash reads as a band rather than a full-bleed
-        // block butting against the card's own rounded corners.
-        borderRadius: '6px',
-        transform: CSS.Translate.toString(transform),
-        opacity: isDragging ? 0.5 : 1,
-      }}
+      role={isDir ? undefined : 'listitem'}
       data-testid="fs-entry"
       data-name={entry.name}
+      data-selected={selected || undefined}
+      // From md one line on the board's grid; below it a two-line card (select, grip and ⋯ span both lines).
+      className="grid grid-cols-[28px_32px_minmax(0,1fr)_44px] items-center gap-x-2 gap-y-1 border-b px-4 py-2 text-[13px] hover:bg-[var(--surface-2)] data-[selected=true]:bg-[var(--surface-2)] md:min-h-[40px] md:grid-cols-[28px_28px_minmax(0,1fr)_96px_132px_104px_36px] md:gap-x-3 md:py-1"
+      style={{ borderColor: 'var(--hairline)', transform: CSS.Translate.toString(transform), opacity: isDragging ? 0.5 : 1 }}
       {...(isDir ? {} : nativeDrop)}
     >
-      {/*
-        Absolutely positioned in the gutter `GRIP_GUTTER` reserves on the
-        row's own left edge, at the SAME horizontal offset the row's
-        paddingLeft used to start at before this task -- so it lands in the
-        depth-appropriate spot without shifting anything else in the row
-        (the chevron, the name, the metadata columns, the rename/delete
-        lines) out of the alignment they already had.
-
-        `touchAction: 'none'` matches collection-rail.tsx's own grip handle
-        and for the same reason: dnd-kit only calls preventDefault() on a
-        touchmove that is still cancelable, and once the browser has
-        committed a gesture to a scroll it no longer is -- opting the handle
-        out of browser gestures is what keeps the first post-hold move
-        cancelable, so a press-and-hold here picks the row up instead of the
-        page scrolling under it.
-      */}
-      <button
-        type="button"
-        aria-label={`Move ${entry.name}`}
-        disabled={!!editDisabled || busy}
-        title={editDisabled?.message}
-        data-testid={`fs-drag-${entry.block}`}
-        {...attributes}
-        {...listeners}
-        style={{
-          position: 'absolute',
-          left: `${depth * 18 + 8 + selectGutter}px`,
-          top: '50%',
-          transform: 'translateY(-50%)',
-          touchAction: 'none',
-          color: 'var(--muted-2)',
-        }}
-        className="grid h-5 w-5 shrink-0 cursor-grab place-items-center active:cursor-grabbing disabled:cursor-default disabled:opacity-40"
-      >
-        <GripVertical size={12} aria-hidden />
+      <span className="row-span-2 grid place-items-center md:row-span-1">
+        {selectable && (
+          <input type="checkbox" checked={selected} onChange={() => onSelect(entry.block)}
+                 aria-label={`Select ${entry.name}`} data-testid={`fs-select-${entry.block}`}
+                 className="h-4 w-4" style={{ accentColor: 'var(--ink)' }} />
+        )}
+      </span>
+      {/* The grip is the ONLY drag activator (`attributes`/`listeners` are never spread on the row): the row hosts
+          the folder toggle and the ⋯ menu, and none of those should have to survive an 8px move to register as a
+          click. `touchAction: none` keeps the first post-hold touchmove cancelable (collection-rail.tsx's grip). */}
+      <button type="button" aria-label={`Move ${entry.name}`} disabled={!!editDisabled || busy} title={editDisabled?.message}
+              data-testid={`fs-drag-${entry.block}`} {...attributes} {...listeners}
+              style={{ touchAction: 'none', color: 'var(--muted-2)' }}
+              className="row-span-2 grid h-11 w-8 cursor-grab place-items-center rounded-[6px] active:cursor-grabbing disabled:cursor-default disabled:opacity-40 md:row-span-1 md:h-8 md:w-7">
+        <GripVertical size={14} aria-hidden />
       </button>
-
-      {selectable && (
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={() => onSelect(entry.block)}
-          aria-label={`Select ${entry.name}`}
-          data-testid={`fs-select-${entry.block}`}
-          className="absolute"
-          style={{ left: `${depth * 18 + 10}px`, top: '50%', transform: 'translateY(-50%)' }}
-        />
-      )}
       {isDir ? (
-        // A stable testid of its own -- not just the accessible name
-        // (which happens to equal entry.name today) -- because a row
-        // now legitimately holds more than one <button> (Rename,
-        // Delete, and this toggle), so any test still choosing "the
-        // button" by role alone would be ambiguous or, worse, silently
-        // pick the wrong one if the row's button order ever changes.
-        // Fix round 1 moved e2e/adf-browser.spec.ts and
-        // e2e/mobile.spec.ts onto this testid for exactly that reason
-        // -- do not "simplify" them back to a bare getByRole('button').
-        <button
-          type="button"
-          onClick={() => toggle(entry.block)}
-          data-testid={`fs-toggle-${entry.block}`}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left font-semibold"
-          style={{ color: 'var(--ink)' }}
-          aria-expanded={open}
-        >
-          <span
-            aria-hidden
-            className="inline-block transition-transform duration-150"
-            style={{ color: 'var(--muted)', transform: open ? 'rotate(90deg)' : 'none' }}
-          >
-            ▸
-          </span>
-          <span className="truncate">{entry.name}</span>
-          {newMark}
+        // A stable testid of its own: a row holds more than one <button>, so a test choosing "the button" by role
+        // alone would be ambiguous (e2e moved onto fs-toggle-* for exactly that reason).
+        <button type="button" onClick={() => toggle(entry.block)} data-testid={`fs-toggle-${entry.block}`}
+                aria-expanded={open}
+                className="col-start-3 flex min-w-0 items-center gap-2 rounded-[6px] text-left focus-visible:outline-2 focus-visible:outline-(--ring)"
+                style={{ paddingLeft: `${depth * 18}px` }}>
+          <span aria-hidden className="inline-block w-3 shrink-0 transition-transform duration-150"
+                style={{ color: 'var(--muted)', transform: open ? 'rotate(90deg)' : 'none' }}>▸</span>
+          {nameBits}
         </button>
       ) : (
-        <span className="flex min-w-0 flex-1 items-center gap-2 pl-[22px]" style={{ color: 'var(--ink)' }}>
-          <span className="truncate">{entry.name}</span>
-          {newMark}
+        <span className="col-start-3 flex min-w-0 items-center gap-2" style={{ paddingLeft: `${depth * 18}px` }}>
+          <span aria-hidden className="inline-block w-3 shrink-0" />
+          {nameBits}
         </span>
       )}
-
-      {/*
-        `sm:contents` rather than a second set of column rules: from
-        `sm` up this wrapper generates no box at all, so the row's own
-        flex lays these four out exactly as it did before the wrapper
-        existed -- the desktop row is unchanged, not re-derived. Below
-        `sm` it is line two, indented by the chevron's width so it
-        starts under the name rather than under the arrow.
-      */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-[22px] sm:contents">
-        {!isDir && (
-          <span className="shrink-0 font-mono text-[11px]" style={{ color: 'var(--muted-2)' }}>
-            {entry.sizeBytes.toLocaleString()} B
-          </span>
-        )}
-        {/* Click to edit (A5); a plain reading when the disk can't be edited. */}
-        {editDisabled ? (
-          <span className="shrink-0 font-mono text-[11px]" style={{ color: 'var(--muted-2)' }}
-                data-testid={`fs-protect-${entry.block}`}>
-            {entry.protection}
-          </span>
-        ) : (
-          <button type="button" onClick={() => startProtect(entry)}
-                  aria-label={`Protection of ${entry.name}: ${entry.protection}. Change`}
-                  title="Change protection bits"
-                  data-testid={`fs-protect-${entry.block}`}
-                  className="shrink-0 rounded font-mono text-[11px] underline-offset-2 hover:underline"
-                  style={{ color: 'var(--muted-2)' }}>
-            {entry.protection}
-          </button>
-        )}
-        <span className="w-[80px] shrink-0 font-mono text-[11px]" style={{ color: 'var(--muted-2)' }}>
-          {entry.modifiedAt ? entry.modifiedAt.toISOString().slice(0, 10) : '—'}
+      <div className="col-start-3 row-start-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[12px] md:contents">
+        <span className="md:text-right" style={{ color: isDir ? 'var(--muted-2)' : 'var(--muted)' }}>
+          {isDir ? '—' : `${entry.sizeBytes.toLocaleString()} B`}
         </span>
-
-        {/*
-          An <a> with a real href, not a <button>: the browser streams
-          the response straight to disk and shows its own progress, the
-          same reasoning as the Download control on the game detail
-          page (disk-row.tsx). A plain fetch-then-save would buffer the
-          whole file in memory to achieve the same result.
-
-          That route addresses a file by BLOCK NUMBER against the disk's
-          CURRENT head bytes (the [block]/route.ts GET reads
-          `diskStore.read(disk.sha256)`, not any particular version) -- it
-          has no way to serve an old version's bytes. While browsing a
-          historical version (Task 3, `editDisabled.reason ===
-          'historical'`) the block numbers on screen belong to a
-          materialised tree that may not even match what that route would
-          walk, so the link is withdrawn rather than risk it silently
-          downloading the WRONG file's bytes, or the right file's current
-          contents mislabelled as this version's. Every other disabled
-          reason (mounted, no filesystem, bitmap untrusted) still allows
-          downloading -- those all describe the same, current disk this
-          route already serves correctly.
-        */}
-        {!isDir ? (
-          editDisabled?.reason === 'historical' ? (
-            <span
-              data-testid={`fs-download-${entry.block}`}
-              title={editDisabled.message}
-              aria-disabled="true"
-              className="shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold opacity-50"
-              style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
-            >
-              Download
-            </span>
-          ) : (
-            <a
-              href={`/api/disks/${diskId}/files/${entry.block}`}
-              data-testid={`fs-download-${entry.block}`}
-              className="shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold"
-              style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
-            >
-              Download
-            </a>
-          )
+        {editDisabled ? (
+          <span className="flex gap-0.5 text-[11px] font-semibold" data-testid={`fs-protect-${entry.block}`}>{chips}</span>
         ) : (
-          // Keeps the file column above aligned when a directory row has
-          // no download link of its own. Only from `sm` up: on the
-          // two-line layout there is no column to align to, and 68px of
-          // nothing would just widen line two.
-          <span className="hidden w-[68px] shrink-0 sm:block" />
-        )}
-        {/* Send to the Amiga (spec §4, R3): a file, or a folder with everything in it. Withdrawn while browsing an
-            older version for the same reason as Download: the route reads the CURRENT head. */}
-        {canSend && (
-          <button type="button" onClick={() => onSend(entry)}
-                  disabled={sendBusy || editDisabled?.reason === 'historical'}
-                  title={editDisabled?.reason === 'historical' ? editDisabled.message : undefined}
-                  aria-label={`Send ${entry.name} to the Amiga`}
-                  data-testid={`fs-send-${entry.block}`}
-                  className="shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold disabled:opacity-50"
-                  style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}>
-            Send
+          <button type="button" onClick={() => startProtect(entry)} title="Change protection bits"
+                  aria-label={`Protection of ${entry.name}: ${entry.protection}. Change`} data-testid={`fs-protect-${entry.block}`}
+                  className="flex w-fit gap-0.5 rounded-[4px] text-[11px] font-semibold hover:outline hover:outline-1 hover:outline-(--line-strong) focus-visible:outline-2 focus-visible:outline-(--ring)">
+            {chips}
           </button>
         )}
+        <span style={{ color: 'var(--muted)' }}>{entry.modifiedAt ? entry.modifiedAt.toISOString().slice(0, 10) : '—'}</span>
       </div>
+      <span className="col-start-4 row-span-2 row-start-1 grid place-items-center md:col-start-auto md:row-span-1 md:row-start-auto">
+        <FileRowMenu entry={entry} diskId={diskId} editDisabled={editDisabled} canSend={canSend} sendBusy={sendBusy}
+                     onSend={() => onSend(entry)} onRename={() => startRename(entry)} onMove={() => startMove(entry)}
+                     onProtect={() => startProtect(entry)} onDelete={() => startDelete(entry)} />
+      </span>
 
-      {/*
-        Rename and delete, on their own line so they never have to
-        fight the responsive column rules above. INLINE expansion, not
-        an overlay: opening one grows this row in normal document
-        flow and pushes every row below it down, so nothing can ever
-        cover a sibling row's controls the way an anchored popup did
-        on the game detail page (see e2e/game-detail.spec.ts).
-
-        Real <button>s, not <a> -- these are destructive/mutating
-        actions with no href of their own, and a native anchor only
-        activates on Enter, not Space, so a keyboard user tabbing here
-        and pressing Space would scroll the page instead of opening the
-        form. An earlier version of this file used <a href="#"> plus
-        preventDefault to keep the row's `<button>` count at one for a
-        test locator's sake; collection-provider.tsx already documents,
-        at length, what a bare href under dnd-kit cost this repo once
-        (a default action that kept firing despite stopPropagation,
-        needing a document-level capture-phase preventDefault, found
-        only by an e2e failure). This tree IS in a drag context now
-        (this very task), which is exactly why every control added here
-        -- the grip handle included -- is a real <button>, never an <a
-        href="#">. The directory toggle carries its own
-        `fs-toggle-${block}` testid instead, so the row can hold more
-        than one button without any test locator caring.
-      */}
-      {protectOpen ? (
-        <ProtectionEditor diskId={diskId} entry={entry} onClose={closeProtect} />
-      ) : renameBlock === entry.block ? (
-        <div className="flex flex-wrap items-center gap-2 pl-[22px]">
-          <input
-            value={renameValue}
-            onChange={(e) => setRenameValue(e.target.value.slice(0, MAX_NAME_LENGTH))}
-            maxLength={MAX_NAME_LENGTH}
-            aria-label={`New name for ${entry.name}`}
-            data-testid={`fs-rename-name-${entry.block}`}
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') submitRename(entry.block);
-              if (e.key === 'Escape') cancelRename();
-            }}
-            className="rounded border bg-transparent px-2 py-1 text-[11px]"
-            style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
-          />
-          <button
-            type="button"
-            onClick={() => submitRename(entry.block)}
-            disabled={busy || !renameValue.trim()}
-            data-testid={`fs-rename-submit-${entry.block}`}
-            className="rounded px-2 py-0.5 text-[11px] font-semibold text-white disabled:opacity-50"
-            style={{ background: 'var(--primary-action)' }}
-          >
-            Save
-          </button>
-          <button
-            type="button"
-            onClick={cancelRename}
-            disabled={busy}
-            data-testid={`fs-rename-cancel-${entry.block}`}
-            className="rounded px-2 py-0.5 text-[11px] font-semibold disabled:opacity-50"
-            style={{ color: 'var(--muted)' }}
-          >
-            Cancel
-          </button>
-        </div>
-      ) : deleteBlock === entry.block ? (
-        <div className="flex flex-wrap items-center gap-2 pl-[22px]">
-          <span className="text-[11px]" style={{ color: 'var(--muted)' }}>
-            Delete &quot;{entry.name}&quot;{isDir ? ' and everything inside it' : ''}? This cannot be undone.
-          </span>
-          <button
-            type="button"
-            onClick={() => submitDelete(entry.block)}
-            disabled={busy}
-            data-testid={`fs-delete-confirm-${entry.block}`}
-            className="rounded px-2 py-0.5 text-[11px] font-semibold text-white disabled:opacity-50"
-            style={{ background: 'var(--danger-fg)' }}
-          >
-            Delete
-          </button>
-          <button
-            type="button"
-            onClick={cancelDelete}
-            disabled={busy}
-            data-testid={`fs-delete-cancel-${entry.block}`}
-            className="rounded px-2 py-0.5 text-[11px] font-semibold disabled:opacity-50"
-            style={{ color: 'var(--muted)' }}
-          >
-            Cancel
-          </button>
-        </div>
-      ) : moveBlock === entry.block ? (
-        // The keyboard path onto the exact same PATCH a drop issues (D-DD-7):
-        // a directory can never be moved into itself or its own descendants,
-        // so `moveOptions` has already dropped those before this menu is
-        // ever drawn -- the refusal is surfaced by omission here rather than
-        // discovered later as a 409, the same guarantee the drag gets from
-        // `forbiddenBlocks`.
-        <div className="flex flex-wrap items-center gap-2 pl-[22px]">
-          <select
-            value={moveTarget}
-            onChange={(e) => setMoveTarget(e.target.value === '' ? '' : Number(e.target.value))}
-            aria-label={`Move ${entry.name} to`}
-            data-testid={`fs-move-target-${entry.block}`}
-            autoFocus
-            className="rounded border bg-transparent px-2 py-1 text-[11px]"
-            style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
-          >
-            <option value="">Choose a location…</option>
-            {moveOptions.map((option) => (
-              <option key={option.block} value={option.block}>{option.label}</option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => submitMove(entry.block)}
-            disabled={busy || moveTarget === ''}
-            data-testid={`fs-move-submit-${entry.block}`}
-            className="rounded px-2 py-0.5 text-[11px] font-semibold text-white disabled:opacity-50"
-            style={{ background: 'var(--primary-action)' }}
-          >
-            Move
-          </button>
-          <button
-            type="button"
-            onClick={cancelMove}
-            disabled={busy}
-            data-testid={`fs-move-cancel-${entry.block}`}
-            className="rounded px-2 py-0.5 text-[11px] font-semibold disabled:opacity-50"
-            style={{ color: 'var(--muted)' }}
-          >
-            Cancel
-          </button>
-        </div>
-      ) : (
-        <div className="flex items-center gap-3 pl-[22px]">
-          <button
-            type="button"
-            onClick={() => startRename(entry)}
-            disabled={!!editDisabled}
-            title={editDisabled?.message}
-            data-testid={`fs-rename-${entry.block}`}
-            className="text-[11px] font-semibold underline-offset-2 hover:underline disabled:opacity-50 disabled:no-underline"
-            style={{ color: 'var(--muted)' }}
-          >
-            Rename
-          </button>
-          <button
-            type="button"
-            onClick={() => startDelete(entry)}
-            disabled={!!editDisabled}
-            title={editDisabled?.message}
-            data-testid={`fs-delete-${entry.block}`}
-            className="text-[11px] font-semibold underline-offset-2 hover:underline disabled:opacity-50 disabled:no-underline"
-            style={{ color: 'var(--muted)' }}
-          >
-            Delete
-          </button>
-          {/*
-            The keyboard/no-mouse equivalent of Task 9's drag: a real
-            <button>, its own stable testid (the row already holds several
-            buttons -- see the comment above this whole block), and the
-            native `disabled` attribute rather than a click handler that
-            silently no-ops, matching every other control on this row.
-          */}
-          <button
-            type="button"
-            onClick={() => startMove(entry)}
-            disabled={!!editDisabled}
-            title={editDisabled?.message}
-            data-testid={`fs-move-${entry.block}`}
-            className="text-[11px] font-semibold underline-offset-2 hover:underline disabled:opacity-50 disabled:no-underline"
-            style={{ color: 'var(--muted)' }}
-          >
-            Move to…
-          </button>
+      {formOpen && (
+        // INLINE expansion, not an overlay: opening one grows this row in normal flow, so nothing can cover a sibling
+        // row's controls. Escape on any field or button cancels and hands focus back to the row's ⋯.
+        <div className="col-span-full flex flex-wrap items-center gap-2 py-2" style={{ paddingLeft: `${depth * 18 + 68}px` }}
+             onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); cancelForm(); } }}>
+          {protectOpen ? (
+            <ProtectionEditor diskId={diskId} entry={entry} onClose={closeProtect} autoFocusFirst />
+          ) : renameBlock === entry.block ? (
+            <>
+              <input value={renameValue} onChange={(e) => setRenameValue(e.target.value.slice(0, MAX_NAME_LENGTH))}
+                     maxLength={MAX_NAME_LENGTH} aria-label={`New name for ${entry.name}`}
+                     data-testid={`fs-rename-name-${entry.block}`} autoFocus
+                     onKeyDown={(e) => { if (e.key === 'Enter') submitRename(entry.block); }}
+                     className={`${field} min-w-0 w-[220px] max-w-full`} style={fieldStyle} />
+              <button type="button" onClick={() => submitRename(entry.block)} disabled={busy || !renameValue.trim()}
+                      data-testid={`fs-rename-submit-${entry.block}`} className={btn} style={primary}>Save</button>
+              <button type="button" onClick={cancelRename} disabled={busy}
+                      data-testid={`fs-rename-cancel-${entry.block}`} className={btn} style={outline}>Cancel</button>
+            </>
+          ) : deleteBlock === entry.block ? (
+            <>
+              <span className="text-[13px]" style={{ color: 'var(--muted)' }}>
+                Delete &quot;{entry.name}&quot;{isDir ? ' and everything inside it' : ''}? This cannot be undone.
+              </span>
+              <button type="button" onClick={() => submitDelete(entry.block)} disabled={busy}
+                      data-testid={`fs-delete-confirm-${entry.block}`} className={btn}
+                      style={{ background: 'var(--danger-fg)', color: 'white' }}>Delete</button>
+              <button type="button" onClick={cancelDelete} disabled={busy} autoFocus
+                      data-testid={`fs-delete-cancel-${entry.block}`} className={btn} style={outline}>Cancel</button>
+            </>
+          ) : (
+            // The keyboard path onto the exact PATCH a drop issues (D-DD-7): `moveOptions` has already dropped the
+            // entry's own subtree and current parent, so a refusal is surfaced by omission rather than as a 409.
+            <>
+              <select value={moveTarget} onChange={(e) => setMoveTarget(e.target.value === '' ? '' : Number(e.target.value))}
+                      aria-label={`Move ${entry.name} to`} data-testid={`fs-move-target-${entry.block}`} autoFocus
+                      className={`${field} min-w-0 max-w-full`} style={fieldStyle}>
+                <option value="">Choose a location…</option>
+                {moveOptions.map((option) => (
+                  <option key={option.block} value={option.block}>{option.label}</option>
+                ))}
+              </select>
+              <button type="button" onClick={() => submitMove(entry.block)} disabled={busy || moveTarget === ''}
+                      data-testid={`fs-move-submit-${entry.block}`} className={btn} style={primary}>Move</button>
+              <button type="button" onClick={cancelMove} disabled={busy}
+                      data-testid={`fs-move-cancel-${entry.block}`} className={btn} style={outline}>Cancel</button>
+            </>
+          )}
         </div>
       )}
     </div>
