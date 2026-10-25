@@ -24,6 +24,8 @@ export function PromoteReleaseButton({
   const [open, setOpen] = useState(false);
   const [notes, setNotes] = useState(initialNotes);
   const [busy, setBusy] = useState(false);
+  // The double-submit guard: state lags a render, a ref does not.
+  const inFlight = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const router = useRouter();
@@ -59,7 +61,8 @@ export function PromoteReleaseButton({
   }
 
   async function onPromote() {
-    if (busy || !armed) return;
+    if (inFlight.current || !armed) return;
+    inFlight.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -89,6 +92,7 @@ export function PromoteReleaseButton({
     } catch {
       setError('Could not reach the server. Check your connection and try again.');
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
@@ -130,10 +134,10 @@ export function PromoteReleaseButton({
             <button type="button" aria-disabled={busy || undefined} onClick={() => { if (!busy) onOpenChange(false); }} className={OUTLINE}>
               Cancel
             </button>
-            {/* Native disabled is the notes gate (not focused while not armed); busy is aria-disabled + the guard. */}
-            <button type="button" onClick={onPromote} disabled={!armed} aria-disabled={busy || undefined}
+            {/* Not armed and busy are both aria-disabled + the guard in onPromote: focus never drops to <body>. */}
+            <button type="button" onClick={onPromote} aria-disabled={busy || !armed || undefined}
                     data-testid="fw-promote-confirm"
-                    className="h-[38px] rounded-[10px] px-4 text-[13px] font-semibold text-white disabled:opacity-50 aria-disabled:opacity-60"
+                    className="h-[38px] rounded-[10px] px-4 text-[13px] font-semibold text-white aria-disabled:opacity-60"
                     style={{ background: 'var(--ink)', color: 'var(--surface)' }}>
               {busy ? 'Promoting…' : 'Promote'}
             </button>
@@ -158,7 +162,9 @@ export function PromoteReleaseButton({
               id={`fw-notes-${id}`}
               data-testid="fw-promote-notes"
               value={notes}
-              onChange={(e) => setNotes(e.target.value)}
+              readOnly={busy}
+              aria-readonly={busy || undefined}
+              onChange={(e) => { if (!inFlight.current) setNotes(e.target.value); }}
               rows={5}
               maxLength={2000}
               className="-mt-2 rounded-[10px] px-3 py-2 text-[14px]"

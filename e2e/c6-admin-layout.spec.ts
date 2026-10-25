@@ -416,6 +416,9 @@ const fwRow = (page: import('@playwright/test').Page, version: string) =>
   page.locator(`[data-testid="firmware-release-row"][data-version="${version}"]`);
 
 test('Firmware: All / Releases / Test builds filter on the server, the pager keeps it, a garbage URL clamps', async ({ page }) => {
+  // Enough releases of our own that Releases has a second page whatever the registry holds; the two the test
+  // looks for go last, so they are the newest and sit on page 1 of every filter.
+  for (let i = 0; i < 26; i++) await publishTestRelease(`0.0.0+e2e7${String(i).padStart(2, '0')}`);
   await publishTestRelease('0.0.0+e2e60', { notes: 'TEST build c6 filter' });
   await publishTestRelease('0.0.0+e2e61');
   await signInAsSuperAdmin(page);
@@ -441,8 +444,7 @@ test('Firmware: All / Releases / Test builds filter on the server, the pager kee
   await expect(page).toHaveURL(/\/admin\/firmware\?show=releases$/);
   await expect(fwRow(page, '0.0.0+e2e61')).toHaveCount(1);
   await expect(fwRow(page, '0.0.0+e2e60')).toHaveCount(0);
-  const older = page.getByTestId('fw-page-older');
-  if (await older.count()) await expect(older).toHaveAttribute('href', '/admin/firmware?show=releases&page=2');
+  await expect(page.getByTestId('fw-page-older')).toHaveAttribute('href', '/admin/firmware?show=releases&page=2');
 
   const res = await page.goto('/admin/firmware?show=nope&page=999');
   expect(res?.status()).toBe(200);
@@ -484,5 +486,89 @@ test('Promote to release… under Test builds: notes take focus, Escape returns,
   await page.keyboard.press('Enter');
   await expect(dialog).toHaveCount(0);
   await expect(fwRow(page, version)).toHaveCount(0);   // a release now: not in Test builds
+  await expect(page.locator('h1')).toBeFocused();
+});
+
+async function openPromote(page: import('@playwright/test').Page, version: string) {
+  const trigger = fwRow(page, version).getByRole('button', { name: 'Promote to release' });
+  const dialog = page.getByTestId('fw-promote-dialog');
+  await expect(async () => {
+    await trigger.click();
+    await expect(dialog).toBeVisible({ timeout: 1_000 });
+  }).toPass();
+  return dialog;
+}
+const PROMOTE_URL = '**/api/admin/firmware/*/promote';
+
+test('Promote in flight: Escape and Cancel keep the dialog, a second click sends no second request, the notes cannot change', async ({ page }) => {
+  const version = await publishTestReleaseWithBlob('0.0.0+e2e63', { notes: 'TEST build c6 inflight' });
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/firmware');
+  let sent = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  await page.route(PROMOTE_URL, async (route) => { sent++; await gate; await route.continue(); });
+  const dialog = await openPromote(page, version);
+  const notes = dialog.getByTestId('fw-promote-notes');
+  const confirm = dialog.getByTestId('fw-promote-confirm');
+  await notes.fill('c6 inflight release');
+  await confirm.click();
+  await expect(confirm).toHaveText('Promoting…');
+  await expect.poll(() => sent).toBe(1);
+
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  // force: Playwright waits out aria-disabled, and these clicks are meant to land on an inert control.
+  await dialog.getByRole('button', { name: 'Cancel' }).click({ force: true });
+  await expect(dialog).toBeVisible();
+  await confirm.click({ force: true });
+  await confirm.press('Enter');
+  await page.waitForTimeout(300);
+  expect(sent).toBe(1);
+  await expect(notes).not.toBeEditable();
+  await notes.press('End');
+  await page.keyboard.type('zzz');
+  await expect(notes).toHaveValue('c6 inflight release');
+
+  release();
+  await expect(dialog.getByTestId('fw-promote-done')).toBeVisible();
+  expect(sent).toBe(1);
+});
+
+test('Promote with the connection dropped: the failure is said, Promote is armed again, Cancel closes', async ({ page }) => {
+  const version = await publishTestReleaseWithBlob('0.0.0+e2e64', { notes: 'TEST build c6 abort' });
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/firmware');
+  await page.route(PROMOTE_URL, (route) => route.abort());
+  const dialog = await openPromote(page, version);
+  const confirm = dialog.getByTestId('fw-promote-confirm');
+  await dialog.getByTestId('fw-promote-notes').fill('c6 abort release');
+  await confirm.click();
+  await expect(dialog.getByTestId('fw-promote-error')).toHaveText('Could not reach the server. Check your connection and try again.');
+  await expect(confirm).toHaveText('Promote');
+  await expect(confirm).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(dialog.getByTestId('fw-promote-notes')).toBeEditable();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await page.unroute(PROMOTE_URL);
+  const again = await openPromote(page, version);
+  await again.getByTestId('fw-promote-notes').fill('c6 abort release');
+  await again.getByTestId('fw-promote-confirm').click();
+  await expect(again.getByTestId('fw-promote-done')).toBeVisible();
+});
+
+test('Promote on the default filter: the row turns into a Release at once, and Close hands focus to the heading', async ({ page }) => {
+  const version = await publishTestReleaseWithBlob('0.0.0+e2e65', { notes: 'TEST build c6 all' });
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/firmware');
+  const dialog = await openPromote(page, version);
+  await dialog.getByTestId('fw-promote-notes').fill('c6 all release');
+  await dialog.getByTestId('fw-promote-confirm').click();
+  await expect(dialog.getByTestId('fw-promote-done')).toBeVisible();
+  await expect(fwRow(page, version).getByTestId('fw-tag-release')).toBeVisible();
+  await expect(page.getByTestId('fw-promote-done-close')).toBeFocused();
+  await page.getByTestId('fw-promote-done-close').click();
+  await expect(dialog).toHaveCount(0);
   await expect(page.locator('h1')).toBeFocused();
 });
