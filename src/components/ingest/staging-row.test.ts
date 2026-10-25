@@ -10,7 +10,7 @@ const amiga = (o: Partial<ServerRow>): ServerRow => ({ source: 'server', key: 'a
 const lib = (o: Partial<LibRow>): LibRow => ({ source: 'lib', key: 'lib:abc', kind: 'lib', name: 'Bad.zip',
   sizeBytes: 1_000_000, state: 'failed', note: 'No disk images inside', title: null, at: 1, ...o });
 const html = (r: ServerRow | LibRow) =>
-  renderToStaticMarkup(createElement(StagingRow, { v: stagingView([r], 'all', new Set()).shown[0], children: 'ACTIONS' }));
+  renderToStaticMarkup(createElement(StagingRow, { v: stagingView([r], 'all', new Set()).shown[0] }, 'ACTIONS'));
 
 describe('StagingRow (spec §5)', () => {
   it('keeps the row attributes and every part id', () => {

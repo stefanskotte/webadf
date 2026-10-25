@@ -8,7 +8,7 @@ import type { ViewRow } from '@/lib/upload-staging';
 const XL = 'xl:col-auto xl:row-auto xl:col-start-auto xl:row-start-auto xl:row-span-1 xl:col-span-1';
 
 /** One Staging row (C3 spec §5): the board's one-line grid from xl, a three-line card below. */
-export function StagingRow({ v, children }: { v: ViewRow; children: React.ReactNode }) {
+export function StagingRow({ v, children }: { v: ViewRow; children?: React.ReactNode }) {
   const pill = directionPill(v.kind);
   const tone = toneLook(v.tone);
   const hd = v.kind === 'lib' && !isHfeFilename(v.name) && adfDensity(v.row.sizeBytes) === 'hd';
