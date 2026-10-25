@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import {
   DndContext,
   MouseSensor,
@@ -16,13 +16,16 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical } from 'lucide-react';
+import { GripVertical, Search } from 'lucide-react';
 import type { AdfEntry } from '@/lib/adffs';
 import type { SendContext } from '@/lib/send-ui';
 import { useSendAction } from '@/components/send/send-button';
 import { useFileEdit, MAX_NAME_LENGTH, type EditDisabled } from './file-actions';
 import { useNativeDrop, isFileDrag } from './native-drop';
 import { SelectionBar } from './selection-bar';
+import { FilesCard } from './files-card';
+import { DiskIcon } from '@/components/ui/disk-icon';
+import { countInfo, plural } from '@/lib/disk-files-look';
 import { ProtectionEditor } from './protection-editor';
 import { filterTree } from '@/lib/file-filter';
 import { underSelected } from '@/lib/disk-entries';
@@ -217,10 +220,12 @@ const GRIP_GUTTER = 22;
 const SELECT_GUTTER = 20;
 
 export function FileTree({
-  entries, diskId, send = null, sort: initialSort = DEFAULT_PREFS.browse.sort,
+  entries, diskId, toolbar, send = null, sort: initialSort = DEFAULT_PREFS.browse.sort,
   hideInfo: initialHideInfo = DEFAULT_PREFS.browse.hideInfo, addedIn = {},
 }: {
   entries: AdfEntry[]; diskId: string; send?: SendContext | null;
+  /** The Add file / New folder controls, drawn in the Files card header. */
+  toolbar: ReactNode;
   /** The person's remembered Browse sort (user prefs browse.sort), read by the page. */
   sort?: BrowseSort;
   /** The person's remembered "Hide .info files" (user prefs browse.hideInfo). */
@@ -528,35 +533,43 @@ export function FileTree({
     disabled: !!disabled,
   });
 
-  if (entries.length === 0) {
-    return (
-      <DndContext
-        id="disk-files-dnd"
-        sensors={sensors}
-        collisionDetection={fileTreeCollisionDetection}
-        onDragStart={onDragStart}
-        onDragEnd={onDragEnd}
-        onDragCancel={onDragCancel}
-      >
-        <div
-          ref={setRootDropRef}
-          className="glass-card p-5 text-[13px]"
-          style={{ color: 'var(--muted)',
-                   boxShadow: nativeOver === rootBlock ? 'inset 0 0 0 2px var(--accent-amber)' : undefined }}
-          data-testid="file-tree"
-          data-drop-target={rootIsOver || nativeOver === rootBlock ? 'true' : undefined}
-          {...nativeDropProps(rootBlock)}
-        >
-          This disk&apos;s root directory is empty.
-        </div>
-      </DndContext>
-    );
-  }
-
   // While a filter is typed, the folders leading to a match are open as well
   // as whatever the person opened themselves.
   const shownOpen = query.trim() ? new Set([...openBlocks, ...filtered.open]) : openBlocks;
   const rows = flatten(filtered.entries, shownOpen, sort);
+  const shownDirs = rows.filter((r) => r.entry.kind === 'dir').length;
+  const hiddenInfo = hideInfo ? countInfo(entries) : 0;   // every *.info in the whole tree
+
+  const controls = (
+    <>
+      <label className="flex h-9 flex-1 items-center gap-2 rounded-[9px] px-2.5 focus-within:outline-2 focus-within:outline-(--ring) sm:w-[220px] sm:flex-none"
+             style={{ background: 'var(--surface-2)', boxShadow: 'inset 0 0 0 1px var(--line)' }}>
+        <Search size={14} aria-hidden style={{ color: 'var(--muted-2)' }} className="shrink-0" />
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Escape') setQuery(''); }}
+          placeholder="Filter by name"
+          aria-label="Filter files by name"
+          data-testid="fs-filter"
+          className="min-w-0 flex-1 border-0 bg-transparent text-[13px] outline-none placeholder:text-[var(--muted-2)]"
+          style={{ color: 'var(--ink)' }}
+        />
+      </label>
+      <button type="button" role="switch" aria-checked={hideInfo} onClick={() => changeHideInfo(!hideInfo)}
+              data-testid="fs-hide-info"
+              className="flex h-9 items-center gap-2 rounded-[9px] px-2.5 text-[13px] font-medium hover:bg-[var(--track)] focus-visible:outline-2 focus-visible:outline-(--ring)"
+              style={{ color: 'var(--muted)' }}>
+        <span aria-hidden className={`flex h-4 w-7 shrink-0 rounded-full p-0.5 ${hideInfo ? 'justify-end' : 'justify-start'}`}
+              style={hideInfo ? { background: 'var(--ink)' } : { background: 'var(--line-strong)', boxShadow: 'inset 0 0 0 1px var(--muted-2)' }}>
+          <span className="h-3 w-3 rounded-full" style={{ background: 'var(--surface)', boxShadow: '0 1px 2px rgb(0 0 0 / 0.25)' }} />
+        </span>
+        Hide .info files
+      </button>
+      <SortSelect options={BROWSE_SORT_OPTIONS} value={sort} onChange={changeSort} testId="browse-sort" toolbar />
+    </>
+  );
 
   return (
     // `id` is not decoration. dnd-kit derives the hidden drag description's
@@ -575,40 +588,39 @@ export function FileTree({
       onDragEnd={onDragEnd}
       onDragCancel={onDragCancel}
     >
-      <div
-        ref={setRootDropRef}
-        className="glass-card overflow-hidden p-3"
-        style={{ boxShadow: nativeOver === rootBlock ? 'inset 0 0 0 2px var(--accent-amber)' : undefined }}
-        data-testid="file-tree"
-        data-drop-target={rootIsOver || nativeOver === rootBlock ? 'true' : undefined}
-        {...nativeDropProps(rootBlock)}
-      >
-        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2 px-1 pb-2">
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Escape') setQuery(''); }}
-            placeholder="Filter by name"
-            aria-label="Filter files by name"
-            data-testid="fs-filter"
-            className="min-w-0 flex-1 rounded border bg-transparent px-2 py-1 text-[12px] sm:max-w-[240px]"
-            style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
-          />
-          <label className="flex items-center gap-1.5 text-[12px]" style={{ color: 'var(--muted)' }}>
-            <input type="checkbox" checked={hideInfo} onChange={(e) => changeHideInfo(e.target.checked)}
-                   data-testid="fs-hide-info" />
-            Hide .info files
-          </label>
-          <SortSelect options={BROWSE_SORT_OPTIONS} value={sort} onChange={changeSort} testId="browse-sort" />
-        </div>
+      <FilesCard controls={controls} toolbar={toolbar}>
         {selectionTops.length > 0 && (
           <SelectionBar diskId={diskId} tops={selectionTops} directoryOptions={directoryOptions}
                         hidden={selectionTops.filter((e) => !shownBlocks.has(e.block)).length}
                         onClear={() => setSelected(new Set())} />
         )}
-        {rows.length === 0 && (
-          <p className="px-2 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }} data-testid="fs-filter-empty">
+        {entries.length > 0 && (
+          <div aria-hidden data-testid="fs-columns"
+               className="hidden h-9 items-center gap-3 border-b px-4 text-[12px] font-medium md:grid md:grid-cols-[28px_28px_minmax(0,1fr)_96px_132px_104px_36px]"
+               style={{ borderColor: 'var(--line)', background: 'var(--modal-foot)', color: 'var(--muted-2)' }}>
+            <span /><span /><span>Name</span><span className="text-right">Size</span><span>Protection</span><span>Modified</span><span />
+          </div>
+        )}
+      <div
+        role="list"
+        ref={setRootDropRef}
+        className="md:max-h-[700px] md:overflow-y-auto"
+        style={{ boxShadow: nativeOver === rootBlock ? 'inset 0 0 0 2px var(--accent-amber)' : undefined }}
+        data-testid="file-tree"
+        data-drop-target={rootIsOver || nativeOver === rootBlock ? 'true' : undefined}
+        {...nativeDropProps(rootBlock)}
+      >
+        {entries.length === 0 && (
+          <div className="flex flex-col items-center gap-2.5 px-4 py-10 text-center">
+            <DiskIcon color="cream" size={48} />
+            <span className="text-[14px]" style={{ color: 'var(--muted)' }}>This disk&apos;s root directory is empty.</span>
+            <span className="text-[12px]" style={{ color: 'var(--muted-2)' }}>
+              {disabled ? `Editing is off: ${disabled.message}` : 'Drop files on the bar below, or press Add file.'}
+            </span>
+          </div>
+        )}
+        {entries.length > 0 && rows.length === 0 && (
+          <p className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }} data-testid="fs-filter-empty">
             {query.trim() ? `No files match "${query.trim()}".` : 'Every file here is a .info icon file.'}
           </p>
         )}
@@ -659,6 +671,13 @@ export function FileTree({
           />
         ))}
       </div>
+      {entries.length > 0 && (
+        <div className="border-t px-4 py-3 text-[12px]" data-testid="fs-footer"
+             style={{ borderColor: 'var(--line)', background: 'var(--modal-foot)', color: 'var(--muted-2)' }}>
+          {plural(shownDirs, 'folder')} · {plural(rows.length - shownDirs, 'file')} shown{hiddenInfo > 0 ? ` · ${plural(hiddenInfo, '.info file')} hidden` : ''}
+        </div>
+      )}
+      </FilesCard>
     </DndContext>
   );
 }

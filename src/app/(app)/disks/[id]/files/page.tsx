@@ -28,6 +28,7 @@ import { Breadcrumb } from '@/components/shell/breadcrumb';
 import { DiskCard, noFilesystemCopy } from '@/components/disks/disk-card';
 import { VersionBanner } from '@/components/disks/version-banner';
 import { FileTree } from '@/components/disks/file-tree';
+import { FilesCard } from '@/components/disks/files-card';
 import { DropStaging } from '@/components/disks/drop-staging';
 import { NativeDropProvider } from '@/components/disks/native-drop';
 import { FileEditProvider, FileToolbar, type EditDisabled } from '@/components/disks/file-actions';
@@ -168,6 +169,9 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
     .innerJoin(blobs, eq(blobs.sha256, disks.sha256))
     .innerJoin(tosecEntries, eq(tosecEntries.id, blobs.tosecEntryId))
     .where(and(eq(disks.gameId, disk.gameId), eq(disks.orgId, orgId)));
+  // A notFound() or a throw below can leave this un-awaited; mark that branch handled so a late rejection is never
+  // unhandled. The await further down still sees the original value or rejection.
+  kindRowsPromise.catch(() => undefined);
 
   const filename = disk.tosecName ?? disk.sourceFilename ?? `${disk.sha256.slice(0, 12)}.adf`;
 
@@ -348,7 +352,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
         <VersionBanner seq={historicalSeq} backHref={`/disks/${id}/files${fromQuery(from, view)}`}
                        time={(() => { const v = historyVersions.find((x) => x.seq === historicalSeq); return v ? fmtTimeUtc(v.createdAt) : null; })()} />
       )}
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
       <div className="flex min-w-0 flex-col gap-4">
         {volume === null ? (
           <div className="glass-card p-5 text-[13px]" style={{ color: 'var(--amber-text)' }}
@@ -357,22 +361,15 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
           </div>
         ) : (
           <FileEditProvider diskId={id} disabled={disabled} tosecName={matchedTosecName} rootBlock={rootBlock}>
-            {!volume.ok && (
-              <div className="glass-card p-5 text-[13px]" data-testid="no-filesystem" style={{ color: 'var(--muted)' }}>
-                {noFilesystemCopy(volume)}
-              </div>
-            )}
-            {/*
-              Shown even when there is no filesystem to browse -- a disk
-              with nothing to add a file to still gets the toolbar, disabled
-              with that reason, rather than the controls simply not existing.
-            */}
-            <FileToolbar />
             {/* Lets a file dropped on a folder row land in the staging area below, aimed at that folder. */}
             <NativeDropProvider>
-            {volume.ok && (
+            {volume.ok ? (
               <FileTree entries={volume.root} diskId={id} send={send} sort={prefs.browse.sort}
-                        hideInfo={prefs.browse.hideInfo} addedIn={addedInMarks} />
+                        hideInfo={prefs.browse.hideInfo} addedIn={addedInMarks} toolbar={<FileToolbar />} />
+            ) : (
+              <FilesCard toolbar={<FileToolbar />}>
+                <p className="px-4 py-6 text-[13px]" style={{ color: 'var(--muted)' }} data-testid="no-filesystem">{noFilesystemCopy(volume)}</p>
+              </FilesCard>
             )}
             {/*
               Below the tree, always rendered -- even with no filesystem to
@@ -397,6 +394,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
           might want to restore an earlier, readable version onto, so the
           history is not hidden behind that same failure.
         */}
+        <div className="min-w-0">
         {historyUnavailable ? (
           <div className="glass-card p-4 text-[13px]" style={{ color: 'var(--amber-text)' }}
                data-testid="history-unavailable">
@@ -412,6 +410,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
             mountedMessage={mountedMessage}
           />
         )}
+        </div>
       </div>
     </div>
   );

@@ -48,7 +48,7 @@ export function SelectionBar({ diskId, tops, directoryOptions, hidden, onClear }
   const { files, folders } = countAll(tops);
   const what = [files ? plural(files, 'file') : '', folders ? plural(folders, 'folder') : ''].filter(Boolean).join(' and ');
 
-  function done() { setMode('idle'); setTarget(''); onClear(); }
+  function done() { setMode('idle'); setTarget(''); onClear(); document.getElementById('files-heading')?.focus(); }
 
   function submitMove() {
     if (target === '') return;
@@ -65,16 +65,17 @@ export function SelectionBar({ diskId, tops, directoryOptions, hidden, onClear }
     }), `Deleted ${plural(tops.length, 'item')}`, done, { undoable: true });
   }
 
-  const button = 'shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold disabled:opacity-50';
-  const plain = { background: 'var(--glass-strong)', color: 'var(--ink)' };
+  const button = 'grid h-[30px] shrink-0 place-items-center rounded-[7px] px-2.5 text-[13px] font-semibold disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-(--surface)';
+  const plain = { background: 'var(--on-ink-fill)', color: 'var(--surface)' };
+  const danger = { background: 'var(--danger-fg)', color: '#fff' };
 
   return (
-    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg px-3 py-2 text-[12px]"
-         style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
+    <div className="flex flex-wrap items-center gap-2 px-4 py-2 text-[13px]"
+         style={{ background: 'var(--ink)', color: 'var(--surface)' }}
          data-testid="fs-selection-bar" role="region" aria-label="Selected files">
-      <span className="font-semibold" data-testid="fs-selection-count">{plural(tops.length, 'item')} selected</span>
+      <span className="flex-1 font-semibold" data-testid="fs-selection-count">{plural(tops.length, 'item')} selected</span>
       {hidden > 0 && (
-        <span className="text-[11px]" style={{ color: 'var(--amber-text)' }} data-testid="fs-selection-hidden">
+        <span className="text-[12px] font-semibold" style={{ color: 'var(--fetch-dot)' }} data-testid="fs-selection-hidden">
           ({hidden} not shown)
         </span>
       )}
@@ -92,10 +93,12 @@ export function SelectionBar({ diskId, tops, directoryOptions, hidden, onClear }
           )}
           <button type="button" className={button} style={plain} disabled={!!disabled || busy} title={disabled?.message}
                   onClick={() => setMode('move')} data-testid="fs-bulk-move">Move to…</button>
-          <button type="button" className={button} style={plain} disabled={!!disabled || busy} title={disabled?.message}
+          <button type="button" className={button} style={danger} disabled={!!disabled || busy} title={disabled?.message}
                   onClick={() => setMode('delete')} data-testid="fs-bulk-delete">Delete</button>
-          <button type="button" className={button} style={{ color: 'var(--muted)' }} onClick={onClear}
-                  data-testid="fs-selection-clear">Clear</button>
+          <button type="button" className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-[7px] text-[18px] leading-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-(--surface)"
+                  style={plain} aria-label="Clear selection"
+                  onClick={() => { onClear(); document.getElementById('files-heading')?.focus(); }}
+                  data-testid="fs-selection-clear"><span aria-hidden>×</span></button>
         </>
       )}
 
@@ -103,26 +106,26 @@ export function SelectionBar({ diskId, tops, directoryOptions, hidden, onClear }
         <>
           <select value={target} autoFocus aria-label="Move the selected items to"
                   onChange={(e) => setTarget(e.target.value === '' ? '' : Number(e.target.value))}
-                  className="rounded border bg-transparent px-2 py-1 text-[11px]"
-                  style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }} data-testid="fs-bulk-move-target">
+                  className="h-[30px] rounded-[7px] px-2 text-[13px]"
+                  style={{ background: 'var(--surface)', color: 'var(--ink)' }} data-testid="fs-bulk-move-target">
             <option value="">Choose a location…</option>
             {moveOptions.map((o) => <option key={o.block} value={o.block}>{o.label}</option>)}
           </select>
-          <button type="button" className={`${button} text-white`} style={{ background: 'var(--primary-action)' }}
+          <button type="button" className={button} style={{ background: 'var(--surface)', color: 'var(--ink)' }}
                   disabled={busy || target === ''} onClick={submitMove} data-testid="fs-bulk-move-submit">Move</button>
-          <button type="button" className={button} style={{ color: 'var(--muted)' }} disabled={busy}
+          <button type="button" className={button} style={plain} disabled={busy}
                   onClick={() => setMode('idle')}>Cancel</button>
         </>
       )}
 
       {mode === 'delete' && (
         <>
-          <span className="text-[11px]" style={{ color: 'var(--muted)' }} data-testid="fs-bulk-delete-summary">
+          <span data-testid="fs-bulk-delete-summary">
             Delete {what}?
           </span>
-          <button type="button" className={`${button} text-white`} style={{ background: 'var(--danger-fg)' }}
+          <button type="button" className={button} style={danger}
                   disabled={busy} onClick={submitDelete} data-testid="fs-bulk-delete-confirm">Delete</button>
-          <button type="button" className={button} style={{ color: 'var(--muted)' }} disabled={busy}
+          <button type="button" className={button} style={plain} disabled={busy}
                   onClick={() => setMode('idle')}>Cancel</button>
         </>
       )}

@@ -4,7 +4,7 @@ import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
 import { readVolume, type AdfEntry } from '@/lib/adffs';
 import { signUpFresh, createAdf } from './helpers';
-import { cleanupSeeded } from './device-helpers';
+import { cleanupSeeded, hydrated } from './device-helpers';
 
 /**
  * Phase C4: the disk page in the ModernDiskFiles layout (spec 2026-10-25-phase-c4-disk-files-design.md). Every disk
@@ -72,4 +72,48 @@ test('the version banner: the board words, Back to current returns to the head',
   await page.getByTestId('version-banner-back').click();
   await expect(page).toHaveURL(new RegExp(`/disks/${disk.id}/files$`));
   await expect(page.getByTestId('version-banner')).toHaveCount(0);
+});
+
+test('the Files header: heading, filter, the Hide .info switch, Add file and New folder, and a footer that counts', async ({ page }) => {
+  const { disk } = await freshDisk(page, [{ name: 'Tool', content: 'exe' }, { name: 'Tool.info', content: 'icn' },
+    { name: 'Docs', dir: true }]);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/disks/${disk.id}/files`);
+  const card = page.getByTestId('files-card');
+  await expect(card.getByRole('heading', { level: 2, name: 'Files' })).toBeVisible();
+  await expect(page.getByTestId('fs-filter')).toHaveAttribute('placeholder', 'Filter by name');
+  const sw = page.getByTestId('fs-hide-info');
+  await expect(sw).toHaveAttribute('role', 'switch');
+  await expect(sw).toHaveText('Hide .info files');
+  await expect(page.getByTestId('upload-trigger')).toHaveText(/Add file/);
+  await expect(page.getByTestId('new-folder-trigger')).toHaveText(/New folder/);
+  await expect(page.getByTestId('file-toolbar')).toBeVisible();
+  await expect(page.getByTestId('fs-columns')).toContainText('Protection');
+  await hydrated(page, 'fs-hide-info');
+  const wasHiding = (await sw.getAttribute('aria-checked')) === 'true';
+  if (wasHiding) await sw.click();                          // a fresh account starts from the default
+  await expect(page.getByTestId('fs-footer')).toHaveText('1 folder · 2 files shown');
+  await sw.click();
+  await expect(sw).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByTestId('fs-footer')).toHaveText('1 folder · 1 file shown · 1 .info file hidden');
+  await sw.click();                                         // leave the preference as found
+});
+
+test('read-only states say why in the header, and the selection strip keeps A5 words', async ({ page }) => {
+  const { disk } = await freshDisk(page, [{ name: 'A.TXT' }, { name: 'B.TXT' }]);
+  const b = await blocks(page, disk.id);
+  await page.goto(`/disks/${disk.id}/files`);
+  await hydrated(page, `fs-select-${b['A.TXT'].block}`, 'onChange');
+  await page.getByTestId(`fs-select-${b['A.TXT'].block}`).check();
+  await page.getByTestId(`fs-select-${b['B.TXT'].block}`).check();
+  await expect(page.getByTestId('fs-selection-count')).toHaveText('2 items selected');
+  await expect(page.getByTestId('fs-selection-clear')).toHaveAttribute('aria-label', 'Clear selection');
+  await page.getByTestId('fs-selection-clear').click();
+  await expect(page.getByTestId('fs-selection-bar')).toHaveCount(0);
+  await expect(page.locator('#files-heading')).toBeFocused();
+  await page.goto(`/disks/${disk.id}/files?version=0`);
+  await expect(page.getByTestId('file-edit-disabled')).toContainText('read-only');
+  await expect(page.getByTestId('files-card').getByTestId('file-edit-disabled')).toHaveCount(1);
+  await expect(page.getByTestId('upload-trigger')).toBeDisabled();
+  await expect(page.getByTestId('file-tree')).toContainText("This disk's root directory is empty.");
 });
