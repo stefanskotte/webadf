@@ -316,8 +316,29 @@ test('the filter is a radiogroup: arrows move and select, the tab stop follows t
   await expect(page.getByTestId('staging-filter-in')).toBeFocused();
   await expect(page.getByTestId('staging-filter-in')).toHaveAttribute('aria-checked', 'true');
   await expect(group).toHaveAttribute('data-value', 'in');
+  // Exactly one radio is a tab stop, and it is the checked one.
+  const tabStops = async (checked: string) => {
+    for (const id of ['all', 'in', 'out', 'lib']) {
+      await expect(page.getByTestId(`staging-filter-${id}`)).toHaveAttribute('tabindex', id === checked ? '0' : '-1');
+      await expect(page.getByTestId(`staging-filter-${id}`)).toHaveAttribute('aria-checked', id === checked ? 'true' : 'false');
+    }
+  };
+  await tabStops('in');
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.getByTestId('staging-filter-all')).toBeFocused();
+  await tabStops('all');
+  await page.keyboard.press('ArrowLeft');                            // wraps to the last
+  await expect(page.getByTestId('staging-filter-lib')).toBeFocused();
+  await tabStops('lib');
+  await page.keyboard.press('ArrowRight');                           // and forward to the first
+  await expect(page.getByTestId('staging-filter-all')).toBeFocused();
+  await tabStops('all');
+  // A browser shortcut (Alt+ArrowLeft is Back) is not swallowed.
+  await page.keyboard.press('Alt+ArrowRight');
+  await expect(group).toHaveAttribute('data-value', 'all');
   await page.keyboard.press('End');
   await expect(page.getByTestId('staging-filter-lib')).toHaveAttribute('aria-checked', 'true');
+  await tabStops('lib');
   await expect(page.getByTestId('staging-empty')).toHaveText('Nothing to the library right now.');
 });
 
@@ -356,4 +377,36 @@ test('the board keys sit in the footer beside the 30-day note', async ({ page, r
   const k = (await key.boundingBox())!, n = (await note.boundingBox())!;
   expect(k.y).toBeGreaterThan((await page.getByTestId('staging-list').boundingBox())!.y);
   expect(Math.abs(k.y - n.y)).toBeLessThan(40);
+});
+
+test('a row at 1440 px is one line: disk, pill, name and where, size, status with its bar, actions', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const id = await seedUpload(orgId, deviceId, 'Bench', { path: 'Moving.bin', status: 'receiving', size: 20_000, received: 16_384 });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/ingest');
+  const key = `amiga:${id}`;
+  await expect(page.getByTestId(`staging-status-${key}`)).toContainText('Arriving · 81 %', { timeout: LIVE });
+  await expect(page.getByTestId(`staging-dir-${key}`)).toHaveText('←From Amiga');
+  await expect(page.getByTestId(`staging-where-${key}`)).toHaveText('from Bench');
+  await expect(page.getByTestId(`staging-size-${key}`)).toContainText('KB');
+  const bar = page.getByTestId(`staging-progress-${key}`).locator('span');
+  expect(await bar.evaluate((el) => el.style.width)).toBe('81%');
+  const mid = async (sel: string) => { const b = (await page.getByTestId(sel).boundingBox())!; return b.y + b.height / 2; };
+  const y = await mid(`staging-dir-${key}`);
+  for (const sel of [`staging-size-${key}`, `staging-actions-${key}`]) expect(Math.abs((await mid(sel)) - y)).toBeLessThan(12);
+});
+
+test('below xl the row stacks: the actions sit under the name', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  const id = await seedUpload(orgId, deviceId, 'Bench', { path: 'Keep.txt', status: 'stored' });
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await page.goto('/ingest');
+  const key = `amiga:${id}`;
+  await expect(page.getByTestId(`staging-actions-${key}`)).toBeVisible({ timeout: LIVE });
+  const where = (await page.getByTestId(`staging-where-${key}`).boundingBox())!;
+  const acts = (await page.getByTestId(`staging-actions-${key}`).boundingBox())!;
+  expect(acts.y).toBeGreaterThan(where.y + where.height - 1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 });

@@ -2,23 +2,17 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Link } from '@/components/shell/link';
-import { HdTag } from '@/components/disks/hd-tag';
 import { HelpTip } from '@/components/help/help-tip';
-import { adfDensity, isHfeFilename } from '@/lib/disk-format';
 import { sendErrorText, targetLabel, type SendTarget } from '@/lib/send-ui';
 import { downloadName, uploadErrorText } from '@/lib/from-amiga-ui';
-import { SIGNED_OUT_TEXT, isSignedOutAnswer, mergeStaging, stagingView, type StagingFilter, type Tone, type ViewRow } from '@/lib/upload-staging';
+import { SIGNED_OUT_TEXT, isSignedOutAnswer, mergeStaging, stagingView, type StagingFilter, type ViewRow } from '@/lib/upload-staging';
 import { useStaging } from './staging-provider';
 import { StagingConfirm } from './staging-confirm';
+import { StagingRow } from './staging-row';
 import { FILTERS, EMPTY_UNDER, filterAfterKey } from '@/lib/upload-look';
 
 const btn = 'rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50';
 const quiet = { background: 'var(--glass-strong)', color: 'var(--ink)', border: '1px solid var(--hairline-strong)' } as const;
-
-const PILL: Record<ViewRow['kind'], string> = { lib: '↓ To library', out: '→ To Amiga', in: '← From Amiga' };
-const DOT: Record<Tone, string> = {
-  done: 'var(--success-fg)', busy: 'var(--accent-amber)', wait: 'var(--muted)', fail: 'var(--danger-fg)',
-};
 
 /** `stop`: the file is still arriving; the delete then holds only while it is (`?only=receiving`). */
 type Confirm = { key: string; id: string; question: string; yes: string; what: string; stop?: boolean };
@@ -174,6 +168,7 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
   }
 
   function onFilterKey(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;   // Alt+ArrowLeft is the browser's Back
     const next = filterAfterKey(filter, e.key);
     if (!next) return;
     e.preventDefault();
@@ -212,10 +207,8 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
           Clear finished ({clearN})
         </button>
       </div>
-      {/* list: Task 4 restyles the rows */}
-        <ul aria-label="Staging" data-testid="staging-list"
-            className="flex flex-col overflow-hidden rounded-xl md:max-h-[36rem] md:overflow-y-auto" style={{ border: '1px solid var(--hairline-strong)', background: 'var(--glass-subtle)' }}>
-          {view.shown.map((v) => <Row key={v.key} v={v}>{v.actions.map((a) => action(v, a))}</Row>)}
+        <ul aria-label="Staging" data-testid="staging-list" className="flex flex-col md:max-h-[36rem] md:overflow-y-auto">
+          {view.shown.map((v) => <StagingRow key={v.key} v={v}>{v.actions.map((a) => action(v, a))}</StagingRow>)}
           {view.shown.length === 0 && (rows.length > 0 || s.loaded) && (
             <li className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }} data-testid="staging-empty">
               {filter === 'all' || rows.length === 0
@@ -249,41 +242,6 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
 
 /** A server row's id (send or Amiga file); the actions that take one only appear on server rows. */
 const idOf = (v: ViewRow): string => (v.row.source === 'server' ? v.row.id : '');
-
-function Row({ v, children }: { v: ViewRow; children: React.ReactNode }) {
-  const hd = v.kind === 'lib' && !isHfeFilename(v.name) && adfDensity(v.row.sizeBytes) === 'hd';
-  // A refused library file says why in its status ("Failed · No disk images inside"); the reason keeps ingest-note.
-  const failNote = v.row.source === 'lib' && v.row.state === 'failed' && v.row.note ? v.row.note : null;
-  return (
-    <li data-testid="staging-row" data-kind={v.kind} data-state={v.state} data-key={v.key}
-        className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5" style={{ borderBottom: '1px solid var(--hairline)' }}>
-      <span className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold"
-            style={{ background: 'var(--glass-strong)', border: '1px solid var(--hairline-strong)', color: 'var(--ink)' }}>
-        {PILL[v.kind]}
-      </span>
-      <span className="min-w-0 flex-1" style={{ overflowWrap: 'anywhere' }}>
-        <span className="font-mono text-[12px]" style={{ color: 'var(--ink)' }}>{v.name}</span>
-        {v.note && (
-          // Not a tooltip: "this .adf came out of a .dms" needs to be seen.
-          <span className="ml-2 text-[11.5px]" data-testid="ingest-note" style={{ color: 'var(--muted)' }}>{v.note}</span>
-        )}
-      </span>
-      <span className="flex shrink-0 items-center gap-1 font-mono text-[11.5px]" style={{ color: 'var(--muted)' }}>
-        {v.size}
-        {hd && <HdTag testId="ingest-hd-tag" />}
-      </span>
-      <span className="flex min-w-0 basis-full flex-wrap items-center gap-2">
-        <span className="min-w-0 text-[12px]" style={{ color: 'var(--muted)', overflowWrap: 'anywhere' }}>{v.where}</span>
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[12px]" data-testid={`staging-status-${v.key}`}
-              style={{ color: v.tone === 'fail' ? 'var(--danger-fg)' : 'var(--ink)', overflowWrap: 'anywhere' }}>
-          <span aria-hidden className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: DOT[v.tone] }} />
-          {failNote ? <span>Failed · <span data-testid="ingest-note">{failNote}</span></span> : v.status}
-        </span>
-        {children}
-      </span>
-    </li>
-  );
-}
 
 function RefreshState({ loaded, failed }: { loaded: boolean; failed: boolean }) {
   const state = failed ? 'failed' : loaded ? 'ok' : 'reading';
