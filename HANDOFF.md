@@ -1480,11 +1480,25 @@ separately.
 
 **Current order (re-checked 2026-10-24):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6**; next C2 Devices) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
+**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f**; next C3 Upload) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **Phase C2 Devices -- SHIPPED 2026-10-25** (merge 3d12b1f; spec `docs/superpowers/specs/2026-10-24-phase-c2-devices-design.md`,
+  plan `docs/superpowers/plans/2026-10-24-phase-c2-devices.md`; 35 spec rulings). Modern card: DriveArt SVG + DriveGlass (the
+  live display.wasm OLED is the button that opens the display editor), drive box / Transfer box, DF1 radiogroup (Off / Next disk
+  of the set / Network / Any disk; roving tabIndex, aria-disabled while saving, falls back to the first enabled radio),
+  Board settings modal (Disk at startup draft + Save to board, NFC row, Delete), display editor in a Modal (940), shared
+  `src/components/ui/modal.tsx` (Base UI Dialog), PageHeader h1 `tabIndex={-1}` app-wide, devices loading/empty states,
+  Devices contrast pairs in e2e, `mountedGameId`/`desiredGameId` from org-scoped joins (db test). Follow-up 3fed241
+  (operator request): the OLED is drawn 2x (180 of 304 art units; case 304x155 / 304x200). Rulings: Disk at startup saves via
+  the modal's Save; DF1 input during a save is ignored, not queued; display modal stays two Modal instances. Deferred minors:
+  online card's Last seen frozen while online (<~1 min); mounting disk shows the old disk's colour/tab (spec 4.1 literal);
+  display editor Panel/scale radios ink-filled not segmented; desktop MAC breaks mid-token, firmware cell 4 lines; focus to
+  body if a card is deleted in another tab while its modal is open; boards help lost "and their history"; no Modal unit test;
+  bootDisk not in the live-refresh fingerprint; delete confirm has no focus trap; no Home/End on display radios; help doesn't
+  say Reset acts at once. Pre-existing: lint purity in admin pages (area 6); help.spec "Enter opens the ?" order-dependent flake.
 - **Phase C1 Library + Title -- SHIPPED 2026-10-24** (merge 1d930b6; spec `docs/superpowers/specs/2026-10-24-phase-c1-library-title-design.md`,
   plan `docs/superpowers/plans/2026-10-24-phase-c1-library-title.md`; 24+ rulings in the spec and ledger). Card actions moved
   into a portalled ⋯ menu (`title-menu-<id>`, controlled Mount/Fob/Move/Delete dialogs), 4:5 cards with DF0 pill only, table
