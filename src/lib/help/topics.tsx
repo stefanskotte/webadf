@@ -639,7 +639,9 @@ export const HELP_TOPICS = {
   // Sources: src/lib/user-prefs-schema.ts (choices, defaults), src/app/page.tsx + sign-in/page.tsx (start page),
   // library/page.tsx (sort skipped in a collection; ?view= else library.view), file-tree.tsx + browse-sort.ts (folders first),
   // components/prefs/preferences-form.tsx (saves as it changes), db/schema/user-prefs.ts (per user, not per org),
-  // components/prefs/firmware-password-setting.tsx + api/me/prefs/firmware-skip-password (firmware password).
+  // components/prefs/firmware-password-setting.tsx + api/me/prefs/firmware-skip-password (firmware password),
+  // components/ui/seg-radio-group.tsx (Start page, Library opens in, Titles per page are radio rows; C5 spec
+  // docs/superpowers/specs/2026-10-25-phase-c5-settings-help-search-signin-design.md §10).
   preferences: {
     title: 'Preferences',
     short: 'Your own start page, library view and sort orders. They are kept with your account, so they follow you to every browser.',

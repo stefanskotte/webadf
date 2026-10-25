@@ -124,6 +124,11 @@ async function gameIdByTitle(orgId: string, like: string): Promise<string> {
 
 test('capture the README screenshots', async ({ page, request, browser }) => {
   // --- the demo account ----------------------------------------------------
+  // --- signed out: the sign-in page (C5, Ruling 38) -------------------------
+  await page.goto('/sign-in');
+  await expect(page.getByTestId('auth-hero')).toBeVisible();
+  await shoot(page, 'sign-in');
+
   inviteCode = await mintInviteCode();
   await page.goto('/sign-up');
   await page.getByLabel('Email').fill(DEMO_EMAIL);
@@ -254,4 +259,8 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
 
   await page.goto('/help');
   await shoot(page, 'help');
+
+  await page.goto('/settings');
+  await expect(page.getByTestId('settings-nav')).toBeVisible();
+  await shoot(page, 'settings', { tall: true });
 });

@@ -23,7 +23,7 @@ describe('ensureBootstrapInvite', () => {
   it('creates one invite while there is no user, reuses it, and names the admin email', async () => {
     const a = await ensureBootstrapInvite('https://x.lan', 'me@x.lan');
     const b = await ensureBootstrapInvite('https://x.lan', 'me@x.lan');
-    expect(a).toMatch(/^Sign up as the first admin \(use me@x\.lan\): https:\/\/x\.lan\/sign-up\?invite=[A-Z0-9]{8}$/);
+    expect(a).toMatch(/^Create account as the first admin \(use me@x\.lan\): https:\/\/x\.lan\/sign-up\?invite=[A-Z0-9]{8}$/);
     expect(b).toBe(a);
     const n = await admin(`select count(*)::int as n from invites where org_id = 'bootstrap'`, u.toString());
     expect(n.rows[0].n).toBe(1);

@@ -22,5 +22,5 @@ export async function ensureBootstrapInvite(url: string, adminEmail: string): Pr
     code = Array.from({ length: CODE_LEN }, () => ALPHABET[randomInt(ALPHABET.length)]).join('');
     await db.insert(invites).values({ code, orgId: BOOTSTRAP_ORG, createdByUserId: 'system', expiresAt: new Date(Date.now() + TTL_MS) });
   }
-  return `Sign up as the first admin (use ${adminEmail}): ${url}/sign-up?invite=${code}`;
+  return `Create account as the first admin (use ${adminEmail}): ${url}/sign-up?invite=${code}`;
 }

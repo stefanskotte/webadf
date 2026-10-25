@@ -179,7 +179,7 @@ test('Settings: the firmware confirm cannot be cancelled or re-sent while its re
   let posts = 0;
   await page.route('**/api/me/prefs/firmware-skip-password', async (route) => {
     posts += 1;
-    await new Promise((r) => setTimeout(r, 8000));
+    await new Promise((r) => setTimeout(r, 1500));
     await route.continue();
   });
   await hydrated(page, 'fw-skip-password');
@@ -206,7 +206,7 @@ test('Settings: the password form ignores Cancel, Escape and a second submit whi
   let calls = 0;
   await page.route('**/api/auth/change-password', async (route) => {
     calls += 1;
-    await new Promise((r) => setTimeout(r, 8000));
+    await new Promise((r) => setTimeout(r, 1500));
     await route.continue();
   });
   await hydrated(page, 'password-change-open');
@@ -239,7 +239,7 @@ test('Settings: the delete form ignores Cancel, Escape and a second submit while
   let calls = 0;
   await page.route('**/api/me/account', async (route) => {   // answered here: nothing is ever deleted
     calls += 1;
-    await new Promise((r) => setTimeout(r, 8000));
+    await new Promise((r) => setTimeout(r, 1500));
     await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'bad_password' }) });
   });
   await hydrated(page, 'account-delete-open');
@@ -627,3 +627,72 @@ test('Create account: invite code first with its hint, the words for a bad code,
   await expect(page.getByTestId('auth-error')).toHaveText('That invite code is not valid, or it has been used.');
   await expect(page).toHaveURL(/\/sign-up/);
 });
+
+// ---- Phone (spec §8: only what the boards and today's specs pin; the full pass is C7) -------------------------
+
+test('at 390 px: Settings stacks with no list, Help folds its topics, Search has no scrim or keys, sign-in has no hero', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const noSideways = async () =>
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+
+  await page.goto('/sign-in');
+  await expect(page.getByTestId('auth-hero')).toBeHidden();
+  await expect(page.getByTestId('auth-switch')).toBeVisible();
+  await noSideways();
+
+  const run = runTag();
+  const u = await signUpFresh(page);
+  await seedDisk(u.orgId, { title: `Phone Find ${run}`, diskNo: 1, sha256: sha('f') });
+  await page.goto('/settings');
+  await expect(page.getByTestId('settings-nav')).toBeHidden();
+  expect(await page.locator('h1').evaluate((h) => getComputedStyle(h).fontSize)).toBe('30px');
+  // A row stacks: its control sits under its words.
+  await expect(page.getByTestId('pref-start-page')).toBeVisible();
+  const labelId = await page.getByTestId('pref-start-page').getAttribute('aria-labelledby');
+  const words = (await page.locator(`[id="${labelId}"]`).boundingBox())!;
+  const control = (await page.getByTestId('pref-start-page').boundingBox())!;
+  expect(control.y).toBeGreaterThan(words.y + words.height - 1);
+  await noSideways();
+
+  await page.goto('/help');
+  await expect(page.getByTestId('help-nav-toggle')).toHaveText('Topics · 17');
+  await noSideways();
+
+  await page.getByTestId('search-input').fill(`Phone Find ${run}`);
+  const panel = page.getByTestId('search-panel');
+  await expect(panel).toBeVisible();
+  await expect(page.getByTestId('search-scrim')).toBeHidden();
+  await expect(page.getByTestId('search-keys')).toBeHidden();
+  const box = (await panel.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  await noSideways();
+});
+
+test('at 1040 px the hero clips its third disk: no disk box crosses the hero right edge', async ({ page }) => {
+  await page.setViewportSize({ width: 1040, height: 800 });
+  await page.goto('/sign-in');
+  const hero = (await page.getByTestId('auth-hero').boundingBox())!;
+  const form = (await page.getByTestId('sign-in-form').boundingBox())!;
+  expect(form.x).toBeGreaterThanOrEqual(hero.x + hero.width - 1);
+  // The third disk (left 290 + rotation) can reach past the hero here; a bounding box ignores clipping, so assert the clip.
+  expect(await page.getByTestId('auth-hero').evaluate((h) => getComputedStyle(h).overflow)).toBe('hidden');
+});
+
+for (const path of ['/sign-in', '/sign-up']) {
+  test(`at 390 px ${path} has no hero, no sideways scroll, a visible form and a 44 px submit`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(path);
+    await expect(page.getByTestId('auth-hero')).toBeHidden();
+    await expect(page.getByTestId('auth-switch')).toBeVisible();
+    const form = page.getByTestId(path === '/sign-in' ? 'sign-in-form' : 'sign-up-form');
+    await expect(form).toBeVisible();
+    const fb = (await form.boundingBox())!;
+    expect(fb.x).toBeGreaterThanOrEqual(0);
+    expect(fb.x + fb.width).toBeLessThanOrEqual(390);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    const submit = form.locator('button[type=submit]');
+    await expect(submit).toBeVisible();
+    expect((await submit.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  });
+}

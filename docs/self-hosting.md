@@ -48,8 +48,8 @@ docker compose up -d
 docker compose logs app | grep 'first admin'
 ```
 
-The log line is `webadf: Sign up as the first admin (use you@example.org): https://192.168.1.10/sign-up?invite=ABCD2345`.
-Open that link and sign up **with exactly that email address**. That is what makes the account the super-admin. Registration is
+The log line is `webadf: Create account as the first admin (use you@example.org): https://192.168.1.10/sign-up?invite=ABCD2345`.
+Open that link and create the account **with exactly that email address**. That is what makes the account the super-admin. Registration is
 by invitation only; the super-admin invites everybody else from `/admin`.
 
 The first start creates the data folder (`./data`, or `WEBADF_DATA_DIR`) with:

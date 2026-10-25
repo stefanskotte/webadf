@@ -30,7 +30,7 @@ export default function AuthLayout({ children }: LayoutProps<'/'>) {
   const display = { fontFamily: 'var(--font-display)' };
   return (
     <div className="min-h-dvh lg:grid lg:grid-cols-[minmax(0,1fr)_560px]" style={{ background: 'var(--ground)' }}>
-      <section aria-label="About WebFloppy" data-testid="auth-hero" className="hidden flex-col justify-between p-16 lg:flex"
+      <section aria-label="About WebFloppy" data-testid="auth-hero" className="hidden flex-col justify-between overflow-hidden p-16 lg:flex"
                style={{ background: 'var(--ink)', color: 'var(--surface)' }}>
         <div className="flex items-center gap-2.5">
           <Logo size={34} tone="light" />
