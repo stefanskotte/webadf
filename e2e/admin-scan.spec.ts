@@ -4,7 +4,7 @@ import { getDb } from '@/db';
 import { games, disks, blobs } from '@/db/schema/catalog';
 import { signUpFresh, createAdf } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
-import { cleanupSeeded } from './device-helpers';
+import { cleanupSeeded, hydrated } from './device-helpers';
 import { trackTosecSet, cleanupTosec } from './tosec-helpers';
 
 test.afterAll(async () => { await cleanupTosec(); await cleanupSeeded(); });
@@ -98,6 +98,8 @@ game (
 
   await signInAsSuperAdmin(page);
   await page.goto('/admin/scan');
+  // A file chosen before hydration fires a change no React handler hears: nothing uploads, no toast.
+  await hydrated(page, 'dat-upload', 'onChange');
 
   await page.getByTestId('dat-upload').setInputFiles({
     name: 'test.dat', mimeType: 'text/plain', buffer: Buffer.from(datText),
