@@ -215,10 +215,6 @@ export function collectDirectories(entries: AdfEntry[], parentPath = ''): Direct
   return dirs;
 }
 
-/** Reserved on the left of every row for the drag handle, so the handle can be absolutely positioned in that gutter without disturbing any of the existing `pl-[22px]` alignment the metadata/action lines below the name already depend on. */
-
-/** Room for the selection checkbox (A5), left of the grip, when rows are selectable. */
-
 
 export function FileTree({
   entries, diskId, toolbar, send = null, sort: initialSort = DEFAULT_PREFS.browse.sort,
@@ -502,7 +498,7 @@ export function FileTree({
    * verbatim from collection-provider.tsx, whose comment explains why in
    * full: PointerSensor cannot be kept alongside TouchSensor (one finger
    * would activate both), the 8px mouse threshold is what keeps ordinary
-   * clicks on the toggle/Download/Rename/Delete controls from being eaten,
+   * clicks on the toggle, checkbox and ⋯ menu from being eaten,
    * and the touch delay is what stops a drag eating page scrolling on a
    * phone -- `tolerance` is the movement budget during that hold, and
    * exceeding it lets the gesture stay a scroll instead.
@@ -989,6 +985,7 @@ function FileRow({
   return (
     <div
       ref={setDropRef}
+      role="listitem"
       data-testid={`fs-drop-${entry.block}`}
       data-drop-target={isOver || nativeOver ? 'true' : undefined}
       {...nativeDrop}
