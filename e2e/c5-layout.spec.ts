@@ -1,6 +1,11 @@
 import { test, expect, type Page } from '@playwright/test';
-import { signUpFresh } from './helpers';
-import { cleanupSeeded, hydrated } from './device-helpers';
+import { eq } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { getDb } from '@/db';
+import { blobs } from '@/db/schema/catalog';
+import { signUpFresh, runTag } from './helpers';
+import { cleanupSeeded, hydrated, seedDisk } from './device-helpers';
+import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
 
 /**
  * Phase C5: Settings, Help + the "?" popover, the header search, Sign in & Create account in the InfSettings /
@@ -8,10 +13,12 @@ import { cleanupSeeded, hydrated } from './device-helpers';
  * test signs up fresh (or stays signed out) and asserts only on rows it made: the e2e DB is the shared live one.
  */
 test.describe.configure({ timeout: 90_000 });
-test.afterAll(async () => { await cleanupSeeded(); });
+test.afterAll(async () => { await cleanupTosec(); await cleanupSeeded(); });
 
 const prefsSaved = (page: Page) =>
   page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH');
+
+const sha = (tag: string) => randomUUID().replace(/-/g, '').padEnd(64, tag);
 
 // ---- Settings (spec §2) ---------------------------------------------------------------------------------------
 
@@ -395,4 +402,125 @@ test('the "?" popover: a 24 px round trigger, the ink card, and a uniquely named
   await page.keyboard.press('Escape');
   await expect(pop).toBeHidden();
   await expect(tip).toBeFocused();
+});
+
+// ---- Search (spec §5) -----------------------------------------------------------------------------------------
+
+test('Search: the field is a combobox over a listbox of option links; the arrows move aria-activedescendant', async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  // The query is one ILIKE substring (search-query.ts), so the run tag sits between the shared word and the name.
+  const a = await seedDisk(u.orgId, { title: `Combo ${run} Alpha`, diskNo: 1, sha256: sha('a') });
+  await seedDisk(u.orgId, { title: `Combo ${run} Beta`, diskNo: 1, sha256: sha('b') });
+  const input = page.getByRole('combobox', { name: 'Search titles' });
+  await expect(input).toHaveAttribute('data-testid', 'search-input');
+  await expect(input).toHaveAttribute('aria-expanded', 'false');
+  await input.fill(`Combo ${run}`);   // both seeded titles, nothing else (the run tag is unique)
+  await expect(page.locator('[data-testid="search-result"][data-result-kind="title"]')).toHaveCount(2);
+  await expect(input).toHaveAttribute('aria-expanded', 'true');
+  await expect(input).toHaveAttribute('aria-controls', 'search-listbox');
+  await expect(page.getByRole('listbox', { name: 'Search results' })).toBeVisible();
+  await expect(page.getByTestId('search-group-title')).toHaveText('Titles');
+  const first = page.getByRole('option').first();
+  await expect(first).toHaveAttribute('id', 'search-opt-0');
+  await expect(first).toHaveAttribute('aria-selected', 'true');
+  await expect(first).toHaveAttribute('tabindex', '-1');
+  await expect(first).toHaveAttribute('href', `/games/${a.gameId}`);
+  await expect(input).toHaveAttribute('aria-activedescendant', 'search-opt-0');
+  await input.press('ArrowDown');
+  await expect(input).toHaveAttribute('aria-activedescendant', 'search-opt-1');
+  await expect(page.locator('#search-opt-1')).toHaveAttribute('aria-selected', 'true');
+});
+
+test('Search: the panel closes when focus leaves or the scrim is pressed, keeps the query, opens again on focus; a row press navigates', async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  const { gameId } = await seedDisk(u.orgId, { title: `Scrim Target ${run}`, diskNo: 1, sha256: sha('s') });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/settings');   // its aside below y=320 is empty: a press there lands on nothing but the scrim
+  const input = page.getByTestId('search-input');
+  await hydrated(page, 'search-input', 'onChange');
+  await input.fill(`Scrim Target ${run}`);
+  const panel = page.getByTestId('search-panel');
+  await expect(panel).toBeVisible();
+  await expect(page.getByTestId('search-scrim')).toBeVisible();
+  await expect(page.getByTestId('search-keys')).toContainText('Esc to close');
+  expect(Math.round((await panel.boundingBox())!.width)).toBe(600);
+
+  await page.mouse.click(150, 600);   // the scrim
+  await expect(panel).toHaveCount(0);
+  await expect(input).toHaveValue(`Scrim Target ${run}`);
+  await input.focus();
+  await expect(panel).toBeVisible();
+  await page.keyboard.press('Tab');
+  await expect(panel).toHaveCount(0);
+  await expect(input).toHaveValue(`Scrim Target ${run}`);
+
+  // A press on a row keeps the input focused (the panel would otherwise vanish under the pointer); the click opens it.
+  await input.focus();
+  const row = page.locator(`[data-testid="search-result"][data-result-id="${gameId}"]`);
+  await row.hover();
+  await page.mouse.down();
+  await expect(input).toBeFocused();
+  await expect(panel).toBeVisible();
+  await page.mouse.up();
+  await expect(page).toHaveURL(new RegExp(`/games/${gameId}$`));
+  await expect(input).toHaveValue('');
+  await expect(page.getByTestId('search-panel')).toHaveCount(0);
+});
+
+test("Search: a row shows its disk, kind and facts; a help row its '?' tile; the API carries the four new fields", async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  const plain = await seedDisk(u.orgId, { title: `Rowfacts ${run} Plain`, diskNo: 1, sha256: sha('p') });
+  const typedSha = sha('t');
+  const typed = await seedDisk(u.orgId, { title: `Rowfacts ${run} Typed`, diskNo: 1, sha256: typedSha });
+  const entryId = await seedTosecEntry({
+    setName: 'Commodore Amiga - Games - [ADF]', gameName: `Rowfacts ${run} Typed (1991)(Test)`, romName: `rowfacts-${run}.adf`,
+    title: `Rowfacts ${run} Typed`, sortTitle: `rowfacts ${run} typed`, year: 1991,
+  });
+  await getDb().update(blobs).set({ tosecEntryId: entryId, matchState: 'matched', matchCheckedAt: new Date() })
+    .where(eq(blobs.sha256, typedSha));
+
+  const body = await (await page.request.get(`/api/search?q=${encodeURIComponent(`Rowfacts ${run}`)}`)).json();
+  const byId = Object.fromEntries((body.titles as { id: string }[]).map((x) => [x.id, x]));
+  expect(byId[plain.gameId]).toMatchObject({ authored: false, hasHd: false, hasHfe: false, kind: null });
+  expect(byId[typed.gameId]).toMatchObject({ authored: false, hasHd: false, hasHfe: false, kind: 'Game' });
+
+  await page.getByTestId('search-input').fill(`Rowfacts ${run}`);
+  const row = (id: string) => page.locator(`[data-testid="search-result"][data-result-id="${id}"]`);
+  await expect(row(plain.gameId).getByTestId('search-result-sub')).toHaveText(/^Unidentified · .*Uncategorized$/);
+  await expect(row(typed.gameId).getByTestId('search-result-sub')).toHaveText(/^Game · /);
+  await expect(row(plain.gameId).locator('[data-disk-color]')).toHaveAttribute('data-disk-color', 'cream');
+  await expect(row(typed.gameId).locator('[data-disk-color]')).not.toHaveAttribute('data-disk-color', 'cream');
+
+  await page.getByTestId('search-input').fill('preload');
+  const help = page.locator('[data-testid="search-result"][data-result-kind="help"]').first();
+  await expect(help.locator('[data-tile]')).toHaveText('?');
+  await expect(page.getByTestId('search-group-help')).toHaveText('Help');
+});
+
+test('Search: an empty answer names what was searched', async ({ page }) => {
+  await signUpFresh(page);
+  const q = `Nothing Here ${runTag()}`;
+  await page.getByTestId('search-input').fill(q);
+  await expect(page.getByTestId('search-empty')).toHaveText(`Nothing in your library or Help matches “${q}”.`);
+});
+
+test('Search: at 390 px the panel stays on screen and below the box', async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  await seedDisk(u.orgId, { title: `Phone Panel ${run}`, diskNo: 1, sha256: sha('f') });
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.goto('/library');
+  await hydrated(page, 'search-input', 'onChange');
+  await page.getByTestId('search-input').fill(`Phone Panel ${run}`);
+  const panel = page.getByTestId('search-panel');
+  await expect(panel).toBeVisible();
+  const b = (await panel.boundingBox())!;
+  const i = (await page.getByTestId('search-input').boundingBox())!;
+  expect(b.x).toBeGreaterThanOrEqual(0);
+  expect(b.x + b.width).toBeLessThanOrEqual(390);
+  expect(b.y).toBeGreaterThanOrEqual(i.y + i.height);
+  await expect(page.getByTestId('search-scrim')).toBeHidden();
 });

@@ -14,8 +14,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { SearchIcon } from 'lucide-react';
+import { Link } from '@/components/shell/link';
+import { DiskIcon } from '@/components/ui/disk-icon';
 import { matchHelpTopics } from '@/lib/help/match';
 import { HELP_TOPICS, type HelpTopicId } from '@/lib/help/topics';
+import { titleDiskColor } from '@/lib/library-look';
+import { searchEmptyText, searchTitleSub } from '@/lib/search-look';
 
 interface SearchTitle {
   id: string;
@@ -24,6 +28,8 @@ interface SearchTitle {
   publisher: string | null;
   diskCount: number;
   collections: string[];
+  // Optional on the client: a page loaded before a deploy may meet an older server for one request.
+  authored?: boolean; hasHd?: boolean; hasHfe?: boolean; kind?: string | null;
 }
 interface SearchCollectionHit {
   id: string;
@@ -36,6 +42,45 @@ interface SearchResults {
 }
 
 const EMPTY_RESULTS: SearchResults = { titles: [], collections: [] };
+
+type Entry =
+  | { kind: 'title'; item: SearchTitle }
+  | { kind: 'collection'; item: SearchCollectionHit }
+  | { kind: 'help'; item: { id: HelpTopicId } };
+
+/** Where a row goes: the same three destinations as before (Ruling 23 makes them real links). */
+function hrefOf(e: Entry): string {
+  if (e.kind === 'title') return `/games/${e.item.id}`;
+  if (e.kind === 'help') return `/help#${e.item.id}`;
+  return `/library?collection=${e.item.id}`;
+}
+
+const GROUP_LABEL = { title: 'Titles', collection: 'Collections', help: 'Help' } as const;
+
+function LetterTile({ letter }: { letter: string }) {
+  return (
+    <span data-tile className="flex size-[30px] items-center justify-center rounded-[8px] font-mono text-[12px] font-semibold"
+          style={{ background: 'var(--track)', color: 'var(--muted)' }}>{letter}</span>
+  );
+}
+
+/** A row's icon, name and sub line (spec §5.4). */
+function rowParts(e: Entry): { id: string; name: string; sub: string; clamp: boolean; icon: React.ReactNode } {
+  if (e.kind === 'title') {
+    const t = e.item;
+    const color = titleDiskColor({ id: t.id, hasHd: !!t.hasHd, hasHfe: !!t.hasHfe, kind: t.kind, authored: !!t.authored });
+    return {
+      id: t.id, name: t.title, sub: searchTitleSub(t), clamp: false,
+      icon: <span data-disk-color={color}><DiskIcon size={30} color={color} hd={!!t.hasHd} stack={t.diskCount} mounted={false} /></span>,
+    };
+  }
+  if (e.kind === 'collection') {
+    const c = e.item;
+    return { id: c.id, name: c.name, sub: `${c.gameCount} title${c.gameCount === 1 ? '' : 's'}`, clamp: false, icon: <LetterTile letter="C" /> };
+  }
+  const h = HELP_TOPICS[e.item.id];
+  return { id: e.item.id, name: h.title, sub: h.short, clamp: true, icon: <LetterTile letter="?" /> };
+}
 
 export function SearchBox() {
   const router = useRouter();
@@ -169,15 +214,12 @@ export function SearchBox() {
   }, []);
 
   const [focused, setFocused] = useState(false);
+  const [open, setOpen] = useState(false);   // Ruling 22: cleared on blur and by the scrim; the query stays
 
   const trimmed = q.trim();
   // While an error is showing, the rows behind it are stale and must not be
   // navigable -- an empty flat list here also disarms ArrowUp/ArrowDown/Enter.
-  const flat: Array<
-    | { kind: 'title'; item: SearchTitle }
-    | { kind: 'collection'; item: SearchCollectionHit }
-    | { kind: 'help'; item: { id: HelpTopicId } }
-  > = error
+  const flat: Entry[] = error
     ? []
     : [
         ...results.titles.map((item) => ({ kind: 'title' as const, item })),
@@ -185,7 +227,6 @@ export function SearchBox() {
         // Help topics (A3), matched here in the browser: they ship with the app, so no request is needed.
         ...matchHelpTopics(trimmed).map((id) => ({ kind: 'help' as const, item: { id } })),
       ];
-  const helpHits = flat.filter((e) => e.kind === 'help').map((e) => e.item.id as HelpTopicId);
   const showEmpty = trimmed !== '' && !error && respondedQuery === trimmed && flat.length === 0;
   // The panel itself is gated on there being something to put in it. Without
   // this, the bordered box renders empty (no rows, no error, no empty-state
@@ -193,8 +234,16 @@ export function SearchBox() {
   // round trip of every single search: a small blank box flashing under the
   // pill on the first keystroke.
   const showPanel = trimmed !== '' && (error !== null || flat.length > 0 || showEmpty);
+  const panelOpen = open && showPanel;
+
+  // Ruling 26: the list scrolls past 620 px, so the arrows keep the highlighted option in view.
+  useEffect(() => {
+    if (!panelOpen) return;
+    document.getElementById(`search-opt-${highlight}`)?.scrollIntoView({ block: 'nearest' });
+  }, [highlight, panelOpen]);
 
   function onChange(value: string) {
+    setOpen(true);
     // `q` is a controlled input's value, so it must always take the literal
     // characters typed -- including a leading space on an otherwise-empty
     // box, which trims to ''. Clearing search state below must not clear
@@ -212,15 +261,12 @@ export function SearchBox() {
     currentQueryRef.current = trimmedValue;
   }
 
-  function select(entry: (typeof flat)[number]) {
-    // The page's loading placeholders (loading.tsx) confirm the click landed.
-    if (entry.kind === 'title') router.push(`/games/${entry.item.id}`);
-    else if (entry.kind === 'help') router.push(`/help#${entry.item.id}`);
-    else router.push(`/library?collection=${entry.item.id}`);
-    // SearchBox lives in the layout, so navigating does not unmount it --
-    // without reset() here the request for whatever was typed keeps running
-    // and can repopulate the panel with the PREVIOUS search's rows the next
-    // time it opens.
+  function select(entry: Entry) {
+    // The page's loading placeholders (loading.tsx) confirm the press landed.
+    router.push(hrefOf(entry));
+    // SearchBox lives in the layout, so navigating does not unmount it -- without reset() here the request for
+    // whatever was typed keeps running and can repopulate the panel with the PREVIOUS search's rows the next time it
+    // opens.
     reset();
     inputRef.current?.blur();
   }
@@ -229,17 +275,19 @@ export function SearchBox() {
     if (e.key === 'ArrowDown') {
       if (flat.length === 0) return;
       e.preventDefault();
+      setOpen(true);
       setHighlight((h) => (h + 1) % flat.length);
       return;
     }
     if (e.key === 'ArrowUp') {
       if (flat.length === 0) return;
       e.preventDefault();
+      setOpen(true);
       setHighlight((h) => (h - 1 + flat.length) % flat.length);
       return;
     }
     if (e.key === 'Enter') {
-      const entry = flat[highlight];
+      const entry = panelOpen ? flat[highlight] : undefined;
       if (entry) {
         e.preventDefault();
         select(entry);
@@ -252,202 +300,119 @@ export function SearchBox() {
     }
   }
 
-  return (
-    // Full width below sm: the header wraps the search box onto a line of its
-    // own there, and a shrink-to-fit box would leave that line mostly empty
-    // while the input it contains stayed too narrow to read a query in.
-    // mr-2 keeps the box 16px clear of the icon buttons, which sit 8px
-    // apart (gap-2 on the header's right group) -- below sm as well, where
-    // the box shares its wrapped line with them (spec §6.1).
-    <div className="relative mr-2 w-full sm:w-auto">
-      <SearchIcon aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2"
-                  style={{ color: 'var(--muted-2)' }} />
-      <input
-        ref={inputRef}
-        data-testid="search-input"
-        // Tells LiveRefresh's `typing()` guard (src/components/shell/live-refresh.tsx)
-        // not to treat focus here as "editing a form on the page". This box
-        // lives in the layout, not on a page, and focus can linger in it for
-        // reasons that have nothing to do with an in-progress edit (a result
-        // panel left open, a stray click) -- that must not hold back live
-        // updates for the rest of the page the way a genuine rename field
-        // should.
-        data-live-ok
-        aria-label="Search titles"
-        title="Search titles — press / to focus"
-        placeholder="Search titles"
-        value={q}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={onKeyDown}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        // pr-9 leaves room for the key hint; without it a long query runs
-        // underneath the badge instead of scrolling behind the box's edge.
-        // w-48, not w-56. The admin shell carries the operator's email and a
-        // back-link beside this box, and at w-56 the centred nav pill and this
-        // input overlapped by 15px at 1280 (measured, both shells). 192px
-        // still holds the placeholder and the key hint with room to spare.
-        // Below sm none of that applies -- the pill has left the header for
-        // the bottom bar -- and 192px would waste the line the box now has to
-        // itself, so it takes the whole of it.
-        // The focus ring is a box-shadow in the full --ring (>= 3:1 on the
-        // bar, WCAG 1.4.11): the border colour is an inline style, which a
-        // focus-visible border class could not override.
-        className="h-10 w-full rounded-[10px] border pl-9 pr-4 text-[14px] outline-none transition-colors placeholder:text-(--muted-2) focus-visible:ring-2 focus-visible:ring-(--ring) sm:w-48 sm:pr-9"
-        style={{ background: 'var(--surface-2)', borderColor: 'var(--line)', color: 'var(--ink)' }}
-      />
+  const groups = (['title', 'collection', 'help'] as const)
+    .map((kind) => ({ kind, rows: flat.map((entry, index) => ({ entry, index })).filter((r) => r.entry.kind === kind) }))
+    .filter((g) => g.rows.length > 0);
 
-      {/* The "/" shortcut has always worked; nothing on screen said so, which
-          for most people is the same as it not existing. Shown only while the
-          box is idle -- once it is focused or has a query in it, the hint has
-          served its purpose and would just be sitting in the way of the text.
-          aria-hidden because the same thing is already announced properly by
-          the input's title attribute; a screen reader does not need "slash"
-          read out as content. */}
-      {!focused && q === '' && (
-        <kbd
-          aria-hidden
-          data-testid="search-hint"
-          // hidden below sm: it advertises a KEY, and a phone has no keyboard
-          // to press it with -- on a touch device it is decoration sitting on
-          // top of the input's text. The shortcut itself still works for
-          // anything with a keyboard attached at any width.
-          className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded-md border px-1.5 font-mono text-[11px] leading-[15px] sm:block"
-          style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--muted)' }}
-        >
-          /
-        </kbd>
+  return (
+    // Static, so the panel anchors to the header (both shells' headers are `relative`); see the plan ruling in C5
+    // Task 5. Full width below sm, where the header wraps the box onto a line it shares with the icon buttons; mr-2
+    // keeps it 16px clear of them (they sit 8px apart).
+    <div className="mr-2 w-full sm:w-auto">
+      <div className="relative w-full sm:w-auto">
+        <SearchIcon aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2"
+                    style={{ color: 'var(--muted-2)' }} />
+        <input
+          ref={inputRef}
+          data-testid="search-input"
+          // LiveRefresh's typing() guard skips this box (src/components/shell/live-refresh.tsx): it lives in the
+          // layout, and focus lingering here must not hold back live updates the way a rename field should.
+          data-live-ok
+          role="combobox"
+          aria-expanded={panelOpen}
+          aria-controls="search-listbox"
+          aria-autocomplete="list"
+          aria-activedescendant={panelOpen && flat.length > 0 ? `search-opt-${highlight}` : undefined}
+          aria-label="Search titles"
+          title="Search titles — press / to focus"
+          placeholder="Search titles"
+          value={q}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={onKeyDown}
+          onFocus={() => { setFocused(true); if (q.trim() !== '') setOpen(true); }}
+          onBlur={() => { setFocused(false); setOpen(false); }}
+          // w-48 (not w-56): at w-56 the admin shell's centred pill and this input overlapped by 15px at 1280. The
+          // focus ring is a box-shadow in the full --ring (>= 3:1 on the bar, WCAG 1.4.11).
+          className="h-10 w-full rounded-[10px] border pl-9 pr-4 text-[14px] outline-none transition-colors placeholder:text-(--muted-2) focus-visible:ring-2 focus-visible:ring-(--ring) sm:w-48 sm:pr-9"
+          style={{ background: 'var(--surface-2)', borderColor: 'var(--line)', color: 'var(--ink)' }}
+        />
+        {/* The "/" shortcut, advertised while the box is idle (aria-hidden: the title attribute says it). Hidden below
+            sm: a phone has no key to press. */}
+        {!focused && q === '' && (
+          <kbd aria-hidden data-testid="search-hint"
+               className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded-md border px-1.5 font-mono text-[11px] leading-[15px] sm:block"
+               style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--muted)' }}>
+            /
+          </kbd>
+        )}
+      </div>
+
+      {panelOpen && (
+        // A light scrim from sm (spec §5.3). Not a focus trap: this is a combobox popup, not a dialog. A press on it
+        // also blurs the input, which closes the panel on its own; the handler makes the close not depend on that.
+        <div data-testid="search-scrim" aria-hidden onPointerDown={() => setOpen(false)}
+             className="fixed inset-x-0 bottom-0 top-[72px] z-40 hidden sm:block" style={{ background: 'var(--search-scrim)' }} />
       )}
 
-      {showPanel && (
-        // The panel is the opaque --surface, so the page never shows through.
-        // The highlighted row is --surface-2; the per-row metadata stays
-        // --muted, 6.71:1 on that row (--muted-2 is kept off highlighted rows).
+      {panelOpen && (
         <div
           data-testid="search-panel"
-          // The panel is anchored right-0 and grows leftwards, so on a narrow
-          // screen a fixed 20rem puts its LEFT edge off-canvas -- and the
-          // titles are left-aligned inside it, so that is the half a reader
-          // needs. 20rem still fits at 390px; it stops fitting on the 320px
-          // phones below that, and the min() is what makes those degrade to a
-          // narrower panel rather than a truncated one. Above sm it always
-          // resolves to 20rem, which is today's w-80 exactly.
-          className="absolute right-0 top-[46px] z-50 w-[min(20rem,calc(100vw-2rem))] rounded-2xl border p-1.5 sm:w-80"
-          style={{
-            background: 'var(--surface)',
-            borderColor: 'var(--line)',
-            boxShadow: 'var(--shadow-card)',
-          }}
+          // No press inside the panel may blur the input (Ruling 22): the row would vanish under the pointer.
+          onMouseDown={(e) => e.preventDefault()}
+          className="absolute left-4 right-4 top-[calc(100%+4px)] z-50 flex flex-col overflow-hidden rounded-[16px] border sm:left-auto sm:right-7 sm:top-[64px] sm:w-[min(600px,calc(100vw-56px))]"
+          style={{ background: 'var(--surface)', borderColor: 'var(--line)', boxShadow: 'var(--shadow-card)' }}
         >
           {error ? (
-            <div className="px-2 py-1.5 text-[12.5px]" style={{ color: 'var(--ink)' }}>
-              {error}
-            </div>
+            <div data-testid="search-error" className="px-[18px] py-4 text-[13px]" style={{ color: 'var(--danger-fg)' }}>{error}</div>
           ) : showEmpty ? (
-            <div
-              data-testid="search-empty"
-              className="px-2 py-1.5 text-[12.5px]"
-              style={{ color: 'var(--muted-2)' }}
-            >
-              No titles match &quot;{trimmed}&quot;
+            <div data-testid="search-empty" className="px-[18px] py-4 text-[13px]" style={{ color: 'var(--muted)' }}>
+              {searchEmptyText(trimmed)}
             </div>
           ) : (
-            <>
-              {results.titles.length > 0 && (
-                <div className="px-2 py-1 font-mono text-[10px] uppercase tracking-[0.09em]" style={{ color: 'var(--faint)' }}>
-                  Titles
+            <div role="listbox" id="search-listbox" aria-label="Search results"
+                 className="max-h-[min(620px,calc(100dvh-160px))] overflow-y-auto p-2">
+              {groups.map((g) => (
+                <div key={g.kind} role="group" aria-labelledby={`search-group-${g.kind}`}>
+                  <div id={`search-group-${g.kind}`} data-testid={`search-group-${g.kind}`}
+                       className="px-2.5 pb-1 pt-2.5 text-[12px] font-medium" style={{ color: 'var(--muted-2)' }}>
+                    {GROUP_LABEL[g.kind]}
+                  </div>
+                  {g.rows.map(({ entry, index }) => {
+                    const p = rowParts(entry);
+                    const highlighted = index === highlight;
+                    return (
+                      <Link key={`${entry.kind}-${p.id}`} href={hrefOf(entry)} role="option" id={`search-opt-${index}`}
+                            aria-selected={highlighted} tabIndex={-1}
+                            data-testid="search-result" data-result-kind={entry.kind} data-result-id={p.id}
+                            onMouseEnter={() => setHighlight(index)}
+                            onClick={() => { reset(); inputRef.current?.blur(); }}
+                            className="flex min-h-[50px] items-center gap-3 rounded-[10px] px-2.5 py-1.5"
+                            style={highlighted ? { background: 'var(--surface-2)' } : undefined}>
+                        <span aria-hidden className="flex size-[30px] shrink-0 items-center justify-center">{p.icon}</span>
+                        <span className="flex min-w-0 flex-1 flex-col gap-px">
+                          <span className="text-[14px] font-semibold" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>{p.name}</span>
+                          {/* --muted, not --muted-2: 6.71:1 on the highlighted row's --surface-2. */}
+                          <span data-testid="search-result-sub" className={`text-[12px]${p.clamp ? ' line-clamp-2' : ''}`}
+                                style={{ color: 'var(--muted)' }}>{p.sub}</span>
+                        </span>
+                        {highlighted && (
+                          <kbd aria-hidden className="hidden rounded-[6px] border px-[7px] font-mono text-[12px] sm:block"
+                               style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--muted)' }}>↵</kbd>
+                        )}
+                      </Link>
+                    );
+                  })}
                 </div>
-              )}
-              {results.titles.map((t) => {
-                const index = flat.findIndex((e) => e.kind === 'title' && e.item.id === t.id);
-                const highlighted = index === highlight;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    data-testid="search-result"
-                    data-result-kind="title"
-                    data-result-id={t.id}
-                    onMouseEnter={() => setHighlight(index)}
-                    onClick={() => select({ kind: 'title', item: t })}
-                    className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2 py-1.5 text-left"
-                    style={highlighted ? { background: 'var(--surface-2)' } : undefined}
-                  >
-                    <span className="text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
-                      {t.title}
-                    </span>
-                    <span className="font-mono text-[10.5px]" style={{ color: 'var(--muted)' }}>
-                      {[t.year, t.publisher, `${t.diskCount} disk${t.diskCount === 1 ? '' : 's'}`,
-                        // Where it lives (A3): its collections, or the inbox. Older servers send no list.
-                        t.collections ? (t.collections.length > 0 ? `in ${t.collections.join(', ')}` : 'Uncategorized') : null]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </span>
-                  </button>
-                );
-              })}
-
-              {results.collections.length > 0 && (
-                <div className="px-2 py-1 font-mono text-[10px] uppercase tracking-[0.09em]" style={{ color: 'var(--faint)' }}>
-                  Collections
-                </div>
-              )}
-              {results.collections.map((c) => {
-                const index = flat.findIndex((e) => e.kind === 'collection' && e.item.id === c.id);
-                const highlighted = index === highlight;
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    data-testid="search-result"
-                    data-result-kind="collection"
-                    data-result-id={c.id}
-                    onMouseEnter={() => setHighlight(index)}
-                    onClick={() => select({ kind: 'collection', item: c })}
-                    className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2 py-1.5 text-left"
-                    style={highlighted ? { background: 'var(--surface-2)' } : undefined}
-                  >
-                    <span className="text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
-                      {c.name}
-                    </span>
-                    <span className="font-mono text-[10.5px]" style={{ color: 'var(--muted)' }}>
-                      {c.gameCount} title{c.gameCount === 1 ? '' : 's'}
-                    </span>
-                  </button>
-                );
-              })}
-
-              {helpHits.length > 0 && (
-                <div className="px-2 py-1 font-mono text-[10px] uppercase tracking-[0.09em]" style={{ color: 'var(--faint)' }}>
-                  Help
-                </div>
-              )}
-              {helpHits.map((id) => {
-                const index = flat.findIndex((e) => e.kind === 'help' && e.item.id === id);
-                const highlighted = index === highlight;
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    data-testid="search-result"
-                    data-result-kind="help"
-                    data-result-id={id}
-                    onMouseEnter={() => setHighlight(index)}
-                    onClick={() => select({ kind: 'help', item: { id } })}
-                    className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2 py-1.5 text-left"
-                    style={highlighted ? { background: 'var(--surface-2)' } : undefined}
-                  >
-                    <span className="text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
-                      {HELP_TOPICS[id].title}
-                    </span>
-                    <span className="line-clamp-1 text-[11.5px]" style={{ color: 'var(--muted)' }}>
-                      {HELP_TOPICS[id].short}
-                    </span>
-                  </button>
-                );
-              })}
-            </>
+              ))}
+            </div>
           )}
+          <div data-testid="search-keys"
+               className="hidden min-h-10 flex-wrap items-center gap-x-4 gap-y-1 border-t px-4 py-2 text-[12px] sm:flex"
+               style={{ borderColor: 'var(--hairline)', color: 'var(--muted-2)' }}>
+            {([['↑ ↓', 'to move'], ['↵', 'to open'], ['Esc', 'to close'], ['/', 'from anywhere']] as const).map(([k, w]) => (
+              <span key={k}><kbd className="font-mono">{k}</kbd> {w}</span>
+            ))}
+          </div>
         </div>
       )}
     </div>

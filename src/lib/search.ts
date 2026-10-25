@@ -26,8 +26,10 @@ import { games, disks } from '@/db/schema/catalog';
 import { collections } from '@/db/schema/collections';
 import { orgFilter } from '@/db/scope';
 import { likePattern } from '@/lib/search-query';
+import { isHdAdfSql } from '@/lib/disk-format-sql';
+import { kindsForGames } from '@/lib/queries';
 
-/** Enough to choose from, few enough that the panel never scrolls. */
+/** Enough to choose from; the panel scrolls past 620 px (C5 Ruling 26). */
 export const TITLE_LIMIT = 8;
 export const COLLECTION_LIMIT = 4;
 
@@ -35,6 +37,8 @@ export interface SearchTitle {
   id: string; title: string; year: number | null; publisher: string | null; diskCount: number;
   /** This org's collections the title is in, in the rail's order; empty = Uncategorized (A3). */
   collections: string[];
+  /** C5 (Ruling 24): so the panel draws the title's disk in its card's colour and leads its sub line with the kind. */
+  authored: boolean; hasHd: boolean; hasHfe: boolean; kind: string | null;
 }
 export interface SearchCollectionHit { id: string; name: string; gameCount: number }
 export interface SearchResults { titles: SearchTitle[]; collections: SearchCollectionHit[] }
@@ -60,7 +64,7 @@ export async function search(orgId: string, raw: string): Promise<SearchResults>
 
   const db = getDb();
 
-  const [titles, collectionHits] = await Promise.all([
+  const [rows, collectionHits] = await Promise.all([
     db
       .select({
         id: games.id,
@@ -68,6 +72,10 @@ export async function search(orgId: string, raw: string): Promise<SearchResults>
         year: games.year,
         publisher: games.publisher,
         diskCount: sql<number>`count(${disks.id})::int`,
+        authored: games.authored,
+        // Over the same org-scoped disk join as diskCount, so neither is fanned out (listGames' aggregates).
+        hasHd: sql<boolean>`coalesce(bool_or(${isHdAdfSql()}), false)`,
+        hasHfe: sql<boolean>`coalesce(bool_or(${disks.imageFormat} = 'hfe'), false)`,
         // Scoped by the COLLECTION's org: collection_games carries no org_id of its own (D-4-5), so the join to
         // collections is what keeps another tenant's collection names out of this answer.
         collections: sql<string[]>`coalesce((
@@ -117,5 +125,7 @@ export async function search(orgId: string, raw: string): Promise<SearchResults>
       .limit(COLLECTION_LIMIT),
   ]);
 
-  return { titles, collections: collectionHits };
+  // One small query over the <= 8 ids, by the library's rule (C5 spec §5.5); org-scoped like the rest.
+  const kinds = await kindsForGames(orgId, rows.map((r) => r.id));
+  return { titles: rows.map((r) => ({ ...r, kind: kinds.get(r.id) ?? null })), collections: collectionHits };
 }

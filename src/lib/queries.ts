@@ -335,6 +335,29 @@ export async function coverUrlsForGames(orgId: string, gameIds: string[]): Promi
   return out;
 }
 
+/**
+ * Each title's kind by the library's rule: kindFromSetName per disk (its blob's TOSEC set), pickKind over a title's
+ * disks. Scoped by BOTH the game ids and the org on the disk row (a drifted disk is never read). Shared by the list
+ * queries (withDerived) and the header search (search.ts, C5 spec §5.5).
+ */
+export async function kindsForGames(orgId: string, ids: string[]): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  if (ids.length === 0) return out;
+  const sets = await getDb().select({ gameId: disks.gameId, setName: tosecEntries.setName })
+    .from(disks)
+    .innerJoin(blobs, eq(blobs.sha256, disks.sha256))
+    .innerJoin(tosecEntries, eq(tosecEntries.id, blobs.tosecEntryId))
+    .where(and(inArray(disks.gameId, ids), eq(disks.orgId, orgId)));
+  const byGame = new Map<string, Array<string | null>>();
+  for (const s of sets) {
+    const list = byGame.get(s.gameId) ?? [];
+    list.push(kindFromSetName(s.setName));
+    byGame.set(s.gameId, list);
+  }
+  for (const id of ids) out.set(id, pickKind(byGame.get(id) ?? []));
+  return out;
+}
+
 async function withDerived<T extends { id: string; authored: boolean; diskId: string | null }>(
   orgId: string, rows: T[],
 ): Promise<Array<T & { coverUrl: string | null; kind: string | null; holderName: string | null }>> {
@@ -345,14 +368,10 @@ async function withDerived<T extends { id: string; authored: boolean; diskId: st
   // Only authored titles offer the rename, so only their disks need a holder.
   const authoredDiskIds = rows.flatMap((r) => (r.authored && r.diskId ? [r.diskId] : []));
 
-  const [coverUrls, sets, held] = await Promise.all([
+  const [coverUrls, kinds, held] = await Promise.all([
     coverUrlsForGames(orgId, ids),
 
-    db.select({ gameId: disks.gameId, setName: tosecEntries.setName })
-      .from(disks)
-      .innerJoin(blobs, eq(blobs.sha256, disks.sha256))
-      .innerJoin(tosecEntries, eq(tosecEntries.id, blobs.tosecEntryId))
-      .where(and(inArray(disks.gameId, ids), eq(disks.orgId, orgId))),
+    kindsForGames(orgId, ids),
 
     // ONE query for the page, not one per card: the same rule findHolder
     // (src/lib/disk-holder.ts) applies -- same org, and the disk's sha is a
@@ -372,18 +391,11 @@ async function withDerived<T extends { id: string; authored: boolean; diskId: st
   const holderByDisk = new Map<string, string>();
   for (const h of held) if (!holderByDisk.has(h.diskId)) holderByDisk.set(h.diskId, h.name);
 
-  const kindsByGame = new Map<string, Array<string | null>>();
-  for (const s of sets) {
-    const list = kindsByGame.get(s.gameId) ?? [];
-    list.push(kindFromSetName(s.setName));
-    kindsByGame.set(s.gameId, list);
-  }
-
   return rows.map((r) => {
     return {
       ...r,
       coverUrl: coverUrls.get(r.id) ?? null,
-      kind: pickKind(kindsByGame.get(r.id) ?? []),
+      kind: kinds.get(r.id) ?? null,
       holderName: r.authored && r.diskId ? holderByDisk.get(r.diskId) ?? null : null,
     };
   });

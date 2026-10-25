@@ -268,10 +268,9 @@ test('the search panel metadata line is legible while its row is highlighted', a
   await page.getByTestId('search-input').fill('Contrast Row');
   await expect(page.getByTestId('search-result').first()).toBeVisible();
 
-  // The metadata line is the second (last) span in the top result's button
-  // -- querySelector returns the first DOM match, which is that top,
-  // highlighted-by-default row.
-  const p = await probe(page, '[data-testid="search-result"] span:last-child');
+  // The sub line of the top, highlighted-by-default row (the DiskIcon now comes first in the row, so span:last-child
+  // would land on its label).
+  const p = await probe(page, '[data-testid="search-result-sub"]');
   expect(p, 'search result metadata line not found').toBeTruthy();
   const r = ratio(p!.fg, p!.bg);
   console.log(`search    metadata line                  ${r.toFixed(2)}:1  "${p!.text.slice(0, 40)}"`);
