@@ -83,4 +83,20 @@ describe('admin firmware list: paging, Current, boards', () => {
     expect(m.get('1.0.1+g1') ?? 0).toBe(0);
     expect(m.has('9.9.9+gunknown')).toBe(false);
   });
+
+  it('?show= filters by the TEST build notes pattern, newest first, and counts what it shows (C6 Ruling 30)', async () => {
+    // From the rows above: 1.0.1..1.0.27 (seq 1-27), a TEST build (28), an e2e version with no notes (29).
+    expect(await countReleases()).toBe(29);
+    expect(await countReleases({ show: 'all' })).toBe(29);
+    expect(await countReleases({ show: 'test' })).toBe(1);
+    expect(await countReleases({ show: 'releases' })).toBe(28);
+    expect((await listReleasesFull({ limit: 25, offset: 0, show: 'test' })).map((r) => r.sequence)).toEqual([28]);
+    const rel1 = await listReleasesFull({ limit: 25, offset: 0, show: 'releases' });
+    expect(rel1).toHaveLength(25);
+    expect(rel1.map((r) => r.sequence).slice(0, 3)).toEqual([29, 27, 26]);
+    expect(rel1.some((r) => (r.notes ?? '').startsWith('TEST build'))).toBe(false);
+    expect((await listReleasesFull({ limit: 25, offset: 25, show: 'releases' })).map((r) => r.sequence)).toEqual([3, 2, 1]);
+    // The unfiltered list is unchanged.
+    expect((await listReleasesFull({ limit: 25, offset: 0 })).map((r) => r.sequence)[1]).toBe(28);
+  });
 });

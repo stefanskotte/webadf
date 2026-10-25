@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  stripTestPrefix, looksLikeTestBuild, githubReleaseUrl, clampPage, firmwareRepo,
+  stripTestPrefix, looksLikeTestBuild, githubReleaseUrl, clampPage, firmwareRepo, parseShow, firmwareHref,
   FIRMWARE_PAGE_SIZE, FIRMWARE_REPO_DEFAULT,
 } from './admin-firmware';
 
@@ -102,5 +102,24 @@ describe('looksLikeTestBuild', () => {
     for (const n of ['Fixes DF1.', 'Tested build of the DF1 fix', 'Build test passes']) {
       expect(looksLikeTestBuild(n), n).toBe(false);
     }
+  });
+});
+
+describe('parseShow (C6 spec §6.2, Ruling 27)', () => {
+  it('releases and test are themselves; anything else, or nothing, is all', () => {
+    expect(parseShow('releases')).toBe('releases');
+    expect(parseShow('test')).toBe('test');
+    expect(parseShow(['test', 'releases'])).toBe('test');
+    for (const raw of [undefined, '', 'all', 'nope', 'TEST', 'Releases', [] as string[]]) expect(parseShow(raw)).toBe('all');
+  });
+});
+
+describe('firmwareHref', () => {
+  it('drops show=all and page 1, keeps the rest in show-then-page order', () => {
+    expect(firmwareHref('all')).toBe('/admin/firmware');
+    expect(firmwareHref('all', 1)).toBe('/admin/firmware');
+    expect(firmwareHref('all', 3)).toBe('/admin/firmware?page=3');
+    expect(firmwareHref('test')).toBe('/admin/firmware?show=test');
+    expect(firmwareHref('releases', 2)).toBe('/admin/firmware?show=releases&page=2');
   });
 });

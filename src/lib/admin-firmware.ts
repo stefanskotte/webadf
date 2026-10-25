@@ -57,3 +57,21 @@ export function clampPage(raw: string | string[] | undefined, pages: number): nu
   const n = Number.parseInt(s, 10);
   return Math.min(Math.max(n, 1), last);
 }
+
+/** The Firmware list's filter (C6 spec §6.2, Ruling 27). */
+export type FirmwareShow = 'all' | 'releases' | 'test';
+
+/** `?show=` as a filter: `releases` and `test` are themselves; anything else, or nothing, is `all`. */
+export function parseShow(raw: string | string[] | undefined): FirmwareShow {
+  const s = Array.isArray(raw) ? raw[0] : raw;
+  return s === 'releases' || s === 'test' ? s : 'all';
+}
+
+/** The Firmware page's URL for a filter and page: `all` and page 1 are left out, so the plain URL stays plain. */
+export function firmwareHref(show: FirmwareShow, page = 1): string {
+  const q = new URLSearchParams();
+  if (show !== 'all') q.set('show', show);
+  if (page > 1) q.set('page', String(page));
+  const s = q.toString();
+  return s ? `/admin/firmware?${s}` : '/admin/firmware';
+}

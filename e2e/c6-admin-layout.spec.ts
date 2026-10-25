@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { signUpFresh, mintInviteCode } from './helpers';
 import { signInAsSuperAdmin, SUPERADMIN_EMAIL, gotoAdminUserRow, seedUsers, cleanupSeededUsers, ADMIN_PER_PAGE } from './admin-helpers';
-import { cleanupSeeded, cleanupTestReleases, hydrated } from './device-helpers';
+import { cleanupSeeded, cleanupTestReleases, hydrated, publishTestRelease, publishTestReleaseWithBlob } from './device-helpers';
 import { ALPHABET } from '@/lib/invites';
 
 // Phase C6 (spec 2026-10-25-phase-c6-admin-design.md §10.4): the admin layout. The DB is the live one: every
@@ -408,4 +408,81 @@ test('Scan: each upload exposes one control to assistive tech, and the status li
   await hydrated(page, 'dat-upload', 'onChange');
   await page.getByTestId('dat-upload').setInputFiles({ name: 'junk.dat', mimeType: 'text/plain', buffer: Buffer.from('not a dat') });
   await expect(page.getByTestId('dat-status')).toHaveText('Nothing imported. 1 file(s) rejected — are these really TOSEC DATs?');
+});
+
+// ---- Firmware (spec §6, Rulings 27–31) --------------------------------------------------------------------
+
+const fwRow = (page: import('@playwright/test').Page, version: string) =>
+  page.locator(`[data-testid="firmware-release-row"][data-version="${version}"]`);
+
+test('Firmware: All / Releases / Test builds filter on the server, the pager keeps it, a garbage URL clamps', async ({ page }) => {
+  await publishTestRelease('0.0.0+e2e60', { notes: 'TEST build c6 filter' });
+  await publishTestRelease('0.0.0+e2e61');
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/firmware');
+  await expect(page.getByTestId('fw-filter')).toHaveAttribute('aria-label', 'Show releases');
+  await expect(page.getByTestId('fw-filter').getByRole('link')).toHaveText(['All', 'Releases', 'Test builds']);
+  await expect(page.getByTestId('fw-filter-all')).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByText('Test builds reach only the bench organizations. Promote to release… offers one to every organization.')).toBeVisible();
+  await expect(page.getByText(/^\d+ published · (current \S+|no current release yet)$/)).toBeVisible();
+  await expect(fwRow(page, '0.0.0+e2e60').getByTestId('fw-tag-test')).toHaveText('Test build · bench orgs only');
+  await expect(fwRow(page, '0.0.0+e2e61').getByTestId('fw-tag-release')).toHaveText('Release');
+
+  await page.getByTestId('fw-filter-test').click();
+  await expect(page).toHaveURL(/\/admin\/firmware\?show=test$/);
+  await expect(page.getByTestId('fw-filter-test')).toHaveAttribute('aria-current', 'page');
+  await expect(fwRow(page, '0.0.0+e2e60')).toHaveCount(1);
+  await expect(fwRow(page, '0.0.0+e2e61')).toHaveCount(0);
+  const allTest = await page.getByTestId('firmware-release-row')
+    .evaluateAll((rows) => rows.every((r) => !!r.querySelector('[data-testid="fw-tag-test"]')));
+  expect(allTest).toBe(true);
+
+  await page.getByTestId('fw-filter-releases').click();
+  await expect(page).toHaveURL(/\/admin\/firmware\?show=releases$/);
+  await expect(fwRow(page, '0.0.0+e2e61')).toHaveCount(1);
+  await expect(fwRow(page, '0.0.0+e2e60')).toHaveCount(0);
+  const older = page.getByTestId('fw-page-older');
+  if (await older.count()) await expect(older).toHaveAttribute('href', '/admin/firmware?show=releases&page=2');
+
+  const res = await page.goto('/admin/firmware?show=nope&page=999');
+  expect(res?.status()).toBe(200);
+  await expect(page.getByTestId('fw-filter-all')).toHaveAttribute('aria-current', 'page');
+  const text = await page.getByText(/^Page \d+ of \d+$/).textContent();
+  const [, n, m] = /^Page (\d+) of (\d+)$/.exec(text ?? '') ?? [];
+  expect(n).toBe(m);
+  await expect(page.getByTestId('fw-page-older')).toHaveCount(0);
+  await page.getByTestId('fw-filter-all').click();
+  await expect(page).toHaveURL(/\/admin\/firmware$/);
+});
+
+test('Promote to release… under Test builds: notes take focus, Escape returns, the done text stays until Close, then the heading', async ({ page }) => {
+  const version = await publishTestReleaseWithBlob('0.0.0+e2e62', { notes: 'TEST build c6 focus' });
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/firmware?show=test');
+  const trigger = fwRow(page, version).getByRole('button', { name: 'Promote to release' });
+  await expect(trigger).toHaveText('Promote to release…');
+  const dialog = page.getByTestId('fw-promote-dialog');
+  await expect(async () => {
+    await trigger.click();
+    await expect(dialog).toBeVisible({ timeout: 1_000 });
+  }).toPass();
+  await expect(dialog.getByRole('heading', { name: 'Promote to release' })).toBeVisible();
+  await expect(dialog).toContainText(version);
+  await expect(dialog.getByTestId('fw-promote-notes')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+
+  await trigger.click();
+  await dialog.getByTestId('fw-promote-notes').fill('c6 focus release');
+  await dialog.getByTestId('fw-promote-confirm').click();
+  await expect(dialog.getByTestId('fw-promote-done')).toBeVisible();
+  // Under show=test the refresh waits for Close, so the done text is still there to read.
+  await page.waitForTimeout(1_500);
+  await expect(dialog.getByTestId('fw-promote-done')).toBeVisible();
+  await expect(page.getByTestId('fw-promote-done-close')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(dialog).toHaveCount(0);
+  await expect(fwRow(page, version)).toHaveCount(0);   // a release now: not in Test builds
+  await expect(page.locator('h1')).toBeFocused();
 });
