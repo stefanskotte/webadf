@@ -25,12 +25,26 @@ export function SideNav({ label, testId, groups, size = 'md' }: {
   const key = ids.join(' ');
   const [current, setCurrent] = useState<string | null>(null);
   const lockUntil = useRef(0);
+  const arrived = useRef(false);
+  // Kept across effect runs (a re-run -- React's dev double run, a filter changing the ids -- must not end it early).
+  const arrivalUntil = useRef(0);
 
   useEffect(() => {
     const list = key ? key.split(' ') : [];
     if (list.length === 0 || typeof IntersectionObserver === 'undefined') return;
     const visible = new Set<string>();
     let scrolled = false;
+    // A full load of a #section link: the sections stream in behind the app's loading screen, so the browser's own
+    // jump can run before they exist and is not retried. Jump once here; the scrolls of that jump are not the reader's,
+    // so for CLICK_LOCK_MS the mark keeps following the hash.
+    if (!arrived.current) {
+      arrived.current = true;
+      const target = sectionForHash(list, window.location.hash);
+      if (target) {
+        arrivalUntil.current = performance.now() + CLICK_LOCK_MS;
+        document.getElementById(target)?.scrollIntoView();
+      }
+    }
     const io = new IntersectionObserver((entries) => {
       for (const e of entries) {
         if (e.isIntersecting) visible.add(e.target.id);
@@ -44,7 +58,7 @@ export function SideNav({ label, testId, groups, size = 'md' }: {
       const el = document.getElementById(id);
       if (el) io.observe(el);
     }
-    const onScroll = () => { scrolled = true; };
+    const onScroll = () => { if (performance.now() >= arrivalUntil.current) scrolled = true; };
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => { io.disconnect(); window.removeEventListener('scroll', onScroll); };
   }, [key]);
