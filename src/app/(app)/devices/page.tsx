@@ -18,7 +18,7 @@ import { HelpTip } from '@/components/help/help-tip';
 import { PageHeader } from '@/components/shell/page-header';
 import { DeviceList } from '@/components/devices/device-list';
 import { PairButton } from '@/components/devices/pair-button';
-import { FirmwareNotice } from '@/components/devices/firmware-notice';
+import { PairingProvider } from '@/components/devices/pairing';
 import { FobButton } from '@/components/nfc/fob-button';
 
 export default async function DevicesPage() {
@@ -49,6 +49,11 @@ export default async function DevicesPage() {
     return [t.id, cardSendLine(s, receiverRunning(t, (s?.sending ?? 0) > 0, now))];
   }));
 
+  // Whether Transfer runs on the Amiga, per sending board (spec §7): the same verdict the send line is built from.
+  const transferById: Record<string, { running: boolean }> = Object.fromEntries(sendTargets.map((t) => [
+    t.id, { running: receiverRunning(t, (summaries[t.id]?.sending ?? 0) > 0, now) },
+  ]));
+
   // Uploads from the Amiga (spec 2026-10-18 §4, §8): files stored within 24 h, or the update a Network board needs.
   const uploads = await uploadSummaries(getDb(), orgId, new Date(now));
   const uploadLineById = Object.fromEntries(devices.map((d) => [d.id,
@@ -74,29 +79,21 @@ export default async function DevicesPage() {
     : [];
 
   return (
-    <>
+    <PairingProvider>
       <PageHeader
+        size="lg"
         eyebrow="Hardware"
         title="Devices"
         help="boards"
         subtitle={`${devices.length} paired · ${online} online · long-poll every 25 s`}
-        actions={<div className="flex items-center gap-2">{writers.length > 0 && <><FobButton mode="next" testId="write-next-card" title="Next-disk card" disks={[]} devices={writers} /><span style={{ color: 'var(--on-dark)' }}><HelpTip topic="nfc" /></span></>}<PairButton /></div>}
+        actions={<div className="flex items-center gap-2">{writers.length > 0 && <><FobButton mode="next" testId="write-next-card" title="Next-disk card" disks={[]} devices={writers} /><span style={{ color: 'var(--muted)' }}><HelpTip topic="nfc" /></span></>}<PairButton /></div>}
       />
-      <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
-        {registry.latest && (
-          <FirmwareNotice behind={behind} total={devices.length}
-                          latest={registry.latest} security={securityPending} />
-        )}
-        {devices.length === 0 ? (
-          <div className="glass-card p-6 text-[13px]" style={{ color: 'var(--muted)' }}>
-            No devices paired yet. Press <strong>Pair a device</strong> and enter the code on the hardware.
-          </div>
-        ) : (
-          <DeviceList devices={devices} now={now} states={states}
-                      selectableIds={selectableIds} latest={registry.latest} nextById={nextById} sendLineById={sendLineById} uploadLineById={uploadLineById}
-                      skipPassword={prefs.firmware.skipPassword} />
-        )}
+      <div className="flex flex-col gap-6 px-4 pb-10 sm:px-7">
+        <DeviceList devices={devices} now={now} states={states}
+                    selectableIds={selectableIds} latest={registry.latest} behind={behind} security={securityPending}
+                    nextById={nextById} sendLineById={sendLineById} transferById={transferById} uploadLineById={uploadLineById}
+                    skipPassword={prefs.firmware.skipPassword} />
       </div>
-    </>
+    </PairingProvider>
   );
 }

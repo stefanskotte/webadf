@@ -4,11 +4,15 @@ import { readFile } from 'node:fs/promises';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices, pairingCodes } from '@/db/schema/devices';
+import { disks } from '@/db/schema/catalog';
 import { signUpFresh, runTag } from './helpers';
 import { decodeLayout, encodeLayout } from '@/lib/display-layout';
-import { pairDevice, seedDisk, cleanupSeeded, authHeader } from './device-helpers';
+import { pairDevice, seedDisk, cleanupSeeded, authHeader, publishTestRelease, cleanupTestReleases, openBoardSettings, hydrated } from './device-helpers';
 
-test.afterAll(cleanupSeeded);
+// The releases first (firmware_releases is global), then the seeded rows.
+test.afterAll(async () => {
+  try { await cleanupTestReleases(); } finally { await cleanupSeeded(); }
+});
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
@@ -29,6 +33,12 @@ test('a fresh org with no devices shows the empty-state copy', async ({ page }) 
   await signUpFresh(page);
   await page.goto('/devices');
   await expect(page.getByText('No devices paired yet')).toBeVisible();
+  // Spec 9.1: the empty card carries its marker, and its button opens the header's pairing form.
+  await expect(page.getByTestId('devices-empty')).toHaveAttribute('data-empty', 'devices');
+  await expect(page.getByTestId('pair-another-card')).toHaveCount(0);
+  await hydrated(page, 'pair-another');
+  await page.getByTestId('pair-another').click();
+  await expect(page.getByTestId('pair-name')).toBeVisible();
 });
 
 test('the header subtitle counts online devices by lastSeenAt, not just how many are paired', async ({ page, request }) => {
@@ -282,46 +292,134 @@ test('a pending eject says "Ejecting", never "Mounting"', async ({ page, request
 
 // --- the card grid (option A -- "the disk in the middle"; content height since 2026-10-08) --
 
-test('three paired devices share one row, each card as tall as its content, and a drawer grows only its own card', async ({ page, request }) => {
+test('three paired devices stack, each card the full content width, and no card is a fixed square', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId: idA } = await pairDevice(page, request, 'Card A');
   const { deviceId: idB } = await pairDevice(page, request, 'Card B');
   const { deviceId: idC } = await pairDevice(page, request, 'Card C');
 
-  // Default desktop viewport (playwright.config.ts's "desktop" project sets
-  // none, so this is 1280x720) is above the lg breakpoint device-list.tsx
-  // switches on -- 3 per row is what should render here.
+  // 1280x720 is above the lg breakpoint; with 2+ boards the list is one column (spec §1, Ruling 1), no aside.
   await page.goto('/devices');
   // boundingBox() does not wait, and the cards stream in behind the loading placeholders (A1): wait for them first.
   for (const id of [idA, idB, idC]) await expect(page.getByTestId(`device-${id}`)).toBeVisible();
-  const a = (await page.getByTestId(`device-${idA}`).boundingBox())!;
-  const b = (await page.getByTestId(`device-${idB}`).boundingBox())!;
-  const c = (await page.getByTestId(`device-${idC}`).boundingBox())!;
+  const boxes = await Promise.all([idA, idB, idC].map((id) => page.getByTestId(`device-${id}`).boundingBox()));
+  const [a, b, c] = boxes.map((x) => x!).sort((x, y) => x.y - y.y);
 
-  // Same row: all three tops line up.
-  expect(Math.abs(a.y - b.y)).toBeLessThan(4);
-  expect(Math.abs(a.y - c.y)).toBeLessThan(4);
+  // Stacked: each starts below the previous one's bottom.
+  expect(b.y).toBeGreaterThanOrEqual(a.y + a.height - 1);
+  expect(c.y).toBeGreaterThanOrEqual(b.y + b.height - 1);
+  // Same left edge and the same width (+-2 px), and wide (the page content, not a third of it).
+  for (const box of [b, c]) {
+    expect(Math.abs(box.x - a.x)).toBeLessThan(2);
+    expect(Math.abs(box.width - a.width)).toBeLessThan(2);
+  }
+  expect(a.width).toBeGreaterThan(700);
+  await expect(page.getByTestId('pair-another-card')).toHaveCount(0);
 
-  // Content height, not square (changed 2026-10-08 at the operator's request:
-  // the square left an empty band under the bezel). Three identical fresh
-  // cards are the same height, and about as tall as they are wide (< 1.1; was
-  // 0.8 before the DF1 second-drive control added its rows to every card, and
-  // < 1.0 before the Disk at startup line added one more, 2026-10-19: 1.04).
-  expect(Math.abs(a.height - b.height)).toBeLessThan(2);
-  expect(Math.abs(a.height - c.height)).toBeLessThan(2);
-  for (const box of [a, b, c]) expect(box.height / box.width).toBeLessThan(1.1);
+  // Opening one board's display modal leaves every card's height unchanged (it is a modal, not a drawer).
+  await hydrated(page, `display-toggle-${idB}`);
+  await page.getByTestId(`display-toggle-${idB}`).click();
+  await expect(page.getByTestId(`display-drawer-${idB}`)).toBeVisible();
+  const after = await Promise.all([idA, idB, idC].map((id) => page.getByTestId(`device-${id}`).boundingBox()));
+  after.forEach((box, i) => expect(Math.abs(box!.height - boxes[i]!.height)).toBeLessThan(1));
+});
 
-  // Opening A's drawer grows A; B in the same row keeps its height (the grid
-  // does not stretch row neighbours). Closing it shrinks A back.
-  await page.getByTestId(`device-oled-${idA}`).click();
-  await expect(page.getByTestId(`display-drawer-${idA}`)).toBeVisible();
-  await expect.poll(async () => (await page.getByTestId(`device-${idA}`).boundingBox())!.height)
-    .toBeGreaterThan(a.height + 40);
-  expect(Math.abs((await page.getByTestId(`device-${idB}`).boundingBox())!.height - b.height)).toBeLessThan(2);
-  await page.getByTestId(`display-toggle-${idA}`).click();
-  await expect(page.getByTestId(`display-drawer-${idA}`)).toHaveCount(0);
-  await expect.poll(async () => Math.round((await page.getByTestId(`device-${idA}`).boundingBox())!.height))
-    .toBeLessThan(a.height + 2);
+test('pair-another: with one board the aside opens the header pairing form, with two the aside is gone', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Only Board');
+  await page.goto('/devices');
+  await expect(page.getByTestId(`device-${deviceId}`)).toBeVisible();
+  await expect(page.getByTestId('pair-another-card')).toBeVisible();
+  await expect(page.getByTestId('pair-name')).toHaveCount(0);
+
+  await page.getByTestId('pair-another').click();
+  // The header's own form opens: exactly one on the page, and it has the focus.
+  await expect(page.getByTestId('pair-name')).toHaveCount(1);
+  await expect(page.getByTestId('pair-name')).toBeFocused();
+
+  await pairDevice(page, request, 'Second Board');
+  await page.goto('/devices');
+  await expect(page.getByTestId('pair-device')).toBeVisible();
+  await expect(page.getByTestId('pair-another-card')).toHaveCount(0);
+});
+
+test('firmware-notice: one updatable board gets "Update <name>", which opens the update dialog listing it', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await setDevice(deviceId, { name: 'Bench A500' });
+  await publishTestRelease('0.0.0+e2e69');
+  await publishTestRelease('0.0.0+e2e72');
+  await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '0.0.0+e2e69', updateProtocol: 1 },
+  });
+
+  await page.goto('/devices');
+  const notice = page.getByTestId('firmware-notice');
+  await expect(notice).toContainText('is available');
+  await expect(notice).toContainText('1 of 1 device is behind');
+  const action = page.getByTestId('firmware-notice-update');
+  await expect(action).toHaveText('Update Bench A500');
+
+  await action.click();
+  const dialog = page.getByTestId('update-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('Update 1 device');
+  await expect(dialog).toContainText('Bench A500');
+  await expect(dialog).toContainText('0.0.0+e2e72');
+});
+
+test('offline strip: an offline board says so and when it was last seen, an online one has no strip', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId: idOff } = await pairDevice(page, request, 'Strip Off');
+  const { deviceId: idOn } = await pairDevice(page, request, 'Strip On');
+  await setDevice(idOff, { name: 'Dark Amiga', lastSeenAt: new Date(Date.now() - 5 * 60_000) });
+  await setDevice(idOn, { name: 'Lit Amiga', lastSeenAt: new Date() });
+
+  await page.goto('/devices');
+  const strip = page.getByTestId(`device-offline-${idOff}`);
+  await expect(strip).toBeVisible();
+  await expect(strip).toContainText('Dark Amiga is offline');
+  await expect(page.getByTestId(`device-last-seen-${idOff}`)).toContainText(/It was last seen \d+m ago\./);
+  await expect(strip).toContainText('reach it when it reconnects');
+  await expect(page.getByTestId(`device-offline-${idOn}`)).toHaveCount(0);
+  await expect(page.getByTestId(`device-last-seen-${idOn}`)).toHaveCount(0);
+});
+
+test('offline strip: a board never seen says so without "last seen never"', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request);
+  await setDevice(deviceId, { lastSeenAt: null });
+  await page.goto('/devices');
+  const line = page.getByTestId(`device-last-seen-${deviceId}`);
+  await expect(line).toHaveText('It has not been seen yet.');
+  await expect(page.getByTestId(`device-offline-${deviceId}`)).not.toContainText('seen never');
+});
+
+test('pair-another while a code is live moves focus to that code', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Only Board');
+  await page.goto('/devices');
+  await expect(page.getByTestId(`device-${deviceId}`)).toBeVisible();
+  await page.getByTestId('pair-device').click();
+  await page.getByTestId('pair-submit').click();
+  await expect(page.getByTestId('pairing-code')).toBeVisible();
+  await page.getByTestId('pair-another').click();
+  await expect(page.getByTestId('pairing-code')).toBeFocused();
+  await expect(page.getByTestId('pairing-code')).toBeInViewport();
+  // The live code stays; no second form opens.
+  await expect(page.getByTestId('pair-name')).toHaveCount(0);
+});
+
+test('the card facts show Network, Signal, Firmware and Last seen', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request);
+  await setDevice(deviceId, { lastSeenAt: new Date(), rssi: -61 });
+  await page.goto('/devices');
+  await expect(page.getByTestId(`device-signal-${deviceId}`)).toContainText('-61 dBm');
+  await expect(page.getByTestId(`device-seen-${deviceId}`)).toHaveText(/^\d+s ago$|^just now$|^\d+m ago$/);
+  await expect(page.getByTestId(`device-firmware-${deviceId}`)).not.toContainText('fw ');
+  await expect(page.getByTestId(`device-name-${deviceId}`)).toHaveJSProperty('tagName', 'H2');
 });
 
 test('the Online/Offline badge renders both values, and only Offline gets a last-seen line', async ({ page, request }) => {
@@ -461,7 +559,7 @@ test('Cancel closes the pairing form without minting a code', async ({ page }) =
 
 // --- the drive-bezel card (design A2) ---------------------------------------
 
-test('the bezel display names the mounted disk, so the card does not repeat it until a mount is in flight', async ({ page, request }) => {
+test('the bezel display names the mounted disk, and the drive box names it too, always visible', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
   const { deviceId: idConverged } = await pairDevice(page, request, 'Bezel Converged');
   const { deviceId: idPending } = await pairDevice(page, request, 'Bezel Pending');
@@ -486,26 +584,65 @@ test('the bezel display names the mounted disk, so the card does not repeat it u
   // alone, cut at the firmware's DC_LABEL_MAX (24) as mount.ts sends it.
   const shown = `BezelA-${tag} — ${`BezelA-${tag} (Disk 1)`.slice(0, 24)}`;
   await expect(page.getByTestId(`device-oled-${idConverged}`)).toHaveAttribute('data-oled', shown);
-  await expect(page.getByTestId(`device-disk-${idConverged}`)).toHaveClass(/sr-only/);
+  const box = page.getByTestId(`device-disk-${idConverged}`);
+  await expect(box).toBeVisible();
+  await expect(box).toContainText('In the drive');
+  await expect(box).toContainText(`BezelA-${tag}`);
 
   await expect(page.getByTestId(`device-oled-${idPending}`)).toHaveAttribute('data-oled', shown);
   const words = page.getByTestId(`device-disk-${idPending}`);
-  await expect(words).not.toHaveClass(/sr-only/);
+  await expect(words).toBeVisible();
   await expect(words).toContainText('Mounting…');
   await expect(words).toContainText(`BezelB-${tag}`);
 });
 
-test('pressing the bezel display opens the drawer, and the bezel behind it cannot be pressed', async ({ page, request }) => {
+test('the protection switch flips the disk, the disk title links to its title, and an empty drive offers the library', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId: idDisk } = await pairDevice(page, request, 'Switch Disk');
+  const { deviceId: idEmpty } = await pairDevice(page, request, 'Switch Empty');
+  const tag = runTag();
+  const { gameId, diskId } = await seedDisk(orgId, { title: `Switch-${tag}`, diskNo: 1, sha256: sha(`${tag}-s`), writeProtected: false });
+  await setDevice(idDisk, {
+    desiredGameId: gameId, desiredDiskId: diskId, desiredSha256: sha(`${tag}-s`), desiredDiskNo: 1,
+    mountedGameId: gameId, mountedDiskId: diskId, mountedSha256: sha(`${tag}-s`), mountedDiskNo: 1,
+    lastSeenAt: new Date(),
+  });
+  await setDevice(idEmpty, { lastSeenAt: new Date() });
+
+  await page.goto('/devices');
+  const sw = page.getByTestId(`device-protection-${idDisk}`);
+  await expect(sw).toHaveText('Writable');
+  await expect(sw).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByTestId(`device-disk-title-${idDisk}`)).toHaveAttribute('href', `/games/${gameId}`);
+
+  await sw.click();
+  await expect(sw).toHaveText('Protected');
+  await expect(sw).toHaveAttribute('aria-pressed', 'true');
+  const [row] = await getDb().select({ wp: disks.writeProtected }).from(disks).where(eq(disks.id, diskId));
+  expect(row.wp).toBe(true);
+
+  const empty = page.getByTestId(`device-protection-${idEmpty}`);
+  await expect(empty).toHaveText('—');
+  await expect(empty).toBeDisabled();
+  await expect(page.getByTestId(`device-open-library-${idEmpty}`)).toHaveAttribute('href', '/library');
+  await expect(page.getByTestId(`device-disk-title-${idEmpty}`)).toHaveCount(0);
+});
+
+test('pressing the bezel display opens the display modal; Escape closes it and focus returns to the screen', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId } = await pairDevice(page, request);
   await page.goto('/devices');
 
   await expect(page.getByTestId(`display-drawer-${deviceId}`)).toHaveCount(0);
+  await hydrated(page, `device-oled-${deviceId}`);
   await page.getByTestId(`device-oled-${deviceId}`).click();
-  await expect(page.getByTestId(`display-drawer-${deviceId}`)).toBeVisible();
-  await expect(page.getByTestId(`display-toggle-${deviceId}`)).toHaveText('▾ Change Display');
-  // inert: the blurred face is out of the tab order and the click path.
-  await expect(page.getByTestId(`device-oled-${deviceId}`).locator('xpath=..')).toHaveAttribute('inert', '');
+  const modal = page.getByTestId(`display-drawer-${deviceId}`);
+  await expect(modal).toBeVisible();
+  await expect(modal).toHaveAttribute('role', 'dialog');
+  await expect(page.getByTestId(`display-toggle-${deviceId}`)).toHaveText('Change display');
+  await page.keyboard.press('Escape');
+  await expect(modal).toHaveCount(0);
+  await expect(page.getByTestId(`device-oled-${deviceId}`)).toBeFocused();
 });
 
 // Pillock, 2026-10-19: the bezel drew the board's screen upside down at
@@ -570,13 +707,27 @@ test('the card says what the board found on its I2C bus', async ({ page, request
   expect((await report(t3, { firmwareVersion: '1.16.0+ge2e', nfcReader: 'absent' })).status()).toBe(204);
 
   await page.goto('/devices');
+  // The reader line lives in Board settings; a board with no reader carries an attention dot on its button.
+  await expect(page.getByTestId(`device-${older}`)).toBeVisible();
+  await expect(page.getByTestId(`board-settings-attention-${noReader}`)).toBeVisible();
+  await expect(page.getByTestId(`board-settings-attention-${withReader}`)).toHaveCount(0);
+  await expect(page.getByTestId(`board-settings-attention-${older}`)).toHaveCount(0);
+  await openBoardSettings(page, noReader);
   const absent = page.getByTestId(`device-nfc-${noReader}`);
   await expect(absent).toContainText('No NFC reader found — nothing at 0x28');
   await expect(page.getByTestId(`device-i2c-${noReader}`)).toHaveText('I2C devices seen: 0x3c (display)');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('board-settings-dialog')).toHaveCount(0);
+  await openBoardSettings(page, withReader);
   await expect(page.getByTestId(`device-nfc-${withReader}`)).toContainText('NFC reader at 0x28');
   await expect(page.getByTestId(`device-i2c-${withReader}`)).toHaveCount(0);
-  await expect(page.getByTestId(`device-${older}`)).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('board-settings-dialog')).toHaveCount(0);
+  // Firmware that sends no scan: a sentence saying so (Ruling 22), not an empty section.
+  await openBoardSettings(page, older);
   await expect(page.getByTestId(`device-nfc-${older}`)).toHaveCount(0);
+  await expect(page.getByTestId(`device-nfc-unknown-${older}`))
+    .toHaveText('This firmware does not report its reader (needs 1.17.0 or newer).');
 });
 
 // fw 1.18.0 drives a PN532 at 0x24 too (nfc_reader.h): a working one is a reader, and on older firmware the card
@@ -591,8 +742,12 @@ test('the card names a PN532 reader at 0x24, and the firmware it needs', async (
   expect((await report(t2, { firmwareVersion: '1.17.0+ge2e', nfcReader: 'absent', i2c: [0x24, 0x3c] })).status()).toBe(204);
 
   await page.goto('/devices');
+  await openBoardSettings(page, pn);
   await expect(page.getByTestId(`device-nfc-${pn}`)).toContainText('NFC reader at 0x24');
   await expect(page.getByTestId(`device-nfc-${pn}`)).toHaveAttribute('data-ok', 'true');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('board-settings-dialog')).toHaveCount(0);
+  await openBoardSettings(page, oldPn);
   await expect(page.getByTestId(`device-nfc-${oldPn}`)).toContainText('the PN532 at 0x24 needs firmware 1.18.0 or newer');
   await expect(page.getByTestId(`device-i2c-${oldPn}`)).toHaveText('I2C devices seen: 0x24 (NFC reader, PN532), 0x3c (display)');
 });
@@ -617,12 +772,15 @@ test('Disk at startup: No disk empties DF0 at the board\'s boot, and a reconnect
     { headers: authHeader(token) })).status()).toBe(200);
 
   await page.goto('/devices');
-  const select = page.getByTestId(`boot-disk-${deviceId}`);
-  await expect(select).toHaveValue('last');
+  await openBoardSettings(page, deviceId);
+  const group = page.getByTestId(`boot-disk-${deviceId}`);
+  await expect(group).toHaveAttribute('data-value', 'last');
   await expect(page.getByTestId(`boot-disk-note-${deviceId}`)).toHaveCount(0);
+  await page.getByTestId(`boot-disk-${deviceId}-empty`).click();
+  await expect(group).toHaveAttribute('data-value', 'empty');
   await Promise.all([
     page.waitForResponse((r) => r.url().includes(`/api/devices/${deviceId}/boot-disk`) && r.status() === 200),
-    select.selectOption('empty'),
+    page.getByTestId('board-settings-save').click(),
   ]);
   expect((await getDb().select().from(devices).where(eq(devices.id, deviceId)))[0].bootDisk).toBe('empty');
 
@@ -637,7 +795,8 @@ test('Disk at startup: No disk empties DF0 at the board\'s boot, and a reconnect
   const card = page.getByTestId(`device-${deviceId}`);
   await expect(card).toHaveAttribute('data-state', 'empty');
   await expect(card).toContainText('No disk');
-  await expect(page.getByTestId(`boot-disk-${deviceId}`)).toHaveValue('empty');
+  await openBoardSettings(page, deviceId);
+  await expect(page.getByTestId(`boot-disk-${deviceId}`)).toHaveAttribute('data-value', 'empty');
 
   // A tag is tapped (the disk is desired again), then Wi-Fi drops and the board polls again in the SAME boot.
   await setDevice(deviceId, {
@@ -654,12 +813,140 @@ test('Disk at startup: a board before 1.18.1 is told which firmware it needs, an
   expect((await request.post('/api/device/status', { headers: authHeader(token),
     data: { mountedSha256: null, firmwareVersion: '1.18.0+ge2e' } })).status()).toBe(204);
   await page.goto('/devices');
+  await openBoardSettings(page, deviceId);
   await expect(page.getByTestId(`boot-disk-fixed-${deviceId}`)).toHaveText('Disk at startup: Last disk');
   await expect(page.getByTestId(`boot-disk-note-${deviceId}`)).toHaveText('— needs firmware 1.18.1 or newer');
   await expect(page.getByTestId(`boot-disk-${deviceId}`)).toHaveCount(0);   // nothing to choose on this firmware
   const res = await page.request.patch(`/api/devices/${deviceId}/boot-disk`, { data: { mode: 'empty' } });
   expect(res.status()).toBe(409);
   expect((await res.json()).reason).toBe('Needs firmware 1.18.1 or newer');
+});
+
+// The "?" next to "Disk at startup" lives inside the modal's top layer: its popover must open there without closing the modal.
+test('Board settings: the Disk at startup help tip opens inside the modal and leaves the modal open', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Help In Modal');
+  expect((await request.post('/api/device/status', { headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.21.1+ge2e' } })).status()).toBe(204);
+  await page.goto('/devices');
+  await openBoardSettings(page, deviceId);
+  const dialog = page.getByTestId('board-settings-dialog');
+
+  const tip = dialog.getByTestId('help-tip-boards');
+  await tip.click();
+  const pop = page.getByTestId('help-pop-boards');
+  await expect(pop).toBeVisible();
+  await expect(dialog).toBeVisible();
+
+  // First Escape: record what the app does rather than assume it.
+  await page.keyboard.press('Escape');
+  await expect(pop).toHaveCount(0);
+  const dialogAfterFirstEscape = await dialog.count();
+  console.log(`after the first Escape: help popover closed, modal ${dialogAfterFirstEscape ? 'STILL OPEN' : 'CLOSED'}`);
+  expect(dialogAfterFirstEscape).toBe(1);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+});
+
+// Board settings (spec §8.3, Ruling 20): Disk at startup is a draft that Save sends; Cancel, the X and Escape send nothing.
+test('Board settings: Save is disabled until a choice changes; Cancel and Escape send nothing and return focus', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Settings Draft');
+  expect((await request.post('/api/device/status', { headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.21.1+ge2e' } })).status()).toBe(204);
+  const bootDiskRequests: string[] = [];
+  await page.route(`**/api/devices/${deviceId}/boot-disk`, (route) => {
+    bootDiskRequests.push(route.request().method());
+    return route.continue();
+  });
+  await page.goto('/devices');
+  const opener = page.getByTestId(`board-settings-${deviceId}`);
+  const dialog = page.getByTestId('board-settings-dialog');
+
+  await openBoardSettings(page, deviceId);
+  await expect(dialog).toHaveAttribute('data-device-id', deviceId);
+  await expect(dialog).toContainText(`Settings Draft · nothing changes until you save.`);
+  const save = page.getByTestId('board-settings-save');
+  const group = page.getByTestId(`boot-disk-${deviceId}`);
+  await expect(save).toBeDisabled();
+  await expect(page.getByTestId(`boot-disk-hint-${deviceId}`)).toHaveText('The board puts the last disk back in DF0 when it starts.');
+
+  // A change enables Save; changing it back disables it again.
+  await page.getByTestId(`boot-disk-${deviceId}-empty`).click();
+  await expect(group).toHaveAttribute('data-value', 'empty');
+  await expect(page.getByTestId(`boot-disk-hint-${deviceId}`)).toHaveText('The board starts with DF0 empty.');
+  await expect(save).toBeEnabled();
+  await page.getByTestId(`boot-disk-${deviceId}-last`).click();
+  await expect(save).toBeDisabled();
+
+  // Keyboard: an arrow moves focus and the draft, as in a WAI-ARIA radiogroup.
+  await page.getByTestId(`boot-disk-${deviceId}-last`).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByTestId(`boot-disk-${deviceId}-empty`)).toBeFocused();
+  await expect(group).toHaveAttribute('data-value', 'empty');
+
+  // Cancel discards the draft and sends nothing; focus returns to the opener.
+  await page.getByTestId('board-settings-cancel').click();
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+
+  // Reopened, the draft starts from the board's value again. Escape closes without a request too.
+  await openBoardSettings(page, deviceId);
+  await expect(group).toHaveAttribute('data-value', 'last');
+  await page.getByTestId(`boot-disk-${deviceId}-empty`).click();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+  await openBoardSettings(page, deviceId);
+  await expect(group).toHaveAttribute('data-value', 'last');
+  await page.getByTestId('board-settings-close').click();
+  await expect(dialog).toHaveCount(0);
+  expect(bootDiskRequests).toEqual([]);
+  expect((await getDb().select().from(devices).where(eq(devices.id, deviceId)))[0].bootDisk).toBe('last');
+});
+
+test('Board settings: Save closes, toasts, and the row\'s bootDisk is empty', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Settings Save');
+  expect((await request.post('/api/device/status', { headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.21.1+ge2e' } })).status()).toBe(204);
+  await page.goto('/devices');
+  await openBoardSettings(page, deviceId);
+  await page.getByTestId(`boot-disk-${deviceId}-empty`).click();
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes(`/api/devices/${deviceId}/boot-disk`)
+      && r.request().method() === 'PATCH' && r.status() === 200),
+    page.getByTestId('board-settings-save').click(),
+  ]);
+  await expect(page.getByTestId('board-settings-dialog')).toHaveCount(0);
+  await expect(page.getByText('Disk at startup saved. The board uses it at its next start.')).toBeVisible();
+  expect((await getDb().select().from(devices).where(eq(devices.id, deviceId)))[0].bootDisk).toBe('empty');
+  await page.reload();   // the draft starts from what the page holds when the modal opens
+  await openBoardSettings(page, deviceId);
+  await expect(page.getByTestId(`boot-disk-${deviceId}`)).toHaveAttribute('data-value', 'empty');
+});
+
+// Fix round 1: the draft is taken from the server value when the modal opens, never while it is open.
+test('Board settings: a server change while the modal is open does not overwrite the draft', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Settings Keep');
+  expect((await request.post('/api/device/status', { headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.21.1+ge2e' } })).status()).toBe(204);
+  await page.goto('/devices');
+  await openBoardSettings(page, deviceId);
+  const group = page.getByTestId(`boot-disk-${deviceId}`);
+  const save = page.getByTestId('board-settings-save');
+  // The user's choice: Last disk, while the server says Last disk.
+  await page.getByTestId(`boot-disk-${deviceId}-empty`).click();
+  await page.getByTestId(`boot-disk-${deviceId}-last`).click();
+  await expect(group).toHaveAttribute('data-value', 'last');
+  await expect(save).toBeDisabled();
+  // Another tab saves No disk; the page's live refresh brings it in. The draft keeps the user's choice, so Save turns on.
+  // (bootDisk is not in the live fingerprint, so the rename is what makes the page refresh.)
+  await setDevice(deviceId, { bootDisk: 'empty', name: 'Settings Kept' });
+  await expect(page.getByTestId(`device-name-${deviceId}`)).toHaveText('Settings Kept', { timeout: 20_000 });
+  await expect(save).toBeEnabled();
+  await expect(group).toHaveAttribute('data-value', 'last');
 });
 
 // The boot trail (fw 1.18.2): the card names where the previous start stopped -- and says nothing after a clean one.

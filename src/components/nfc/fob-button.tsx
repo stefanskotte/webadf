@@ -60,8 +60,8 @@ export function FobButton({ testId, title, disks, devices, mode = 'disk' }: {
   }
   const trigger = mode === 'next' ? (
     <button type="button" data-testid="write-next-card" onClick={onOpen}
-            className="flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-semibold text-white"
-            style={{ background: 'var(--primary-action)' }}>
+            className="flex h-10 items-center gap-1.5 rounded-[10px] border px-3.5 text-[14px] font-medium"
+            style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}>
       <Nfc size={14} strokeWidth={1.75} aria-hidden /> Write a Next-disk card
     </button>
   ) : (

@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { NextInfo } from '@/lib/next-disk';
 import { requestNextDisk } from './device-actions';
+import { BOX_BTN, BOX_BTN_STYLE } from './box-button';
 
 export function NextDiskButton({ deviceId, next }: { deviceId: string; next: NextInfo }) {
   const router = useRouter();
@@ -22,8 +23,7 @@ export function NextDiskButton({ deviceId, next }: { deviceId: string; next: Nex
   return (
     <button type="button" onClick={onClick} disabled={busy || pending}
             data-testid={`next-disk-${deviceId}`}
-            className="rounded-lg border px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
-            style={{ borderColor: 'var(--hairline)', color: 'var(--muted)' }}>
+            className={BOX_BTN} style={BOX_BTN_STYLE}>
       {busy || pending ? 'Switching…' : `Next: disk ${next.diskNo}`}
     </button>
   );

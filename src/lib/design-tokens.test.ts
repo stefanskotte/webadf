@@ -43,6 +43,8 @@ describe('design tokens (globals.css)', () => {
     ['--warning-fg', '#7A4A08'],
     ['--online-dot', '#3FBF55'],
     ['--ring', '#7A7262'],
+    ['--fw-line', '#F1D3A4'],
+    ['--modal-foot', '#FBF8F1'],
   ])('%s is %s', (name, value) => {
     expect(tokens()[name]).toBe(value);
   });
@@ -59,6 +61,9 @@ describe('design tokens (globals.css)', () => {
     ['--danger-fg', '--surface'], ['--danger-fg', '--danger-bg'],
     ['--success-fg', '--success-bg'],
     ['--warning-fg', '--warning-bg'],
+    // Devices spec §12
+    ['--muted', '--danger-bg'], ['--ink', '--danger-bg'], ['--muted', '--track'], ['--muted-2', '--modal-foot'],
+    ['--surface', '--ink'],
   ];
   it.each(pairs)('%s on %s clears AA (4.5:1)', (fg, bg) => {
     const read = (n: string) => (n.startsWith('#') ? n : tok(n));

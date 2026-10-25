@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { Pencil } from 'lucide-react';
 
 /**
  * The device's label, editable in place.
@@ -82,19 +83,19 @@ export function DeviceAlias({ deviceId, name, isDefault }: {
           placeholder="Name this drive — empty restores the MAC"
           aria-label="Device name"
           data-testid={`alias-input-${deviceId}`}
-          className="min-w-0 flex-1 rounded-lg border px-2.5 py-1.5 text-[14px] font-semibold sm:w-64 sm:flex-none"
-          style={{ borderColor: 'var(--hairline)', background: 'var(--glass-strong)', color: 'var(--ink)' }}
+          className="h-[38px] min-w-0 flex-1 rounded-[9px] border px-2.5 text-[16px] font-semibold sm:w-60 sm:flex-none"
+          style={{ borderColor: 'var(--ink)', background: 'var(--surface)', color: 'var(--ink)' }}
         />
         <button type="button" onClick={() => void save()} disabled={busy}
                 data-testid={`alias-save-${deviceId}`}
-                className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50"
-                style={{ background: 'var(--primary-action)' }}>
+                className="h-[38px] rounded-[10px] px-4 text-[14px] font-semibold disabled:opacity-50"
+                style={{ background: 'var(--ink)', color: 'var(--surface)' }}>
           {busy ? 'Saving…' : 'Save'}
         </button>
         <button type="button" onClick={() => setEditing(false)} disabled={busy}
                 data-testid={`alias-cancel-${deviceId}`}
-                className="rounded-lg border px-3 py-1.5 text-[12px] font-semibold"
-                style={{ borderColor: 'var(--hairline)', color: 'var(--muted)' }}>
+                className="h-[38px] rounded-[10px] px-3 text-[14px] font-semibold disabled:opacity-50"
+                style={{ color: 'var(--muted)' }}>
           Cancel
         </button>
       </div>
@@ -102,34 +103,22 @@ export function DeviceAlias({ deviceId, name, isDefault }: {
   }
 
   return (
-    <div className="flex min-w-0 items-center gap-2">
-      <span className="truncate text-[16px] font-bold" style={{ color: 'var(--ink)' }}
-            data-testid={`device-name-${deviceId}`}>
+    <div className="flex min-w-0 items-center gap-1">
+      <h2 className="truncate text-[28px] font-bold leading-tight tracking-[-0.01em]"
+          style={{ color: 'var(--ink)', fontFamily: 'var(--font-display)' }}
+          data-testid={`device-name-${deviceId}`}>
         {name}
-      </span>
+      </h2>
+      {/* "Name" while it is still wearing its MAC, "Rename" once it is not: the first is an invitation, the second
+          a correction. The word is the button's accessible name and sits inside as sr-only text (device-alias.spec
+          reads the button's text); the pencil is the visible part. No width or layout utility on the sr-only span. */}
       <button type="button" onClick={beginEdit}
               data-testid={`alias-edit-${deviceId}`}
-              // aria-label rather than relying on the visible word: below
-              // `sm` the word is visually hidden (see the span below) and the
-              // pencil glyph alone would otherwise have no accessible name.
               aria-label={isDefault ? 'Name' : 'Rename'}
-              // The pencil glyph is CSS generated content (a `::before`), not
-              // a DOM node -- deliberately, so it can NEVER show up in
-              // `element.textContent`. A sibling <span> holding "✎" looked
-              // equivalent but isn't: `display:none` on that span still left
-              // its text in textContent (Node.textContent ignores CSS
-              // entirely), so `toHaveText('Name')` in device-alias.spec.ts
-              // saw "Name✎" the first time this was tried. A pseudo-element
-              // has no such hazard.
-              className="shrink-0 rounded-lg border px-2 py-0.5 text-[11px] font-semibold max-sm:before:content-['✎']"
-              style={{ borderColor: 'var(--hairline)', color: 'var(--muted)' }}>
-        {/* "Name" while it is still wearing its MAC, "Rename" once it is not:
-            the first is an invitation, the second is a correction. Visually
-            hidden below `sm`, collapsing the button to just the pencil above
-            (fix round 1, critical 1): on a 390px phone the full word left the
-            truncating device name itself 0-2px wide next to the online badge
-            and this button. */}
-        <span className="max-sm:hidden">{isDefault ? 'Name' : 'Rename'}</span>
+              className="grid size-8 shrink-0 place-items-center rounded-lg transition-colors hover:bg-[var(--track)]"
+              style={{ color: 'var(--muted)' }}>
+        <Pencil size={16} strokeWidth={2} aria-hidden />
+        <span className="sr-only">{isDefault ? 'Name' : 'Rename'}</span>
       </button>
     </div>
   );

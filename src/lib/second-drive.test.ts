@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sel1Text, df1SeenText, secondDriveStatus, asSecondDriveMode, SECOND_DRIVE_NET_FW, secondDriveRefusal, firmwareFor } from './second-drive';
+import { sel1Text, df1SeenText, secondDriveStatus, asSecondDriveMode, SECOND_DRIVE_NET_FW, secondDriveRefusal, firmwareFor, secondDriveHelp } from './second-drive';
 
 describe('second-drive readings', () => {
   it('names both values of the SEL1 line', () => {
@@ -72,5 +72,25 @@ describe('why a save was refused', () => {
   it('names the right version for each mode', () => {
     expect(firmwareFor('df1')).toBe('1.9.0');
     expect(firmwareFor('net')).toBe('1.11.0');
+  });
+});
+
+describe('secondDriveHelp (Devices spec §5.1; the sentences are today\'s, moved)', () => {
+  it('off', () => {
+    for (const p of [true, false]) expect(secondDriveHelp('off', p)).toBe('No second drive: the Amiga sees DF0 only.');
+  });
+  it('df1', () => {
+    for (const p of [true, false]) {
+      expect(secondDriveHelp('df1', p)).toBe('DF1 holds the next disk of the set, read-only, so a game asking for its next disk finds it.');
+    }
+  });
+  it('any, with and without a pick', () => {
+    expect(secondDriveHelp('any', true)).toBe('DF1 holds a disk you mount into DF1 from the library, read-only.');
+    expect(secondDriveHelp('any', false)).toBe('DF1 holds a disk you mount into DF1 from the library, read-only. Mount one with a title’s Mount → DF1; until then DF1 holds the next disk of the set.');
+  });
+  it('net', () => {
+    for (const p of [true, false]) {
+      expect(secondDriveHelp('net', p)).toBe('The Amiga’s network: the driver disk sits in DF1 and PaulaNET carries Ethernet over the floppy cable.');
+    }
   });
 });

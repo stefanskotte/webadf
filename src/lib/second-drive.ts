@@ -61,3 +61,16 @@ export function secondDriveStatus(d: {
   if (d.secondDriveReported !== d.secondDrive) return 'Waiting for the board';
   return 'Set on the board \u2014 takes effect when the Amiga restarts';
 }
+
+/**
+ * The sentence under "Second drive (DF1)" for the mode being shown (Devices spec §5.1). `hasPick`: DF1 holds a disk
+ * the person mounted into it, which only the `any` sentence cares about.
+ */
+export function secondDriveHelp(shown: 'off' | 'df1' | 'any' | 'net', hasPick: boolean): string {
+  return shown === 'any'
+    ? `DF1 holds a disk you mount into DF1 from the library, read-only.${hasPick ? ''
+      : ' Mount one with a title’s Mount → DF1; until then DF1 holds the next disk of the set.'}`
+    : shown === 'df1' ? 'DF1 holds the next disk of the set, read-only, so a game asking for its next disk finds it.'
+    : shown === 'net' ? 'The Amiga’s network: the driver disk sits in DF1 and PaulaNET carries Ethernet over the floppy cable.'
+    : 'No second drive: the Amiga sees DF0 only.';
+}

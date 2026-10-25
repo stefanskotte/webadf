@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { requestEject } from './device-actions';
+import { BOX_BTN, BOX_BTN_STYLE } from './box-button';
 
 /**
  * "Re-insert last disk" on a board whose DF0 is empty (A4): mounts the disk the last web eject took out
@@ -48,9 +49,8 @@ export function ReinsertButton({ deviceId, diskId, title, diskNo }: {
 
   return (
     <button type="button" data-testid={`reinsert-${deviceId}`} disabled={busy || refreshing} onClick={() => void reinsert()}
-            className="flex w-fit max-w-full flex-col items-start rounded-lg border px-3 py-1.5 text-left text-[12px] disabled:opacity-50"
-            style={{ borderColor: 'var(--hairline-strong)', color: 'var(--ink)' }}>
-      <span className="font-semibold">Re-insert last disk</span>
+            className={`${BOX_BTN} w-fit max-w-full flex-col !items-start !gap-0 py-1 text-left`} style={BOX_BTN_STYLE}>
+      <span className="text-[13px] font-semibold">Re-insert last disk</span>
       <span className="text-[11px]" style={{ color: 'var(--muted)', overflowWrap: 'anywhere' }}>{label}</span>
     </button>
   );

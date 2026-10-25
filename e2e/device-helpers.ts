@@ -560,3 +560,24 @@ export async function df1OnBoard(
   await getDb().update(devices).set({ lastSeenAt: new Date() }).where(eq(devices.id, deviceId));
   return { deviceId, token };
 }
+
+/** Choose a second-drive mode on a board's card: click its radio in the DF1 box (Devices spec §5.1). */
+export async function pickSecondDrive(page: Page, deviceId: string, mode: 'off' | 'df1' | 'net' | 'any') {
+  await page.getByTestId(`second-drive-${deviceId}-${mode}`).click();
+}
+
+/** Wait until React has hydrated an element: a click or key sent before that reaches DOM with no handler. */
+export async function hydrated(page: Page, testId: string, handler = 'onClick') {
+  await page.waitForFunction(([tid, h]) => {
+    const el = document.querySelector(`[data-testid="${tid}"]`);
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$')
+      && typeof (el as unknown as Record<string, Record<string, unknown>>)[k]?.[h] === 'function');
+  }, [testId, handler] as const);
+}
+
+/** Open a board's Board settings modal (spec §8): wait for hydration, press the button, wait for the dialog. */
+export async function openBoardSettings(page: Page, deviceId: string) {
+  await hydrated(page, `board-settings-${deviceId}`);
+  await page.getByTestId(`board-settings-${deviceId}`).click();
+  await page.getByTestId('board-settings-dialog').waitFor({ state: 'visible' });
+}

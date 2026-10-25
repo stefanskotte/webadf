@@ -130,7 +130,7 @@ test('the library grid is two columns, and nothing overflows the viewport', asyn
   expect(overflow).toBeLessThanOrEqual(0);
 });
 
-test('the Devices grid is two columns at 390px, and nothing overflows the viewport', async ({ page, request }) => {
+test('Devices cards are one per row at 390px, and nothing overflows the viewport', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId: idA } = await pairDevice(page, request, 'Mobile A');
   const { deviceId: idB } = await pairDevice(page, request, 'Mobile B');
@@ -158,6 +158,7 @@ test('the Devices grid is two columns at 390px, and nothing overflows the viewpo
 
   await page.goto('/devices');
   const ids = [idA, idB, idC, idD];
+  for (const id of ids) await expect(page.getByTestId(`device-${id}`)).toBeVisible();   // streamed (A1)
   // listDevices orders by `devices.name` -- and register/route.ts names every
   // device "Device <mac>" from a RANDOM mac, ignoring the label pairDevice()
   // was given (same landmine devices-page.spec.ts's own "org B's device"
@@ -168,13 +169,10 @@ test('the Devices grid is two columns at 390px, and nothing overflows the viewpo
   const nonNull = boxes.filter((b): b is NonNullable<typeof b> => b !== null);
   expect(nonNull).toHaveLength(4);
   const byRow = [...nonNull].sort((x, y) => x.y - y.y);
-  const [row1a, row1b, row2a] = byRow;
 
-  // Two across: the two topmost cards share a row (device-list.tsx's
-  // grid-cols-2 base, below the lg breakpoint that switches to three), the
-  // third starts the next one.
-  expect(Math.abs(row1a.y - row1b.y)).toBeLessThan(4);
-  expect(row2a.y).toBeGreaterThan(row1a.y + row1a.height / 2);
+  // One per row (spec Ruling 2): every card is nearly the full 390 px less the gutters, and they stack.
+  for (const box of byRow) expect(box.width).toBeGreaterThan(330);
+  for (let k = 1; k < byRow.length; k++) expect(byRow[k].y).toBeGreaterThan(byRow[k - 1].y + byRow[k - 1].height - 1);
 
   // CRITICAL 1 guard: the device name must not be squeezed to nothing next
   // to the online badge and the Name/Rename control on a 173px-wide card.

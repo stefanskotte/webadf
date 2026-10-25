@@ -290,6 +290,21 @@ describe('boards explains Disk at startup', () => {
   });
 });
 
+describe('help names Board settings (Devices C2)', () => {
+  it('boards sends Disk at startup and deleting a board to Board settings, not to the card or a trash icon', () => {
+    const b = bodyText('boards');
+    expect(b).toMatch(/Board settings/);
+    expect(b).toMatch(/Save to board/);
+    expect(b).toMatch(/Delete device…\s+in\s+Board settings/);
+    expect(b).not.toMatch(/trash icon/);
+  });
+  it('nfc: "No reader found?" names Board settings and its dot', () => {
+    const b = bodyText('nfc');
+    expect(b).toMatch(/Board settings/);
+    expect(b).toMatch(/dot/);
+  });
+});
+
 describe('boards explains the stuck-start line (fw 1.18.2 boot trail)', () => {
   it('names the card line and the firmware', () => {
     const t = bodyText('boards');

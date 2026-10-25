@@ -64,7 +64,7 @@ export const HELP_TOPICS = {
 
   // Sources: pair-button.tsx, devices/page.tsx:58-68, device-state.ts:19 (60 s),
   // firmware-state.ts:107-148, HANDOFF trial/revert (5546-5577) and "waits for eject" (2064, 5148).
-  // Deleting a board: delete-device-dialog.tsx + api/devices/[id] DELETE; the board's side (401 -> token erased ->
+  // Deleting a board: delete-device-dialog.tsx (DeleteDeviceConfirm, opened from board-settings.tsx) + api/devices/[id] DELETE; the board's side (401 -> token erased ->
   // setup portal, same already-used code rejected, so a fresh code is asked for) is wifi-floppy/firmware/src/main.c
   // DC_HALTED branch; disk history kept because disk_versions.device_id has no FK (db/schema/disk-history.ts).
   // Address note: plan 2026-10-12 ruling 4 -- 1.11.0 sends the board's own DHCP client-id.
@@ -88,22 +88,23 @@ export const HELP_TOPICS = {
           <strong>Online / Offline.</strong> A board is online if heard from in the last minute.
         </p>
         <p>
-          <strong>Firmware updates.</strong> Tick <em>Select for update</em> on the board, press <em>Update</em> and
-          confirm with your password (unless you turned that off in Settings). The card shows <em>update queued</em>,{' '}
+          <strong>Firmware updates.</strong> Press <em>Update &lt;name&gt;</em> in the banner or tick <em>Select for update</em>,{' '}
+          then confirm with your password (unless you turned that off in Settings). The card shows <em>update queued</em>,{' '}
           <em>downloading</em> and <em>applying — do not power off</em>. A new version runs on trial: if it doesn&apos;t
-          check in within 5 minutes, the board goes back to its old version and the card says <em>update failed</em>.
+          check in within 5 minutes, the board goes back and the card says <em>update failed</em>.
         </p>
         <p>
-          <strong>Disk at startup.</strong> <em>Last disk</em> (the default) puts the board&apos;s disk back at power-up.{' '}
-          <em>No disk</em> leaves the drive empty: the Amiga waits at its insert-disk screen until you tap a card or
-          mount one. A firmware update or a Wi-Fi drop keeps the disk. Needs firmware 1.18.1.
+          <strong>Disk at startup.</strong> In <em>Board settings</em>, <em>Last disk</em> (the default) puts the
+          board&apos;s disk back at power-up; <em>No disk</em> leaves the drive empty: the Amiga waits at its
+          insert-disk screen until you tap a card or mount one. Press <em>Save to board</em>. A firmware update or a
+          Wi-Fi drop keeps the disk. Needs firmware 1.18.1.
         </p>
         <p>
-          <strong>Stuck start?</strong> The card then says where, e.g.{' '}
-          <em>Previous start stopped at: I2C scan</em> (firmware 1.18.2). Include it in reports.
+          <strong>Stuck start?</strong> The card says where, e.g.{' '}
+          <em>Previous start stopped at: I2C scan</em> (firmware 1.18.2).
         </p>
         <p>
-          <strong>Deleting a board.</strong> The trash icon removes a board from your account. Your disks and their history stay.
+          <strong>Deleting a board.</strong> <em>Delete device…</em> in <em>Board settings</em> removes a board from your account; your disks stay.
         </p>
         <p>
           <strong>Your own server.</strong> Running your own copy? See{' '}
@@ -138,8 +139,8 @@ export const HELP_TOPICS = {
           there when you started.
         </p>
         <p>
-          <strong>Tapping.</strong> Tapping a tag mounts its disk. Tapping the disk that is already in the drive does
-          nothing. The tag stores which disk it is, so it keeps working after the Amiga has saved to that disk.
+          <strong>Tapping.</strong> Tapping a tag mounts its disk; tapping the disk already in the drive does
+          nothing. The tag keeps working after the Amiga has saved to that disk.
         </p>
         <p>
           <strong>Next-disk card.</strong> Write one with <em>Write a Next-disk card</em> on the Devices page. Tapping
@@ -150,13 +151,12 @@ export const HELP_TOPICS = {
           and still being tested; restart the board after connecting one. With both fitted, the Si512 is used.
         </p>
         <p>
-          <strong>No reader found?</strong> Each board card says whether the board found its reader when it
-          started, and what else answered: the display, or nothing at all. Check the reader&apos;s wires, then
-          restart the board.
+          <strong>No reader found?</strong> <em>Board settings</em> on the board&apos;s card says what answered at
+          start-up; an amber dot on its button means no reader. Check the wires, then restart the board.
         </p>
         <GoodToKnow items={[
           'Next-disk cards need board firmware 1.6.0 or newer.',
-          'The reader line on the card needs firmware 1.17.0 or newer.',
+          'The reader line in Board settings needs firmware 1.17.0 or newer.',
           'A PN532 reader needs firmware 1.18.0 or newer.',
           'NTAG stickers need firmware 1.18.1 or newer.',
         ]} />
@@ -321,7 +321,7 @@ export const HELP_TOPICS = {
     ),
   },
 
-  // Sources: display-editor.tsx, drive-bezel.tsx, live-display.ts, display-editor-geometry.ts:172-178 (status texts), HANDOFF 3ax;
+  // Sources: display-editor.tsx, drive-glass.tsx, live-display.ts, display-editor-geometry.ts:172-178 (status texts), HANDOFF 3ax;
   // panel chips and the boot-time check: wifi-floppy/firmware/src/ssd1306.c (detect_sh1106, ssd1306_init), HANDOFF 3az.
   // NFC icon: display.c draw_nfc (present / struck = absent / inverted = write armed), main.c ui.nfc (armed wins,
   // then g_nfc_reader), display_layout.h EL_NFC (in no default), display-layout.ts NFC_ELEMENT_FIRMWARE 1.10.0,
@@ -331,7 +331,7 @@ export const HELP_TOPICS = {
   // full only at 100 %), display_layout.h STATUS_OPT_ICON (opt 1; the word in every default),
   // display_layout_for (built-in screens take the icon), display-layout.ts STATUS_ICON_FIRMWARE 1.15.0.
   // Rotation (1.17.0): oled_cmds.c (A0/C0 in the controller, every screen turns), display_layout.h
-  // REC_ROTATION, display-editor.tsx (Rotation select, reset keeps the turn), drive-bezel.tsx (stripRotation), route.ts tooOldReason.
+  // REC_ROTATION, display-editor.tsx (Rotation select, reset keeps the turn), drive-glass.tsx (stripRotation), route.ts tooOldReason.
   // Track counter side arrow (1.18.0): display.c track_text ("42" arrow "79", down = side 0, up = side 1).
   // The 1.17.0 head element (id 10) was withdrawn; stored layouts that name it lose it silently.
   display: {
@@ -341,7 +341,7 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          Each board&apos;s card shows its screen, drawn from its layout and last reported disk. Press <em>Change Display</em>, or the screen, to edit it.
+          Each board&apos;s card shows its screen, drawn from its layout and last reported disk. Press <em>Change display</em> under the drive, or its screen, to edit it.
         </p>
         <p>
           Pick the <em>Panel</em> (128×32 or 128×64) and drag elements into place, shown or hidden, at 1× or 2×.{' '}
@@ -349,16 +349,16 @@ export const HELP_TOPICS = {
           upside down; the preview and the card&rsquo;s screen stay upright.
         </p>
         <p>
-          The <em>track</em> counter reads cylinder, a side arrow, then the last cylinder, as{' '}
-          <em>42↑79</em> or <em>42↓79</em>: up is side 1, down is side 0. The <em>nfc</em> element, hidden until you tick it, shows
+          The <em>Track</em> counter reads cylinder, a side arrow, then the last cylinder, as{' '}
+          <em>42↑79</em> or <em>42↓79</em>: up is side 1, down side 0. The <em>NFC</em> element, hidden until you tick it, shows
           the NFC reader (struck through when none is found, inverted while a tag write waits).
         </p>
         <p>
-          The <em>status</em> shows <em>as</em> a word or a small icon: an empty or filled floppy, filling while
+          The <em>Status</em> shows <em>as</em> a word or an icon: an empty or filled floppy, filling while
           downloading, blinking arcs while connecting, a blinking triangle on error.
         </p>
         <p>
-          After <em>Save</em> it reads <em>Waiting for the board</em>, then <em>Applied on the board</em> or why the
+          After <em>Save to board</em> it reads <em>Waiting for the board</em>, then <em>Applied on the board</em> or why the
           board refused it. <em>Cancel</em> discards unsaved changes;{' '}
           <em>Reset to default</em> restores the standard layout and keeps the rotation.
         </p>
@@ -403,9 +403,9 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          Choose <em>Next disk of the set</em> under <em>Second drive (DF1)</em> on the board&apos;s card. DF1 then holds the next disk
-          of the set (empty when that is an HD disk); after <em>Next disk</em> it is empty for about five seconds while
-          the following disk is fetched.
+          Choose <em>Next disk of the set</em> under <em>Second drive (DF1)</em> on the board&apos;s card and DF1 holds the
+          next disk of the set (an HD disk leaves it empty, as do the five seconds after <em>Next disk</em>). The other
+          radios are <em>Off</em>, <em>Network (PaulaNET)</em> and <em>Any disk</em>.
         </p>
         <p>
           Or choose <em>Any disk</em> and mount a disk of your choice into DF1: press <em>DF1</em> beside <em>DF0</em> where you
@@ -422,7 +422,7 @@ export const HELP_TOPICS = {
         </p>
         <GoodToKnow items={[
           'DF1 is read-only: saving to it fails as write-protected. Saves to DF0 follow that disk’s own write protection.',
-          <>The third choice, <em>Network (PaulaNET)</em>, uses DF1 for networking instead: see{' '}
+          <>The choice <em>Network (PaulaNET)</em> uses DF1 for networking instead: see{' '}
             <a className="underline" href="/help#network">Amiga networking</a>.</>,
           'DF1 needs board firmware 1.9.0 or newer, and Any disk needs 1.12.0; Network needs 1.11.0. Older firmware keeps the DF1 setting it had, and the card says DF1 is on while it holds a disk; install 1.9.0 or newer to switch it off.',
         ]} />
@@ -446,7 +446,7 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          Choose <em>Network (PaulaNET)</em> under <em>Second drive (DF1)</em> on the board&apos;s card, then restart
+          Choose <em>Network (PaulaNET)</em> in the <em>Second drive (DF1)</em> box on the board&apos;s card, then restart
           the Amiga. DF1 then holds the PaulaNET driver disk, whatever is in DF0. You need a TCP/IP stack such as
           AmiTCP_NG or Roadshow, and no other drive answering as DF1. If the board has seen another drive answer as DF1, the
           setting refuses to switch on; once you have removed that drive, override it with <em>Switch on anyway…</em>.

@@ -6,7 +6,7 @@ import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { decodeLayout } from '@/lib/display-layout';
 import { signUpFresh } from './helpers';
-import { pairDevice, authHeader, cleanupSeeded } from './device-helpers';
+import { pairDevice, authHeader, cleanupSeeded, hydrated } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
 
@@ -27,7 +27,9 @@ async function reportStatus(
 
 async function openEditor(page: Page, deviceId: string) {
   await page.goto('/devices');
+  await hydrated(page, `display-toggle-${deviceId}`);
   await page.getByTestId(`display-toggle-${deviceId}`).click();
+  await expect(page.getByTestId(`display-drawer-${deviceId}`)).toBeVisible();
 }
 
 test('a board without display support is told it needs firmware 1.7.0', async ({ page, request }) => {
@@ -47,7 +49,7 @@ test('a layout saved from the editor reaches the board, which reports it applied
 
   await openEditor(page, deviceId);
   await expect(page.getByTestId(`display-status-${deviceId}`)).toHaveText('Applied on the board');
-  await page.getByTestId(`display-panel-${deviceId}`).selectOption('128x64');
+  await page.getByTestId(`display-panel-${deviceId}-128x64`).click();
 
   // Grab the default 128x64 title (x 0..128, y 12..28 at 2x) and drag it 8 panel pixels down.
   const canvas = page.getByTestId(`display-canvas-${deviceId}`);
@@ -82,7 +84,7 @@ test('a layout saved from the editor reaches the board, which reports it applied
   // The board applies it and acks the version.
   await reportStatus(request, token, { displayLayouts: true, displayVersion: 1 });
   await page.reload();
-  await page.getByTestId(`display-toggle-${deviceId}`).click();
+  await openEditor(page, deviceId);
   await expect(page.getByTestId(`display-status-${deviceId}`)).toHaveText('Applied on the board');
 });
 
@@ -146,7 +148,7 @@ test('the poll wakes for a display version above the board\'s ack, and only then
   expect(held.status()).toBe(204);
 });
 
-test('Cancel throws away unsaved edits and closes the drawer without asking the server', async ({ page, request }) => {
+test('Cancel throws away unsaved edits and closes the modal without asking the server', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
   await reportStatus(request, token, { displayLayouts: true, displayVersion: 0 });
@@ -162,13 +164,67 @@ test('Cancel throws away unsaved edits and closes the drawer without asking the 
   await page.getByTestId(`display-cancel-${deviceId}`).click();
 
   await expect(page.getByTestId(`display-drawer-${deviceId}`)).toHaveCount(0);
-  await expect(page.getByTestId(`display-toggle-${deviceId}`)).toHaveText('▸ Change Display');
+  await expect(page.getByTestId(`display-toggle-${deviceId}`)).toHaveText('Change display');
   expect(writes).toEqual([]);
   expect((await deviceRow(deviceId)).displayVersion).toBe(0);
 
   // Reopened, the editor starts from the board's layout again.
   await page.getByTestId(`display-toggle-${deviceId}`).click();
   await expect(page.getByTestId('display-width-title')).toHaveValue(before);
+});
+
+test('closing the display modal returns focus to the opener that was pressed', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await reportStatus(request, token, { displayLayouts: true, displayVersion: 0 });
+  await page.goto('/devices');
+  for (const opener of [`device-oled-${deviceId}`, `display-toggle-${deviceId}`]) {
+    await hydrated(page, opener);
+    await page.getByTestId(opener).click();
+    await expect(page.getByTestId(`display-canvas-${deviceId}`)).toBeVisible();
+    await page.getByTestId(`display-cancel-${deviceId}`).click();
+    await expect(page.getByTestId(`display-drawer-${deviceId}`)).toHaveCount(0);
+    await expect(page.getByTestId(opener)).toBeFocused();
+  }
+});
+
+test('Escape closes the display modal, sends nothing, and reopening shows the board\'s value; Save keeps it open', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await reportStatus(request, token, { displayLayouts: true, displayVersion: 0 });
+
+  await openEditor(page, deviceId);
+  const dialog = page.getByTestId(`display-drawer-${deviceId}`);
+  await expect(dialog).toHaveAttribute('role', 'dialog');
+  const width = page.getByTestId('display-width-title');
+  const before = await width.inputValue();
+  await width.fill('100');
+  await expect(page.getByTestId(`display-unsaved-${deviceId}`)).toHaveText('Unsaved changes');
+
+  const writes: string[] = [];
+  await page.route(`**/api/devices/${deviceId}/display`, (route) => { writes.push(route.request().method()); void route.continue(); });
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  expect(writes).toEqual([]);
+  await expect(page.getByTestId(`display-toggle-${deviceId}`)).toBeFocused();
+  expect((await deviceRow(deviceId)).displayVersion).toBe(0);
+
+  await page.getByTestId(`display-toggle-${deviceId}`).click();
+  await expect(page.getByTestId('display-width-title')).toHaveValue(before);
+  await expect(page.getByTestId(`display-unsaved-${deviceId}`)).toHaveCount(0);
+
+  // The element count follows the ticks.
+  const count = page.getByTestId(`display-shown-count-${deviceId}`);
+  await expect(count).toHaveText(/^\d+ of \d+ shown$/);
+  const shown = Number((await count.textContent())!.split(' ')[0]);
+  await page.getByTestId('display-visible-lemming').uncheck();
+  await expect(count).toHaveText(new RegExp(`^${shown - 1} of \\d+ shown$`));
+
+  // Save keeps the modal open and the status line turns to waiting.
+  await page.getByTestId(`display-save-${deviceId}`).click();
+  await expect(page.getByTestId(`display-status-${deviceId}`)).toHaveText('Waiting for the board');
+  await expect(dialog).toBeVisible();
+  expect(writes).toEqual(['PATCH']);
 });
 
 // The NFC icon element (firmware 1.10.0). Older firmware refuses any layout
@@ -186,7 +242,7 @@ test('a 1.10.0 board gets the NFC icon as a hidden element; ticked and saved, th
   await expect(nfc).not.toBeChecked();
   await expect(page.getByText('Unsaved changes')).toHaveCount(0);   // listing it hidden is not an edit
   await nfc.check();
-  await page.getByTestId('display-scale-nfc').selectOption('2');
+  await page.getByTestId('display-scale-nfc-2').click();
   await expect(page.getByTestId(`display-save-${deviceId}`)).toBeEnabled();
   await page.getByTestId(`display-save-${deviceId}`).click();
   await expect(page.getByTestId(`display-status-${deviceId}`)).toHaveText('Waiting for the board');
@@ -206,7 +262,7 @@ test('a board before 1.10.0 is not offered the NFC icon, and the server refuses 
   await reportStatus(request, token, { displayLayouts: true, displayVersion: 0, firmwareVersion: '1.9.3+ge2etest' });
 
   await openEditor(page, deviceId);
-  await expect(page.getByTestId(`display-nfc-needs-fw-${deviceId}`)).toHaveText('nfc — needs firmware 1.10.0 or newer');
+  await expect(page.getByTestId(`display-nfc-needs-fw-${deviceId}`)).toHaveText('NFC — needs firmware 1.10.0 or newer');
   await expect(page.getByTestId('display-visible-nfc')).toHaveCount(0);
   // Saving the rest still works for it: the layout it is sent lists no nfc element.
   await page.getByTestId('display-width-title').fill('100');

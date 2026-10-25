@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { driverDiskLine, driverLine, amigaAddressLine, trafficText, driverBucket } from './network-checklist';
+import { driverDiskLine, driverLine, amigaAddressLine, trafficText, driverBucket, splitCheckLine } from './network-checklist';
 import { PAULANET_DISK_PREVIOUS, PAULANET_DISK_SHA256 } from './paulanet-disk';
 
 const NOW = 1_800_000_000_000;
@@ -45,5 +45,19 @@ describe('the Network checklist names both values of every state', () => {
     expect(driverBucket(null, NOW)).toBe('never');
     expect(driverBucket(new Date(NOW - 5_000), NOW)).toBe('talking');
     expect(driverBucket(new Date(NOW - 600_000), NOW)).toBe('quiet');
+  });
+});
+
+describe('splitCheckLine (Devices spec §6)', () => {
+  it('splits at the first ": "', () => {
+    expect(splitCheckLine('Driver disk: in DF1')).toEqual({ label: 'Driver disk', detail: 'in DF1' });
+    expect(splitCheckLine('Driver: talking (last seen 12 s ago)')).toEqual({ label: 'Driver', detail: 'talking (last seen 12 s ago)' });
+    expect(splitCheckLine('Amiga address: 172.16.10.231')).toEqual({ label: 'Amiga address', detail: '172.16.10.231' });
+  });
+  it('keeps later colons in the detail', () => {
+    expect(splitCheckLine('A: b: c')).toEqual({ label: 'A', detail: 'b: c' });
+  });
+  it('renders a line without ": " whole', () => {
+    expect(splitCheckLine('Nothing here')).toEqual({ label: null, detail: 'Nothing here' });
   });
 });

@@ -23,7 +23,7 @@ import { test, expect, type Page } from '@playwright/test';
  */
 import { randomUUID } from 'node:crypto';
 import { signUpFresh, runTag } from './helpers';
-import { cleanupSeeded, seedDisk, pairDevice, authHeader } from './device-helpers';
+import { cleanupSeeded, seedDisk, pairDevice, authHeader, openBoardSettings, hydrated } from './device-helpers';
 import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
 import { getDb } from '@/db';
 import { blobs } from '@/db/schema/catalog';
@@ -350,5 +350,83 @@ test('header focus indicators clear 3:1 against the bar', async ({ page }) => {
     const r = ratio(indicator, bg);
     console.log(`focus     ${sel.padEnd(38)} ${r.toFixed(2)}:1  ${kind}`);
     expect.soft(r, `${sel} focus indicator (${kind})`).toBeGreaterThanOrEqual(3);
+  }
+});
+
+// Phase C2 (spec §12): the Devices pairs, measured on the real elements of a seeded org -- one online board holding a
+// disk, one offline board, and a Network board with a not-OK checklist mark -- then a modal footer.
+test('the Devices pairs are legible: drive box, tile caption, offline strip, pills, checklist mark, DF1 tile, modal footer', async ({ page, request }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  const sha = createHash('sha256').update(`contrast-dev-${run}`).digest('hex');
+  const disk = await seedDisk(u.orgId, { title: `Devices ${run}`, diskNo: 1, sha256: sha });
+  const online = await pairDevice(page, request, `On ${run.slice(0, 6)}`);
+  await getDb().update(devices).set({ desiredDiskId: disk.diskId, desiredSha256: sha, desiredVersion: 1 })
+    .where(eq(devices.id, online.deviceId));
+  expect((await request.post('/api/device/status', {
+    headers: authHeader(online.token), data: { mountedSha256: sha, mountedDiskId: disk.diskId, version: 1, displayLayouts: true, displayVersion: 0 },
+  })).status()).toBe(204);
+  await getDb().update(devices).set({ lastError: 'Disk read failed on the board', lastErrorAt: new Date() })
+    .where(eq(devices.id, online.deviceId));
+  const off = await pairDevice(page, request, `Off ${run.slice(0, 6)}`);
+  await getDb().update(devices).set({ lastSeenAt: new Date(Date.now() - 3 * 3600_000) }).where(eq(devices.id, off.deviceId));
+  const net = await pairDevice(page, request, `Net ${run.slice(0, 6)}`);
+  const fw = '1.11.0+gabc1234';
+  const st = (data: Record<string, unknown>) => request.post('/api/device/status', { headers: authHeader(net.token), data });
+  expect((await st({ mountedSha256: null, firmwareVersion: fw, secondDrive: 'off', driveVersion: 0, sel1Wired: true, df1Seen: false })).status()).toBe(204);
+  expect((await page.request.patch(`/api/devices/${net.deviceId}/second-drive`, { data: { mode: 'net' } })).status()).toBe(200);
+  expect((await st({ mountedSha256: null, firmwareVersion: fw, secondDrive: 'net', driveVersion: 1, net: { framesIn: 0, framesOut: 0 } })).status()).toBe(204);
+
+  await page.goto('/devices');
+  await expect(page.getByTestId(`net-checklist-${net.deviceId}`)).toBeVisible();
+  await expect(page.getByTestId(`device-offline-${off.deviceId}`)).toBeVisible();
+  const pairs: [string, string][] = [
+    ['drive-box label', `[data-testid="device-disk-${online.deviceId}"] div.flex-1 > span:first-child`],
+    ['tile caption', `[data-testid="device-bezel-${online.deviceId}"] > div:last-child > span:first-child`],
+    ['offline strip heading', `[data-testid="device-offline-${off.deviceId}"] p:nth-of-type(1)`],
+    ['offline strip body', `[data-testid="device-offline-${off.deviceId}"] p:nth-of-type(2)`],
+    ['Online pill', `[data-testid="device-status-${online.deviceId}"]`],
+    ['Offline pill', `[data-testid="device-status-${off.deviceId}"]`],
+    ['not-OK checklist mark', `[data-testid="net-checklist-${net.deviceId}"] li[data-ok="false"] > span:first-child`],
+    ['not-OK checklist line', `[data-testid="net-checklist-${net.deviceId}"] li[data-ok="false"] > span:nth-child(2) > span:last-child`],
+    ['last error (danger-fg on danger-bg)', `[data-testid="device-error-${online.deviceId}"]`],
+    ['DF1 tile', `[data-testid="device-df1-${online.deviceId}"] span[style*="--track"]`],
+  ];
+  for (const [what, sel] of pairs) {
+    const p = await probe(page, sel);
+    expect(p, `${what}: ${sel} not found`).toBeTruthy();
+    const r = ratio(p!.fg, p!.bg);
+    console.log(`devices   ${what.padEnd(24)} ${r.toFixed(2)}:1  "${p!.text.slice(0, 24)}"`);
+    expect(r, what).toBeGreaterThan(4.5);
+  }
+  await page.screenshot({ path: 'test-results/zz-devices.png', fullPage: true });
+
+  await openBoardSettings(page, online.deviceId);
+  const cancel = await probe(page, '[data-testid="board-settings-cancel"]');
+  expect(cancel, 'modal footer Cancel not found').toBeTruthy();
+  const rc = ratio(cancel!.fg, cancel!.bg);
+  console.log(`devices   modal footer Cancel      ${rc.toFixed(2)}:1`);
+  expect(rc, 'modal footer Cancel').toBeGreaterThan(4.5);
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('board-settings-dialog')).toHaveCount(0);
+
+  // The Board display modal: hide the first element (its row sits on --modal-foot, its hint is --muted-2) and the
+  // Unsaved pill (--warning-fg on --warning-bg) appears.
+  await hydrated(page, `display-toggle-${online.deviceId}`);
+  await page.getByTestId(`display-toggle-${online.deviceId}`).click();
+  const editor = page.getByTestId(`display-editor-${online.deviceId}`);
+  await expect(editor).toBeVisible();
+  await editor.locator('input[data-testid^="display-visible-"]').first().uncheck();
+  await expect(page.getByTestId(`display-unsaved-${online.deviceId}`)).toBeVisible();
+  const row = `[data-testid="display-editor-${online.deviceId}"] ul > li:first-child`;
+  for (const [what, sel] of [
+    ['hidden element hint (muted-2 on modal-foot)', `${row} label > span:last-child > span:last-child`],
+    ['Unsaved pill (warning-fg on warning-bg)', `[data-testid="display-unsaved-${online.deviceId}"]`],
+  ] as const) {
+    const p = await probe(page, sel);
+    expect(p, `${what}: ${sel} not found`).toBeTruthy();
+    const r = ratio(p!.fg, p!.bg);
+    console.log(`devices   ${what.padEnd(24)} ${r.toFixed(2)}:1  "${p!.text.slice(0, 24)}"`);
+    expect(r, what).toBeGreaterThan(4.5);
   }
 });
