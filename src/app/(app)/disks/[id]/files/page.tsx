@@ -164,11 +164,13 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   if (disk.imageFormat === 'hfe') redirect(`/games/${disk.gameId}${fromQuery(from, view)}`);
 
   // Started here and awaited with the other late reads: an extra sequential round trip is felt on every edit refresh.
-  const kindRowsPromise = getDb().select({ setName: tosecEntries.setName })
+  // Promise.resolve runs the drizzle builder exactly once (its then() executes the query on every call, so a .catch()
+  // on the builder itself would run a second query).
+  const kindRowsPromise = Promise.resolve(getDb().select({ setName: tosecEntries.setName })
     .from(disks)
     .innerJoin(blobs, eq(blobs.sha256, disks.sha256))
     .innerJoin(tosecEntries, eq(tosecEntries.id, blobs.tosecEntryId))
-    .where(and(eq(disks.gameId, disk.gameId), eq(disks.orgId, orgId)));
+    .where(and(eq(disks.gameId, disk.gameId), eq(disks.orgId, orgId))));
   // A notFound() or a throw below can leave this un-awaited; mark that branch handled so a late rejection is never
   // unhandled. The await further down still sees the original value or rejection.
   kindRowsPromise.catch(() => undefined);
