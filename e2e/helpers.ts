@@ -191,3 +191,10 @@ export async function openRowMenu(page: Page, row: number | string) {
   await expect(panel).toBeVisible();
   return panel;
 }
+
+/** Opens one version in a disk's History (C4 spec §7.2) unless it is open already; versions collapse by default. */
+export async function openVersion(page: Page, seq: number) {
+  const toggle = page.getByTestId(`version-toggle-${seq}`);
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+  await expect(page.getByTestId(`version-body-${seq}`)).toBeVisible();
+}

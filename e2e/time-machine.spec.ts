@@ -3,8 +3,8 @@ import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
 import { readVolume, readFile, type AdfEntry } from '@/lib/adffs';
-import { signUpFresh, runTag, createAdf, openTitleMenu } from './helpers';
-import { cleanupSeeded, pairDevice } from './device-helpers';
+import { signUpFresh, runTag, createAdf, openTitleMenu, openVersion } from './helpers';
+import { cleanupSeeded, pairDevice, hydrated } from './device-helpers';
 
 /**
  * Task 6: the time machine, end to end -- history, browsing an old version
@@ -49,6 +49,8 @@ function findByName(entries: AdfEntry[], name: string): AdfEntry | null {
 const AFTER_EDIT = { timeout: 15_000 };
 
 async function uploadFile(page: Page, name: string, content: string) {
+  // A file set before React has hydrated the input reaches DOM with no onChange: nothing is staged (disk-files-edit.spec.ts does the same).
+  await hydrated(page, 'upload-input', 'onChange');
   await page.getByTestId('upload-input').setInputFiles({
     name, mimeType: 'application/octet-stream', buffer: Buffer.from(content),
   });
@@ -58,6 +60,7 @@ async function uploadFile(page: Page, name: string, content: string) {
 }
 
 test('history lists what changed, newest first, with version 0 as uploaded', async ({ page }) => {
+  test.setTimeout(60_000); // same two uploads as the browsing test below; see its measurement
   const u = await signUpFresh(page);
   await page.goto('/library');
   await createAdf(page);
@@ -70,7 +73,7 @@ test('history lists what changed, newest first, with version 0 as uploaded', asy
 
   const panel = page.getByTestId('history-panel');
   await expect(panel).toBeVisible();
-  const rows = panel.locator('[data-testid^="version-"]');
+  const rows = panel.locator('li[data-testid^="version-"]');
   await expect(rows).toHaveCount(3);
 
   // Newest first: version 2 (the second upload) is the first row and the head.
@@ -113,6 +116,9 @@ test('the library card reaches the history, and the wordmark leads back', async 
 });
 
 test('browsing an old version shows its tree read-only, with no edit controls', async ({ page }) => {
+  // Measured 2026-10-25 against the shared remote DB, six runs: sign-up 6.5-7.8 s, createAdf ~5 s, each upload
+  // 6.5-7.4 s, so 26.3 to 38.4 s end to end -- at or past Playwright's 30 s default. Worst case 38.4 s + 50% = 60 s.
+  test.setTimeout(60_000);
   const u = await signUpFresh(page);
   await page.goto('/library');
   await createAdf(page);
@@ -164,6 +170,7 @@ test('restoring an old version brings its content back as a new version', async 
   if (!before.ok) throw new Error('fixture: the disk should read before the restore');
   const createdBefore = before.volume.createdAt!.getTime();
 
+  await openVersion(page, 1);
   await page.getByTestId('restore-1').click();
   await expect(page.getByTestId('restore-dialog')).toBeVisible();
   await expect(page.getByTestId('restore-dialog')).toContainText('Restore version 1?');
@@ -177,7 +184,7 @@ test('restoring an old version brings its content back as a new version', async 
   // Nothing was deleted from history: four entries now (0, 1, 2, 3), and the
   // disk got a genuinely new digest, not a reuse of version 1's own.
   const panel = page.getByTestId('history-panel');
-  await expect(panel.locator('[data-testid^="version-"]')).toHaveCount(4);
+  await expect(panel.locator('li[data-testid^="version-"]')).toHaveCount(4);
   await expect(page.getByTestId('version-3')).toContainText('Restored to version 1');
   await expect(page.getByTestId('version-3')).toHaveAttribute('data-head', 'true');
 
@@ -243,6 +250,7 @@ test('restore is refused while a board holds the disk, and succeeds once ejected
   // The panel says so too, before anyone even tries.
   await page.reload();
   await expect(page.getByTestId('history-mounted-notice')).toContainText('mounted on');
+  await openVersion(page, 0);
   await expect(page.getByTestId('restore-0')).toBeDisabled();
 
   // Eject, and the identical request now succeeds.
@@ -290,8 +298,11 @@ test('another tenant gets 404 from restore and from browsing history', async ({ 
   expect(restore.status()).toBe(404);
   expect(await restore.json()).toEqual({ error: 'not_found' });
 
-  const browseRes = await pb.goto(`/disks/${disk.id}/files?version=0`);
-  expect(browseRes?.status()).toBe(404);
+  // A1: the app streams behind loading.tsx, so a notFound() page is HTTP 200 with the not-found card; the API route
+  // above still answers 404.
+  await pb.goto(`/disks/${disk.id}/files?version=0`);
+  await expect(pb.getByTestId('not-found-page')).toBeVisible();
+  await expect(pb.getByTestId('file-tree')).toHaveCount(0);
 
   const unchanged = await diskRow(disk.id);
   expect(unchanged.id).toBe(disk.id);

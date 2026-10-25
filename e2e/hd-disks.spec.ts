@@ -8,7 +8,7 @@ import { diskStore } from '@/lib/storage';
 import { formatVolume } from '@/lib/adffs/format';
 import { readVolume } from '@/lib/adffs';
 import { HD_TRACK_DATA_BYTES } from '@/lib/adfmfm';
-import { signUpFresh, runTag, createAdf, libRows, stagingReady, openRowMenu } from './helpers';
+import { signUpFresh, runTag, createAdf, libRows, stagingReady, openRowMenu, openVersion } from './helpers';
 import { seedDisk, cleanupSeeded, pairDevice, authHeader } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
@@ -323,9 +323,10 @@ test('a blank HD disk is made, edited in the browser, and its history lists and 
 
   // History: file-level changes, newest first (HD writes spec §5.2).
   const panel = page.getByTestId('history-panel');
-  await expect(panel.locator('[data-testid^="version-"]')).toHaveCount(3);
+  await expect(panel.locator('li[data-testid^="version-"]')).toHaveCount(3);
   await expect(page.getByTestId('version-2')).toHaveAttribute('data-head', 'true');
   await expect(page.getByTestId('changes-2')).toContainText('NEWNAME.TXT');
+  await openVersion(page, 1);
   await expect(page.getByTestId('changes-1')).toContainText('HELLO.TXT');
 
   // Restore version 1 from the panel: HELLO.TXT is back under its first name.

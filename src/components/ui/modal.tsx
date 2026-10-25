@@ -13,7 +13,7 @@ import { XIcon } from 'lucide-react';
  * to the element focused before opening (Base UI's default).
  */
 export function Modal({
-  open, onOpenChange, title, subtitle, badge, footer, width, testId, dismissible, closeTestId, finalFocus, attrs, children,
+  open, onOpenChange, title, subtitle, badge, footer, width, testId, dismissible, closeTestId, finalFocus, initialFocus, attrs, children,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -22,11 +22,14 @@ export function Modal({
   /** Extra header content, e.g. an "Unsaved changes" pill. */
   badge?: ReactNode;
   footer: ReactNode;
-  width: 620 | 940;
+  width: 440 | 620 | 940;
   testId: string;
   dismissible: boolean;
   closeTestId: string;
-  finalFocus?: RefObject<HTMLElement | null>;
+  /** A ref, or a function evaluated when the popup closes (so it can pick a fallback for an opener that is gone). */
+  finalFocus?: RefObject<HTMLElement | null> | (() => HTMLElement | boolean | null);
+  /** Where focus lands on open; Base UI's default is the first tabbable, here the close button. */
+  initialFocus?: RefObject<HTMLElement | null>;
   /** Extra data attributes on the popup, e.g. `data-device-id`. */
   attrs?: Record<`data-${string}`, string>;
   children: ReactNode;
@@ -43,6 +46,7 @@ export function Modal({
           {...attrs}
           data-testid={testId}
           finalFocus={finalFocus}
+          initialFocus={initialFocus}
           className="glass-card wf-modal fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-32px)] w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden max-sm:inset-0 max-sm:max-h-none max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none"
           style={{ maxWidth: width }}
         >

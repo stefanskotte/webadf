@@ -1,8 +1,17 @@
+'use client';
 import { Link } from '@/components/shell/link';
+import { useRestore } from '@/components/disks/restore-dialog';
+import type { HistoryVersion } from '@/lib/disk-history/history';
 
-export function VersionBanner({ seq, time, backHref, restore = null }: {
-  seq: number; time: string | null; backHref: string; restore?: React.ReactNode;
+export function VersionBanner({ seq, time, backHref, version, mountedMessage, restore = null }: {
+  seq: number; time: string | null; backHref: string;
+  /** The loaded history entry for `seq`; null when the history could not be loaded (no Restore then). */
+  version: HistoryVersion | null;
+  mountedMessage: string | null;
+  restore?: React.ReactNode;
 }) {
+  const { ask, busy, reactiveMounted } = useRestore();
+  const mounted = mountedMessage ?? reactiveMounted;
   return (
     <div role="status" data-testid="version-banner" data-version={seq}
          className="flex flex-wrap items-center gap-3 rounded-[12px] border px-4 py-3 text-[14px]"
@@ -15,6 +24,15 @@ export function VersionBanner({ seq, time, backHref, restore = null }: {
         You’re browsing <b>version {seq}</b>{time ? ` (${time})` : ''}. It’s read-only — restore it to make it current.
       </span>
       {restore}
+      {version && (
+        <button type="button" data-testid="version-banner-restore" onClick={() => ask(version)}
+                disabled={!!mounted || busy} title={mounted ?? undefined}
+                aria-describedby={mounted ? 'history-mounted-reason' : undefined}
+                className="h-8 rounded-[8px] px-3 text-[13px] font-semibold disabled:opacity-50"
+                style={{ background: 'var(--ink)', color: 'var(--surface)' }}>
+          Restore this version
+        </button>
+      )}
       <Link href={backHref} data-testid="version-banner-back"
             className="inline-flex h-8 items-center rounded-[8px] border px-3 text-[13px] font-medium"
             style={{ borderColor: 'var(--warning-line)', color: 'var(--warning-fg)' }}>

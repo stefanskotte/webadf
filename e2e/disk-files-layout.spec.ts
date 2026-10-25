@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
 import { readVolume, type AdfEntry } from '@/lib/adffs';
-import { signUpFresh, createAdf, openRowMenu } from './helpers';
+import { signUpFresh, createAdf, openRowMenu, openVersion } from './helpers';
 import { cleanupSeeded, hydrated, pairDevice } from './device-helpers';
 
 /**
@@ -194,4 +194,48 @@ test('the edit guard: a disk a running Amiga holds has its row-menu edit actions
   await page.getByTestId(`fs-select-${b}`).check();
   await expect(page.getByTestId('fs-bulk-move')).toBeDisabled();
   await expect(page.getByTestId('fs-bulk-delete')).toBeDisabled();
+});
+
+test('History: the head open, older versions closed, counts as chips, Current in words', async ({ page }) => {
+  const { disk } = await freshDisk(page, [{ name: 'ONE.TXT' }, { name: 'TWO.TXT' }]);
+  await page.goto(`/disks/${disk.id}/files`);
+  await expect(page.getByTestId('history-panel').getByRole('heading', { level: 2, name: 'History' })).toBeVisible();
+  await expect(page.getByTestId('version-2')).toHaveAttribute('data-head', 'true');
+  await expect(page.getByTestId('version-toggle-2')).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByTestId('version-toggle-1')).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByTestId('changes-1')).toHaveCount(0);
+  await expect(page.getByTestId('current-2')).toHaveText('Current');
+  await expect(page.getByTestId('version-counts-2')).toContainText('+1');
+  await expect(page.getByTestId('version-2')).toContainText('Version 2 · Edited in browser');
+  await openVersion(page, 1);
+  await expect(page.getByTestId('changes-1')).toContainText('ONE.TXT');
+  await expect(page.getByTestId('restore-1')).toHaveText('Restore…');
+});
+
+test('Restore… asks in a dialog that focuses Cancel; Escape cancels and focus returns', async ({ page }) => {
+  const { disk } = await freshDisk(page, [{ name: 'ONE.TXT' }, { name: 'TWO.TXT' }]);
+  await page.goto(`/disks/${disk.id}/files`);
+  await openVersion(page, 1);
+  await page.getByTestId('restore-1').click();
+  const dialog = page.getByTestId('restore-dialog');
+  await expect(dialog).toContainText('Restore version 1?');
+  await expect(dialog).toContainText('This is saved as a new version, so nothing after it is lost.');
+  await expect(page.getByTestId('restore-cancel')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByTestId('restore-1')).toBeFocused();
+});
+
+test('Restore this version from the banner lands on the current version, focus on the h1', async ({ page }) => {
+  test.setTimeout(120_000);
+  const { disk } = await freshDisk(page, [{ name: 'ONE.TXT' }, { name: 'TWO.TXT' }]);
+  await page.goto(`/disks/${disk.id}/files?version=1`);
+  await page.getByTestId('version-banner-restore').click();
+  await expect(page.getByTestId('restore-dialog')).toContainText('Restore version 1?');
+  await page.getByTestId('restore-confirm').click();
+  await expect(page).toHaveURL(new RegExp(`/disks/${disk.id}/files$`), AFTER_EDIT);
+  await expect(page.getByTestId('version-banner')).toHaveCount(0);
+  await expect(page.getByTestId('version-3')).toContainText('Restored to version 1', AFTER_EDIT);
+  await expect(page.locator('[data-testid="fs-entry"][data-name="TWO.TXT"]')).toHaveCount(0);
+  await expect(page.locator('h1')).toBeFocused();
 });

@@ -33,6 +33,7 @@ import { DropStaging } from '@/components/disks/drop-staging';
 import { NativeDropProvider } from '@/components/disks/native-drop';
 import { FileEditProvider, FileToolbar, type EditDisabled } from '@/components/disks/file-actions';
 import { HistoryPanel } from '@/components/disks/history-panel';
+import { RestoreProvider } from '@/components/disks/restore-dialog';
 import { MountAction } from '@/components/games/mount-action';
 import { listSendTargets } from '@/lib/send-targets';
 import { SendBoardPicker } from '@/components/send/send-button';
@@ -333,6 +334,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // "New in vN" marks (A5) describe the head: browsing an older version shows none.
   const addedInMarks = historicalSeq === null ? Object.fromEntries(addedIn(historyVersions)) : {};
   const kind = pickKind((await kindRowsPromise).map((r) => kindFromSetName(r.setName)));
+  const viewedVersion = historicalSeq === null ? null : historyVersions.find((x) => x.seq === historicalSeq) ?? null;
   const send = sendTargets.length > 0 ? { targets: sendTargets, now } : null;
 
   return (
@@ -350,9 +352,11 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
                 sizeBytes={disk.sizeBytes} rootBlock={rootBlock} holder={held} light={driveLight(choices)}
                 actions={<><SendBoardPicker ctx={send} /><MountAction diskId={id} choices={choices} /></>} />
       {/* Above everything else, including the blob-unavailable branch: which version failed, and the way back. */}
+      <RestoreProvider diskId={id} viewingSeq={historicalSeq} currentHref={`/disks/${id}/files${fromQuery(from, view)}`}>
       {historicalSeq !== null && (
         <VersionBanner seq={historicalSeq} backHref={`/disks/${id}/files${fromQuery(from, view)}`}
-                       time={(() => { const v = historyVersions.find((x) => x.seq === historicalSeq); return v ? fmtTimeUtc(v.createdAt) : null; })()} />
+                       version={viewedVersion} mountedMessage={mountedMessage}
+                       time={viewedVersion ? fmtTimeUtc(viewedVersion.createdAt) : null} />
       )}
       <div className="grid grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
       <div className="flex min-w-0 flex-col gap-4">
@@ -414,6 +418,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
         )}
         </div>
       </div>
+      </RestoreProvider>
     </div>
   );
 }
