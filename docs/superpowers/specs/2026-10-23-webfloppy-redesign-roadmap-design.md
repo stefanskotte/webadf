@@ -58,6 +58,9 @@ which the restyle keeps.
 5. Settings, Help + "?" popover, Search, Sign in & sign up.
 6. Admin (Overview, Users, Invites, Scan, Firmware).
 7. Phone layouts (390 px) — a pass over everything; to iterate later.
+   C7 also moves About into Settings (operator 2026-10-25): the header's (i) `about-link` goes; About becomes its own
+   section of the Settings page (in the Settings section list, beside the account sections); `/about` redirects to
+   `/settings#about` so the Help topic, search, docs and bookmarks keep working.
 8. Header drive menu, simple version (operator 2026-10-25, after C7): each board's existing header chip and menu take
    the board's look -- the chip shows the board name, its disk and the `WP` tag (no "n/N" count -- operator 2026-10-25: it makes no
    sense, leave it out); the menu opens as a
