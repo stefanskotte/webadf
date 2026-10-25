@@ -8,6 +8,7 @@ import type { FirmwareState, ReleaseRef } from '@/lib/firmware-state';
 import type { NextInfo } from '@/lib/next-disk';
 import { MAX_UPDATE_BATCH, overBatchCap } from '@/lib/firmware-update-rules';
 import { DeviceCard } from './device-card';
+import { DevicesEmpty } from './devices-empty';
 import { FirmwareNotice } from './firmware-notice';
 import { PairAnotherButton } from './pairing';
 
@@ -232,10 +233,7 @@ export function DeviceList({
       )}
 
       {devices.length === 0 ? (
-        // The full empty state (spec §9.1) is Task 7's; today's words stay until then.
-        <div className="glass-card p-6 text-[13px]" style={{ color: 'var(--muted)' }}>
-          No devices paired yet. Press <strong>Pair a device</strong> and enter the code on the hardware.
-        </div>
+        <DevicesEmpty />
       ) : (
         /*
           One board: the card and the "Add another drive" aside side by side from lg (spec §1). Two or more: one

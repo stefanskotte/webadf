@@ -33,6 +33,12 @@ test('a fresh org with no devices shows the empty-state copy', async ({ page }) 
   await signUpFresh(page);
   await page.goto('/devices');
   await expect(page.getByText('No devices paired yet')).toBeVisible();
+  // Spec 9.1: the empty card carries its marker, and its button opens the header's pairing form.
+  await expect(page.getByTestId('devices-empty')).toHaveAttribute('data-empty', 'devices');
+  await expect(page.getByTestId('pair-another-card')).toHaveCount(0);
+  await hydrated(page, 'pair-another');
+  await page.getByTestId('pair-another').click();
+  await expect(page.getByTestId('pair-name')).toBeVisible();
 });
 
 test('the header subtitle counts online devices by lastSeenAt, not just how many are paired', async ({ page, request }) => {
