@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AdfEntry } from '@/lib/adffs';
 import { useFileEdit } from './file-actions';
 import type { DirectoryOption } from './file-tree';
@@ -36,6 +36,16 @@ export function SelectionBar({ diskId, tops, directoryOptions, hidden, onClear }
   const { disabled, busy, runEdit } = useFileEdit();
   const [mode, setMode] = useState<'idle' | 'move' | 'delete'>('idle');
   const [target, setTarget] = useState<number | ''>('');
+  // Cancel removes itself with its step: focus goes back to the Move to… or Delete that opened it, never <body>.
+  const returnTo = useRef<'move' | 'delete' | null>(null);
+  const moveRef = useRef<HTMLButtonElement>(null);
+  const deleteRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (mode !== 'idle' || !returnTo.current) return;
+    (returnTo.current === 'move' ? moveRef : deleteRef).current?.focus();
+    returnTo.current = null;
+  }, [mode]);
+  function cancel() { returnTo.current = mode === 'idle' ? null : mode; setMode('idle'); }
   const blocks = tops.map((e) => e.block);
   const historical = disabled?.reason === 'historical';
 
@@ -91,9 +101,9 @@ export function SelectionBar({ diskId, tops, directoryOptions, hidden, onClear }
             <a href={`/api/disks/${diskId}/files/zip?blocks=${blocks.join(',')}`} className={button} style={plain}
                data-testid="fs-bulk-download">Download .zip</a>
           )}
-          <button type="button" className={button} style={plain} disabled={!!disabled || busy} title={disabled?.message}
+          <button type="button" ref={moveRef} className={button} style={plain} disabled={!!disabled || busy} title={disabled?.message}
                   onClick={() => setMode('move')} data-testid="fs-bulk-move">Move to…</button>
-          <button type="button" className={button} style={danger} disabled={!!disabled || busy} title={disabled?.message}
+          <button type="button" ref={deleteRef} className={button} style={danger} disabled={!!disabled || busy} title={disabled?.message}
                   onClick={() => setMode('delete')} data-testid="fs-bulk-delete">Delete</button>
           <button type="button" className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-[7px] text-[18px] leading-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-(--surface)"
                   style={plain} aria-label="Clear selection"
@@ -114,7 +124,7 @@ export function SelectionBar({ diskId, tops, directoryOptions, hidden, onClear }
           <button type="button" className={button} style={{ background: 'var(--surface)', color: 'var(--ink)' }}
                   disabled={busy || target === ''} onClick={submitMove} data-testid="fs-bulk-move-submit">Move</button>
           <button type="button" className={button} style={plain} disabled={busy}
-                  onClick={() => setMode('idle')}>Cancel</button>
+                  onClick={cancel}>Cancel</button>
         </>
       )}
 
@@ -126,7 +136,7 @@ export function SelectionBar({ diskId, tops, directoryOptions, hidden, onClear }
           <button type="button" className={button} style={danger}
                   disabled={busy} onClick={submitDelete} data-testid="fs-bulk-delete-confirm">Delete</button>
           <button type="button" className={button} style={plain} disabled={busy}
-                  onClick={() => setMode('idle')}>Cancel</button>
+                  onClick={cancel}>Cancel</button>
         </>
       )}
     </div>

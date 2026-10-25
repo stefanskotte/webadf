@@ -713,7 +713,8 @@ export function DropStaging({
             </button>
             <button
               type="button"
-              onClick={clearStaged}
+              // Clear vanishes with the list: focus goes to the Files heading, as after a commit (spec §9).
+              onClick={() => { clearStaged(); document.getElementById('files-heading')?.focus(); }}
               disabled={busy}
               data-testid="drop-clear"
               className="h-9 rounded-[10px] border px-4 text-[12.5px] font-semibold disabled:opacity-50"

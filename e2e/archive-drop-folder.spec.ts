@@ -156,6 +156,8 @@ test('an archive that does not fit, or is not an archive, is refused and writes 
   await expect(page.getByTestId('drop-commit')).toBeDisabled();
   await page.getByTestId('drop-clear').click();
   await expect(page.getByTestId('drop-staging-list')).toHaveCount(0);
+  // Clear vanishes with the list: focus goes to the Files heading, never <body>.
+  await expect(page.locator('#files-heading')).toBeFocused();
 
   // Not an archive at all, despite its name: refused by name, nothing staged.
   const junk = [...new TextEncoder().encode('this is not an LHA archive, only text')];
@@ -286,6 +288,7 @@ test('the tree reports its drop receiver as ready once hydrated, and its list ho
   // drop on the tree reaches nothing. The tree exposes the moment it can.
   await expect(page.getByTestId('file-tree')).toHaveAttribute('data-native-drop', 'ready');
   // Every direct child of the files list is a list item (folders and files alike).
+  await expect(page.getByTestId('file-tree')).toHaveAttribute('role', 'list');
   const roles = await page.getByTestId('file-tree').evaluate((el) => [...el.children].map((c) => c.getAttribute('role')));
   expect(roles.length).toBeGreaterThanOrEqual(4);
   expect(roles.every((r) => r === 'listitem'), `roles: ${JSON.stringify(roles)}`).toBe(true);

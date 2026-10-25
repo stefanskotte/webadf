@@ -100,6 +100,20 @@ test('the Files header: heading, filter, the Hide .info switch, Add file and New
   await sw.click();                                         // leave the preference as found
 });
 
+test('Cancel in the selection strip\'s move or delete step returns focus to the button that opened it', async ({ page }) => {
+  const { disk } = await freshDisk(page, [{ name: 'A.TXT' }]);
+  const b = await blocks(page, disk.id);
+  await page.goto(`/disks/${disk.id}/files`);
+  await hydrated(page, `fs-select-${b['A.TXT'].block}`, 'onChange');
+  await page.getByTestId(`fs-select-${b['A.TXT'].block}`).check();
+  for (const [opener, step] of [['fs-bulk-move', 'fs-bulk-move-target'], ['fs-bulk-delete', 'fs-bulk-delete-confirm']]) {
+    await page.getByTestId(opener).click();
+    await expect(page.getByTestId(step)).toBeVisible();
+    await page.getByTestId('fs-selection-bar').getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByTestId(opener)).toBeFocused();
+  }
+});
+
 test('read-only states say why in the header, and the selection strip keeps A5 words', async ({ page }) => {
   const { disk } = await freshDisk(page, [{ name: 'A.TXT' }, { name: 'B.TXT' }]);
   const b = await blocks(page, disk.id);
