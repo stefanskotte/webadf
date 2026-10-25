@@ -273,6 +273,30 @@ test('restore is refused while a board holds the disk, and succeeds once ejected
 
 });
 
+// A board that mounts the disk while the confirm is open: the 409 disables both Restore buttons, and a disabled button
+// cannot take focus back -- so focus lands on the History heading, never <body>.
+test('a board mounting the disk during the restore confirm sends focus to the History heading', async ({ page, request }) => {
+  test.setTimeout(60_000);
+  const u = await signUpFresh(page);
+  await page.goto('/library');
+  await createAdf(page);
+  const disk = await authoredDisk(page, u.orgId);
+  await page.goto(`/disks/${disk.id}/files`);
+  await uploadFile(page, 'ONLY.TXT', 'the only file');
+  const { deviceId } = await pairDevice(page, request, `Board ${runTag()}`);
+
+  await page.reload();
+  await openVersion(page, 0);
+  await page.getByTestId('restore-0').click();
+  await expect(page.getByTestId('restore-dialog')).toBeVisible();
+  expect((await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId: disk.id } })).ok()).toBe(true);
+  await page.getByTestId('restore-confirm').click();
+
+  await expect(page.getByTestId('restore-0')).toBeDisabled();
+  await expect(page.getByTestId('restore-dialog')).toBeHidden();
+  await expect(page.locator('#history-heading')).toBeFocused();
+});
+
 test('another tenant gets 404 from restore and from browsing history', async ({ browser }) => {
   const a = await browser.newContext();
   const b = await browser.newContext();

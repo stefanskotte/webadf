@@ -30,10 +30,14 @@ export function RestoreProvider({ diskId, viewingSeq, currentHref, children }: {
   const opener = useRef<HTMLElement | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const toCurrent = useRef(false);
+  // Set by a 409 mounted refusal: both Restore buttons (the likely openers) turn disabled, and a disabled button
+  // cannot hold focus, so the dialog returns focus to the History heading instead.
+  const refused = useRef(false);
 
   function ask(v: HistoryVersion) {
     opener.current = document.activeElement as HTMLElement | null;
     toCurrent.current = false;
+    refused.current = false;
     setTarget(v);
     setOpen(true);
   }
@@ -42,7 +46,8 @@ export function RestoreProvider({ diskId, viewingSeq, currentHref, children }: {
   // the refreshed list no longer has it, the History heading (never <body>).
   function finalFocus(): HTMLElement | boolean | null {
     if (toCurrent.current) return document.querySelector<HTMLElement>('h1');
-    const back = opener.current && document.contains(opener.current) ? opener.current : null;
+    const back = !refused.current && opener.current && document.contains(opener.current)
+      && !opener.current.matches(':disabled') ? opener.current : null;
     return back ?? document.getElementById('history-heading');
   }
 
@@ -59,6 +64,7 @@ export function RestoreProvider({ diskId, viewingSeq, currentHref, children }: {
       if (!res.ok) {
         if (res.status === 409 && data?.error === 'mounted' && typeof data.reason === 'string') {
           const message = ejectMessage(data.reason);
+          refused.current = true;
           setReactiveMounted(message);
           toast.error(message);
           setOpen(false);
