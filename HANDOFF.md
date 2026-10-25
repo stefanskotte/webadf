@@ -1480,11 +1480,35 @@ separately.
 
 **Current order (re-checked 2026-10-24):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d**; next C5 Settings/Help/Search/Sign in) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
+**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d; C5 Settings/Help/Search/Sign in SHIPPED 2026-10-25, merge f6d1941**; next C6 Admin) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **Phase C5 Settings, Help + "?", Search, Sign in -- SHIPPED 2026-10-25** (merge f6d1941; spec
+  `docs/superpowers/specs/2026-10-25-phase-c5-settings-help-search-signin-design.md` (41 rulings), plan
+  `docs/superpowers/plans/2026-10-25-phase-c5-settings-help-search-signin.md`). Shared `SegRadioGroup`/`SideNav`/`PageHeader
+  flush`/`SortSelect bare`; Settings with a sticky section list, four cards, radio rows (10 e2e selectOption sites now click
+  radios), a firmware switch keeping A2's meaning (Ruling 10), busy controls aria-disabled + guard (never `disabled`; Cancel/
+  Escape blocked in flight; idle close clears the form); Help keeps every topic on one page (Ruling 12) in four groups with a
+  filter, nav once inside a <details> open on the server, closed on phones after hydration, scrollable aside; the "?" is a
+  round trigger with an ink popover and "Read the full topic"; Search keeps the header field as the only input, a 600 px panel
+  anchored to the header with a scrim, disk icon + kind per row (`/api/search` gains authored/hasHd/hasHfe/kind via the
+  org-scoped `kindsForGames`, additive, Ruling 24), modifier/IME keys ignored, Escape still clears and blurs (Ruling 22);
+  Sign in / Create account: split frame with hero, `authErrorText`, the submit renamed "Create account" (Ruling 35: 10 e2e
+  sites in 5 files, invite code first), the first-admin log line and docs/README/.env.example/docker-smoke follow it, no
+  "Forgot your password?" and no GitHub link (Rulings 33, 41). Found and fixed in the final pass: a dropped connection left
+  Change password / Sign out other browsers / Sign in / Create account stuck busy (try/finally); a full load of /help#topic or
+  /settings#section could land elsewhere or mark the section above (the browser's jump ran before the streamed sections,
+  and the jump's scroll counted as the reader's) -- SideNav now jumps once on arrival and ignores those scrolls for 600 ms;
+  the docker smoke grep would have failed the image workflow on the new log wording. Deferred minors: scroll marks dropped
+  during the 600 ms click lock; filter hiding the current Help item leaves none current; phone /help#topic reload jumps when
+  the Topics list closes; arrow keys on a Preferences row save once per step (out-of-order replies can show an in-between
+  value); search rows prefetch while typing; fixed scrim vs absolute panel on page scroll; no scrim below sm (iOS tap-away
+  leaves the panel open); ctrl/cmd-click on a result clears the query; SegRadioGroup `disabled` uses native disabled (no
+  caller); "?" 24 px target and auth switch links 36 px (spec values); auth busy guard reads render state; "Read the full
+  topic" aria-label can drift from its text; 1040 px hero test asserts overflow only; bootstrap.db.test pin not run here
+  (needs TEST_DATABASE_URL); docker smoke not run here.
 - **Phase C4 Disk files -- SHIPPED 2026-10-25** (merge a7cbd5d; spec `docs/superpowers/specs/2026-10-25-phase-c4-disk-files-design.md`
   (35 rulings), plan `docs/superpowers/plans/2026-10-25-phase-c4-disk-files.md`). Disk card + version banner (volume-header.tsx
   gone), FilesCard with the tree kept (R2), an always-visible row ⋯ menu incl. Send (R11), eight protection bits (R13), selection
