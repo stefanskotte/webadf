@@ -1,10 +1,11 @@
 import { adminListInvites } from '@/lib/admin-queries';
-import { PageHeader } from '@/components/shell/page-header';
+import { AdminPageHead } from '@/components/admin/admin-page-head';
 import { IssueInviteButton } from '@/components/admin/issue-invite-button';
 import { CopyInviteButtons } from '@/components/admin/copy-invite-buttons';
 import { RevokeInviteButton } from '@/components/admin/revoke-invite-button';
 
 export const dynamic = 'force-dynamic';
+export const metadata = { title: 'Admin · Invites' };
 
 // Live first, then newest first -- adminListInvites orders it that way in SQL
 // so this page never recomputes the state from three columns and disagrees
@@ -22,8 +23,7 @@ export default async function AdminInvitesPage() {
 
   return (
     <>
-      <PageHeader
-        eyebrow="Admin"
+      <AdminPageHead
         title="Invites"
         subtitle={`${live} live · ${invites.length} total · registration is invite-only (D13)`}
         actions={<IssueInviteButton />}

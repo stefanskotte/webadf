@@ -3,12 +3,14 @@ import {
 } from '@/lib/admin-queries';
 import { readCurrentRelease } from '@/lib/firmware-releases';
 import { needsAttention, orderDistribution, versionLabel } from '@/lib/admin-board-health';
-import { PageHeader } from '@/components/shell/page-header';
+import { nowMs } from '@/lib/clock';
+import { AdminPageHead } from '@/components/admin/admin-page-head';
 
 // Counts are read live on every render; nothing here is cached. cacheComponents
 // stays off in this project (see next.config.ts), and an operator looking at a
 // database overview wants the number as it is now, not as it was.
 export const dynamic = 'force-dynamic';
+export const metadata = { title: 'Admin · Overview' };
 
 const TILES = [
   { key: 'users', label: 'Users' },
@@ -47,8 +49,9 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 }
 
 export default async function AdminOverviewPage() {
-  // One `now` for every rule on the page, so the tiles, the distribution and the attention list agree.
-  const now = Date.now();
+  // One `now` for every rule on the page, read once per request (Ruling 3), so the tiles, the distribution and the
+  // attention list agree.
+  const now = nowMs();
   const [counts, boards, dist, candidates, current] = await Promise.all([
     adminCounts(), adminBoardCounts(now), adminFirmwareDistribution(now), adminAttentionCandidates(now),
     readCurrentRelease(),
@@ -57,8 +60,7 @@ export default async function AdminOverviewPage() {
   const distribution = orderDistribution(dist, current?.sequence ?? null);
   return (
     <>
-      <PageHeader
-        eyebrow="Admin"
+      <AdminPageHead
         title="Overview"
         subtitle="Every organization, unscoped — these numbers cross the tenant boundary"
       />

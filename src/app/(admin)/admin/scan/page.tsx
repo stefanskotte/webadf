@@ -1,5 +1,6 @@
 import { scanStatus } from '@/lib/tosec-sweep';
-import { PageHeader } from '@/components/shell/page-header';
+import { nowMs } from '@/lib/clock';
+import { AdminPageHead } from '@/components/admin/admin-page-head';
 import { DatUpload } from '@/components/admin/dat-upload';
 import { RunScanButton } from '@/components/admin/run-scan-button';
 import { OpenRetroUpload } from '@/components/admin/openretro-upload';
@@ -8,6 +9,7 @@ import { readDemozooImportState } from '@/lib/demozoo/import';
 import { demozooStatusText } from '@/lib/demozoo/status';
 
 export const dynamic = 'force-dynamic';
+export const metadata = { title: 'Admin · Scan' };
 
 const TILES = [
   { key: 'blobs', label: 'Blobs' },
@@ -34,6 +36,7 @@ export default async function AdminScanPage() {
   const fetchState = await readTosecFetchState().catch(() => null);
   // null = never fetched; 'unreadable' = the read failed. Distinct on purpose.
   const demozooState = await readDemozooImportState().catch(() => 'unreadable' as const);
+  const now = nowMs();
 
   // A blob whose bytes could not be read is stamped hashed (so the sweeper
   // does not spin on it forever) with null hashes, and phase 2's short
@@ -61,8 +64,7 @@ export default async function AdminScanPage() {
 
   return (
     <>
-      <PageHeader
-        eyebrow="Admin"
+      <AdminPageHead
         title="Scan"
         subtitle={[
           `${s.tosecEntries} TOSEC entries loaded`,
@@ -164,7 +166,7 @@ export default async function AdminScanPage() {
         </div>
 
         <div className="glass-card mb-3 p-5 text-[12.5px]" style={{ color: 'var(--muted)' }} data-testid="demozoo-status">
-          {demozooStatusText(demozooState, Date.now())}
+          {demozooStatusText(demozooState, now)}
         </div>
 
         <div className="glass-card mb-3 p-5">

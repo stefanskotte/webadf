@@ -1,9 +1,10 @@
 import { Link } from '@/components/shell/link';
 import { adminListUsers, adminCountUsers } from '@/lib/admin-queries';
-import { PageHeader } from '@/components/shell/page-header';
+import { AdminPageHead } from '@/components/admin/admin-page-head';
 import { DeleteUserDialog } from '@/components/admin/delete-user-dialog';
 
 export const dynamic = 'force-dynamic';
+export const metadata = { title: 'Admin · Users' };
 
 const PER_PAGE = 50;
 
@@ -35,8 +36,7 @@ export default async function AdminUsersPage({
 
   return (
     <>
-      <PageHeader
-        eyebrow="Admin"
+      <AdminPageHead
         title="Users"
         subtitle={`${total} total · page ${page} of ${lastPage} · newest first`}
       />

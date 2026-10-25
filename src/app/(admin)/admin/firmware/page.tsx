@@ -1,7 +1,7 @@
 import { Link } from '@/components/shell/link';
 import { listReleasesFull, countReleases, readCurrentRelease } from '@/lib/firmware-releases';
 import { adminBoardsByVersion } from '@/lib/admin-queries';
-import { PageHeader } from '@/components/shell/page-header';
+import { AdminPageHead } from '@/components/admin/admin-page-head';
 import { PromoteReleaseButton } from '@/components/admin/promote-release-button';
 import { fmtSize, fmtTimeUtc } from '@/lib/format';
 import { signatureLabel } from '@/lib/firmware-state';
@@ -11,6 +11,7 @@ import {
 } from '@/lib/admin-firmware';
 
 export const dynamic = 'force-dynamic';
+export const metadata = { title: 'Admin · Firmware' };
 
 /**
  * Publishing happens from the operator's Mac, because the signing key is there
@@ -41,8 +42,7 @@ export default async function AdminFirmwarePage({
 
   return (
     <>
-      <PageHeader
-        eyebrow="Admin"
+      <AdminPageHead
         title="Firmware"
         subtitle={
           total === 0

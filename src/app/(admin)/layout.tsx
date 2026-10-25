@@ -1,13 +1,15 @@
-import { Link } from '@/components/shell/link';
 import { requireSuperAdmin } from '@/lib/superadmin';
-import { AdminNav } from '@/components/admin/admin-nav';
+import { TopNav } from '@/components/shell/top-nav';
 import { SearchBox } from '@/components/shell/search-box';
+import { SettingsLink } from '@/components/shell/settings-link';
+import { SignOutButton } from '@/components/sign-out-button';
 import { Logo } from '@/components/shell/logo';
 
 /**
- * The admin shell. Deliberately NOT the (app) shell: there is no active
- * organization here, so the org switcher and the library/devices/ingest nav
- * would all be showing a tenant context these pages do not have.
+ * The admin shell. Deliberately NOT the (app) shell: there is no active organization here, so the drive chips and
+ * the drive menu would be showing a tenant context these pages do not have. Since C6 (spec §1.1, Ruling 1) it
+ * carries the app's own Main nav (TopNav, with Admin current on every /admin page), the gear and Sign out; the five
+ * admin sections are the in-page tabs under each heading (AdminSections).
  *
  * requireSuperAdmin() is called here and *also* independently by every
  * /api/admin route. A layout guard is not an API guard -- a page render and a
@@ -27,7 +29,7 @@ export default async function AdminLayout({
           page, which would otherwise each have to remember it. */}
       <div className="min-h-screen pb-[calc(4.5rem+env(safe-area-inset-bottom))] sm:pb-0">
         {/* Below sm the header wraps: wordmark on line one, then the search
-            box, the operator's email and the way back. They do not fit on one
+            box, the operator's email, the gear and Sign out. They do not fit on one
             line at 390px, and nowrap would push the last of them off-screen. */}
         <header
           data-testid="admin-header"
@@ -71,7 +73,8 @@ export default async function AdminLayout({
                 -- a justify-center scroll container puts the start of its own
                 content out of reach once it overflows. */}
             <div className="pointer-events-auto max-w-full overflow-x-auto">
-              <AdminNav />
+              {/* Every page under this layout passed requireSuperAdmin(), so Admin is shown (TopNav's own rule). */}
+              <TopNav showAdmin />
             </div>
           </div>
           {/* Wraps onto its own full-width line below sm; ml-auto is inert
@@ -90,15 +93,8 @@ export default async function AdminLayout({
             >
               {email}
             </span>
-            {/* The way back to the ordinary app; the admin shell has no TopNav. */}
-            <Link
-              href="/library"
-              // Colours as classes, not an inline style: an inline colour
-              // would beat the hover.
-              className="whitespace-nowrap text-[13px] font-medium text-(--muted) hover:text-(--ink)"
-            >
-              Back to library
-            </Link>
+            <SettingsLink />
+            <SignOutButton />
           </div>
         </header>
         {children}
