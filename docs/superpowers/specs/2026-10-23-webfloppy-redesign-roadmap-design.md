@@ -66,6 +66,10 @@ which the restyle keeps.
    "current drive" concept: each chip's menu is that board's card. Existing functions only (go to disk, write
    protection, next, eject, board settings); every drive-chip test id kept. Reference: the operator's screenshot,
    session scratchpad `design-approved/drive-menu-simple-operator-2026-10-25.png`.
+9. GitHub page (operator 2026-10-25, last step of Phase C): refresh every screenshot in the README (and anything it
+   links under docs/screenshots/) from the finished redesign, check every sentence of the README against what the app
+   does today (features, names, self-host steps), and add a short invitation to report bugs and request features
+   through GitHub issues. Screenshots from the live DB show no email address or board name.
 
 Each area: a short spec, a plan, the build, the e2e specs for that area, merge.
 
