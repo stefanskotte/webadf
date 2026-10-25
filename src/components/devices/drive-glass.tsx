@@ -21,7 +21,7 @@ const TICK_MS = 500;
  * viewBox (18 / 11 / 90 of 304 x 132; the 128x64 case is 153 tall) so it scales with the SVG.
  */
 export function DriveGlass({ device, online, onOpenDisplay }: {
-  device: DeviceListItem; online: boolean; onOpenDisplay: () => void;
+  device: DeviceListItem; online: boolean; onOpenDisplay: (from: HTMLElement) => void;
 }) {
   const [wasm, setWasm] = useState<DisplayWasm | null>(null);
   const [failed, setFailed] = useState(false);
@@ -68,7 +68,7 @@ export function DriveGlass({ device, online, onOpenDisplay }: {
   const words = failed ? 'Display preview unavailable' : liveDisplayText(state);
   const artH = ART_H + (rows === 64 ? ART_TALL_EXTRA : 0);
   return (
-    <button type="button" onClick={onOpenDisplay} aria-haspopup="dialog"
+    <button type="button" onClick={(e) => onOpenDisplay(e.currentTarget)} aria-haspopup="dialog"
             aria-label={`Change display — showing: ${words}`}
             data-testid={`device-oled-${device.id}`} data-oled={words}
             className="absolute box-border block cursor-pointer rounded-[4px] bg-[#1C1B18] px-1 py-px shadow-[inset_0_0_0_1px_rgb(255_255_255/.06)] transition-transform hover:-translate-y-px hover:ring-2 hover:ring-[#EE8A2A] motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:hover:ring-0"

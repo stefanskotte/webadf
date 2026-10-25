@@ -17,8 +17,13 @@ import { DisplayEditor } from './display-editor';
 export function DriveFront({ device, online }: { device: DeviceListItem; online: boolean }) {
   const [open, setOpen] = useState(false);
   const opener = useRef<HTMLElement | null>(null);
-  const finalFocus = useMemo(() => ({ get current() { return opener.current; } }) as RefObject<HTMLElement | null>, []);
-  const openDisplay = () => { opener.current = document.activeElement as HTMLElement | null; setOpen(true); };
+  const toggle = useRef<HTMLButtonElement>(null);
+  // Focus returns to the element that was pressed (its own currentTarget, not document.activeElement, which Safari
+  // does not move on a button click), or to "Change display" when that element has left the page.
+  const finalFocus = useMemo(() => ({
+    get current() { return opener.current?.isConnected ? opener.current : toggle.current; },
+  }) as RefObject<HTMLElement | null>, []);
+  const openDisplay = (from: HTMLElement) => { opener.current = from; setOpen(true); };
   const tall = panelHeight(device.displayPanel) === 64;
   const hasDisk = device.desiredSha256 !== null || device.mountedSha256 !== null;
   return (
@@ -32,7 +37,7 @@ export function DriveFront({ device, online }: { device: DeviceListItem; online:
         <div className="flex w-full items-center justify-between text-[12px]" style={{ color: 'var(--muted-2)' }}>
           <span>Board display · {tall ? '128×64' : '128×32'}</span>
           <span className="flex items-center gap-1">
-            <button type="button" onClick={openDisplay} aria-haspopup="dialog" aria-expanded={open}
+            <button type="button" ref={toggle} onClick={(e) => openDisplay(e.currentTarget)} aria-haspopup="dialog" aria-expanded={open}
                     data-testid={`display-toggle-${device.id}`}
                     className="flex h-7 items-center gap-1.5 rounded-[7px] px-2 text-[12px] font-semibold"
                     style={{ color: 'var(--ink)' }}>

@@ -173,6 +173,21 @@ test('Cancel throws away unsaved edits and closes the modal without asking the s
   await expect(page.getByTestId('display-width-title')).toHaveValue(before);
 });
 
+test('closing the display modal returns focus to the opener that was pressed', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await reportStatus(request, token, { displayLayouts: true, displayVersion: 0 });
+  await page.goto('/devices');
+  for (const opener of [`device-oled-${deviceId}`, `display-toggle-${deviceId}`]) {
+    await hydrated(page, opener);
+    await page.getByTestId(opener).click();
+    await expect(page.getByTestId(`display-canvas-${deviceId}`)).toBeVisible();
+    await page.getByTestId(`display-cancel-${deviceId}`).click();
+    await expect(page.getByTestId(`display-drawer-${deviceId}`)).toHaveCount(0);
+    await expect(page.getByTestId(opener)).toBeFocused();
+  }
+});
+
 test('Escape closes the display modal, sends nothing, and reopening shows the board\'s value; Save keeps it open', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);

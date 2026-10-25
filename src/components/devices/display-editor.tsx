@@ -187,7 +187,7 @@ function Shell({ device, onOpenChange, finalFocus, dismissible, badge, status, f
              <>
                {`Choose what ${device.name}’s screen shows. Changes are sent to the board when you save.`}
                {status && (
-                 <span className="mt-1 block text-[12px]" data-testid={`display-status-${device.id}`}
+                 <span role="status" className="mt-1 block text-[12px]" data-testid={`display-status-${device.id}`}
                        style={{ color: status.warn ? 'var(--amber-text)' : 'var(--muted)', overflowWrap: 'anywhere' }}>
                    {status.text}
                  </span>
