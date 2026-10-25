@@ -1,8 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { signUpFresh } from './helpers';
+import { signUpFresh, mintInviteCode } from './helpers';
 import { signInAsSuperAdmin, SUPERADMIN_EMAIL, gotoAdminUserRow, seedUsers, cleanupSeededUsers, ADMIN_PER_PAGE } from './admin-helpers';
 import { cleanupSeeded, cleanupTestReleases, hydrated } from './device-helpers';
+import { ALPHABET } from '@/lib/invites';
 
 // Phase C6 (spec 2026-10-25-phase-c6-admin-design.md §10.4): the admin layout. The DB is the live one: every
 // assertion is about rows a test made, or follows a value the page itself shows (both values of a state).
@@ -237,5 +238,59 @@ test('Delete…: the dialog opens on the field, Escape returns to the trigger, a
 
   await confirm.click();
   await expect(page.getByTestId(`user-row-${victim.email}`)).toHaveCount(0);
+  await expect(page.locator('h1')).toBeFocused();
+});
+
+// ---- Invites (spec §4, Rulings 17–20) ---------------------------------------------------------------------
+
+test('Invites: Issue an invite shows the new-code panel under the tabs; the none-live note follows the live count', async ({ page }) => {
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/invites');
+  const sub = (await page.getByText(/^\d+ live · \d+ total · invite-only$/).textContent()) ?? '';
+  const live = Number(/^(\d+) live/.exec(sub)?.[1]);
+  await expect(page.getByTestId('invites-none-live')).toHaveCount(live === 0 ? 1 : 0);
+  await expect(page.locator('section[aria-label="Invite codes"] th'))
+    .toHaveText(['Code', 'State', 'Issued', 'Expires', 'Used by', 'Action']);
+  await expect(page.getByTestId('new-invite-panel')).toHaveCount(0);
+
+  const button = page.getByRole('button', { name: 'Issue an invite' });
+  const panel = page.getByTestId('new-invite-panel');
+  // No test id on the button (spec §10): retry the click until hydration has wired it.
+  await expect(async () => {
+    await button.click();
+    await expect(panel).toBeVisible({ timeout: 2_000 });
+  }).toPass();
+  await expect(panel).toContainText('New code · single use · expires in 7 days');
+  const code = (await page.getByTestId('new-invite-code').textContent())?.trim() ?? '';
+  expect(code).toMatch(new RegExp(`^[${ALPHABET}]{8}$`));
+  await expect(page.getByTestId('new-invite-copy-code')).toHaveText('Copy code');
+  await expect(page.getByTestId('new-invite-copy-link')).toHaveText('Copy sign-up link');
+  await expect(page.getByRole('status').filter({ hasText: `New invite code ${code}` })).toHaveCount(1);
+  // Under the tabs, not beside the button.
+  const tabs = (await page.getByTestId('admin-sections').boundingBox())!;
+  expect((await panel.boundingBox())!.y).toBeGreaterThan(tabs.y + tabs.height - 1);
+  await expect(button).toBeFocused();
+  await expect(page.getByTestId('invites-none-live')).toHaveCount(0);
+  await expect(page.getByTestId(`invite-${code}`).locator('[data-state]')).toHaveText('Live');
+});
+
+test('Invites: a dropped revoke keeps the button; a revoke leaves the row Revoked with no action and focus on the heading', async ({ page }) => {
+  const code = await mintInviteCode();
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/invites');
+  const revoke = page.getByTestId(`revoke-${code}`);
+  await hydrated(page, `revoke-${code}`);
+
+  await page.route(`**/api/admin/invites/${code}`, (r) => r.abort());
+  await revoke.click();
+  await expect(page.getByText('Could not reach the server')).toBeVisible();
+  await expect(revoke).toHaveText('Revoke');
+  await expect(revoke).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(revoke).toBeFocused();
+  await page.unroute(`**/api/admin/invites/${code}`);
+
+  await revoke.click();
+  await expect(page.getByTestId(`invite-${code}`).locator('[data-state]')).toHaveText('Revoked');
+  await expect(revoke).toHaveCount(0);
   await expect(page.locator('h1')).toBeFocused();
 });

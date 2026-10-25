@@ -9,7 +9,7 @@ test.afterAll(cleanupSeeded);
 const CODE_RE = new RegExp(`^[${ALPHABET}]{8}$`);
 
 async function issueCode(page: import('@playwright/test').Page): Promise<string> {
-  await page.getByRole('button', { name: /issue invite/i }).click();
+  await page.getByRole('button', { name: /issue an invite/i }).click();
   const code = (await page.getByTestId('new-invite-code').textContent())?.trim() ?? '';
   expect(code).toMatch(CODE_RE);
   return code;

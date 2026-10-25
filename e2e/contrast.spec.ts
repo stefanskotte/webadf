@@ -243,7 +243,7 @@ test('a toast description is legible', async ({ page }) => {
   // Force the fetch to fail: that is the branch raising a toast WITH a
   // description. The success path renders the code inline instead.
   await page.route('**/api/admin/invites', (r) => r.abort());
-  await page.getByRole('button', { name: /issue invite/i }).click();
+  await page.getByRole('button', { name: /issue an invite/i }).click();
 
   await expect(page.locator('[data-description]').first()).toBeVisible({ timeout: 10_000 });
   // Let the entrance animation finish: a toast measured mid-fade reports the
