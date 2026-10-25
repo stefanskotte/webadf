@@ -380,3 +380,32 @@ test('Scan: three source cards with every count, the status lines, Choose button
   await expect(page.locator('section[aria-labelledby="sets-heading"] th')).toHaveText(['Set', 'Version', 'Entries']);
   await expect(page.getByRole('heading', { name: /scan/i })).toHaveCount(1);
 });
+
+test('Scan: each upload exposes one control to assistive tech, and the status lines keep the outcome in words', async ({ page }) => {
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/scan');
+  // The real file inputs are out of the accessibility tree: the Choose button is the one control per card.
+  for (const [section, choose, input] of [['dat-heading', 'dat-choose', 'dat-upload'], ['openretro-heading', 'openretro-choose', 'openretro-upload']]) {
+    const card = page.locator(`section[aria-labelledby="${section}"]`);
+    await expect(card.getByRole('button')).toHaveCount(1);
+    await expect(card.getByTestId(choose)).toBeVisible();
+    await expect(card.getByTestId(input)).toHaveAttribute('aria-hidden', 'true');
+    await expect(card.getByTestId(input)).toHaveAttribute('tabindex', '-1');
+  }
+  // Live regions are present from first paint and empty when idle.
+  const runStatus = page.getByTestId('run-scan-status');
+  await expect(runStatus).toHaveAttribute('role', 'status');
+  await expect(runStatus).toHaveText('');
+  await expect(page.getByTestId('dat-status')).toHaveAttribute('role', 'status');
+  await expect(page.getByTestId('dat-status')).toHaveText('');
+  await expect(page.getByTestId('openretro-status')).toHaveAttribute('role', 'status');
+  await expect(page.getByTestId('openretro-status')).toHaveText('');
+
+  // A rejected file leaves the failure in words on the page (the toast is gone in seconds). Nothing is written.
+  await hydrated(page, 'openretro-upload', 'onChange');
+  await page.getByTestId('openretro-upload').setInputFiles({ name: 'not-a-db.sqlite', mimeType: 'application/octet-stream', buffer: Buffer.from('this is not sqlite') });
+  await expect(page.getByTestId('openretro-status')).toHaveText('Import failed. That is not a SQLite database — expected Amiga.sqlite.');
+  await hydrated(page, 'dat-upload', 'onChange');
+  await page.getByTestId('dat-upload').setInputFiles({ name: 'junk.dat', mimeType: 'text/plain', buffer: Buffer.from('not a dat') });
+  await expect(page.getByTestId('dat-status')).toHaveText('Nothing imported. 1 file(s) rejected — are these really TOSEC DATs?');
+});

@@ -152,7 +152,7 @@ export default async function AdminScanPage() {
             <p className="text-[14px] leading-[1.5]" style={{ color: 'var(--muted)' }}>
               One or more .dat files, ClrMamePro or XML. Importing a set again updates it in place.
             </p>
-            <DatUpload labelledBy="dat-heading" />
+            <DatUpload />
             <div className="text-[12px]" style={{ color: 'var(--muted-2)' }} data-testid="tosec-fetch-status">
               {fetchState?.release ? (
                 <div>
@@ -174,7 +174,7 @@ export default async function AdminScanPage() {
             <p className="text-[14px] leading-[1.5]" style={{ color: 'var(--muted)' }}>
               The Amiga.sqlite that FS-UAE Launcher syncs. A newer sync updates entries in place.
             </p>
-            <OpenRetroUpload labelledBy="openretro-heading" />
+            <OpenRetroUpload />
             <p className="text-[12px]" style={{ color: 'var(--muted-2)' }} data-testid="openretro-hint">
               Run FS-UAE Launcher once to produce <strong>Amiga.sqlite</strong>; find it in FS-UAE&apos;s data folder and upload it here.
             </p>

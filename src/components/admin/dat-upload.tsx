@@ -4,9 +4,11 @@ import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
-export function DatUpload({ labelledBy }: { labelledBy: string }) {
+export function DatUpload() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
+  // The outcome in words, kept after the toast is gone (a live region reads it out).
+  const [result, setResult] = useState('');
   const input = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
@@ -18,6 +20,7 @@ export function DatUpload({ labelledBy }: { labelledBy: string }) {
   // each import is a large parse and the route is not worth stampeding.
   async function onChange(e: React.ChangeEvent<HTMLInputElement>) {
     if (busy) return;
+    setResult('');
     const files = [...(e.target.files ?? [])];
     if (files.length === 0) return;
     setBusy(true);
@@ -44,6 +47,7 @@ export function DatUpload({ labelledBy }: { labelledBy: string }) {
           toast.error('Could not reach the server', {
             description: `Stopped at ${file.name}. ${ok} of ${files.length} imported.`,
           });
+          setResult(`Could not reach the server. Stopped at ${file.name}. ${ok} of ${files.length} imported.`);
           return;
         }
         const body = await res.json().catch(() => ({}));
@@ -61,10 +65,12 @@ export function DatUpload({ labelledBy }: { labelledBy: string }) {
         toast.success(`Imported ${entries} entries from ${ok} file${ok === 1 ? '' : 's'}`, {
           description: failed.length > 0 ? `${failed.length} skipped: ${failed.join(', ')}` : undefined,
         });
+        setResult(`Imported ${entries} entries from ${ok} file${ok === 1 ? '' : 's'}.${failed.length > 0 ? ` ${failed.length} skipped: ${failed.join(', ')}.` : ''}`);
       } else {
         toast.error('Nothing imported', {
           description: `${failed.length} file(s) rejected — are these really TOSEC DATs?`,
         });
+        setResult(`Nothing imported. ${failed.length} file(s) rejected — are these really TOSEC DATs?`);
       }
       router.refresh();
     } finally {
@@ -82,11 +88,11 @@ export function DatUpload({ labelledBy }: { labelledBy: string }) {
         type="file"
         accept=".dat,.xml"
         multiple
+        aria-hidden="true"
         onChange={onChange}
         data-testid="dat-upload"
         className="sr-only"
         tabIndex={-1}
-        aria-labelledby={labelledBy}
       />
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" data-testid="dat-choose" aria-disabled={busy || undefined}
@@ -95,8 +101,8 @@ export function DatUpload({ labelledBy }: { labelledBy: string }) {
           {busy ? 'Importing…' : 'Choose .dat files'}
         </button>
         {/* A live region from the first paint, empty while idle. */}
-        <span role="status" className="text-[13px]" style={{ color: 'var(--muted)' }}>
-          {busy ? `Importing ${progress ?? '…'}` : ''}
+        <span role="status" data-testid="dat-status" className="text-[13px]" style={{ color: 'var(--muted)' }}>
+          {busy ? `Importing ${progress ?? '…'}` : result}
         </span>
       </div>
     </div>
