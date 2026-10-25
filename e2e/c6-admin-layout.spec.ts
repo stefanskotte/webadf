@@ -1,11 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { signInAsSuperAdmin } from './admin-helpers';
-import { cleanupSeeded, cleanupTestReleases } from './device-helpers';
+import { signUpFresh } from './helpers';
+import { signInAsSuperAdmin, SUPERADMIN_EMAIL, gotoAdminUserRow, seedUsers, cleanupSeededUsers, ADMIN_PER_PAGE } from './admin-helpers';
+import { cleanupSeeded, cleanupTestReleases, hydrated } from './device-helpers';
 
 // Phase C6 (spec 2026-10-25-phase-c6-admin-design.md §10.4): the admin layout. The DB is the live one: every
 // assertion is about rows a test made, or follows a value the page itself shows (both values of a state).
-test.afterAll(async () => { await cleanupTestReleases(); await cleanupSeeded(); });
+test.afterAll(async () => { await cleanupSeededUsers(); await cleanupTestReleases(); await cleanupSeeded(); });
 
 const PAGES = [
   ['/admin', 'Overview'], ['/admin/users', 'Users'], ['/admin/invites', 'Invites'],
@@ -171,4 +172,70 @@ test('Needs attention: the server items follow the tile numbers and come first, 
   if (firstRow !== -1) expect(lastServer).toBeLessThan(firstRow);
   expect(order.includes('attention-empty')).toBe(order.every((id) => id === 'attention-empty'));
   expect(order.length).toBeGreaterThan(0);
+});
+
+// ---- Users (spec §3, Rulings 7–12) ------------------------------------------------------------------------
+
+test("Users: the board's columns, the Admin pill with a Delete… that does nothing, the footer and the pager", async ({ page }) => {
+  await seedUsers(ADMIN_PER_PAGE + 5);   // the live DB holds few users since teardown; a test brings its own second page
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/users');
+  await expect(page.getByText(/^\d+ users · newest first · page 1 of \d+$/)).toBeVisible();
+  await expect(page.locator('section[aria-label="Users"] th'))
+    .toHaveText(['Email', 'Organization', 'Joined', 'Titles', 'Disks', 'Boards', 'Action']);
+  await expect(page.locator('[data-users-foot]')).toHaveText(
+    'Deleting a user removes their organization, titles, disks and boards. Disk images are kept: other libraries may share them.');
+  // Page 1: Previous is a disabled span (both values: a word in each), Next a link.
+  await expect(page.getByRole('link', { name: 'Previous' })).toHaveCount(0);
+  await expect(page.getByText('Previous', { exact: true })).toHaveAttribute('aria-disabled', 'true');
+  await expect(page.getByRole('link', { name: 'Next' })).toHaveAttribute('href', '/admin/users?page=2');
+
+  // An ordinary row has no pill and an armed Delete….
+  const other = page.getByTestId('admin-user-row').filter({ hasNot: page.locator('[data-admin-pill]') }).first();
+  await expect(other.locator('[data-testid^="delete-user-"]')).toHaveText('Delete…');
+  await expect(other.locator('[data-testid^="delete-user-"]')).not.toHaveAttribute('aria-disabled', 'true');
+
+  // The allowlisted account: the pill says why, and Delete… neither clicks nor Enters into the dialog.
+  await gotoAdminUserRow(page, SUPERADMIN_EMAIL);
+  await expect(page.getByTestId(`user-row-${SUPERADMIN_EMAIL}`).locator('[data-admin-pill]')).toHaveText('Admin');
+  const del = page.getByTestId(`delete-user-${SUPERADMIN_EMAIL}`);
+  await expect(del).toHaveAttribute('aria-disabled', 'true');
+  await expect(del).toHaveAttribute('title', 'An admin account cannot be deleted');
+  await hydrated(page, `delete-user-${SUPERADMIN_EMAIL}`);
+  await del.click({ force: true });   // force: Playwright waits forever for an aria-disabled control to enable
+  await del.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('delete-user-dialog')).toHaveCount(0);
+});
+
+test('Delete…: the dialog opens on the field, Escape returns to the trigger, a failure keeps it open, a delete leaves focus on the heading', async ({ page }) => {
+  const victim = await signUpFresh(page);
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/users');
+  const id = `delete-user-${victim.email}`;
+  const trigger = page.getByTestId(id);
+  await hydrated(page, id);
+  await trigger.click();
+  const dialog = page.getByTestId('delete-user-dialog');
+  await expect(dialog.getByRole('heading', { name: 'Delete this account?' })).toBeVisible();
+  await expect(dialog).toContainText(victim.email);
+  await expect(page.getByLabel('Type the email to confirm')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+
+  // A server failure: the toast, the dialog stays, the button reads Delete permanently again.
+  await page.route(`**/api/admin/users/**`, (r) => r.fulfill({ status: 500, body: '' }));
+  await trigger.click();
+  await page.getByLabel('Type the email to confirm').fill(victim.email);
+  const confirm = dialog.getByRole('button', { name: /delete permanently/i });
+  await confirm.click();
+  await expect(page.getByText('Could not delete the user')).toBeVisible();
+  await expect(confirm).toHaveText('Delete permanently');
+  await expect(confirm).not.toHaveAttribute('aria-disabled', 'true');
+  await page.unroute(`**/api/admin/users/**`);
+
+  await confirm.click();
+  await expect(page.getByTestId(`user-row-${victim.email}`)).toHaveCount(0);
+  await expect(page.locator('h1')).toBeFocused();
 });
