@@ -114,7 +114,8 @@ test('Clear finished removes what is finished and keeps a stored file from the A
   await page.getByTestId('staging-clear-finished').click();
   await expect(page.getByTestId('staging-row')).toHaveCount(1, { timeout: LIVE });
   await expect(page.getByTestId('staging-row')).toHaveAttribute('data-key', `amiga:${kept}`);
-  await expect(page.getByTestId('staging-clear-finished')).toHaveCount(0);
+  await expect(page.getByTestId('staging-clear-finished')).toHaveText('Clear finished (0)');
+  await expect(page.getByTestId('staging-clear-finished')).toBeDisabled();
   await page.waitForTimeout(11_000);   // one idle poll later the server agrees (Review Focus 2)
   await expect(page.getByTestId('staging-row')).toHaveCount(1);
   await expect(page.getByTestId('staging-row')).toHaveAttribute('data-key', `amiga:${kept}`);
@@ -297,4 +298,62 @@ test('the Send card without a board is not a drop target, but still cancels a dr
   expect(await dragOn(page, 'send-dropzone', 'drop', { name: 'x.txt', bytes: [1] })).toBe(true);
   await expect(page.getByTestId('send-dropzone')).toHaveAttribute('data-over', 'false');
   expect(page.url()).toBe(url);
+});
+
+test('the filter is a radiogroup: arrows move and select, the tab stop follows the checked one', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Bench');
+  await seedUpload(orgId, deviceId, 'Bench', { path: 'In.txt', status: 'stored' });
+  await page.goto('/ingest');
+  const group = page.getByTestId('staging-filters');
+  await expect(group).toHaveAttribute('role', 'radiogroup');
+  await expect(page.getByTestId('staging-filter-all')).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByTestId('staging-filter-all')).toHaveAttribute('tabindex', '0');
+  await expect(page.getByTestId('staging-filter-in')).toHaveAttribute('tabindex', '-1');
+  await hydrated(page, 'staging-filters', 'onKeyDown');
+  await page.getByTestId('staging-filter-all').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByTestId('staging-filter-in')).toBeFocused();
+  await expect(page.getByTestId('staging-filter-in')).toHaveAttribute('aria-checked', 'true');
+  await expect(group).toHaveAttribute('data-value', 'in');
+  await page.keyboard.press('End');
+  await expect(page.getByTestId('staging-filter-lib')).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByTestId('staging-empty')).toHaveText('Nothing to the library right now.');
+});
+
+test('Clear finished is shown at (0), disabled, and the refresh state reads Up to date', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/ingest');
+  await expect(page.getByTestId('staging-empty')).toBeVisible({ timeout: LIVE });
+  await expect(page.getByTestId('staging-clear-finished')).toHaveText('Clear finished (0)');
+  await expect(page.getByTestId('staging-clear-finished')).toBeDisabled();
+  await expect(page.getByTestId('staging-refresh')).toHaveAttribute('data-state', 'ok');
+  await expect(page.getByTestId('staging-refresh')).toHaveText('Up to date');
+});
+
+test('a first read that fails says so instead of reading forever, then the list arrives', async ({ page }) => {
+  await signUpFresh(page);
+  let failed = 0;
+  await page.route('**/api/staging', async (route) => {
+    if (failed++ === 0) return route.fulfill({ status: 503, body: 'down' });
+    return route.continue();
+  });
+  await page.goto('/ingest');
+  await expect(page.getByTestId('staging-reading')).toHaveAttribute('data-state', 'failed', { timeout: LIVE });
+  await expect(page.getByTestId('staging-reading')).toHaveText("Couldn't read the list. It tries again every few seconds.");
+  await expect(page.getByTestId('staging-empty')).toBeVisible({ timeout: 20_000 });   // the 10 s idle poll
+  await expect(page.getByTestId('staging-reading')).toHaveCount(0);
+});
+
+test('the board keys sit in the footer beside the 30-day note', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token, 'ab12');
+  await page.goto('/ingest');
+  const key = page.getByTestId('from-amiga-key');
+  await expect(key).toHaveText('Bench: board key AB12', { timeout: LIVE });
+  const note = page.getByText('Files from the Amiga are kept 30 days.', { exact: false });
+  const k = (await key.boundingBox())!, n = (await note.boundingBox())!;
+  expect(k.y).toBeGreaterThan((await page.getByTestId('staging-list').boundingBox())!.y);
+  expect(Math.abs(k.y - n.y)).toBeLessThan(40);
 });

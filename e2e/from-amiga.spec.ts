@@ -122,7 +122,8 @@ test('Clear finished clears a failed file and keeps the stored ones and one stil
   await expect(row(page, b)).toBeVisible();
   await expect(row(page, moving)).toBeVisible();
   await expect(row(page, late)).toBeVisible({ timeout: LIVE });
-  await expect(page.getByTestId('staging-clear-finished')).toHaveCount(0);
+  await expect(page.getByTestId('staging-clear-finished')).toHaveText('Clear finished (0)');
+  await expect(page.getByTestId('staging-clear-finished')).toBeDisabled();
   // A file still arriving can be stopped (a stalled one is otherwise stuck for 24 h); the board then hears gone.
   await act(page, 'stop', moving).click();
   await expect(page.getByTestId('staging-confirm')).toContainText('Stop receiving Moving.bin? The part that arrived is deleted.');
@@ -159,13 +160,13 @@ test("every board's files show with their board, the device card's line, and the
   await page.goto('/ingest');
   await expect(row(page, fromBench)).toContainText('from Bench', { timeout: LIVE });
   await expect(row(page, fromDen)).toContainText('from Den');
-  await expect(page.getByTestId('staging-filter-all')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('staging-filter-all')).toHaveAttribute('aria-checked', 'true');
   await page.goto('/devices');
   await expect(page.getByTestId(`device-upload-${bench.deviceId}`)).toHaveText('1 file from the Amiga');
   await expect(page.getByTestId(`device-upload-${old.deviceId}`)).toHaveText('Update to 1.19.0 to send files from the Amiga');
   await page.getByTestId(`device-upload-${bench.deviceId}`).click();
   await expect(page).toHaveURL(new RegExp(`/ingest\\?from=${bench.deviceId}#from-amiga`));
-  await expect(page.getByTestId('staging-filter-in')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('staging-filter-in')).toHaveAttribute('aria-checked', 'true');
   await expect(row(page, fromBench)).toBeVisible({ timeout: LIVE });
   await expect(row(page, fromDen)).toBeVisible();
 });

@@ -3,7 +3,6 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { Link } from '@/components/shell/link';
 import { HdTag } from '@/components/disks/hd-tag';
-import { UploadCard } from '@/components/ingest/upload-card';
 import { HelpTip } from '@/components/help/help-tip';
 import { adfDensity, isHfeFilename } from '@/lib/disk-format';
 import { sendErrorText, targetLabel, type SendTarget } from '@/lib/send-ui';
@@ -11,7 +10,7 @@ import { downloadName, uploadErrorText } from '@/lib/from-amiga-ui';
 import { SIGNED_OUT_TEXT, isSignedOutAnswer, mergeStaging, stagingView, type StagingFilter, type Tone, type ViewRow } from '@/lib/upload-staging';
 import { useStaging } from './staging-provider';
 import { StagingConfirm } from './staging-confirm';
-import { FILTERS, EMPTY_UNDER } from '@/lib/upload-look';
+import { FILTERS, EMPTY_UNDER, filterAfterKey } from '@/lib/upload-look';
 
 const btn = 'rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50';
 const quiet = { background: 'var(--glass-strong)', color: 'var(--ink)', border: '1px solid var(--hairline-strong)' } as const;
@@ -174,45 +173,46 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
     }
   }
 
-  const meta = (
-    <>
-      {s.boards.filter((b) => b.key).map((b) => (
-        <span key={b.id} className="text-[12px]" style={{ color: 'var(--muted)', overflowWrap: 'anywhere' }} data-testid="from-amiga-key">
-          {b.name}: board key <strong style={{ color: 'var(--ink)' }}>{b.key}</strong>
-        </span>
-      ))}
-      {s.refreshFailed && (
-        <span role="status" className="text-[12px] font-semibold" style={{ color: 'var(--danger-fg)' }} data-testid="staging-refresh-failed">
-          Couldn&apos;t refresh
-        </span>
-      )}
-      {clearN > 0 && (
-        <button type="button" data-testid="staging-clear-finished" disabled={busy.has('clear-finished')} className={btn} style={quiet}
-                onClick={() => void clear({ local: view.clearLocal, server: view.clearServer }, 'clear-finished')}>
-          Clear finished ({clearN})
-        </button>
-      )}
-    </>
-  );
+  function onFilterKey(e: React.KeyboardEvent<HTMLDivElement>) {
+    const next = filterAfterKey(filter, e.key);
+    if (!next) return;
+    e.preventDefault();
+    setFilter(next);
+    e.currentTarget.querySelector<HTMLElement>(`[data-testid="staging-filter-${next}"]`)?.focus();
+  }
 
   return (
     // id: a device card's "N files from the Amiga" link lands here (/ingest?from=<board>#from-amiga), on that filter.
-    <section id="from-amiga">
-      <UploadCard id="staging-heading" title="Staging" help={<HelpTip topic="from-amiga" />} meta={meta}>
-        <div role="group" aria-label="Show" className="flex flex-wrap gap-1 self-start rounded-xl p-1"
-             style={{ border: '1px solid var(--hairline-strong)', background: 'var(--glass-subtle)' }}>
+    // Spec 2026-10-25-phase-c3-upload-design.md §4: header, filter, refresh state, Clear finished, footer.
+    <section id="from-amiga" aria-labelledby="staging-heading" className="flex scroll-mt-24 flex-col gap-3 rounded-[20px] p-4 sm:p-5"
+             style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-1">
+          <h2 id="staging-heading" tabIndex={-1} className="text-[16px] font-semibold focus:outline-none" style={{ color: 'var(--ink)' }}>Staging</h2>
+          <HelpTip topic="from-amiga" />
+        </div>
+        <div role="radiogroup" aria-label="Show" data-testid="staging-filters" data-value={filter}
+             className="seg seg--sm flex-wrap" onKeyDown={onFilterKey}>
           {FILTERS.map((f) => {
             const on = filter === f.id;
             return (
-              <button key={f.id} type="button" aria-pressed={on} data-testid={`staging-filter-${f.id}`} onClick={() => setFilter(f.id)}
-                      className="rounded-lg px-3 py-1 text-[12px] font-semibold"
-                      style={on ? { background: 'var(--ink)', color: 'var(--glass-strong)' } : { color: 'var(--muted)' }}>
-                {f.label} <span className="font-mono">{view.counts[f.id]}</span>
+              <button key={f.id} type="button" role="radio" aria-checked={on} tabIndex={on ? 0 : -1}
+                      data-testid={`staging-filter-${f.id}`} className="seg-item gap-1.5" onClick={() => setFilter(f.id)}>
+                {f.label}<span className="font-mono text-[11px]" style={{ color: 'var(--muted-2)' }}>{view.counts[f.id]}</span>
               </button>
             );
           })}
         </div>
-
+        <span className="flex-1" />
+        <RefreshState loaded={s.loaded} failed={s.refreshFailed} />
+        <button type="button" data-testid="staging-clear-finished" disabled={clearN === 0 || busy.has('clear-finished')}
+                className="h-[34px] rounded-[9px] px-3 text-[13px] font-medium hover:bg-[var(--track)] disabled:cursor-default disabled:hover:bg-transparent"
+                style={{ border: '1px solid var(--line)', color: clearN === 0 ? 'var(--muted-2)' : 'var(--ink)' }}
+                onClick={() => void clear({ local: view.clearLocal, server: view.clearServer }, 'clear-finished')}>
+          Clear finished ({clearN})
+        </button>
+      </div>
+      {/* list: Task 4 restyles the rows */}
         <ul aria-label="Staging" data-testid="staging-list"
             className="flex flex-col overflow-hidden rounded-xl md:max-h-[36rem] md:overflow-y-auto" style={{ border: '1px solid var(--hairline-strong)', background: 'var(--glass-subtle)' }}>
           {view.shown.map((v) => <Row key={v.key} v={v}>{v.actions.map((a) => action(v, a))}</Row>)}
@@ -224,14 +224,21 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
             </li>
           )}
           {view.shown.length === 0 && rows.length === 0 && !s.loaded && (
-            <li className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }}>Reading the list…</li>
+            <li data-testid="staging-reading" data-state={s.refreshFailed ? 'failed' : 'reading'}
+                className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }}>
+              {s.refreshFailed ? "Couldn't read the list. It tries again every few seconds." : 'Reading the list…'}
+            </li>
           )}
         </ul>
-        <p className="text-[12px]" style={{ color: 'var(--muted)' }}>
-          Files from the Amiga are kept 30 days. Anything here can go on to another place: a file from the Amiga into the
-          library, a library disk to the Amiga.
-        </p>
-      </UploadCard>
+        <footer className="flex flex-wrap gap-x-4 gap-y-1 text-[12px]" style={{ color: 'var(--muted-2)' }}>
+          <span>Files from the Amiga are kept 30 days. Anything here can go on to another place: a file from the Amiga into
+            the library, a library disk to the Amiga.</span>
+          {s.boards.filter((b) => b.key).map((b) => (
+            <span key={b.id} data-testid="from-amiga-key" style={{ overflowWrap: 'anywhere' }}>
+              {b.name}: board key <strong className="font-semibold" style={{ color: 'var(--ink)' }}>{b.key}</strong>
+            </span>
+          ))}
+        </footer>
       {confirm && (
         <StagingConfirm question={confirm.question} yes={confirm.yes} busy={busy.has(confirm.key)}
                         onYes={() => void removeUpload(confirm)} onCancel={() => setConfirm(null)} />
@@ -275,5 +282,16 @@ function Row({ v, children }: { v: ViewRow; children: React.ReactNode }) {
         {children}
       </span>
     </li>
+  );
+}
+
+function RefreshState({ loaded, failed }: { loaded: boolean; failed: boolean }) {
+  const state = failed ? 'failed' : loaded ? 'ok' : 'reading';
+  return (
+    <span data-testid="staging-refresh" data-state={state} className="text-[12px]" style={{ color: 'var(--muted-2)' }}>
+      {state === 'failed'
+        ? <span role="status" data-testid="staging-refresh-failed" className="font-semibold" style={{ color: 'var(--danger-fg)' }}>Couldn&apos;t refresh</span>
+        : state === 'reading' ? 'Reading…' : 'Up to date'}
+    </span>
   );
 }
