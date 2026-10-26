@@ -55,4 +55,7 @@ describe('scanNotes (C6 spec §5.3, Ruling 24)', () => {
     expect(plural(0, 'disk', 'disks')).toBe('disks');
     expect(plural(2, 'disk', 'disks')).toBe('disks');
   });
+  it('never rounds up to 100% recognised while a miss remains', () => {
+    expect(scanCoverage({ matched: 995, none: 5, ambiguous: 0, unreadable: 0, authoredNone: 0 }).recognisedPct).toBe(99);
+  });
 });

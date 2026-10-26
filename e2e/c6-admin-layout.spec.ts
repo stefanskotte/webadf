@@ -305,6 +305,22 @@ test('Invites: a dropped revoke keeps the button; a revoke leaves the row Revoke
   await expect(page.locator('h1')).toBeFocused();
 });
 
+test('Invites: a revoke answered 404 moves focus to the heading as the row loses its button', async ({ page }) => {
+  const code = await mintInviteCode();
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/invites');
+  const revoke = page.getByTestId(`revoke-${code}`);
+  await hydrated(page, `revoke-${code}`);
+  // The row's code is revoked for real (so the refresh drops its button), and this click is answered 404 as if the
+  // code had gone entirely -- the route says 404 only for a code that does not exist.
+  expect((await page.request.delete(`/api/admin/invites/${code}`)).ok()).toBe(true);
+  await page.route(`**/api/admin/invites/${code}`, (r) => r.fulfill({ status: 404, json: { error: 'unknown' } }));
+  await revoke.click();
+  await expect(page.getByText('Could not revoke the code')).toBeVisible();
+  await expect(revoke).toHaveCount(0);
+  await expect(page.locator('h1')).toBeFocused();
+});
+
 test('Invites: revoking the just-issued code clears the new-code panel and its status line', async ({ page }) => {
   await signInAsSuperAdmin(page);
   await page.goto('/admin/invites');

@@ -29,7 +29,7 @@ export default async function AdminLayout({
           page, which would otherwise each have to remember it. */}
       <div className="min-h-screen pb-[calc(4.5rem+env(safe-area-inset-bottom))] sm:pb-0">
         {/* Below sm the header wraps: wordmark on line one, then the search
-            box, the operator's email, the gear and Sign out. They do not fit on one
+            box, the gear and Sign out (the operator's email shows from xl only). They do not fit on one
             line at 390px, and nowrap would push the last of them off-screen. */}
         <header
           data-testid="admin-header"
@@ -84,8 +84,9 @@ export default async function AdminLayout({
             {/* Hidden from sm until xl: with it, the bar has no room for the
                 pill between the wordmark and the search box (the pill would
                 scroll inside a 0px clamp at 640 and the bar overflowed the
-                viewport). It is a label, not a control; below sm it has its
-                own wrapped line again. */}
+                viewport). It is a label, not a control, and below sm it stays
+                hidden too: the phone header has no line to spare, and the
+                address is on Settings. */}
             <span
               className="hidden max-w-[180px] truncate font-mono text-[11.5px] xl:block"
               style={{ color: 'var(--muted)' }}

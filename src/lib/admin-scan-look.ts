@@ -8,7 +8,7 @@ export function plural(n: number, one: string, many: string): string {
 
 export interface Coverage {
   decided: number; matched: number; genuineNone: number; authoredDecided: number;
-  /** matched / decided, rounded; null with nothing decided. */
+  /** matched / decided, rounded (capped at 99 until every decided blob matched); null with nothing decided. */
   recognisedPct: number | null;
   /** The bar's two fills, in percent of the track. */
   okW: number; missW: number;
@@ -18,7 +18,10 @@ function withWidths(c: Pick<Coverage, 'decided' | 'matched' | 'genuineNone' | 'a
   if (c.decided <= 0) return { ...c, recognisedPct: null, okW: 0, missW: 0 };
   return {
     ...c,
-    recognisedPct: Math.round((c.matched / c.decided) * 100),
+    // Rounded, but never up to 100 while a miss remains (995 of 1000 reads 99%, not 100% beside "No match 5").
+    recognisedPct: c.matched < c.decided
+      ? Math.min(99, Math.round((c.matched / c.decided) * 100))
+      : 100,
     okW: (c.matched / c.decided) * 100,
     missW: (c.genuineNone / c.decided) * 100,
   };

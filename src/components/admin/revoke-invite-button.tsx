@@ -27,8 +27,11 @@ export function RevokeInviteButton({ code }: { code: string }) {
       }
       if (!res.ok && res.status !== 204) {
         toast.error('Could not revoke the code', { description: `The server answered ${res.status}.` });
-        // A 404 means the row is already gone: refresh so the stale row goes too.
-        if (res.status === 404) startTransition(() => router.refresh());
+        // A 404 means the row is already gone: refresh so the stale row goes too, focus first so it lands on the h1.
+        if (res.status === 404) {
+          pageHeading()?.focus();
+          startTransition(() => router.refresh());
+        }
         return;
       }
       toast.success(`Revoked ${code}`);

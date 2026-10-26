@@ -83,7 +83,7 @@ export default async function AdminUsersPage({
                             this list is exactly where such an account should be visible. */}
                         {r.orgName ?? <span style={{ color: 'var(--amber-text)' }}>no organization</span>}
                       </td>
-                      <td role="cell" className="px-3.5 py-3 font-mono text-[13px] max-sm:p-0" style={{ color: 'var(--muted)' }}>
+                      <td role="cell" data-label="Joined" className={`px-3.5 py-3 font-mono text-[13px] max-sm:p-0 ${LABEL}`} style={{ color: 'var(--muted)' }}>
                         {r.createdAt.toISOString().slice(0, 10)}
                       </td>
                       <td role="cell" data-label="Titles" className={NUM}>{r.games}</td>
