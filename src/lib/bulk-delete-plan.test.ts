@@ -49,10 +49,37 @@ describe('planBulkDelete', () => {
     expect(p.kept[0].holds).toEqual([{ deviceName: 'A500', drive: 'DF0', label: 'Requested on A500 — not confirmed' }]);
   });
 
-  it('an eject in flight holds nothing: the title is deletable', () => {
+  it('an eject in flight still holds the mounted disk (controller amendment to Ruling 12, case B)', () => {
     const p = planBulkDelete(GAMES, DISKS, [board({ mountedSha256: A, mountedDiskId: 'g1-d1' })], [], NOW);
-    expect(p.kept).toEqual([]);
-    expect(p.deletable.map((g) => g.id)).toEqual(['g1', 'g2', 'g3']);
+    expect(p.kept).toEqual([{ id: 'g1', title: 'T g1', holds: [{ deviceName: 'A500', drive: 'DF0', label: 'In A500' }] }]);
+    expect(p.deletable.map((g) => g.id)).toEqual(['g2', 'g3']);
+  });
+
+  it('a mounted disk holds alongside a requested one, even offline (case A)', () => {
+    const p = planBulkDelete(GAMES, DISKS, [board({
+      desiredSha256: D, desiredDiskId: 'g3-d1', mountedSha256: A, mountedDiskId: 'g1-d1', lastSeenAt: new Date(NOW - 3_600_000),
+    })], [], NOW);
+    expect(p.kept.map((k) => k.id)).toEqual(['g1', 'g3']);
+    expect(p.kept[0].holds).toEqual([{ deviceName: 'A500', drive: 'DF0', label: 'In A500 (offline)' }]);
+    expect(p.kept[1].holds[0].label).toBe('Requested on A500 — not confirmed');
+    expect(p.deletable.map((g) => g.id)).toEqual(['g2']);
+  });
+
+  it('a mounted disk known only by its sha holds (id null)', () => {
+    const p = planBulkDelete(GAMES, DISKS, [board({ mountedSha256: B })], [], NOW);
+    expect(p.kept.map((k) => k.id)).toEqual(['g2']);
+  });
+
+  it("DF1's pick and DF1's different reported content both hold", () => {
+    const p = planBulkDelete(GAMES, DISKS, [board({ df1DiskId: 'g3-d1', df1Sha256: A })], [], NOW);
+    expect(p.kept.map((k) => `${k.id} ${k.holds[0].drive}`).sort()).toEqual(['g1 DF1', 'g3 DF1']);
+    expect(p.deletable.map((g) => g.id)).toEqual(['g2']);
+  });
+
+  it("DF1's pick with the same bytes reported is one hold", () => {
+    const p = planBulkDelete(GAMES, DISKS, [board({ df1DiskId: 'g1-d1', df1Sha256: A })], [], NOW);
+    expect(p.kept).toHaveLength(1);
+    expect(p.kept[0].holds).toHaveLength(1);
   });
 
   it("DF1's pick keeps the title, and says DF1", () => {

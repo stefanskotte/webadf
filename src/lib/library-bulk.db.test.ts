@@ -242,6 +242,42 @@ describe('library bulk operations (db)', () => {
       expect(await entitled(ORG)).toEqual([sha(7)]);
     });
 
+    it("DF1's pick and its different reported content are both kept; a mounted disk under a request too", async () => {
+      for (const [id, n] of [['g1', 1], ['g2', 2], ['g3', 3], ['g4', 4]] as const) await seedTitle(id, ORG, [n]);
+      await board('b1', { name: 'A500', df1DiskId: 'g1-d1', df1Sha256: sha(2) });
+      await board('b2', { name: 'A1200', desiredSha256: sha(3), desiredDiskId: 'g3-d1', mountedSha256: sha(4), mountedDiskId: 'g4-d1',
+        lastSeenAt: new Date(NOW - 3_600_000) });
+      const r = await deleteGames(ORG, ['g1', 'g2', 'g3', 'g4'], { now: NOW });
+      expect(r.deleted).toEqual([]);
+      expect(r.kept.map((k) => k.id)).toEqual(['g1', 'g2', 'g3', 'g4']);
+      expect(r.ejected).toEqual([]);
+      expect(await gameIds(ORG)).toEqual(['g1', 'g2', 'g3', 'g4']);
+    });
+
+    it('a title the drift guard keeps is reported under kept with no holds, not dropped', async () => {
+      await seedTitle('g1', ORG, [1]); await seedTitle('g2', ORG, [2]);
+      // A disk on g2 whose org_id drifted (D-5-5): invisible to this org, so g2 looks deletable but cannot go.
+      await getDb().insert(disks).values({ id: 'g2-drift', gameId: 'g2', orgId: OTHER, diskNo: 9, sha256: sha(2), sizeBytes: 100 });
+      const r = await deleteGames(ORG, ['g1', 'g2'], { now: NOW });
+      expect(r.deleted).toEqual(['g1']);
+      expect(r.kept).toEqual([{ id: 'g2', title: 'T g2', holds: [] }]);
+      expect(await gameIds(ORG)).toEqual(['g2']);
+    });
+
+    it('a failure inside the transaction leaves every selected title intact', async () => {
+      await seedTitle('g1', ORG, [1]); await seedTitle('g-boom', ORG, [2]); await seedTitle('g3', ORG, [3]);
+      await getDb().execute(sql.raw("create or replace function bulk_test_boom2() returns trigger language plpgsql as $$ begin raise exception 'boom'; end $$"));
+      await getDb().execute(sql.raw("create trigger bulk_test_boom2 before delete on games for each row when (old.id = 'g-boom') execute function bulk_test_boom2()"));
+      try {
+        await expect(deleteGames(ORG, ['g1', 'g-boom', 'g3'], { now: NOW })).rejects.toThrow();
+        expect([...(await gameIds(ORG))].sort()).toEqual(['g-boom', 'g1', 'g3']);
+        expect((await getDb().select().from(disks)).length).toBe(3);
+        expect(await entitled(ORG)).toEqual([sha(1), sha(2), sha(3)]);
+      } finally {
+        await getDb().execute(sql.raw('drop trigger if exists bulk_test_boom2 on games'));
+      }
+    });
+
     it('never deletes a blob', async () => {
       await seedTitle('g1', ORG, [1]); await seedTitle('g2', ORG, [2]);
       const before = await blobCount();

@@ -34,6 +34,7 @@ const { deleteGames } = await import('./disk-delete');
 const ORG = 'org-bulk-late';
 const NOW = Date.UTC(2026, 9, 26, 12);
 const S = '7'.repeat(64);
+const T = '8'.repeat(64);
 
 describe('deleteGames: a board that mounted after the read', () => {
   beforeAll(async () => {
@@ -50,6 +51,13 @@ describe('deleteGames: a board that mounted after the read', () => {
         desiredDiskId: 'g1-d1', desiredVersion: 4 },
       { id: 'b2', orgId: ORG, name: 'A1200', tokenHash: 'h-b2', lastSeenAt: new Date(NOW), df1DiskId: 'g1-d1', df1Version: 2 },
     ]);
+    await db.insert(games).values({ id: 'g2', orgId: ORG, title: 'Late2', sortTitle: 'late2' });
+    await db.insert(blobs).values({ sha256: T, sizeBytes: 100, storageKey: T });
+    await db.insert(disks).values({ id: 'g2-d1', gameId: 'g2', orgId: ORG, diskNo: 1, sha256: T, sizeBytes: 100 });
+    await db.insert(games).values({ id: 'g3', orgId: ORG, title: 'Other', sortTitle: 'other' });
+    await db.insert(disks).values({ id: 'g3-d1', gameId: 'g3', orgId: ORG, diskNo: 1, sha256: S, sizeBytes: 100 });
+    await db.insert(devices).values({ id: 'b3', orgId: ORG, name: 'CD32', tokenHash: 'h-b3', lastSeenAt: new Date(NOW),
+      df1DiskId: 'g3-d1', df1Sha256: T, df1Version: 6 });
   });
   afterAll(async () => {
     await closeDb();
@@ -64,5 +72,13 @@ describe('deleteGames: a board that mounted after the read', () => {
     const [b2] = await getDb().select().from(devices).where(eq(devices.id, 'b2'));
     expect(b1).toMatchObject({ desiredDiskId: null, desiredSha256: null, desiredVersion: 5 });
     expect(b2).toMatchObject({ df1DiskId: null, df1Version: 3 });
+  });
+
+  it("ejects a late board that reports the deleted bytes in DF1 under a different pick (the content holder)", async () => {
+    const r = await deleteGames(ORG, ['g2'], { now: NOW });
+    expect(r.deleted).toEqual(['g2']);
+    expect(r.ejected).toEqual(['CD32']);
+    const [b3] = await getDb().select().from(devices).where(eq(devices.id, 'b3'));
+    expect(b3).toMatchObject({ df1DiskId: null, df1Version: 7 });
   });
 });

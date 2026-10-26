@@ -23,7 +23,7 @@ beforeEach(() => { moveGamesToCollection.mockReset(); deleteGames.mockReset(); }
 describe('POST /api/games/bulk', () => {
   it('move: the session org, the ids deduplicated in first order, to and from; 200 with the result', async () => {
     moveGamesToCollection.mockResolvedValue(MOVED);
-    const res = await POST(req({ op: 'move', gameIds: ['a', 'b', 'a'], to: 'c1', from: 'c0', orgId: 'evil' }));
+    const res = await POST(req({ op: 'move', gameIds: ['a', 'b', 'a'], to: 'c1', from: 'c0' }));
     expect(moveGamesToCollection).toHaveBeenCalledWith('org-1', ['a', 'b'], 'c1', 'c0');
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(MOVED);
@@ -75,6 +75,9 @@ describe('POST /api/games/bulk', () => {
     ['an unknown op', { op: 'archive', gameIds: ['a'] }],
     ['a move with no target', { op: 'move', gameIds: ['a'] }],
     ['an empty id', { op: 'delete', gameIds: [''] }],
+    ['a non-string id', { op: 'delete', gameIds: [7] }],
+    ['an unknown key', { op: 'delete', gameIds: ['a'], orgId: 'evil' }],
+    ['dryRun on a move', { op: 'move', gameIds: ['a'], to: 'c1', dryRun: true }],
   ])('%s is 400 invalid_body, and nothing is called', async (_n, body) => {
     const res = await POST(req(body));
     expect(res.status).toBe(400);

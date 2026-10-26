@@ -267,7 +267,7 @@ same end state (Ruling 15). It makes 4 statements whatever the count.
 6. The response is `200 { deleted: string[], diskIds: string[], kept: [...], missing: string[], ejected: string[],
    releasedSha256: string[] }`.
 
-**Atomicity.** The deletable set is deleted all or nothing. Kept and missing titles are reported and never fail the
+**Atomicity.** The deletable set is deleted all or nothing. The late-holder ejects (step 4) run BEFORE the transaction and are not rolled back if it fails; single delete behaves the same. A title the drift guard keeps is reported under `kept` with empty `holds`. Kept and missing titles are reported and never fail the
 request (Ruling 13). A crash after the commit but before step 5 leaves entitlements for bytes the org no longer has a
 disk for. They are harmless: the org has nothing to reach them through. The next single or bulk delete of the same sha
 does not see them, and the blob GC keeps those bytes for as long as the entitlement exists. This is the same exposure
@@ -470,6 +470,7 @@ card to navigate never turn selecting on, so no existing spec changes.
     eject. Single delete is unchanged (it names the eject on its own dialog). — Cost if wrong: the two deletes behave
     differently. If the operator prefers eject-and-delete for bulk too, `planBulkDelete`'s kept list becomes an eject
     list and the dialog gains the "will be ejected" line. **Flagged as an operator question.**
+    *Controller amendment (Task 1 review): the disk a board reports mounted in DF0 holds in every state, alongside a requested or fetching one — a stale or offline board still has it in the drive.* DF1's pick and its reported content hold separately.
 13. **The deletable set is deleted all or nothing in one transaction. Held and missing titles never fail the request:
     they are reported.** — "Nothing changes until OK" means OK must do what the preview showed, and a single
     held-in-the-meantime title should not void the other 40. — Cost if wrong: if "all or nothing including held" is

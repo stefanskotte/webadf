@@ -8,15 +8,15 @@ export const maxDuration = 60;
 
 const gameIds = z.array(z.string().min(1).max(64)).min(1).max(1000);
 const body = z.discriminatedUnion('op', [
-  z.object({ op: z.literal('move'), gameIds, to: z.string().min(1), from: z.string().min(1).optional() }),
-  z.object({ op: z.literal('delete'), gameIds, dryRun: z.boolean().optional() }),
+  z.object({ op: z.literal('move'), gameIds, to: z.string().min(1), from: z.string().min(1).optional() }).strict(),
+  z.object({ op: z.literal('delete'), gameIds, dryRun: z.boolean().optional() }).strict(),
 ]);
 
 /**
  * Library multi-select (spec 2026-10-26 §3): move or delete up to 1,000 titles in one request. A static segment
  * beside games/[id], so it wins over the dynamic one; it defines POST only.
  *
- * The org comes from the session, never the body (zod strips unknown keys). Every id is org-checked by the library
+ * The org comes from the session, never the body (strict arms: an unknown key is 400 invalid_body). Every id is org-checked by the library
  * function in one read; an unknown or foreign id is reported `missing`, never written. A foreign `to`/`from` is 404
  * for the whole move with nothing written (404, never 403). Duplicate ids are dropped here, keeping first order.
  * Both operations are idempotent (Ruling 15), which is what lets the client say "Trying again is safe".

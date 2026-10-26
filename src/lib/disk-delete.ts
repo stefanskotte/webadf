@@ -213,6 +213,7 @@ export interface BulkDeletePreview {
 export interface BulkDeleteResult {
   deleted: string[];
   diskIds: string[];
+  /** Held by a board (`holds` non-empty), or kept by the drift guard (`holds` empty: nothing to eject, just not deleted). */
   kept: KeptTitle[];
   missing: string[];
   ejected: string[];
@@ -278,7 +279,17 @@ export async function deleteGames(
   const sharedRows = plan.deletableShas.length === 0 ? [] : await db.selectDistinct({ sha256: disks.sha256 }).from(disks)
     .where(and(eq(disks.orgId, orgId), inArray(disks.sha256, plan.deletableShas), notInArray(disks.gameId, deletableIds)));
   const shared = new Set(sharedRows.map((r) => r.sha256));
-  const ejected = await ejectHolders(orgId, plan.deletableDiskIds, plan.deletableShas.filter((s) => !shared.has(s)));
+  const unshared = plan.deletableShas.filter((s) => !shared.has(s));
+  const ejected = await ejectHolders(orgId, plan.deletableDiskIds, unshared);
+  // A late DF1 CONTENT holder: ejectDf1Holders matches df1DiskId only, so a board reporting these bytes in DF1 under
+  // another pick would be missed. Same unshared-sha rule as DF0.
+  if (unshared.length > 0) {
+    const late = await db.update(devices)
+      .set({ df1DiskId: null, df1Version: sql`${devices.df1Version} + 1` })
+      .where(and(eq(devices.orgId, orgId), inArray(devices.df1Sha256, unshared)))
+      .returning({ name: devices.name });
+    for (const d of late) if (!ejected.includes(d.name)) ejected.push(d.name);
+  }
 
   const [goneDisks, goneGames] = await atomic((tx) => [
     tx.delete(disks).where(and(eq(disks.orgId, orgId), inArray(disks.gameId, deletableIds)))
@@ -289,10 +300,13 @@ export async function deleteGames(
 
   const releasedSha256 = await releaseEntitlements(orgId, [...new Set(goneDisks.map((d) => d.sha256))]);
   const gone = new Set(goneGames.map((g) => g.id));
+  // The drift guard kept these (a disk of another org_id still hangs off the title): neither deleted nor held by a
+  // board, so they are reported under `kept` with no holds rather than dropped from every list.
+  const guarded: KeptTitle[] = plan.deletable.filter((g) => !gone.has(g.id)).map((g) => ({ id: g.id, title: g.title, holds: [] }));
   return {
     deleted: deletableIds.filter((id) => gone.has(id)),
     diskIds: goneDisks.map((d) => d.id),
-    kept: plan.kept,
+    kept: [...plan.kept, ...guarded],
     missing,
     ejected,
     releasedSha256,
