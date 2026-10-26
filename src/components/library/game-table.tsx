@@ -20,6 +20,8 @@ import { DriveRing, type DriveContext } from './card-mount-button';
 import { DiskIcon } from '@/components/ui/disk-icon';
 import { collectionDot, kindTag, titleDiskColor } from '@/lib/library-look';
 import { DriveBadge } from './cover';
+import { useLibrarySelection } from './selection-provider';
+import { PageSelectBox, SelectBox } from './select-box';
 import { EmptyLibrary, HoldsLabel, TitleControls, TitleName, driveState, pendingHideStyle, titleLabel } from './title-controls';
 
 // The grid condensed (operator design 2026-10-21), restyled to the approved board (InfLibraryTable, spec §3): one row
@@ -33,7 +35,12 @@ import { EmptyLibrary, HoldsLabel, TitleControls, TitleName, driveState, pending
 // columns held (titleMeta), the ⋯ -- and nothing scrolls sideways; from sm it is today's 760 px table.
 const COLS = 'grid-cols-[40px_minmax(0,1fr)_44px] sm:grid-cols-[36px_minmax(0,1fr)_104px_56px_150px_52px_96px_44px]';
 const MIN_W = 'sm:min-w-[760px]';
-const ROW = `grid ${COLS} ${MIN_W} items-center gap-x-3 border-b px-4 font-sans text-[13px] sm:gap-x-[14px] sm:px-[18px]`;
+// While selecting (multi-select spec §1.2, Ruling 3): a leading 28 px box track; the DiskIcon and its ring stay where
+// they are, and the ⋯ track stays (empty), so nothing shifts sideways inside the row.
+const COLS_SELECT = 'grid-cols-[28px_40px_minmax(0,1fr)_44px] sm:grid-cols-[28px_36px_minmax(0,1fr)_104px_56px_150px_52px_96px_44px]';
+const MIN_W_SELECT = 'sm:min-w-[802px]';
+const rowClass = (selecting: boolean) =>
+  `grid ${selecting ? COLS_SELECT : COLS} ${selecting ? MIN_W_SELECT : MIN_W} items-center gap-x-3 border-b px-4 font-sans text-[13px] sm:gap-x-[14px] sm:px-[18px]`;
 /** A column the phone row folds into its fact line. */
 const WIDE = 'max-sm:hidden';
 const HOVER = 'hover:bg-[color:var(--surface-2)]';
@@ -59,6 +66,7 @@ export function GameTable({ games, collectionId = null, fob = null, drives = nul
   // reorders them and bumps their counts optimistically, and the folders
   // must agree with the rail beside them.
   const { collections, view, pendingHide: hidden } = useCollectionsContext();
+  const { selecting } = useLibrarySelection();
   const searchParams = useSearchParams();
   const rows = tableRows(view, collections, games, { firstPage });
   const emptyNote = emptyTableNote(view, games.length);
@@ -75,19 +83,24 @@ export function GameTable({ games, collectionId = null, fob = null, drives = nul
           wrapper scrolls the last columns into reach. Below sm the row is three tracks and nothing overflows
           (C7 Ruling 17). */}
       <div className="overflow-x-auto">
-        <div className={`grid ${COLS} ${MIN_W} h-11 items-center gap-x-[14px] border-b px-[18px] font-sans text-[12px] font-medium max-sm:hidden`}
+        <div className={`grid ${selecting ? COLS_SELECT : COLS} ${selecting ? MIN_W_SELECT : MIN_W} h-11 items-center gap-x-[14px] border-b px-[18px] font-sans text-[12px] font-medium max-sm:hidden`}
              style={{ borderColor: 'var(--line)', color: 'var(--muted-2)' }}>
+          {selecting && (
+            <span className="grid place-items-center">
+              <PageSelectBox testId="table-select-page" label="Select all titles on this page" />
+            </span>
+          )}
           <span /><span>Name</span><span>Type</span><span>Year</span><span>Publisher</span>
           <span className="text-right">Disks</span><span className="text-right">Size</span>
           {/* The controls' column: no header, since the rows are links, not table cells (final review M5). */}
           <span />
         </div>
         {rows.map((row) => {
-          if (row.kind === 'up') return <UpRow key="up" href={tableHref({ kind: 'uncategorized' })} />;
+          if (row.kind === 'up') return <UpRow key="up" href={tableHref({ kind: 'uncategorized' })} selecting={selecting} />;
           if (row.kind === 'folder') {
             const c = row.collection;
             return <FolderRow key={c.id} collection={c} disks={c.diskCount ?? folderDisks[c.id]}
-                              href={tableHref({ kind: 'collection', id: c.id })} />;
+                              href={tableHref({ kind: 'collection', id: c.id })} selecting={selecting} />;
           }
           const g = row.game;
           return (
@@ -107,9 +120,11 @@ export function GameTable({ games, collectionId = null, fob = null, drives = nul
 }
 
 /** Back to the library root -- the folder listing -- from a collection or All titles. */
-function UpRow({ href }: { href: string }) {
+function UpRow({ href, selecting }: { href: string; selecting: boolean }) {
   return (
-    <Link href={href} data-testid="up-row" aria-label="Up to Library" className={`${ROW} ${HOVER} h-11`} style={ROW_BORDER}>
+    <Link href={href} data-testid="up-row" aria-label="Up to Library" className={`${rowClass(selecting)} ${HOVER} h-11`} style={ROW_BORDER}>
+      {/* The box track, empty: a navigation row is not selectable (it ends selecting, Ruling 4). */}
+      {selecting && <span />}
       {/* One arrow, the text's (final review M8: the icon and "↑" drew two; Ruling 13). */}
       <span />
       <span className="col-span-2 text-[14px] font-medium sm:col-span-7" style={{ color: 'var(--muted)' }}>
@@ -124,13 +139,14 @@ function UpRow({ href }: { href: string }) {
  * uses. Not a drop target -- in the table a title is filed by dropping it on
  * the rail, the one place every view shares.
  */
-function FolderRow({ collection: c, disks, href }: { collection: CollectionSummary; disks?: number; href: string }) {
+function FolderRow({ collection: c, disks, href, selecting }: { collection: CollectionSummary; disks?: number; href: string; selecting: boolean }) {
   const titles = `${c.gameCount} ${c.gameCount === 1 ? 'title' : 'titles'}`;
   const diskWords = disks === undefined ? '' : `, ${disks} ${disks === 1 ? 'disk' : 'disks'}`;
   return (
     <Link href={href} data-testid="folder-row" data-collection-id={c.id}
           aria-label={`Open collection ${c.name}, ${titles}${diskWords}`}
-          className={`${ROW} ${HOVER} min-h-[56px] py-2 sm:h-[46px] sm:min-h-0 sm:py-0`} style={ROW_BORDER}>
+          className={`${rowClass(selecting)} ${HOVER} min-h-[56px] py-2 sm:h-[46px] sm:min-h-0 sm:py-0`} style={ROW_BORDER}>
+      {selecting && <span />}
       {/* The board's folder: the collection's dot colour with a light overlay on the front face. */}
       <svg data-testid="folder-glyph" width="24" height="20" viewBox="0 0 24 20" aria-hidden>
         <path d="M1 3a2 2 0 0 1 2-2h6l2 2.5h10a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2z" fill={collectionDot(c.id)} />
@@ -166,14 +182,31 @@ function TitleRow({ game: g, collectionId, fob, drives, pendingHide }: {
   game: GameListItem; collectionId?: string; fob: FobContext; drives: DriveContext; pendingHide: PendingHide | null;
 }) {
   const trailView = useTrailView();
+  const { selecting, selected } = useLibrarySelection();
   // See DraggableCard (game-grid.tsx) on why `role` is discarded rather than spread.
   const data = { type: 'game', id: g.id, title: g.title, diskCount: g.diskCount } satisfies GameDragData;
-  const { attributes: dragAttributes, listeners, setNodeRef, isDragging } = useDraggable({ id: g.id, data });
+  const { attributes: dragAttributes, listeners, setNodeRef, isDragging } = useDraggable({ id: g.id, data, disabled: selecting });
   const attributes = { ...dragAttributes, role: undefined };
   // The row itself stays put while it is dragged -- RowDragOverlay carries
   // the title to the rail -- so it only fades, like a card does.
   const held = drives?.holds[g.id]?.some((h) => h.state === 'mounted');
   const style = { ...ROW_BORDER, ...(held ? { background: 'var(--mounted-bg)' } : {}), opacity: isDragging ? 0.4 : 1, ...pendingHideStyle(pendingHide) };
+  const cls = `${rowClass(selecting)} ${HOVER} min-h-[56px] py-2 sm:h-[46px] sm:min-h-0 sm:py-0`;
+
+  if (selecting) {
+    // Multi-select (spec §1.2, Ruling 3): a <label> wrapping the box in the leading track, so a click anywhere on the
+    // row ticks it and never navigates; drag is off.
+    const checked = selected.has(g.id);
+    return (
+      <label ref={setNodeRef} data-testid="game-row" data-game-id={g.id} data-selected={checked ? 'true' : 'false'}
+             data-drive={driveState(drives, g.id)}
+             className={`${cls} cursor-pointer ${checked ? 'outline-2 -outline-offset-2 outline-(--primary-action)' : ''}`}
+             style={style}>
+        <span className="grid place-items-center"><SelectBox game={g} /></span>
+        <RowCells game={g} collectionId={collectionId} fob={fob} drives={drives} selecting />
+      </label>
+    );
+  }
 
   return (
     <Link
@@ -183,15 +216,28 @@ function TitleRow({ game: g, collectionId, fob, drives, pendingHide }: {
       // (final review M5).
       aria-label={titleLabel(g)}
       data-testid="game-row"
+      data-game-id={g.id}
       data-drive={driveState(drives, g.id)}
       aria-hidden={pendingHide ? true : undefined}
       // See DraggableCard on why an anchor must opt out of native dragging.
       draggable={false}
-      className={`${ROW} ${HOVER} min-h-[56px] py-2 sm:h-[46px] sm:min-h-0 sm:py-0`}
+      className={cls}
       style={style}
       {...attributes}
       {...listeners}
     >
+      <RowCells game={g} collectionId={collectionId} fob={fob} drives={drives} selecting={false} />
+    </Link>
+  );
+}
+
+/** A title row's cells after the box track: the same in both modes but for the plain name and the ⋯ spacer. */
+function RowCells({ game: g, collectionId, fob, drives, selecting }: {
+  game: GameListItem; collectionId?: string; fob: FobContext; drives: DriveContext; selecting: boolean;
+}) {
+  const trailView = useTrailView();
+  return (
+    <>
       <div className="relative h-[27px] w-[26px]">
         {/* mounted={false}: the row's one DF0 mark is the pill after the name (the grid card's rule, Task 2). */}
         <DiskIcon color={titleDiskColor(g)} size={26} hd={g.hasHd} stack={g.diskCount} mounted={false} />
@@ -203,7 +249,7 @@ function TitleRow({ game: g, collectionId, fob, drives, pendingHide }: {
       <span className="flex min-w-0 flex-col sm:flex-row sm:items-center sm:gap-2">
         <span className="flex min-w-0 items-center gap-2">
           {/* Below sm the whole name wraps (no ellipsis); from sm it truncates in its column, as before. */}
-          <TitleName game={g} className="text-[14px] font-semibold [overflow-wrap:anywhere] sm:truncate sm:text-[13px] sm:font-medium" />
+          <TitleName game={g} plain={selecting} className="text-[14px] font-semibold [overflow-wrap:anywhere] sm:truncate sm:text-[13px] sm:font-medium" />
           <DriveBadge holds={drives?.holds[g.id]} diskCount={g.diskCount} inline />
         </span>
         <span data-meta="" className="text-[12px] sm:hidden" style={{ color: 'var(--muted-2)' }}>{titleMeta(g)}</span>
@@ -233,9 +279,9 @@ function TitleRow({ game: g, collectionId, fob, drives, pendingHide }: {
       {/* Inside the row's <a href>, as on the card: each control stops every
           pointer event before it reaches the anchor or dnd-kit. */}
       <span className="flex justify-self-end">
-        <TitleControls game={g} collectionId={collectionId} fob={fob} drives={drives} view={trailView} />
+        <TitleControls game={g} collectionId={collectionId} fob={fob} drives={drives} view={trailView} selecting={selecting} />
       </span>
-    </Link>
+    </>
   );
 }
 

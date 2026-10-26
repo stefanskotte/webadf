@@ -16,6 +16,8 @@ import {
 } from './title-controls';
 import type { GameListItem } from '@/lib/queries';
 import { useCollectionsContext, type GameDragData, type PendingHide } from '@/components/collections/collection-provider';
+import { useLibrarySelection } from './selection-provider';
+import { SelectBox } from './select-box';
 
 export function GameGrid({ games, fob = null, drives = null }: {
   games: GameListItem[];
@@ -92,8 +94,8 @@ const CARD_CLASS = 'glass-card group relative flex flex-col p-0 transition-[box-
 /** No sibling moves: the sortable preview unless the pointer rests in a card's edge. */
 const stillStrategy: SortingStrategy = () => null;
 
-function CardBody({ game: g, collectionId, fob, drives }: {
-  game: GameListItem; collectionId?: string; fob: FobContext; drives: DriveContext;
+function CardBody({ game: g, collectionId, fob, drives, selecting = false }: {
+  game: GameListItem; collectionId?: string; fob: FobContext; drives: DriveContext; selecting?: boolean;
 }) {
   const trailView = useTrailView();
   const tag = g.kind ? kindTag(g.kind) : null;
@@ -103,7 +105,7 @@ function CardBody({ game: g, collectionId, fob, drives }: {
       {/* The ring and the pill say it visually; this says it to a screen reader. */}
       <HoldsLabel game={g} drives={drives} />
       <div className="flex min-w-0 flex-col gap-0.5 px-3.5 pb-1 pt-3">
-        <TitleName game={g} className="truncate text-[14px] font-semibold" />
+        <TitleName game={g} className="truncate text-[14px] font-semibold" plain={selecting} />
         {/* One line tall even when empty, so footers line up across a row. */}
         <span className="min-h-[1lh] truncate text-[13px]" style={{ color: 'var(--muted-2)' }}>{titleByline(g)}</span>
       </div>
@@ -121,7 +123,7 @@ function CardBody({ game: g, collectionId, fob, drives }: {
         <span className="flex-1" />
         {/* Inside the card's <a href>, like the rename field, and safe the same way: the ⋯ trigger stops every
             pointer event before it reaches the anchor or dnd-kit's drag listeners, and so does its portalled menu. */}
-        <TitleControls game={g} collectionId={collectionId} fob={fob} drives={drives} view={trailView} />
+        <TitleControls game={g} collectionId={collectionId} fob={fob} drives={drives} view={trailView} selecting={selecting} />
       </div>
     </>
   );
@@ -150,6 +152,35 @@ function SetDropHint() {
 }
 
 /**
+ * A card while selecting (multi-select spec §1.2, §1.4, Rulings 3, 7): a <label> wrapping its box, so a click
+ * anywhere on it ticks the title and never navigates; drag is off (the caller's hook is disabled). The box sits on a
+ * surface disc in the cover's top-left corner; a ticked card is outlined.
+ */
+function SelectableCard({ ref, game: g, collectionId, fob, drives, pendingHide }: {
+  ref: (el: HTMLElement | null) => void;
+  game: GameListItem; collectionId?: string; fob: FobContext; drives: DriveContext; pendingHide: PendingHide | null;
+}) {
+  const checked = useLibrarySelection().selected.has(g.id);
+  return (
+    <label
+      ref={ref}
+      data-testid="game-card"
+      data-game-id={g.id}
+      data-selected={checked ? 'true' : 'false'}
+      data-drive={driveState(drives, g.id)}
+      className={`${CARD_CLASS} cursor-pointer ${checked ? 'outline-2 outline-(--primary-action)' : ''}`}
+      style={pendingHideStyle(pendingHide)}
+    >
+      <span className="absolute left-3 top-3 z-10 grid size-[30px] place-items-center rounded-full bg-(--surface)">
+        <SelectBox game={g} />
+      </span>
+      <CardBody game={g} collectionId={collectionId} fob={fob} drives={drives} selecting />
+      <DriveRing holds={drives?.holds[g.id]} />
+    </label>
+  );
+}
+
+/**
  * Unfiltered views ("All titles", "Uncategorized"): draggable onto a rail
  * collection, and a drop target for another card (make a disk set) -- not
  * sortable against siblings.
@@ -158,6 +189,7 @@ function DraggableCard({ game: g, fob, drives, pendingHide }: {
   game: GameListItem; fob: FobContext; drives: DriveContext; pendingHide: PendingHide | null;
 }) {
   const trailView = useTrailView();
+  const { selecting } = useLibrarySelection();
   // `role` is pulled OUT of dnd-kit's attributes and thrown away: it is
   // "button", and this card is an <a href> that really does navigate. Spread
   // whole, it would have a screen reader announce every game in the library
@@ -165,15 +197,16 @@ function DraggableCard({ game: g, fob, drives, pendingHide }: {
   // link half keeps working. The rest of the attributes (tabIndex,
   // aria-roledescription, aria-describedby) are kept.
   const data = { type: 'game', id: g.id, title: g.title, diskCount: g.diskCount } satisfies GameDragData;
-  const { attributes: dragAttributes, listeners, setNodeRef: setDragRef, transform, isDragging } = useDraggable({ id: g.id, data });
+  const { attributes: dragAttributes, listeners, setNodeRef: setDragRef, transform, isDragging } = useDraggable({ id: g.id, data, disabled: selecting });
   // The same id as the draggable, as useSortable does: dnd-kit keeps the two
   // registries apart. Droppable rects are measured without transforms, so
   // the dragged card's own drop area stays where the card started, and
   // onDragEnd ignores a card dropped back on itself.
-  const { setNodeRef: setDropRef, isOver, active } = useDroppable({ id: g.id, data });
+  const { setNodeRef: setDropRef, isOver, active } = useDroppable({ id: g.id, data, disabled: selecting });
   // Stable, so React does not detach and re-attach the node on every render
   // of a drag (an inline ref callback is a new function each time).
   const setNodeRef = useCallback((el: HTMLElement | null) => { setDragRef(el); setDropRef(el); }, [setDragRef, setDropRef]);
+  if (selecting) return <SelectableCard ref={setNodeRef} game={g} fob={fob} drives={drives} pendingHide={pendingHide} />;
   const attributes = { ...dragAttributes, role: undefined };
   const style = { ...dragStyle(CSS.Translate.toString(transform), isDragging), ...pendingHideStyle(pendingHide) };
   const hinting = isOver && active !== null && active.id !== g.id
@@ -185,6 +218,7 @@ function DraggableCard({ game: g, fob, drives, pendingHide }: {
       href={`/games/${g.id}${fromQuery(null, trailView)}`}
       aria-label={titleLabel(g)}   // the title, not the card's every line and button (final review M5)
       data-testid="game-card"
+      data-game-id={g.id}
       data-drive={driveState(drives, g.id)}
       aria-hidden={pendingHide ? true : undefined}
       // An <a href> is natively draggable, so pressing one and moving started
@@ -215,10 +249,12 @@ function SortableCard({ game: g, collectionId, fob, drives, armed, pendingHide }
   game: GameListItem; collectionId: string; fob: FobContext; drives: DriveContext; armed: boolean; pendingHide: PendingHide | null;
 }) {
   const trailView = useTrailView();
+  const { selecting } = useLibrarySelection();
   // See DraggableCard on why `role` is discarded rather than spread.
   const { attributes: dragAttributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: g.id,
     data: { type: 'game', id: g.id, title: g.title, diskCount: g.diskCount } satisfies GameDragData,
+    disabled: selecting,
   });
   const attributes = { ...dragAttributes, role: undefined };
   // The same 200 ms glide for every card, the target included. A card slid
@@ -232,6 +268,9 @@ function SortableCard({ game: g, collectionId, fob, drives, armed, pendingHide }
   // replace the reorder glide above -- there is no reorder to glide through
   // on a card-on-card drop, and this card must not visibly move at all.
   const style = { ...dragStyle(CSS.Translate.toString(transform), isDragging), transition, ...pendingHideStyle(pendingHide) };
+  if (selecting) {
+    return <SelectableCard ref={setNodeRef} game={g} collectionId={collectionId} fob={fob} drives={drives} pendingHide={pendingHide} />;
+  }
 
   return (
     <Link
@@ -243,6 +282,7 @@ function SortableCard({ game: g, collectionId, fob, drives, armed, pendingHide }
       href={`/games/${g.id}${fromQuery(collectionId, trailView)}`}
       aria-label={titleLabel(g)}   // the title, not the card's every line and button (final review M5)
       data-testid="game-card"
+      data-game-id={g.id}
       data-drive={driveState(drives, g.id)}
       aria-hidden={pendingHide ? true : undefined}
       // See DraggableCard on why an anchor must opt out of native dragging.

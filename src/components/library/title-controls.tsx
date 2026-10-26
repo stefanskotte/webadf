@@ -211,9 +211,12 @@ function VolumeNameField({ game: g }: { game: GameListItem }) {
   );
 }
 
-/** The title's name: the inline rename on an authored single-disk title, else plain text. */
-export function TitleName({ game: g, className }: { game: GameListItem; className: string }) {
-  if (g.authored && g.diskId) return <VolumeNameField game={g} />;
+/**
+ * The title's name: the inline rename on an authored single-disk title, else plain text. `plain` while selecting
+ * (spec §1.4): the card is a <label>, and nothing interactive sits inside it.
+ */
+export function TitleName({ game: g, className, plain = false }: { game: GameListItem; className: string; plain?: boolean }) {
+  if (!plain && g.authored && g.diskId) return <VolumeNameField game={g} />;
   return <span className={className} style={{ color: 'var(--ink)' }}>{g.title}</span>;
 }
 
@@ -235,11 +238,15 @@ export function titleLabel(g: Pick<GameListItem, 'title' | 'year'>): string {
 /**
  * A title's controls on a card and on a table row: the ⋯ menu (title-menu.tsx, spec §2), which holds Mount / Eject,
  * Write to NFC tag, Version history, Move to collection…, Remove from collection and Delete title in that order.
+ * While selecting (multi-select spec §1.4, Ruling 7) it is a spacer the trigger's size: hidden rather than inert, so
+ * nothing interactive sits inside the card's <label>, and the footer and the table's ⋯ track keep their size.
  */
-export function TitleControls({ game: g, collectionId, fob, drives, view = null }: {
+export function TitleControls({ game: g, collectionId, fob, drives, view = null, selecting = false }: {
   game: GameListItem; collectionId?: string; fob: FobContext; drives: DriveContext;
   /** The library view to carry into the history link when it is not the person's default (trail.ts, final review M1). */
   view?: TrailView;
+  selecting?: boolean;
 }) {
+  if (selecting) return <span aria-hidden data-controls-spacer="" className="h-11 w-11 shrink-0 sm:h-8 sm:w-8" />;
   return <TitleMenu game={g} collectionId={collectionId} fob={fob} drives={drives} view={view} />;
 }
