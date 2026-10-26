@@ -93,10 +93,13 @@ export function DeviceCard(
               {pill.label}
             </span>
           </div>
-          <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {/* A row that wraps, not a grid of equal columns: four equal columns split the MAC ("…AC:C / A") and the
+              version ("…+ga5424 / b4") at 1024-1440, where the board's picture takes half the card. A figure that
+              does not fit moves to the next line whole; only Firmware grows. */}
+          <dl className="flex flex-wrap gap-x-8 gap-y-4">
             <div className="min-w-0">
               <dt className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Network</dt>
-              <dd className="break-all font-mono text-[13px]" style={{ color: 'var(--ink)' }}>{device.macAddress ?? '—'}</dd>
+              <dd className="whitespace-nowrap font-mono text-[13px]" style={{ color: 'var(--ink)' }}>{device.macAddress ?? '—'}</dd>
             </div>
             <div className="min-w-0">
               <dt className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Signal</dt>
@@ -113,14 +116,15 @@ export function DeviceCard(
                 {signal.text}
               </dd>
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1 basis-[12rem]">
               <dt className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Firmware</dt>
               <dd className="flex min-w-0 flex-col items-start gap-1">
-                {/* min-w-0 plus overflow-wrap: anywhere -- a real version like "1.1.4+g137a4db" or a failure reason
-                    holding a URL has no break point and pushed the page sideways at 390 px (fix round 1). */}
+                {/* min-w-0 plus overflow-wrap: break-word -- a failure reason holding a URL has no break point and
+                    pushed the page sideways at 390 px (fix round 1). break-word, not anywhere: a version breaks at
+                    its spaces first and mid-token only when it cannot fit a line on its own. */}
                 <span className="flex w-full min-w-0 items-start gap-1">
                   <span className="block min-w-0 flex-1 font-mono text-[13px]"
-                        style={{ overflowWrap: 'anywhere', color: behind ? 'var(--amber-text)' : 'var(--ink)' }}
+                        style={{ overflowWrap: 'break-word', color: behind ? 'var(--amber-text)' : 'var(--ink)' }}
                         data-testid={`device-firmware-${device.id}`}>
                     {firmwareCellText(update ?? firmwareLabel(firmware))}
                   </span>

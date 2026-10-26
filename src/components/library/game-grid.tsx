@@ -109,21 +109,26 @@ function CardBody({ game: g, collectionId, fob, drives, selecting = false }: {
         {/* One line tall even when empty, so footers line up across a row. */}
         <span className="min-h-[1lh] truncate text-[13px]" style={{ color: 'var(--muted-2)' }}>{titleByline(g)}</span>
       </div>
-      <div className="mt-auto flex min-w-0 items-center gap-1.5 pb-2.5 pl-3.5 pr-2 pt-1.5">
-        {/* Pill and count may shrink and truncate on a 2-column phone card; the ⋯ never does, so it stays inside. */}
+      <div className="mt-auto flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 pb-2.5 pl-3.5 pr-2 pt-1.5">
+        {/* The row wraps rather than truncating: on a 2-column phone card the pill and the count were cut to "De…" and
+            "1 di…" (C9 shots). Now the count and the ⋯ move to a second line whole; the ⋯ never leaves the card. The
+            pill truncates only if it alone is wider than the card. */}
         {tag && (
-          <span data-testid="grid-kind" className="min-w-0 truncate rounded-full px-2 py-0.5 text-[12px] font-medium"
+          <span data-testid="grid-kind" className="max-w-full truncate rounded-full px-2 py-0.5 text-[12px] font-medium"
                 style={{ background: tag.bg, color: tag.fg }}>
             {g.kind}
           </span>
         )}
-        <span data-testid="grid-disks" className="min-w-0 truncate font-mono text-[12px]" style={{ color: 'var(--muted-2)' }}>
+        <span data-testid="grid-disks" className="whitespace-nowrap font-mono text-[12px]" style={{ color: 'var(--muted-2)' }}>
           {g.diskCount === 1 ? '1 disk' : `${g.diskCount} disks`}
         </span>
-        <span className="flex-1" />
+        {/* ml-auto, not a flex-1 spacer: a spacer stays on the first line when the row wraps, leaving the ⋯ at the
+            left of the second. */}
+        <span className="ml-auto flex">
         {/* Inside the card's <a href>, like the rename field, and safe the same way: the ⋯ trigger stops every
             pointer event before it reaches the anchor or dnd-kit's drag listeners, and so does its portalled menu. */}
         <TitleControls game={g} collectionId={collectionId} fob={fob} drives={drives} view={trailView} selecting={selecting} />
+        </span>
       </div>
     </>
   );

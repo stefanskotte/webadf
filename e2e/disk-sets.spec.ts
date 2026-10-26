@@ -858,15 +858,34 @@ const STEP_MS = 16;
  * hand, never a jump. `onStep` runs after every step with where it is now.
  */
 async function walk(page: Page, from: Point, to: Point, onStep?: (p: Point) => Promise<void>,
-  pace: { px: number; ms: number } = { px: STEP_PX, ms: STEP_MS }): Promise<Point> {
-  const n = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / pace.px));
-  for (let i = 1; i <= n; i++) {
-    const p = { x: from.x + ((to.x - from.x) * i) / n, y: from.y + ((to.y - from.y) * i) / n };
-    await page.mouse.move(p.x, p.y);
-    await page.waitForTimeout(pace.ms);
-    if (onStep) await onStep(p);
+  pace?: { px: number; ms: number }): Promise<Point> {
+  const { px, ms } = pace ?? { px: STEP_PX, ms: STEP_MS };
+  const n = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / px));
+  const along = (f: number): Point => ({ x: from.x + (to.x - from.x) * f, y: from.y + (to.y - from.y) * f });
+  if (!pace) {
+    for (let i = 1; i <= n; i++) {
+      const p = along(i / n);
+      await page.mouse.move(p.x, p.y);
+      await page.waitForTimeout(ms);
+      if (onStep) await onStep(p);
+    }
+    return to;
   }
-  return to;
+  // An explicit pace is a SPEED, kept by the clock: the pointer is where px/ms puts it after the time that has really
+  // passed, however long onStep's measuring takes. Stepping px then waiting ms after each measurement made the crawl's
+  // 1 px / 30 ms really 1 px / 50-100 ms on a busy machine -- under the edge's inward-creep floor (3 px per
+  // EDGE_REST_MS, ~15 px/s), where a crawl counts as a rest by design -- and the crawl test failed whenever the machine
+  // was loaded.
+  const total = n * ms;
+  const t0 = Date.now();
+  for (;;) {
+    const f = Math.min(1, (Date.now() - t0) / total);
+    const p = along(f);
+    await page.mouse.move(p.x, p.y);
+    if (onStep) await onStep(p);
+    if (f >= 1) return to;
+    await page.waitForTimeout(ms);
+  }
 }
 
 /**
@@ -916,9 +935,38 @@ async function walkIntoCentreAndHold(page: Page, source: Locator, target: Locato
   if (opts.creep) from = await walk(page, from, { x: slot.x - 6, y: slot.y + slot.height / 2 });
   // Every step, and where the target card was drawn after it.
   const approach: Array<{ p: Point; centre: boolean; off: number }> = [];
-  await walk(page, from, at(slot, 0.5, 0.5), async (p) => {
-    approach.push({ p, centre: inCentre(p, slot), off: offBy((await target.boundingBox())!, slot) });
-  }, opts.creep ? { px: 1, ms: 30 } : undefined);
+  if (opts.creep) {
+    // The crawl is measured in the page, every frame: a boundingBox() round trip after each 1 px step slowed the
+    // pointer's events to a trickle on a busy machine, and a crawl that slow is a rest by design (walk()).
+    await target.evaluate((el) => {
+      const w = window as unknown as { crawl: number[][]; crawlOn: boolean };
+      let x = NaN, y = NaN;
+      w.crawl = []; w.crawlOn = true;
+      window.addEventListener('pointermove', (e) => { x = e.clientX; y = e.clientY; }, { capture: true });
+      const frame = () => {
+        if (!w.crawlOn) return;
+        const r = el.getBoundingClientRect();
+        if (!Number.isNaN(x)) w.crawl.push([x, y, r.x, r.y, r.width, r.height]);
+        requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    });
+    await walk(page, from, at(slot, 0.5, 0.5), undefined, { px: 1, ms: 30 });
+    await page.waitForTimeout(50);
+    const frames = await page.evaluate(() => {
+      const w = window as unknown as { crawl: number[][]; crawlOn: boolean };
+      w.crawlOn = false;
+      return w.crawl;
+    });
+    for (const [x, y, bx, by, bw, bh] of frames) {
+      const p = { x, y };
+      approach.push({ p, centre: inCentre(p, slot), off: offBy({ x: bx, y: by, width: bw, height: bh }, slot) });
+    }
+  } else {
+    await walk(page, from, at(slot, 0.5, 0.5), async (p) => {
+      approach.push({ p, centre: inCentre(p, slot), off: offBy((await target.boundingBox())!, slot) });
+    });
+  }
   // The hold: sampled every 50 ms for 600 ms, the pointer perfectly still.
   const hold: number[] = [];
   const t0 = Date.now();
