@@ -11,6 +11,7 @@ describe('LibraryLoading', () => {
     // Below md (C7 spec §4.2): one 44 px chip row.
     const chips = html.match(/<[^>]*data-testid="library-skeleton-chips"[^>]*>/)?.[0] ?? '';
     expect(chips).toContain('md:hidden');
+    expect(chips).toContain('pb-1');   // the real row's 4 px under the chips, so nothing jumps
     const chipHtml = html.slice(html.indexOf('library-skeleton-chips'), html.indexOf('library-skeleton-rail'));
     expect(chipHtml.match(/h-11/g)?.length).toBe(4);
     // From md: the rail's shape (collection-rail.tsx), 240 px with six 38 px row bones.

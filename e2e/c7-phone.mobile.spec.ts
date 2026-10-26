@@ -524,3 +524,33 @@ test('C7-09b touch targets and no sideways scroll: the Library grid and table', 
   await expect(page.getByTestId('game-table')).toBeVisible();
   await touchSweep(page, 'library table');
 });
+
+test('C7-04d Library at 390: deleting a collection from its ⋯ by keyboard leaves focus on Uncategorized, not <body>', async ({ page }) => {
+  await signUpFresh(page);
+  const id = await newCollection(page, `Delete me ${runTag()}`);
+  await page.goto(`/library?collection=${id}`);
+  await hydrated(page, `collection-menu-${id}`);
+  page.once('dialog', (d) => { void d.accept(); });
+  await page.getByTestId(`collection-menu-${id}`).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId(`collection-delete-${id}`)).toBeVisible();
+  await page.getByTestId(`collection-delete-${id}`).focus();
+  await page.keyboard.press('Enter');
+  await expect(chipOf(page, id)).toHaveCount(0);
+  await expect(page.getByTestId('collection-uncategorized')).toBeFocused();
+});
+
+test('C7-04e Library at 390: a chip that is not current keeps 8 px of its own padding right of the count', async ({ page }) => {
+  await signUpFresh(page);
+  const run = runTag();
+  const a = await newCollection(page, `Pad A ${run}`);
+  const b = await newCollection(page, `Pad B ${run}`);
+  await page.goto(`/library?collection=${b}`);
+  await hydrated(page, 'collections-new');
+  const chip = (await chipOf(page, a).boundingBox())!;
+  const count = (await chipOf(page, a).getByTestId('collection-count').boundingBox())!;
+  expect(chip.x + chip.width - (count.x + count.width)).toBeGreaterThanOrEqual(8);
+  // The whole chip is the link: a tap on its left edge opens the collection.
+  await chipOf(page, a).tap({ position: { x: 3, y: 22 } });
+  await expect(chipOf(page, a)).toHaveAttribute('data-current', 'true');
+});

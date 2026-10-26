@@ -71,6 +71,9 @@ export function CollectionRail({ viewMode = 'grid' }: { viewMode?: 'grid' | 'tab
   const all = current({ kind: 'all' });
   const renaming = collections.find((c) => c.id === renamingId) ?? null;
 
+  // Keyed on the view's kind and id, not the `view` object: that is a new object after every refresh, which would pull
+  // the row back while the person is scrolling it.
+  const viewKey = `${view.kind}:${view.kind === 'collection' ? view.id : ''}`;
   // Below md the current chip is scrolled into view on load, without moving the page (spec §4.2).
   useEffect(() => {
     if (window.matchMedia('(min-width: 768px)').matches) return;
@@ -82,7 +85,7 @@ export function CollectionRail({ viewMode = 'grid' }: { viewMode?: 'grid' | 'tab
     const c = chip.getBoundingClientRect();
     if (c.left < r.left) row.scrollLeft += c.left - r.left;
     else if (c.right > r.right) row.scrollLeft += c.right - r.right;
-  }, [view]);
+  }, [viewKey]);
 
   function endRename(id: string, refocus: boolean) {
     setRenamingId(null);
@@ -99,7 +102,7 @@ export function CollectionRail({ viewMode = 'grid' }: { viewMode?: 'grid' | 'tab
       <div className="px-3 py-2 text-[12px] font-medium max-md:hidden" style={{ color: 'var(--muted-2)' }}>Collections</div>
 
       {/* Below md the chip row; from md `contents`, so its children are the rail's own rows, in today's order. */}
-      <div ref={scroller} className="flex gap-2 overflow-x-auto px-4 pb-1 sm:px-7 md:contents">
+      <nav ref={scroller} aria-label="Collections" className="flex gap-2 overflow-x-auto px-4 pb-1 sm:px-7 md:contents">
         {/* The inbox, and the landing view. It sits with the collections
             rather than apart from them because it behaves like one: it has a
             count, it is a place titles are, and filing one into a collection
@@ -171,7 +174,7 @@ export function CollectionRail({ viewMode = 'grid' }: { viewMode?: 'grid' | 'tab
                 className={`${ROW} font-medium text-(--ink) md:hidden`}>
           <Plus size={14} aria-hidden /> New
         </button>
-      </div>
+      </nav>
 
       {renaming && !isMd && (
         <div className="px-4 pt-2 sm:px-7 md:hidden">
@@ -253,6 +256,7 @@ function CollectionRow({
       `Delete "${collection.name}"? This deletes only the collection -- the titles in it are not deleted.`,
     );
     if (!confirmed) return;
+    let deleted = false;
     try {
       let res: Response;
       try {
@@ -268,12 +272,25 @@ function CollectionRow({
         });
         return;
       }
+      deleted = true;
       // If this was the filtered collection, the stale `?collection=` param
       // is left in the URL on purpose: page.tsx resolves it against a fresh
       // listCollections() on refresh and quietly falls back to unfiltered
       // (requirement carried from earlier reviews) -- no redirect needed here.
     } finally {
       router.refresh();
+      // The row is about to unmount with the menu's focus on its ⋯: hand focus to the rail's first link once the row
+      // is gone (this closure outlives the row), never to <body>. Gives up after ~2 s.
+      if (deleted) {
+        const id = collection.id;
+        let frames = 0;
+        const land = () => {
+          const gone = !document.querySelector(`[data-testid="collection-row"][data-collection-id="${id}"]`);
+          if (gone || ++frames > 120) document.querySelector<HTMLElement>('[data-testid="collection-uncategorized"]')?.focus();
+          else requestAnimationFrame(land);
+        };
+        requestAnimationFrame(land);
+      }
     }
   }
 
@@ -285,7 +302,7 @@ function CollectionRow({
       data-collection-id={collection.id}
       data-current={showCurrent}
       data-drop-target={isDropTarget ? 'true' : undefined}
-      className={`group flex shrink-0 items-center gap-1 md:h-[38px] md:rounded-[10px] md:pl-1 md:pr-1.5 md:hover:bg-(--track) max-md:h-11 max-md:rounded-full max-md:border max-md:border-(--line) max-md:bg-(--surface) max-md:pl-3 max-md:pr-0 ${showCurrent ? CURRENT : ''}`}
+      className={`group flex shrink-0 items-center gap-1 md:h-[38px] md:rounded-[10px] md:pl-1 md:pr-1.5 max-md:h-11 max-md:rounded-full max-md:border max-md:border-(--line) max-md:bg-(--surface) ${active ? 'max-md:pr-0' : 'max-md:pr-3'} ${showCurrent ? CURRENT : 'md:hover:bg-(--track)'}`}
     >
       {/*
         `touchAction: 'none'` is load-bearing for the TouchSensor's press-and-hold: dnd-kit only calls preventDefault()
@@ -309,7 +326,7 @@ function CollectionRow({
         <Link
           href={href}
           aria-current={active ? 'page' : undefined}
-          className="flex h-full min-w-0 flex-1 items-center gap-2.5 pl-1.5 max-md:flex-none max-md:gap-2 max-md:pl-0"
+          className="flex h-full min-w-0 flex-1 items-center gap-2.5 pl-1.5 max-md:flex-none max-md:gap-2 max-md:pl-3"
         >
           <Dot color={collectionDot(collection.id)} />
           <span

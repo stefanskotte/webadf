@@ -9,7 +9,7 @@ export default function LibraryLoading() {
     <PageSkeleton testId="library-skeleton">
       <div className="flex flex-col gap-4 md:flex-row md:items-start">
         {/* Below md the collections are one 44 px chip row (collection-rail.tsx, C7 spec §4.2). */}
-        <div className="flex gap-2 overflow-hidden px-4 sm:px-7 md:hidden" data-testid="library-skeleton-chips">
+        <div className="flex gap-2 overflow-hidden px-4 pb-1 sm:px-7 md:hidden" data-testid="library-skeleton-chips">
           {[28, 24, 24, 20].map((w, i) => <Bone key={i} className="h-11 shrink-0 rounded-full" style={{ width: `${w * 4}px` }} />)}
         </div>
         {/* From md, collection-rail.tsx's box: a caption and six 38 px rows, no card. */}
