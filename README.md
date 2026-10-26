@@ -260,9 +260,9 @@ Vercel Blob. On Vercel the token is required: the app refuses to fall back to lo
 To run your own copy, use the Docker stack in [docs/self-hosting.md](docs/self-hosting.md)
 (Quickstart, [Path B](#path-b-your-own-server-self-hosted-docker)); the commands above are for development.
 
-A self-hosted copy needs no extra setting: the About page (the (i) at the top right) reads
+A self-hosted copy needs no extra setting: Settings → About this server reads
 **Self-hosted** unless `SELFHOSTED=false`, which only our own deployment sets. A Docker build
-without `.git` can pass `GIT_SHA` so the About page shows the commit.
+without `.git` can pass `GIT_SHA` so About this server shows the commit.
 
 Firmware:
 

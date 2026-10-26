@@ -610,12 +610,15 @@ export const HELP_TOPICS = {
       </>
     ),
   },
-  // Sources: spec 2026-10-15-about-page-design.md; src/lib/about/*; src/app/(app)/about/page.tsx.
+  // Sources: spec 2026-10-15-about-page-design.md; src/lib/about/*; src/components/prefs/about-server.tsx (C7 spec 2026-10-26 §10).
   about: {
     title: 'About this server',
     short: 'What this copy of the site is: its build, where it runs, and how much your library stores.',
     body: (
       <>
+        <p>
+          You find it at the end of Settings, above Delete account.
+        </p>
         <p>
           <strong>Web app.</strong> The commit the site was built from, and when. On our own site the commit links to
           the change that produced it.

@@ -47,7 +47,7 @@ test('below lg the header is one 60 px row (home, search); from lg the search bo
   await page.setViewportSize({ width: 1280, height: 844 });
   await page.goto('/library');
   const box = (await page.getByTestId('search-input').boundingBox())!;
-  const next = (await page.getByTestId('about-link').boundingBox())!;
+  const next = (await page.getByTestId('settings-link').boundingBox())!;
   // Same line, and spec §6.1's 16px between them (mr-2 + the group's gap-2).
   expect(Math.abs((box.y + box.height / 2) - (next.y + next.height / 2)), 'same line at 1280').toBeLessThan(4);
   expect(next.x - (box.x + box.width), 'gap at 1280').toBeCloseTo(16, 0);

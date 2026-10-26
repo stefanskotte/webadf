@@ -72,7 +72,7 @@ test('Settings: the section list marks the section in view, and a click moves fo
   await expect(nav).toBeVisible();
   await expect(nav.getByRole('link', { name: 'Preferences' })).toHaveAttribute('aria-current', 'true');
   const about = nav.getByRole('link', { name: 'About this server' });
-  await expect(about).toHaveAttribute('href', '/about');
+  await expect(about).toHaveAttribute('href', '#about');
   // The nav and the radios hydrate in the same pass (no Suspense boundary between them).
   await hydrated(page, 'pref-start-page', 'onKeyDown');
   const danger = nav.getByRole('link', { name: 'Delete account' });
@@ -85,6 +85,11 @@ test('Settings: the section list marks the section in view, and a click moves fo
   await expect(danger).toHaveAttribute('aria-current', 'true');
   await expect(nav.getByRole('link', { name: 'Preferences' })).not.toHaveAttribute('aria-current', 'true');
   await expect(about).not.toHaveAttribute('aria-current', 'true');
+  // C7 (spec §10.2): About this server is an in-page section now; a click marks it and focuses its heading.
+  await about.click();
+  await expect(page).toHaveURL(/#about$/);
+  await expect(page.locator('#about-heading')).toBeFocused();
+  await expect(about).toHaveAttribute('aria-current', 'true');
 });
 
 test('Settings: closing a form hands focus back to its opener; Sign out everywhere else hands it to the heading', async ({ page, browser }) => {

@@ -7,7 +7,6 @@ import { latestReleaseSequence } from "@/lib/firmware-releases";
 import { TopNav } from "@/components/shell/top-nav";
 import { SearchBox } from "@/components/shell/search-box";
 import { SignOutButton } from "@/components/sign-out-button";
-import { AboutLink } from "@/components/shell/about-link";
 import { SettingsLink } from "@/components/shell/settings-link";
 import { Logo } from "@/components/shell/logo";
 import { Link } from "@/components/shell/link";
@@ -114,9 +113,8 @@ export default async function AppLayout({
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <SearchBox />
-            {/* From lg only: below it these are the More menu's (C7 spec §2.2). */}
+            {/* From lg only: below it these are the More menu's (C7 spec §2.2). The (i) is gone at every width (Ruling 20). */}
             <span className="hidden items-center gap-2 lg:flex">
-              <AboutLink />
               <SettingsLink />
               <SignOutButton />
             </span>

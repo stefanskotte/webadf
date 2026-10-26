@@ -1,7 +1,7 @@
 import { Bone } from '@/components/shell/skeleton';
 
 // Settings while it loads (C5 spec §2.7, Ruling 37): the page's own grid -- five nav bones from lg, then the heading
-// and four cards in the main column. Not PageSkeleton: its outer header bones have no counterpart here (the heading is
+// and five cards (C7: About this server before the danger card) in the main column. Not PageSkeleton: its outer header bones have no counterpart here (the heading is
 // in the main column, `PageHeader flush`), and would make the page jump when it lands -- the C4 disk page's lesson.
 // Same status wrapper. Nested under (app)/loading.tsx like the other areas', so status codes do not change.
 export default function SettingsLoading() {
@@ -18,7 +18,7 @@ export default function SettingsLoading() {
             <Bone className="h-5 w-24" />
             <Bone className="h-[30px] w-48 sm:h-[44px]" />
           </div>
-          {[0, 1, 2, 3].map((c) => (
+          {[0, 1, 2, 3, 4].map((c) => (
             <div key={c} data-skeleton-card className="flex flex-col gap-3 rounded-[20px] p-5 sm:p-6" style={card}>
               {c === 0 ? (
                 <>

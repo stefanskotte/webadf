@@ -36,7 +36,7 @@ test('C7-01 header at 390: one row of at most 60 px; home and the chip on it, 44
   expect(home.width).toBeGreaterThanOrEqual(44);
   expect(chip.x).toBeGreaterThanOrEqual(home.x + home.width);
   await expect(page.getByTestId('wordmark-home')).toHaveAccessibleName('webfloppy');
-  for (const id of ['settings-link', 'sign-out', 'about-link']) await expect(page.getByTestId(id)).toBeHidden();
+  for (const id of ['settings-link', 'sign-out']) await expect(page.getByTestId(id)).toBeHidden();
   await noSideways(page);
 });
 
@@ -103,6 +103,7 @@ test('C7-02b the More menu: items at least 44 px and on screen, each reaches its
   await open();
   await page.getByTestId('more-about').tap();
   await expect(page).toHaveURL(/\/settings#about$/);
+  await expect(page.locator('#about-heading')).toBeInViewport();
   await open();
   await page.getByTestId('more-sign-out').tap();
   await expect(page).toHaveURL(/\/sign-in/);
@@ -171,4 +172,27 @@ test('C7-10 a toast ends above the bottom bar at 390 and at 900 px', async ({ pa
       return Math.round(b.y - (t.y + t.height));
     }, { message: `toast bottom vs bar top at ${width}` }).toBeGreaterThanOrEqual(0);
   }
+});
+
+// ---- About into Settings (spec §10, Rulings 20-25) ---------------------------------------------------------
+
+test('C7-07 Settings at 390: About this server is the fourth card with its six groups; More and /about land on it', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/settings');
+  const order = await page.evaluate(() => [...document.querySelectorAll('section[id]')].map((s) => s.id)
+    .filter((id) => ['prefs', 'account', 'firmware', 'about', 'danger'].includes(id)));
+  expect(order).toEqual(['prefs', 'account', 'firmware', 'about', 'danger']);
+  for (const id of ['web-app', 'hosting', 'platform', 'firmware', 'library', 'about-webadf']) {
+    await expect(page.getByTestId(`about-${id}`)).toBeAttached();
+  }
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await hydrated(page, 'nav-more');
+  await page.getByTestId('nav-more').tap();
+  await page.getByTestId('more-about').tap();
+  await expect(page).toHaveURL(/\/settings#about$/);
+  await expect(page.locator('#about-heading')).toBeInViewport();
+  await page.goto('/about');
+  await expect(page).toHaveURL(/\/settings#about$/);
+  await expect(page.locator('#about-heading')).toBeInViewport();
+  await noSideways(page);
 });

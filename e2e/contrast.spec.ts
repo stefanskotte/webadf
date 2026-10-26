@@ -367,7 +367,6 @@ test('header focus indicators clear 3:1 against the bar', async ({ page }) => {
   await page.keyboard.press('Tab');
   for (const sel of [
     'header nav a:not([aria-current])', // .seg-item
-    '[data-testid=about-link]',
     '[data-testid=settings-link]',
     '[data-testid=sign-out]',
     '[data-testid=search-input]',
