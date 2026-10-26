@@ -226,7 +226,18 @@ describe('the compact control below xl (C8 spec §8, Rulings 5, 6)', () => {
     expect(html).toMatch(/data-testid="drives-compact-disk"[^>]*>Turrican</);
     expect(html).toMatch(/data-testid="drives-compact-wp"[^>]*>WP</);
     expect(html.match(/data-testid="drive-chip-name-dev-a"/g)?.length).toBe(1);   // the xl chip's only
-    expect(openTag(html, 'drives-compact')).toContain('title="Bench — online"');
+    // The face is narrower between lg and xl, so the title carries what it drops: name, state, disk and tag.
+    expect(openTag(html, 'drives-compact')).toContain('title="Bench — online — Turrican — WP"');
+  });
+  it('the face between lg and xl: the name shrinks (min-w-0), the disk and tag are hidden; the xl chip is untouched', () => {
+    const html = chips([base]);
+    expect(openTag(html, 'drives-compact-name')).toContain('lg:min-w-0');
+    expect(openTag(html, 'drives-compact-name')).toContain('lg:shrink');
+    expect(openTag(html, 'drives-compact-disk')).toContain('lg:hidden');
+    expect(openTag(html, 'drives-compact-wp')).toContain('lg:hidden');
+    expect(openTag(html, 'drives-compact')).toContain('lg:max-w-[120px]');
+    for (const id of ['name', 'disk', 'wp']) expect(openTag(html, `drive-chip-${id}-dev-a`), id).not.toContain('lg:hidden');
+    expect(openTag(html, 'drive-chip-name-dev-a')).not.toContain('lg:min-w-0');
   });
   it('two or more boards: "Drives n", a count of boards', () => {
     const html = chips(two);

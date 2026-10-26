@@ -108,16 +108,21 @@ function StatusDot({ online }: { online: boolean }) {
 function ChipFace({ chip, ids }: { chip: DriveChip; ids: 'chip' | 'compact' }) {
   const tag = protectTag(chip);
   const tid = (part: 'name' | 'disk' | 'wp') => (ids === 'chip' ? `drive-chip-${part}-${chip.id}` : `drives-compact-${part}`);
+  // The compact control only (the xl chip is untouched): from lg to xl it is 120 px wide and the face is the dot, a name
+  // that shrinks to fit, and the chevron; the disk and the tag are in the title and the panel. The phone row keeps all.
+  const c = ids === 'compact';
   return (
     <>
       <StatusDot online={chip.online} />
-      <span className="max-w-[6rem] shrink-0 truncate font-semibold" data-testid={tid('name')}>{chip.shortName}</span>
-      <span className="min-w-0 flex-1 truncate text-left font-mono text-[13px] text-(--muted)" data-testid={tid('disk')}>
+      <span className={`max-w-[6rem] shrink-0 truncate font-semibold${c ? ' lg:min-w-0 lg:shrink xl:min-w-[auto] xl:shrink-0' : ''}`}
+            data-testid={tid('name')}>{chip.shortName}</span>
+      <span className={`min-w-0 flex-1 truncate text-left font-mono text-[13px] text-(--muted)${c ? ' lg:hidden xl:block' : ''}`}
+            data-testid={tid('disk')}>
         {diskText(chip)}
       </span>
       {tag && (
         <>
-          <span aria-hidden="true" className="shrink-0 rounded-[5px] bg-(--track) px-1.5 font-mono text-[11px] font-semibold leading-4 text-(--muted)"
+          <span aria-hidden="true" className={`shrink-0 rounded-[5px] bg-(--track) px-1.5 font-mono text-[11px] font-semibold leading-4 text-(--muted)${c ? ' lg:hidden xl:block' : ''}`}
                 data-testid={tid('wp')}>
             {tag}
           </span>
@@ -319,6 +324,11 @@ export function MoreList({ chips, showAdmin }: { chips: DriveChip[]; showAdmin: 
   return <>{restFor(chips, showAdmin).map((c) => <DriveCard key={c.id} chip={c} close={() => {}} />)}</>;
 }
 
+/** The one-board control's title: between lg and xl its face drops the disk and the tag, so the title keeps them. */
+function compactTitle(c: DriveChip): string {
+  return [`${c.name} — ${c.online ? 'online' : 'offline'}`, diskText(c), protectTag(c)].filter(Boolean).join(' — ');
+}
+
 /** Below xl: one control (spec §8). One board: that board's chip (Ruling 6). Two or more: "Drives n" (Ruling 5). */
 function CompactControl({ chips }: { chips: DriveChip[] }) {
   const [p, triggerRef] = usePanel();
@@ -328,8 +338,8 @@ function CompactControl({ chips }: { chips: DriveChip[] }) {
       <Popover.Trigger
         ref={triggerRef}
         data-testid="drives-compact"
-        title={one ? `${one.name} — ${one.online ? 'online' : 'offline'}` : undefined}
-        className={`${CHIP_BASE} flex max-lg:w-full lg:max-w-[140px] xl:max-w-[240px]`}
+        title={one ? compactTitle(one) : undefined}
+        className={`${CHIP_BASE} flex max-lg:w-full lg:max-w-[120px] xl:max-w-[240px]`}
         style={one && !one.online ? { opacity: 0.8 } : undefined}
       >
         {one ? (

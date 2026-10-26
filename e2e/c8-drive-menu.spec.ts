@@ -422,28 +422,69 @@ test('C8-07 the gear opens the board\'s Board settings on /devices, strips the U
   await expect(dialog).toHaveCount(0);
 });
 
-test('C8-17 one board, long name and title, at 1024 and 1180: the compact chip leaves the pill whole and clear of search (Review Focus 4)', async ({ page, request }) => {
+/** Where the header's pieces sit at this width: the clamp is the pill's scroll box (the nav's parent). */
+async function headerMetrics(page: Page) {
+  return page.evaluate(() => {
+    const header = document.querySelector<HTMLElement>('[data-testid="app-header"]')!;
+    const nav = header.querySelector('nav')!;
+    const clamp = nav.parentElement!.getBoundingClientRect();
+    const search = header.querySelector('[data-testid="search-input"]')!.getBoundingClientRect();
+    const trigger = header.querySelector('[data-testid="drives-compact"]');
+    const compact = trigger?.getBoundingClientRect() ?? null;
+    const tabs = [...nav.querySelectorAll('a')].filter((a) => a.offsetWidth > 0).map((a) => a.getBoundingClientRect());
+    // The compact face: every visible child (and its visible descendants) ends inside the trigger's border box.
+    const spill = trigger && compact
+      ? [trigger, ...trigger.querySelectorAll('*')].filter((el) => el !== trigger && (el as HTMLElement | SVGElement).getBoundingClientRect().width > 0
+          && getComputedStyle(el).display !== 'none' && !el.classList.contains('sr-only'))
+          .map((el) => (el as Element).getBoundingClientRect().right - compact.right).filter((d) => d > 0.5)
+      : [];
+    return {
+      clampL: clamp.left, clampR: clamp.right, searchL: search.left, compactR: compact?.right ?? 0, compactW: compact?.width ?? 0,
+      clipped: tabs.filter((t) => t.left < clamp.left - 0.5 || t.right > clamp.right + 0.5).length,
+      navFits: nav.scrollWidth <= nav.clientWidth && clamp.width >= nav.scrollWidth - 0.5, navW: nav.scrollWidth, clampW: clamp.width, spill,
+      chevronR: trigger?.querySelector('svg')?.getBoundingClientRect().right ?? 0,
+    };
+  });
+}
+
+test('C8-17 one board, long name and title, protected, at 1024 with a 15 px classic scrollbar (a 1009 px layout), 1024 and 1180: the compact chip leaves the pill whole, clear of search, and its face stays inside its own box', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
-  await loadedBoard(page, request, orgId, 'A rather long board name', 1);
-  for (const width of [1024, 1180]) {
+  await loadedBoard(page, request, orgId, 'A rather long board name', 1);   // protected: the WP tag exists
+  for (const [width, scrollbar] of [[1024, 15], [1024, 0], [1180, 0]] as const) {
     await page.setViewportSize({ width, height: 800 });
     await page.goto('/library');
     await expect(page.getByTestId('drives-compact-name')).toBeVisible();
+    // A classic scrollbar takes 15 px of the layout width but leaves the media query at 1024; headless draws overlay
+    // scrollbars, so the same layout is made by narrowing the root (the header is sticky/in flow, not fixed).
+    if (scrollbar) await page.addStyleTag({ content: `html { width: ${1024 - scrollbar}px; }` });
+    if (scrollbar) expect(await page.evaluate(() => document.querySelector('[data-testid="app-header"]')!.getBoundingClientRect().width)).toBe(1024 - scrollbar);
     await page.waitForTimeout(150);   // HeaderStart's ResizeObserver settles on the real pill
-    const m = await page.evaluate(() => {
-      const header = document.querySelector<HTMLElement>('[data-testid="app-header"]')!;
-      const nav = header.querySelector('nav')!;
-      const clamp = nav.parentElement!.getBoundingClientRect();
-      const search = header.querySelector('[data-testid="search-input"]')!.getBoundingClientRect();
-      const compact = header.querySelector('[data-testid="drives-compact"]')!.getBoundingClientRect();
-      const tabs = [...nav.querySelectorAll('a')].filter((a) => a.offsetWidth > 0).map((a) => a.getBoundingClientRect());
-      return {
-        clampL: clamp.left, clampR: clamp.right, searchL: search.left, compactR: compact.right,
-        clipped: tabs.filter((t) => t.left < clamp.left - 0.5 || t.right > clamp.right + 0.5).length,
-      };
-    });
-    expect(m.clampR, `${width}: pill under the search box ${JSON.stringify(m)}`).toBeLessThanOrEqual(m.searchL + 0.5);
-    expect(m.clampL, `${width}: pill into the chip ${JSON.stringify(m)}`).toBeGreaterThanOrEqual(m.compactR - 0.5);
-    expect(m.clipped, `${width}: a tab is clipped ${JSON.stringify(m)}`).toBe(0);
+    const m = await headerMetrics(page);
+    const note = `${width} (scrollbar ${scrollbar}): ${JSON.stringify(m)}`;
+    expect(m.clampR, `pill under the search box ${note}`).toBeLessThanOrEqual(m.searchL + 0.5);
+    expect(m.clampL, `pill into the chip ${note}`).toBeGreaterThanOrEqual(m.compactR - 0.5);
+    expect(m.clipped, `a tab is clipped ${note}`).toBe(0);
+    expect(m.navFits, `the nav scrolls ${note}`).toBe(true);
+    expect(m.chevronR, `the chevron past the border ${note}`).toBeLessThanOrEqual(m.compactR + 0.5);
+    expect(m.spill, `a visible child past the border ${note}`).toEqual([]);
+    // Between lg and xl the face is the dot, the name and the chevron: no disk text, no tag.
+    await expect(page.getByTestId('drives-compact-disk')).toBeHidden();
+    await expect(page.getByTestId('drives-compact-wp')).toBeHidden();
+  }
+});
+
+test('C8-17 the super-admin with one board at 1100 and 1180: the pill with Admin does not overflow and clears search', async ({ page, request }) => {
+  await signInAsSuperAdmin(page);
+  await pairDevice(page, request, 'Admin one');
+  for (const width of [1100, 1180]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto('/library');
+    await expect(page.getByRole('link', { name: 'Admin' })).toHaveCount(1);
+    await page.waitForTimeout(150);
+    const m = await headerMetrics(page);
+    const note = `${width}: ${JSON.stringify(m)}`;
+    expect(m.clampR, `pill under the search box ${note}`).toBeLessThanOrEqual(m.searchL + 0.5);
+    expect(m.navFits, `the nav scrolls ${note}`).toBe(true);
+    expect(m.clipped, `a tab is clipped ${note}`).toBe(0);
   }
 });
