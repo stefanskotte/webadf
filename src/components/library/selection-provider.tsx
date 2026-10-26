@@ -5,7 +5,7 @@ import {
 } from 'react';
 import { pageHeading } from '@/components/admin/page-heading';
 import {
-  initSelection, selectionReducer, type PageTitle, type SelectedTitle, type SelectionAction,
+  initSelection, isFormControl, reconcileSelection, selectionReducer, type PageTitle, type SelectedTitle, type SelectionAction,
 } from '@/lib/library-selection';
 
 export interface LibrarySelection {
@@ -54,7 +54,8 @@ export function LibrarySelectionProvider({ viewKey, pageTitles, canSelect, child
   children?: ReactNode;
 }) {
   const [state, setState] = useState(() => initSelection(viewKey));
-  if (state.viewKey !== viewKey) setState(initSelection(viewKey));
+  const reconciled = reconcileSelection(state, viewKey, canSelect);
+  if (reconciled !== state) setState(reconciled);
   const dispatch = useCallback((a: SelectionAction) => setState((s) => selectionReducer(s, a)), []);
   useLayoutEffect(() => () => setState((s) => initSelection(s.viewKey)), []);
 
@@ -86,6 +87,7 @@ export function SelectionScope({ className, children }: { className: string; chi
       className={className}
       onKeyDown={(e) => {
         if (e.key !== 'Escape' || !selecting || e.defaultPrevented) return;
+        if (isFormControl(e.target as Element)) return;
         if (e.target instanceof Element && e.target.closest('[role="dialog"],[role="menu"]')) return;
         e.preventDefault();
         cancel();

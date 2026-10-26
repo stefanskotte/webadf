@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   SELECTION_CAP, canSelectPage, countText, initSelection, offPageCount, offPageText, pageCheck, selectionReducer,
-  titlesWord, disksWord, viewKeyOf, type PageTitle, type SelectionState,
+  titlesWord, disksWord, viewKeyOf, reconcileSelection, isFormControl, type PageTitle, type SelectionState,
 } from './library-selection';
 
 const t = (id: string): PageTitle => ({ id, title: `T ${id}`, year: 1990, diskCount: 1 });
@@ -79,5 +79,27 @@ describe('library selection (spec §1.5, §8 unit)', () => {
     expect(offPageText(4)).toBe(' · 4 on other pages');
     expect(titlesWord(1)).toBe('1 title');
     expect(disksWord(19)).toBe('19 disks');
+  });
+
+  it('an empty page toggled is a no-op: the same state back', () => {
+    const s = on(initSelection('all'));
+    expect(selectionReducer(s, { type: 'togglePage', page: [] })).toBe(s);
+  });
+
+  it('reconcile: a view that stops showing titles drops the selection; otherwise the state is kept', () => {
+    const s = selectionReducer(on(initSelection('all')), { type: 'toggle', title: t('a') });
+    expect(reconcileSelection(s, 'all', true)).toBe(s);
+    expect(reconcileSelection(s, 'all', false)).toEqual(initSelection('all'));
+    expect(reconcileSelection(s, 'collection:c1', true)).toEqual(initSelection('collection:c1'));
+    const off = initSelection('all');
+    expect(reconcileSelection(off, 'all', false)).toBe(off);
+  });
+
+  it('Escape in a native form control is that control\'s, not the selection\'s', () => {
+    expect(isFormControl({ tagName: 'SELECT' })).toBe(true);
+    expect(isFormControl({ tagName: 'INPUT' })).toBe(true);
+    expect(isFormControl({ tagName: 'TEXTAREA' })).toBe(true);
+    expect(isFormControl({ tagName: 'BUTTON' })).toBe(false);
+    expect(isFormControl(null)).toBe(false);
   });
 });

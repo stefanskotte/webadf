@@ -53,6 +53,22 @@ export function offPageCount(selected: ReadonlyMap<string, unknown>, pageIds: re
   return n;
 }
 
+/**
+ * What the provider applies in render: another view, or a view with no titles left to select (emptied by another tab
+ * or a refresh), drops the selection, so nothing stale is pressed or sent when titles come back.
+ */
+export function reconcileSelection(s: SelectionState, viewKey: string, canSelect: boolean): SelectionState {
+  if (s.viewKey !== viewKey) return initSelection(viewKey);
+  if (s.selecting && !canSelect) return initSelection(viewKey);
+  return s;
+}
+
+/** A native text/select control: Escape there belongs to the control, not to the selection. */
+export function isFormControl(target: { tagName?: string } | null): boolean {
+  const tag = target?.tagName?.toUpperCase();
+  return tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA';
+}
+
 export function selectionReducer(s: SelectionState, a: SelectionAction): SelectionState {
   switch (a.type) {
     case 'start':
@@ -70,7 +86,7 @@ export function selectionReducer(s: SelectionState, a: SelectionAction): Selecti
       return { ...s, selected: next };
     }
     case 'togglePage': {
-      if (!s.selecting) return s;
+      if (!s.selecting || a.page.length === 0) return s;
       const pageIds = a.page.map((p) => p.id);
       const next = new Map(s.selected);
       if (pageCheck(s.selected, pageIds) === 'all') {
