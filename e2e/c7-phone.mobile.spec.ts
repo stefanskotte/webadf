@@ -279,6 +279,20 @@ test('C7-03c the phone scrim sits under the tab bar: with the panel open, one ta
   await expect(page.getByTestId('search-panel')).toBeHidden();
 });
 
+test('C7-03g at 768 the search scrim also sits under the tab bar: one tap on Devices navigates', async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 1024 });
+  const u = await signUpFresh(page);
+  const run = runTag();
+  await seedDisk(u.orgId, { title: `Tablet Bar ${run}`, diskNo: 1, sha256: randomBytes(32).toString('hex') });
+  await page.goto('/library');
+  await hydrated(page, 'search-input', 'onChange');
+  await page.getByTestId('search-input').fill(`Tablet Bar ${run}`);
+  await expect(page.getByTestId('search-panel')).toBeVisible();
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Devices' }).tap();
+  await expect(page).toHaveURL(/\/devices/);
+  await expect(page.getByTestId('search-panel')).toBeHidden();
+});
+
 test('C7-03d a tap on the scrim closes the panel and does not reach the link underneath', async ({ page }) => {
   const u = await signUpFresh(page);
   const run = runTag();

@@ -842,3 +842,15 @@ test('inside a collection the heading is its name and its rail row is the curren
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All titles');
   await expect(page.getByTestId('collection-all')).toHaveAttribute('aria-current', 'page');
 });
+
+test('C7 (final review): the current Uncategorized row keeps its raised surface on hover', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/library');
+  const row = page.getByTestId('collection-uncategorized');
+  await expect(row).toHaveAttribute('data-current', 'true');
+  const bg = () => row.evaluate((el) => getComputedStyle(el).backgroundColor);
+  const before = await bg();
+  await row.hover();
+  await page.waitForTimeout(250);
+  expect(await bg()).toBe(before);
+});

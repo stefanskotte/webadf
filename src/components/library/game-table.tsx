@@ -139,7 +139,7 @@ function FolderRow({ collection: c, disks, href }: { collection: CollectionSumma
       <span className="flex min-w-0 flex-col sm:flex-row sm:items-baseline sm:gap-2">
         <span className="text-[14px] font-semibold [overflow-wrap:anywhere] sm:truncate" style={{ color: 'var(--ink)' }}>{c.name}</span>
         {/* Below sm the fact line (Plan ruling, C7 Task 5); from sm the count beside the name, as before. */}
-        <span data-meta="" className="text-[12px]" style={{ color: 'var(--muted-2)' }}>
+        <span data-meta="" className="text-[12px] sm:shrink-0 sm:whitespace-nowrap" style={{ color: 'var(--muted-2)' }}>
           <span className="sm:hidden">Collection · </span>
           <span data-testid="folder-titles">{titles}</span>
         </span>

@@ -38,9 +38,11 @@ import {
 } from './collection-provider';
 
 /** A rail row from md; a chip below it (44 px, round, a hairline on the surface). */
-const ROW = 'flex min-w-0 shrink-0 items-center gap-2.5 text-[14px] md:h-[38px] md:rounded-[10px] md:px-3 md:hover:bg-(--track) max-md:h-11 max-md:whitespace-nowrap max-md:rounded-full max-md:border max-md:px-3 max-md:text-[13px]';
+const ROW = 'flex min-w-0 shrink-0 items-center gap-2.5 text-[14px] md:h-[38px] md:rounded-[10px] md:px-3 max-md:h-11 max-md:whitespace-nowrap max-md:rounded-full max-md:border max-md:px-3 max-md:text-[13px]';
 /** A chip that is not the current one: a surface chip. Not in ROW, where it would beat CURRENT's ink on a phone. */
 const CHIP = 'max-md:border-(--line) max-md:bg-(--surface)';
+/** Hover tint for a row that is not current (on the current row it would beat CURRENT's raised surface). */
+const HOVER = 'md:hover:bg-(--track)';
 /** The current row: a raised surface from md, an ink chip below it. In classes, so each width keeps its own look. */
 const CURRENT = 'md:bg-(--surface) md:shadow-[0_1px_2px_rgb(36_33_27/.1),0_0_0_1px_var(--line)] max-md:border-(--ink) max-md:bg-(--ink)';
 /** A row's words: ink, and the surface on the ink chip. */
@@ -115,7 +117,7 @@ export function CollectionRail({ viewMode = 'grid' }: { viewMode?: 'grid' | 'tab
           data-testid="collection-uncategorized"
           data-current={inbox}
           aria-current={inbox ? 'page' : undefined}
-          className={`group ${ROW} justify-between ${inbox ? CURRENT : CHIP}`}
+          className={`group ${ROW} justify-between ${inbox ? CURRENT : `${CHIP} ${HOVER}`}`}
         >
           <span className="flex min-w-0 items-center gap-2.5">
             <Dot color="#C4B9A2" />
@@ -165,7 +167,7 @@ export function CollectionRail({ viewMode = 'grid' }: { viewMode?: 'grid' | 'tab
           data-testid="collection-all"
           data-current={all}
           aria-current={all ? 'page' : undefined}
-          className={`group ${ROW} ${all ? CURRENT : CHIP}`}
+          className={`group ${ROW} ${all ? CURRENT : `${CHIP} ${HOVER}`}`}
         >
           <Dot color="var(--ink)" />
           <span className={NAME} style={{ fontWeight: all ? 600 : 500 }}>All titles</span>
@@ -304,7 +306,7 @@ function CollectionRow({
       data-collection-id={collection.id}
       data-current={showCurrent}
       data-drop-target={isDropTarget ? 'true' : undefined}
-      className={`group flex shrink-0 items-center gap-1 md:h-[38px] md:rounded-[10px] md:pl-1 md:pr-1.5 max-md:h-11 max-md:rounded-full max-md:border ${active ? 'max-md:pr-0' : 'max-md:pr-3'} ${showCurrent ? CURRENT : `${CHIP} md:hover:bg-(--track)`}`}
+      className={`group flex shrink-0 items-center gap-1 md:h-[38px] md:rounded-[10px] md:pl-1 md:pr-1.5 max-md:h-11 max-md:rounded-full max-md:border ${active ? 'max-md:pr-0' : 'max-md:pr-3'} ${showCurrent ? CURRENT : `${CHIP} ${HOVER}`}`}
     >
       {/*
         `touchAction: 'none'` is load-bearing for the TouchSensor's press-and-hold: dnd-kit only calls preventDefault()

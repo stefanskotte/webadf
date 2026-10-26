@@ -447,7 +447,7 @@ export function SearchBox() {
              onPointerDown={() => { if (!isPhone()) setOpen(false); }}
              onMouseDown={(e) => { if (isPhone()) e.preventDefault(); }}
              onClick={() => setOpen(false)}
-             className="fixed inset-x-0 bottom-0 top-[60px] z-30 bg-transparent sm:z-40 sm:bg-(--search-scrim) lg:top-[72px]" />
+             className="fixed inset-x-0 bottom-0 top-[60px] z-30 bg-transparent sm:bg-(--search-scrim) lg:z-40 lg:top-[72px]" />
       )}
 
       {panelOpen && (

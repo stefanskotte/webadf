@@ -68,7 +68,7 @@ export function HeaderStart({ pillEstimate, children }: { pillEstimate: number; 
       ref={ref}
       data-testid="header-start"
       data-pill-estimate={pillEstimate}
-      className="flex min-w-0 flex-1 items-center gap-2.5 lg:flex-none lg:gap-4 xl:flex-1 xl:max-w-[calc(50%-var(--nav-pill-w)/2-1rem)]"
+      className="flex max-lg:min-w-0 flex-1 items-center gap-2.5 lg:flex-none lg:gap-4 xl:flex-1 xl:max-w-[calc(50%-var(--nav-pill-w)/2-1rem)]"
       style={{ '--nav-pill-w': `${pillWidth}px` } as React.CSSProperties}
     >
       {children}
