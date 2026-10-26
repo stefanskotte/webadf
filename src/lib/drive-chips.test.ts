@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MAX_CHIPS, chipSlots, diskText, driveChips, preloadText, protectTag, splitChips, toDriveChip } from './drive-chips';
+import { MAX_CHIPS, chipSlots, diskLine, diskText, driveChips, nextLabel, preloadText, protectTag, splitChips, toDriveChip } from './drive-chips';
 import { STALE_AFTER_MS } from './device-state';
 import type { LiveStateRow } from './live-state';
 
@@ -69,8 +69,15 @@ describe('toDriveChip', () => {
     expect(protectTag(chip({ ...loaded, mountedDiskWriteProtected: false }))).toBe('RW');
   });
 
-  it('leaves the disk number off a one-disk game', () => {
-    expect(chip({ ...loaded, mountedDiskCount: 1 }).disk?.diskNo).toBeNull();
+  it('carries the disk number and the title\'s disk count on every title, one-disk ones included (C8 Ruling 4)', () => {
+    expect(chip(loaded).disk).toMatchObject({ diskNo: 1, diskCount: 2 });
+    expect(chip({ ...loaded, mountedDiskCount: 1 }).disk).toMatchObject({ diskNo: 1, diskCount: 1 });
+  });
+
+  it('says how long ago an offline board was seen, and nothing while it is online', () => {
+    expect(chip(loaded).seen).toBeNull();
+    expect(chip({ ...loaded, lastSeenAt: new Date(NOW - 5 * 60_000) }).seen).toBe('5m ago');
+    expect(chip({ ...loaded, lastSeenAt: null }).seen).toBe('never');
   });
 
   it('an HFE reads WP and cannot be toggled (the PATCH refuses to unprotect one)', () => {
@@ -169,34 +176,34 @@ describe('driveChips', () => {
   });
 });
 
-describe('chipSlots', () => {
-  it.each([
-    [390, 0], [1279, 0], [1280, 1], [1535, 1], [1536, 2], [1919, 2], [1920, 3], [2560, 3],
-  ])('at %ipx there is room for %i chip(s)', (w, n) => {
-    expect(chipSlots(w)).toBe(n);
-  });
-
-  // The Admin item widens the pill by ~77px: two widest chips plus "+k" no
-  // longer fit at 2xl, nor three at 1920 (measured 2026-10-24).
+describe('chipSlots (C8 spec §2.1: the 240 px chip)', () => {
   it.each([
     [390, 0], [1279, 0], [1280, 1], [1535, 1], [1536, 1], [1919, 1], [1920, 2], [2560, 2],
-  ])('with the Admin item, at %ipx there is room for %i chip(s)', (w, n) => {
-    expect(chipSlots(w, true)).toBe(n);
+  ])('a member at %ipx has room for %i chip(s), whatever the board count', (w, n) => {
+    for (const boards of [1, 2, 5]) expect(chipSlots(w, false, boards), `${boards} boards`).toBe(n);
   });
 
-  it('never exceeds MAX_CHIPS', () => {
+  it.each([
+    [1280, 1, 1], [1280, 2, 0], [1280, 4, 0], [1535, 2, 0], [1536, 2, 1], [1919, 3, 1], [1920, 2, 2], [2560, 4, 2],
+  ])('with the Admin item, at %ipx with %i board(s): %i chip(s) -- none at 1280-1535 once "+k" is needed', (w, boards, n) => {
+    expect(chipSlots(w, true, boards)).toBe(n);
+  });
+
+  it('below xl there is never a chip, and never more than MAX_CHIPS', () => {
+    expect(chipSlots(1279, true, 1)).toBe(0);
+    expect(MAX_CHIPS).toBe(2);
     expect(chipSlots(10_000)).toBeLessThanOrEqual(MAX_CHIPS);
-    expect(chipSlots(10_000, true)).toBeLessThanOrEqual(MAX_CHIPS);
+    expect(chipSlots(10_000, true, 9)).toBeLessThanOrEqual(MAX_CHIPS);
   });
 });
 
 describe('splitChips', () => {
-  it('shows every chip when there are three or fewer', () => {
-    expect(splitChips([1, 2, 3])).toEqual({ shown: [1, 2, 3], rest: [] });
+  it('shows every chip when there are two or fewer', () => {
+    expect(splitChips([1, 2])).toEqual({ shown: [1, 2], rest: [] });
   });
 
-  it('shows three and puts the rest behind "+k"', () => {
-    expect(splitChips([1, 2, 3, 4, 5])).toEqual({ shown: [1, 2, 3], rest: [4, 5] });
+  it('shows two and puts the rest behind "+k"', () => {
+    expect(splitChips([1, 2, 3, 4, 5])).toEqual({ shown: [1, 2], rest: [3, 4, 5] });
   });
 });
 
@@ -220,5 +227,45 @@ describe('the DF1 line in the drive menu (spec 2026-10-14 §3.3, plan ruling 7)'
       ...loaded, secondDriveReported: 'df1', df1DiskId: 'disk-x', df1PickTitle: 'Lotus', df1PickDiskNo: 2,
       df1PickSha256: P, df1Sha256: P,
     }, NOW).df1).toBe('DF1: Lotus disk 2 — read-only');
+  });
+});
+
+describe('diskLine: the card\'s second line, in words for every phase (C8 spec §3.3)', () => {
+  it('a loaded disk is its title and "disk n of N", "disk 1 of 1" included', () => {
+    expect(diskLine(chip(loaded))).toEqual({ kind: 'title', title: 'Turrican', count: 'disk 1 of 2' });
+    expect(diskLine(chip({ ...loaded, mountedDiskCount: 1 }))).toEqual({ kind: 'title', title: 'Turrican', count: 'disk 1 of 1' });
+  });
+  it('an unknown count leaves the count off rather than guessing', () => {
+    expect(diskLine(chip({ ...loaded, mountedDiskCount: null }))).toEqual({ kind: 'title', title: 'Turrican', count: null });
+  });
+  it('stale numbers ("disk 3 of 2", "disk 1 of 0", "disk 0 of 2") leave the count off', () => {
+    for (const [no, count] of [[3, 2], [1, 0], [0, 2], [-1, 2]] as const) {
+      expect(diskLine(chip({ ...loaded, mountedDiskNo: no, mountedDiskCount: count })), `${no} of ${count}`)
+        .toEqual({ kind: 'title', title: 'Turrican', count: null });
+    }
+    expect(diskLine(chip({ ...loaded, mountedDiskNo: 2, mountedDiskCount: 2 })))
+      .toEqual({ kind: 'title', title: 'Turrican', count: 'disk 2 of 2' });
+  });
+  it('an empty drive, a load and an eject are words', () => {
+    expect(diskLine(chip(empty))).toEqual({ kind: 'text', text: 'Drive empty' });
+    expect(diskLine(chip({ ...loaded, desiredDiskId: 'disk-2', desiredSha256: B, desiredGameTitle: 'Lotus' })))
+      .toEqual({ kind: 'text', text: 'Loading Lotus…' });
+    expect(diskLine(chip({ ...loaded, desiredDiskId: 'disk-2', desiredSha256: B, desiredGameTitle: null })))
+      .toEqual({ kind: 'text', text: 'Loading a disk…' });
+    expect(diskLine(chip({ ...loaded, desiredDiskId: null, desiredSha256: null })))
+      .toEqual({ kind: 'text', text: 'Ejecting Turrican…' });
+  });
+  it('a digest without a disk row (older firmware) is "A disk", with no count and nothing to link', () => {
+    expect(diskLine(chip({ ...loaded, mountedDiskId: null, mountedGameId: null, mountedGameTitle: null })))
+      .toEqual({ kind: 'text', text: 'A disk' });
+  });
+});
+
+describe('nextLabel: the Next button\'s words and its accessible name (Plan ruling, WCAG 2.5.3)', () => {
+  it('the name starts with the visible words, then the count, then the wrap', () => {
+    expect(nextLabel({ diskNo: 2, diskCount: 3, wraps: false, preload: null }))
+      .toEqual({ text: 'Next: disk 2', name: 'Next: disk 2 of 3' });
+    expect(nextLabel({ diskNo: 1, diskCount: 2, wraps: true, preload: 'ready' }))
+      .toEqual({ text: 'Next: disk 1', name: 'Next: disk 1 of 2 (wraps)' });
   });
 });

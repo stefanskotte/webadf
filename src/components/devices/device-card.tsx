@@ -23,7 +23,7 @@ import { TransferBox } from './transfer-box';
  * opens a modal. The disk is always named in words in the drive box; the glass is a canvas.
  */
 export function DeviceCard(
-  { device, now, firmware, selection, onCancelUpdate, next, sendLine, transfer, uploadLine }: {
+  { device, now, firmware, selection, onCancelUpdate, next, sendLine, transfer, uploadLine, openSettings }: {
     device: DeviceListItem; now: number; firmware: FirmwareState;
     /** Absent when this board cannot be updated -- no checkbox is drawn at all. */
     selection?: { selected: boolean; onToggle: (id: string) => void };
@@ -36,6 +36,8 @@ export function DeviceCard(
     /** Whether Transfer runs on the Amiga; null for a board that cannot take files. */
     transfer?: { running: boolean } | null;
     uploadLine?: { text: string; href: boolean } | null;
+    /** True once, when the header drive panel's gear asked for this board's Board settings (C8 spec §4.4). */
+    openSettings?: boolean;
   },
 ) {
   const state = deviceState(device, now);
@@ -82,7 +84,7 @@ export function DeviceCard(
                            isDefault={isDefaultDeviceName(device.name, device.macAddress)} />
             </div>
             <span className="flex-1" />
-            <BoardSettings device={device} />
+            <BoardSettings device={device} openOnArrival={openSettings} />
             {/* Both values of "is this device online" are words in a pill, never an absent icon (Ruling 10). */}
             <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-semibold"
                   style={{ background: pill.bg, color: pill.fg }}

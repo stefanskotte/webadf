@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import type { DeviceListItem } from '@/lib/queries';
 import type { FirmwareState, ReleaseRef } from '@/lib/firmware-state';
@@ -46,6 +46,16 @@ export function DeviceList({
   skipPassword?: boolean;
 }) {
   const router = useRouter();
+  // The header drive panel's gear links to /devices?settings=<id> (C8 spec §4.4, Ruling 12). Read here, on the client,
+  // rather than as the page's searchParams prop: the prop would still hold <id> after the strip below, so a second
+  // press on the same gear would change nothing (C8 plan ruling). The matching card opens its Board settings; any id
+  // (known or not) leaves the URL -- the known one for its card's anchor, as the board-name link does.
+  const arrival = useSearchParams().get('settings');
+  useEffect(() => {
+    if (arrival === null) return;
+    const known = devices.some((d) => d.id === arrival);
+    window.history.replaceState(null, '', known ? `/devices#device-${arrival}` : '/devices');
+  }, [arrival, devices]);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState(false);
   const [password, setPassword] = useState('');
@@ -253,6 +263,7 @@ export function DeviceList({
               sendLine={sendLineById[d.id] ?? null}
               transfer={transferById[d.id] ?? null}
               uploadLine={uploadLineById[d.id] ?? null}
+              openSettings={arrival === d.id}
             />
           ))}
           {devices.length === 1 && <PairAnotherCard />}

@@ -801,3 +801,44 @@ test('the phone shell pairs are legible at 390: the current tab, another tab, a 
   await expect(page.getByTestId('nav-more-menu')).toBeVisible();
   await legible(page, 'phone', [['More menu item', '[data-testid="more-help"]']]);
 });
+
+// Phase C8 (spec §9.5 C8-15, Ruling 23): the drive panel's text on its real elements -- Manage devices
+// (--accent-amber) on the popup's --surface, the disk line (--muted) on the card's --surface-2, the offline line
+// (--amber-text) on --surface-2, and both pills' words on their pills.
+test('C8-15 the drive panel pairs are legible: Manage devices, the disk line, the offline line, both pills', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const on = await pairDevice(page, request, 'Aa contrast on');
+  const off = await pairDevice(page, request, 'Ab contrast off');
+  await getDb().update(devices).set({ name: 'Aa contrast on', lastSeenAt: new Date() }).where(eq(devices.id, on.deviceId));
+  await getDb().update(devices).set({ name: 'Ab contrast off', lastSeenAt: new Date(Date.now() - 60 * 60_000) })
+    .where(eq(devices.id, off.deviceId));
+  const tag = runTag();
+  const s = createHash('sha256').update(`c8-contrast-${tag}`).digest('hex');
+  const { diskId } = await seedDisk(orgId, { title: `Contrast ${tag.slice(-5)}`, diskNo: 1, sha256: s });
+  const res = await page.request.post(`/api/devices/${on.deviceId}/mount`, { data: { diskId } });
+  const { version } = await res.json();
+  expect((await request.post('/api/device/status', {
+    headers: authHeader(on.token), data: { mountedSha256: s, mountedDiskId: diskId, version },
+  })).status()).toBe(204);
+
+  await page.goto('/library');
+  await hydrated(page, `drive-chip-${on.deviceId}`);
+  await page.getByTestId(`drive-chip-${on.deviceId}`).click();
+  await expect(page.getByTestId(`drive-chip-menu-${on.deviceId}`)).toBeVisible();
+  await page.mouse.move(0, 0);
+  await legible(page, 'drive', [
+    ['Manage devices', '[data-testid="drive-panel-manage"]'],
+    ['disk line', `[data-testid="drive-entry-disk-${on.deviceId}"]`],
+    ['Online pill', `[data-testid="drive-entry-status-${on.deviceId}"]`],
+  ]);
+  await page.keyboard.press('Escape');
+  // At 1280 the second board is behind "+1".
+  await hydrated(page, 'drive-chip-more');
+  await page.getByTestId('drive-chip-more').click();
+  await expect(page.getByTestId('drive-chip-more-menu')).toBeVisible();
+  await page.mouse.move(0, 0);
+  await legible(page, 'drive', [
+    ['offline line', `[data-testid="drive-entry-offline-${off.deviceId}"]`],
+    ['Offline pill', `[data-testid="drive-entry-status-${off.deviceId}"]`],
+  ]);
+});

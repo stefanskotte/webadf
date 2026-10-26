@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { signUpFresh, runTag } from './helpers';
-import { pairDevice, seedDisk, addDisk, authHeader, cleanupSeeded } from './device-helpers';
+import { pairDevice, seedDisk, addDisk, authHeader, cleanupSeeded, hydrated } from './device-helpers';
 
 /**
  * Multi-disk "Next disk" (2026-09-28 plan, task 13): the drive menu's Next
@@ -57,23 +57,26 @@ test('the drive menu offers Next disk and it advances, then wraps', async ({ pag
   await mountAndConverge(page, request, { deviceId, token }, { diskId: disk1, sha256: sha(`${tag}-1`) });
 
   await page.goto('/library');
+  await hydrated(page, `drive-chip-${deviceId}`);
   await chip(page, deviceId).click();
   await expect(menu(page, deviceId)).toBeVisible();
   const nextItem = page.getByTestId(`drive-next-${deviceId}`);
-  await expect(nextItem).toHaveText('Next disk: Disk 2 of 2');
+  // C8: the card's words, the count and the wrap in the name (Plan ruling: the name starts with the visible words).
+  await expect(nextItem).toHaveText('Next: disk 2');
+  await expect(nextItem).toHaveAccessibleName('Next: disk 2 of 2');
 
   await nextItem.click();
   await expect.poll(() => desiredDiskIdOf(deviceId)).toBe(disk2.diskId);
 
-  // Board reports disk 2: converged, and the menu now offers the WRAP back to disk 1.
+  // Board reports disk 2: converged, and the still-open panel now offers the WRAP back to disk 1.
   expect((await request.post('/api/device/status', {
     headers: authHeader(token),
     data: { mountedSha256: sha(`${tag}-2`), mountedDiskId: disk2.diskId },
   })).status()).toBe(204);
 
-  await chip(page, deviceId).click();
   await expect(menu(page, deviceId)).toBeVisible();
-  await expect(page.getByTestId(`drive-next-${deviceId}`)).toHaveText('Next disk: Disk 1 of 2 (wraps)');
+  await expect(page.getByTestId(`drive-next-${deviceId}`)).toHaveText('Next: disk 1', LIVE);
+  await expect(page.getByTestId(`drive-next-${deviceId}`)).toHaveAccessibleName('Next: disk 1 of 2 (wraps)');
 });
 
 test('the preload line shows every state', async ({ page, request }) => {
