@@ -81,6 +81,11 @@ Each area: a short spec, a plan, the build, the e2e specs for that area, merge.
 - Search inside disks: a `blob_files` index (path, name, kind, size; optional excerpt of small text files) filled by a
   resumable sweep like the TOSEC one plus an ingest hook; a third group in `lib/search.ts`; blob-GC and admin-delete
   upkeep. About a week.
+- Admin resets any user's password (operator 2026-10-26): a server-admin action on Admin › Users that sets a new
+  password for a user (generated, shown once to the admin), with the same typed-confirmation care as Delete. Today there
+  is no way in the app; on 2026-10-26 one was reset by hand with better-auth's `hashPassword` straight into
+  `auth.account` (credential row). Decide whether it also signs the user out everywhere. Self-host parity: it must work
+  without email.
 - Forgot password by email: the app sends no email today; needs a mail provider, with a self-host path (parity rule).
 - DF1 "Any disk" writable: DF1 write-back in firmware and server.
 - Library multi-select (operator 2026-10-25): an icon at the top of the grid and table views turns on "multi
