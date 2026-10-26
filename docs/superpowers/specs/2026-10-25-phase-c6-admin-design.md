@@ -453,7 +453,7 @@ Links keep `show`. The board's "load as you scroll" is not built (Ruling 27).
 
 Area 7 owns the phone pass. Here: the admin header wraps as today, its fixed bottom bar now holds the Main nav;
 `admin-sections` scrolls inside its clamp; the PageHeader stacks (title, subtitle, then the action); tiles are two per
-row; the firmware and attention cards stack; the Users and Invites tables scroll sideways inside their cards (the page
+row; the firmware and attention cards stack; the Users rows stack and the Invites table scrolls sideways inside its card (the page
 does not), their footers wrap; firmware rows are a column; the Scan cards and imports are one per row; the new-code
 panel wraps (code, then the copy buttons); both modals are full screen (`Modal`'s rule). Nothing scrolls the page
 sideways.
@@ -589,6 +589,9 @@ are decoration beside the numbers and words that carry the state.
 8. **Users and Invites stay real `<table>`s, styled as the board's grid, scrolling sideways inside their cards on a
    narrow screen.** — header association for screen readers, and `getByRole('row')` semantics; area 7 owns phone
    cards. — cost if wrong: a phone scrolls the table.
+   *Amended in the build (controller, Task 7):* below `sm` the Users rows stack (explicit `table`/`row`/`cell`
+   roles kept, `data-label` per stat), because at 390 px Delete… sat past the scroll edge (762 px) — a delete
+   control a phone user cannot find is worse than a stacked row. Invites keeps the sideways scroll.
 9. **The Users columns take the board's words — Titles, Boards — over the same counts** (`games`, `devices`). — the
    product's words since Phase B. — cost if wrong: none.
 10. **An allowlisted account shows the board's Admin pill and its Delete… is `aria-disabled`** with the reason in its
