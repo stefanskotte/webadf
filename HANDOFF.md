@@ -1480,11 +1480,31 @@ separately.
 
 **Current order (re-checked 2026-10-24):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d; C5 Settings/Help/Search/Sign in SHIPPED 2026-10-25, merge f6d1941; C6 Admin SHIPPED 2026-10-26, merge 8d943f7; C7 Phone + About into Settings SHIPPED 2026-10-26, merge 4efffae**; next C8 header drive menu (simple), C9 GitHub page, then library multi-select) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
+**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d; C5 Settings/Help/Search/Sign in SHIPPED 2026-10-25, merge f6d1941; C6 Admin SHIPPED 2026-10-26, merge 8d943f7; C7 Phone + About into Settings SHIPPED 2026-10-26, merge 4efffae; C8 header drive menu SHIPPED 2026-10-26, merge 79d7c07**; next C9 GitHub page, then library multi-select) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **Phase C8 Header drive menu, simple version -- SHIPPED 2026-10-26** (merge 79d7c07; spec
+  `docs/superpowers/specs/2026-10-26-phase-c8-drive-menu-design.md` (25 rulings), plan
+  `docs/superpowers/plans/2026-10-26-phase-c8-drive-menu.md`; operator's reference: a chip and a one-card panel).
+  Chip: 40 px, 14 px text, board name + disk + `WP` tag, no n/N count, capped at 240 px from lg. Slots: a member gets
+  1/1/2 chips at 1280/1536/1920 (was 1/2/3; `MAX_CHIPS` 2), "+k" for the rest (narrowed to px-1.5); a super-admin with 2+
+  boards gets the compact control up to 1535. Below xl one compact control: with one board it is that board's chip
+  (from lg to xl capped at 120 px, face = dot + shrinking name + chevron; the disk and tag in its title), with 2+ it is
+  "Drives n" (Ruling 5 -- a board count, not the removed n/N). Menu -> Base UI Popover panel: "Controlling" + "Manage
+  devices", one card per board (disk icon, "<board> · DF0", "<title> · disk n of N" -- the title truncates, the count
+  stays, Online/Offline pill, offline "last seen ..." or "never seen", Write-protect switch, Next: disk n, Eject, gear).
+  Offline boards keep live controls (Ruling 10; changes reach the board on reconnect). Every action: aria-disabled +
+  in-flight ref guard + try/catch/finally (a double click sends once). Focus: Escape/outside press back to the chip; a
+  link press back to the chip (final review -- Next 16 moves no focus on navigation); a live update never moves focus;
+  a deleted board's open panel rescues to the wordmark. The gear goes to `/devices?settings=<id>`: Devices opens that
+  board's Board settings once and strips the parameter (foreign or unknown ids open nothing). The phone panel stops
+  above the tab bar with 44 px targets and scrolls inside itself. Deferred minors: busy Next reads "Switching…"
+  without the n-of-N context; a second gear press from /devices adds a history entry; at 1280 with a Windows classic
+  scrollbar a member's chip + "+k" sit ~8 px from the nav pill (no overlap); a super-admin with one board at
+  1024-1082 sees the nav pill scroll; relative() rounds 59.6 min to "60m ago". A dev "1 Issue" badge appeared once in a
+  390 screenshot; a console probe did not reproduce it. e2e: collections must run per project (12.3 min with both).
 - **Phase C7 Phone layouts + About into Settings -- SHIPPED 2026-10-26** (merge 4efffae; spec
   `docs/superpowers/specs/2026-10-26-phase-c7-phone-about-design.md` (30 rulings, measured at 390/640/768/1000), plan
   `docs/superpowers/plans/2026-10-26-phase-c7-phone-about.md`). Below lg (not sm -- Ruling 1: the nav clipped from 640 to
