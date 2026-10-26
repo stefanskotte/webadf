@@ -371,3 +371,18 @@ test('C8-16 the board is deleted while its panel is open: focus lands on the wor
   await expect(chip(page, deviceId)).toHaveCount(0, LIVE);
   await expect(page.getByTestId('wordmark-home')).toBeFocused();
 });
+
+test('C8-17 a live update that removes Next leaves focus on the popup, not on Eject (spec 6/7: live updates never move focus)', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const b = await loadedBoard(page, request, orgId, 'Bench', 2);
+  await page.goto('/library');
+  await openPanel(page, b.deviceId);
+  await expect(panel(page, b.deviceId)).toBeFocused();
+  await expect(page.getByTestId(`drive-next-${b.deviceId}`)).toBeVisible();
+  expect((await page.request.post(`/api/devices/${b.deviceId}/eject`)).status()).toBeLessThan(300);
+  await expect(page.getByTestId(`drive-next-${b.deviceId}`)).toHaveCount(0, LIVE);
+  await expect(page.getByTestId(`drive-entry-disk-${b.deviceId}`)).toContainText('Ejecting');
+  await page.waitForTimeout(500);
+  await expect(page.getByTestId(`drive-eject-${b.deviceId}`)).not.toBeFocused();
+  await expect(panel(page, b.deviceId)).toBeFocused();
+});

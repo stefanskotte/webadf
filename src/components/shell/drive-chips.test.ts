@@ -10,7 +10,7 @@ vi.mock('next/navigation', () => ({
 }));
 vi.mock('sonner', () => ({ toast: { success: () => {}, error: () => {}, message: () => {} } }));
 
-const { DriveChips, DriveCard, MoreList } = await import('./drive-chips');
+const { DriveChips, DriveCard, MoreList, closeOnPlainClick } = await import('./drive-chips');
 const { chipSlots } = await import('@/lib/drive-chips');
 
 /** A converged, online board holding disk 1 of a two-disk title, protected. */
@@ -199,5 +199,22 @@ describe('DriveCard (C8 spec §3.3, §4, §5)', () => {
     expect(openTag(html, 'drive-preload-dev-a')).toContain('data-preload="ready"');
     expect(html).toContain('Disk 2 ready (instant swap)');
     expect(html).toMatch(/data-testid="drive-entry-df1-dev-a"[^>]*>DF1: next disk of the set — empty</);
+  });
+});
+
+describe('fix round 1', () => {
+  it('a board never seen says so, not "last seen never"', () => {
+    const html = card({ ...base, online: false, seen: 'never' });
+    expect(html).toMatch(/data-testid="drive-entry-offline-dev-a"[^>]*>Offline, never seen\. Changes reach it when it reconnects\.</);
+    expect(html).not.toContain('last seen never');
+  });
+  it('a modified or non-primary click on a panel link does not close the panel', () => {
+    let closed = 0;
+    const h = closeOnPlainClick(() => { closed++; });
+    const ev = (o: object) => ({ button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...o }) as never;
+    h(ev({ metaKey: true })); h(ev({ ctrlKey: true })); h(ev({ shiftKey: true })); h(ev({ altKey: true })); h(ev({ button: 1 }));
+    expect(closed).toBe(0);
+    h(ev({}));
+    expect(closed).toBe(1);
   });
 });

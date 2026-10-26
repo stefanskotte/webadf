@@ -229,12 +229,21 @@ function PanelCards({ chips, panel }: { chips: DriveChip[]; panel: Panel }) {
   );
 }
 
+/** A link press closes the panel only when it navigates in this tab: a modified or middle click opens elsewhere and
+ *  leaves the panel (and its focus) alone. */
+export function closeOnPlainClick(close: () => void) {
+  return (e: { button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    close();
+  };
+}
+
 function PanelHead({ close }: { close: () => void }) {
   return (
     <div className="flex items-center justify-between px-2.5 pb-0.5 pt-2">
       {/* Plain text, not a heading: one per panel, no section structure (spec §3.2). */}
       <span className="text-[12px] font-medium text-(--muted-2)">Controlling</span>
-      <Link href="/devices" data-testid="drive-panel-manage" onClick={close}
+      <Link href="/devices" data-testid="drive-panel-manage" onClick={closeOnPlainClick(close)}
             className="flex items-center text-[13px] font-semibold text-(--accent-amber) underline-offset-2 hover:underline max-lg:min-h-11">
         Manage devices
       </Link>
@@ -400,10 +409,15 @@ export function DriveCard({ chip, close }: { chip: DriveChip; close: () => void 
   // Ruling 18: Next unmounts on the loading refresh; if it held the focus, the same card's Eject takes it.
   const ejectRef = useRef<HTMLButtonElement>(null);
   const hadNext = useRef(chip.next !== null);
+  // Only a user who was ON Next is rescued; a live update never moves focus (spec 6/7).
+  const nextHadFocus = useRef(false);
   useEffect(() => {
     const had = hadNext.current;
     hadNext.current = chip.next !== null;
     if (!had || chip.next !== null) return;
+    const was = nextHadFocus.current;
+    nextHadFocus.current = false;
+    if (!was) return;
     // Base UI may already have pulled the lost focus onto the popup itself; either way nothing useful holds it.
     const a = document.activeElement;
     if (!a || a === document.body || a.hasAttribute('data-drive-panel')) ejectRef.current?.focus();
@@ -424,7 +438,7 @@ export function DriveCard({ chip, close }: { chip: DriveChip; close: () => void 
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="flex min-w-0 items-baseline">
             {/* The board's name goes to its card on /devices (operator, 2026-10-01); Ruling 13: no ↗. */}
-            <Link href={`/devices#device-${chip.id}`} data-testid={`drive-entry-link-${chip.id}`} onClick={close}
+            <Link href={`/devices#device-${chip.id}`} data-testid={`drive-entry-link-${chip.id}`} onClick={closeOnPlainClick(close)}
                   className="min-w-0 truncate text-[15px] font-semibold text-(--ink) underline-offset-2 hover:underline">
               {chip.name}
             </Link>
@@ -434,7 +448,7 @@ export function DriveCard({ chip, close }: { chip: DriveChip; close: () => void 
           </span>
           <span data-testid={`drive-entry-disk-${chip.id}`} className="truncate font-mono text-[12px] text-(--muted)">
             {line.kind === 'title' && chip.canGoTo && disk?.gameId ? (
-              <Link href={`/games/${disk.gameId}`} data-testid={`drive-goto-${chip.id}`} onClick={close}
+              <Link href={`/games/${disk.gameId}`} data-testid={`drive-goto-${chip.id}`} onClick={closeOnPlainClick(close)}
                     className="underline-offset-2 hover:underline">{line.title}</Link>
             ) : (
               // No link (Plan ruling): the words carry Go to disk's id, marked off, so it still reads as unavailable.
@@ -463,7 +477,7 @@ export function DriveCard({ chip, close }: { chip: DriveChip; close: () => void 
       {!chip.online && (
         // Ruling 10: every control stays live; this says why that is safe.
         <p data-testid={`drive-entry-offline-${chip.id}`} className="text-[12px] text-(--amber-text)">
-          Offline, last seen {chip.seen}. Changes reach it when it reconnects.
+          {chip.seen === 'never' ? 'Offline, never seen.' : `Offline, last seen ${chip.seen}.`} Changes reach it when it reconnects.
         </p>
       )}
 
@@ -488,7 +502,9 @@ export function DriveCard({ chip, close }: { chip: DriveChip; close: () => void 
         {nextWords && (
           <button type="button" data-testid={`drive-next-${chip.id}`} {...offAttrs(next.off, next.busy)}
                   aria-label={next.busy ? undefined : nextWords.name} title={nextWords.name}
-                  onClick={() => void next.run()} className={ACTION}>
+                  onFocus={() => { nextHadFocus.current = true; }}
+                  onBlur={(e) => { if (e.relatedTarget) nextHadFocus.current = false; }}
+                  onClick={() => { nextHadFocus.current = true; void next.run(); }} className={ACTION}>
             {next.busy ? 'Switching…' : nextWords.text}
           </button>
         )}
@@ -502,7 +518,7 @@ export function DriveCard({ chip, close }: { chip: DriveChip; close: () => void 
           {eject.busy ? 'Ejecting…' : 'Eject'}
         </button>
         {/* Ruling 12: the board's existing Board settings modal, opened on /devices (Task 4 of the C8 plan). */}
-        <Link href={`/devices?settings=${chip.id}`} data-testid={`drive-settings-${chip.id}`} onClick={close}
+        <Link href={`/devices?settings=${chip.id}`} data-testid={`drive-settings-${chip.id}`} onClick={closeOnPlainClick(close)}
               aria-label={`${chip.name} board settings`} className={GEAR}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
