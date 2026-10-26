@@ -1480,11 +1480,28 @@ separately.
 
 **Current order (re-checked 2026-10-24):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d; C5 Settings/Help/Search/Sign in SHIPPED 2026-10-25, merge f6d1941**; next C6 Admin) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
+**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d; C5 Settings/Help/Search/Sign in SHIPPED 2026-10-25, merge f6d1941; C6 Admin SHIPPED 2026-10-26, merge 8d943f7**; next C7 Phone 390 + About into Settings, then C8 header drive menu (simple), C9 GitHub page, then library multi-select) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **Phase C6 Admin -- SHIPPED 2026-10-26** (merge 8d943f7; spec `docs/superpowers/specs/2026-10-25-phase-c6-admin-design.md`
+  (39 rulings, Ruling 20 operator-confirmed, Ruling 8 amended in the build), plan `docs/superpowers/plans/2026-10-25-phase-c6-admin.md`).
+  Overview (tiles, boards-by-firmware bars, Needs attention; own loading frame via route group `admin/(overview)/`), Users
+  (typed-address delete dialog; rows stack below sm with explicit table roles so Delete… is reachable at 390), Invites (no
+  confirm on Revoke, operator), Scan (cards; "% recognised" = matched / decided, never rounded up to 100 with a miss left; Run
+  now with no confirm, operator), Firmware (filter, Promote dialog; under `?show=test` the refresh waits for Close). Focus after
+  a delete/promote/revoke goes to the h1 via a success ref; every busy control is aria-disabled + guard with try/catch/finally.
+  Operator asks folded in: the four-colour stripe is gone from every disk icon (logo and the Devices drive drawing keep it).
+  admin.png added with every address masked (not yet linked from the README -- C9). Also fixed: admin-scan's DAT test chose
+  the file before hydration (red on master). Controller rulings: operator address hidden below xl on the admin header (spec
+  §1.1 said shown below sm); tosec-scan mobile not re-run (server spec, desktop 8/8). Deferred minors: delete succeeding but
+  its JSON lost reads "could not reach" with the dialog open; PageHeader h1 ring also on mouse click app-wide; Scan notes
+  `role=status` re-announces over Run now and loses list semantics; Run now catch wording; malformed 200 reads "could not
+  reach"; 30 px row buttons; Needs-attention e2e branches on live data; duplicate row keys for two memberships; filtered count
+  and list are two round trips; weak ARIA assertion at 390; admin shot never run inside the full `pnpm screenshots` flow
+  (that flow stops at the identification wait on live data); no by-hand phone pass. e2e: admin-scan 8.7 min and tosec-scan
+  14.6 min (desktop only) -- split them with `--project`/`-g` to stay under 9 min.
 - **Phase C5 Settings, Help + "?", Search, Sign in -- SHIPPED 2026-10-25** (merge f6d1941; spec
   `docs/superpowers/specs/2026-10-25-phase-c5-settings-help-search-signin-design.md` (41 rulings), plan
   `docs/superpowers/plans/2026-10-25-phase-c5-settings-help-search-signin.md`). Shared `SegRadioGroup`/`SideNav`/`PageHeader
@@ -1564,7 +1581,7 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
   disk-sets "in a collection" e2e fixed (streamed cards: wait visible before boundingBox; 1204 hit dnd-kit auto-scroll).
   Deferred minors: aria-labels lack visible menu text (spec kept labels), hex literals beside tokens, dead CardMountDialogOwn /
   TitleControls pass-through, rail count inside its link, focus to body after menu Delete, row colour hashes disk id vs
-  card game id, ⋯/grip touch targets below md. Pre-existing at merge: lint react-hooks/purity in admin/page.tsx and
+  card game id, ⋯/grip touch targets below md. Pre-existing at merge: lint react-hooks/purity in admin/(overview)/page.tsx and
   admin/scan/page.tsx (area 6), mobile:133, time-machine 212/268, display-layout 287.
 - **Phase B foundation -- SHIPPED 2026-10-24** (merge 77bc163; spec `docs/superpowers/specs/2026-10-24-phase-b-foundation-design.md`;
   plan `docs/superpowers/plans/2026-10-24-phase-b-foundation.md`). Cream/ink/amber palette on the existing token names (AA-safe
