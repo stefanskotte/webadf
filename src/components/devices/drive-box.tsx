@@ -94,7 +94,8 @@ export function DriveBox({ device, state, next, preload }: {
           </span>
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Below sm the board's two-column grid of 44 px buttons, Eject last (C7 spec §6.2); from sm a wrapped row. */}
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
         <button type="button" onClick={() => void toggleWp()} aria-pressed={wp === true}
                 disabled={wp === null || wpBusy || wpPending}
                 title={wp === null ? 'Shown once the board holds a disk' : undefined}
@@ -117,7 +118,7 @@ export function DriveBox({ device, state, next, preload }: {
         {ejectable && (
           <button type="button" onClick={() => void eject()} disabled={ejecting || ejectPending}
                   data-testid={`eject-${device.id}`} aria-label={ejecting || ejectPending ? 'Ejecting…' : 'Eject'}
-                  className="flex h-[38px] items-center gap-1.5 rounded-[10px] px-3.5 text-[13px] font-semibold disabled:opacity-50"
+                  className="flex h-[38px] items-center gap-1.5 rounded-[10px] px-3.5 text-[13px] font-semibold disabled:opacity-50 max-sm:min-h-11 max-sm:justify-center"
                   style={{ background: 'var(--ink)', color: 'var(--surface)' }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M12 5l7 9H5z" /><rect x="5" y="16.5" width="14" height="2.5" rx="1" />
@@ -130,7 +131,7 @@ export function DriveBox({ device, state, next, preload }: {
         )}
         {state === 'empty' && (
           <Link href="/library" data-testid={`device-open-library-${device.id}`}
-                className="flex h-[38px] items-center rounded-[10px] px-3.5 text-[13px] font-semibold"
+                className="flex h-[38px] items-center rounded-[10px] px-3.5 text-[13px] font-semibold max-sm:min-h-11 max-sm:justify-center"
                 style={{ background: 'var(--ink)', color: 'var(--surface)' }}>
             Open library
           </Link>

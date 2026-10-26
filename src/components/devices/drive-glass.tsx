@@ -71,7 +71,7 @@ export function DriveGlass({ device, online, onOpenDisplay }: {
     <button type="button" onClick={(e) => onOpenDisplay(e.currentTarget)} aria-haspopup="dialog"
             aria-label={`Change display — showing: ${words}`}
             data-testid={`device-oled-${device.id}`} data-oled={words}
-            className="absolute box-border block cursor-pointer rounded-[4px] bg-[#1C1B18] px-1 py-px shadow-[inset_0_0_0_1px_rgb(255_255_255/.06)] transition-transform hover:-translate-y-px hover:ring-2 hover:ring-[#EE8A2A] motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:hover:ring-0"
+            className="absolute box-border block cursor-pointer max-sm:before:absolute max-sm:before:-inset-y-2 max-sm:before:inset-x-0 max-sm:before:content-[''] rounded-[4px] bg-[#1C1B18] px-1 py-px shadow-[inset_0_0_0_1px_rgb(255_255_255/.06)] transition-transform hover:-translate-y-px hover:ring-2 hover:ring-[#EE8A2A] motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:hover:ring-0"
             style={{ left: `${(18 / ART_W) * 100}%`, top: `${(11 / artH) * 100}%`, width: `${(GLASS_W / ART_W) * 100}%` }}>
       <canvas ref={canvasRef} width={PANEL_W * ZOOM} height={rows * ZOOM}
               className="block h-auto w-full"

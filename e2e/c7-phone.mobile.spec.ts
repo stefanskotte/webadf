@@ -2,7 +2,10 @@ import { test, expect, type Page } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
 import { signUpFresh, runTag, createAdf } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
-import { cleanupSeeded, hydrated, pairDevice, seedDisk } from './device-helpers';
+import { eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { devices } from '@/db/schema/devices';
+import { authHeader, cleanupSeeded, hydrated, pairDevice, seedDisk } from './device-helpers';
 
 /**
  * Phase C7 (spec 2026-10-26-phase-c7-phone-about-design.md §14): the phone pass, measured rather than read off
@@ -553,4 +556,72 @@ test('C7-04e Library at 390: a chip that is not current keeps 8 px of its own pa
   // The whole chip is the link: a tap on its left edge opens the collection.
   await chipOf(page, a).tap({ position: { x: 3, y: 22 } });
   await expect(chipOf(page, a)).toHaveAttribute('data-current', 'true');
+});
+
+// ---- Devices (spec §6, Ruling 18) --------------------------------------------------------------------------
+
+/** One board with an NFC reader (so Write a Next-disk card shows), DF1-capable firmware and a disk in DF0. */
+async function deviceWithDisk(page: Page, request: Parameters<typeof pairDevice>[1], orgId: string) {
+  const { deviceId, token } = await pairDevice(page, request, 'C7 Devices');
+  const sha = randomBytes(32).toString('hex');
+  const { gameId, diskId } = await seedDisk(orgId, { title: `C7 Disk ${runTag()}`, diskNo: 1, sha256: sha });
+  expect((await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: sha, nfcReader: 'present', preload: null, firmwareVersion: '1.21.1+gabc1234', secondDrive: 'off', driveVersion: 0 },
+  })).status()).toBe(204);
+  // devices-page.spec's setDevice: desired = mounted, so the card is converged and offers Eject.
+  await getDb().update(devices).set({
+    desiredGameId: gameId, desiredDiskId: diskId, desiredSha256: sha, desiredDiskNo: 1,
+    mountedGameId: gameId, mountedDiskId: diskId, mountedSha256: sha, mountedDiskNo: 1,
+    lastSeenAt: new Date(), desiredVersion: 1,
+  }).where(eq(devices.id, deviceId));
+  return deviceId;
+}
+
+test('C7-05 Devices at 390: the head buttons one line each and full width; Change second drive opens the radios; card controls 44 px', async ({ page, request }) => {
+  const u = await signUpFresh(page);
+  const id = await deviceWithDisk(page, request, u.orgId);
+  await page.goto('/devices');
+  await expect(page.getByTestId(`eject-${id}`)).toBeVisible();   // the page streams in: measure only what is there
+  for (const tid of ['write-next-card', 'pair-device']) {
+    const b = (await page.getByTestId(tid).boundingBox())!;
+    expect(b.height, `${tid} one line`).toBeLessThanOrEqual(48);
+    expect(b.height, tid).toBeGreaterThanOrEqual(44);
+    expect(b.width, `${tid} full width`).toBeGreaterThan(300);
+  }
+  for (const tid of [`alias-edit-${id}`, `board-settings-${id}`, `display-toggle-${id}`, `device-protection-${id}`,
+    `device-change-disk-${id}`, `eject-${id}`]) {
+    const b = (await page.getByTestId(tid).boundingBox())!;
+    expect(b.height, tid).toBeGreaterThanOrEqual(44);
+    expect(b.x + b.width, tid).toBeLessThanOrEqual(390);
+  }
+  // DF1: closed, it says the mode in words; the button opens the radios in place, one per row, 44 px.
+  const group = page.getByTestId(`second-drive-${id}`);
+  await expect(group).toBeHidden();
+  const change = page.getByTestId(`df1-change-${id}`);
+  await expect(change).toHaveText('Change second drive');
+  await hydrated(page, `df1-change-${id}`);
+  await change.tap();
+  await expect(change).toHaveAttribute('aria-expanded', 'true');
+  await expect(change).toHaveText('Done');
+  await expect(group).toBeVisible();
+  for (const m of ['off', 'df1', 'net', 'any']) {
+    expect((await page.getByTestId(`second-drive-${id}-${m}`).boundingBox())!.height, m).toBeGreaterThanOrEqual(44);
+  }
+  // A choice saves as today and does not close the group.
+  const saved = page.waitForResponse((r) => r.url().includes(`/api/devices/${id}/second-drive`) && r.request().method() === 'PATCH');
+  await page.getByTestId(`second-drive-${id}-net`).tap();
+  expect((await saved).ok()).toBe(true);
+  await expect(group).toBeVisible();
+  await expect(page.getByTestId(`second-drive-${id}-net`)).toHaveAttribute('aria-checked', 'true');
+  await noSideways(page);
+});
+
+test('C7-09c touch targets and no sideways scroll: Devices with a board holding a disk', async ({ page, request }) => {
+  test.setTimeout(90_000);
+  const u = await signUpFresh(page);
+  await deviceWithDisk(page, request, u.orgId);
+  await page.goto('/devices');
+  await expect(page.getByTestId('pair-device')).toBeVisible();
+  await touchSweep(page, 'devices');
 });

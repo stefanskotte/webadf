@@ -39,7 +39,7 @@ export function DriveFront({ device, online }: { device: DeviceListItem; online:
           <span className="flex items-center gap-1">
             <button type="button" ref={toggle} onClick={(e) => openDisplay(e.currentTarget)} aria-haspopup="dialog" aria-expanded={open}
                     data-testid={`display-toggle-${device.id}`}
-                    className="flex h-7 items-center gap-1.5 rounded-[7px] px-2 text-[12px] font-semibold"
+                    className="flex h-7 items-center gap-1.5 rounded-[7px] px-2 max-sm:min-h-11 text-[12px] font-semibold"
                     style={{ color: 'var(--ink)' }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

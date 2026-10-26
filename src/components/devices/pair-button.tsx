@@ -84,7 +84,7 @@ export function PairButton() {
 
   return (
     <button type="button" onClick={p.startNaming} data-testid="pair-device"
-            className={`flex items-center gap-1.5 ${inkButton}`} style={inkStyle}>
+            className={`flex items-center justify-center gap-1.5 whitespace-nowrap ${inkButton} max-sm:min-h-11 max-sm:w-full`} style={inkStyle}>
       <Plus size={16} aria-hidden /> Pair a device
     </button>
   );

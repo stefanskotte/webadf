@@ -86,7 +86,19 @@ export default async function DevicesPage() {
         title="Devices"
         help="boards"
         subtitle={`${devices.length} paired · ${online} online · long-poll every 25 s`}
-        actions={<div className="flex items-center gap-2">{writers.length > 0 && <><FobButton mode="next" testId="write-next-card" title="Next-disk card" disks={[]} devices={writers} /><span style={{ color: 'var(--muted)' }}><HelpTip topic="nfc" /></span></>}<PairButton /></div>}
+        actions={(
+          // Below sm the head's actions stack under the subtitle, full width and one line each (C7 spec §6.1); from sm
+          // a row, as before. The "?" stays beside the first.
+          <div className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center">
+            {writers.length > 0 && (
+              <div className="flex items-center gap-2">
+                <FobButton mode="next" testId="write-next-card" title="Next-disk card" disks={[]} devices={writers} />
+                <span style={{ color: 'var(--muted)' }}><HelpTip topic="nfc" /></span>
+              </div>
+            )}
+            <PairButton />
+          </div>
+        )}
       />
       <div className="flex flex-col gap-6 px-4 pb-10 sm:px-7">
         <DeviceList devices={devices} now={now} states={states}

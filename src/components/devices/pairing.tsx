@@ -120,7 +120,7 @@ export function PairAnotherButton() {
               document.querySelector('[data-testid="pair-device"], [data-testid="pair-name"]')
                 ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
             }}
-            className="h-[38px] rounded-[10px] border px-4 text-[14px] font-semibold"
+            className="h-[38px] rounded-[10px] border px-4 text-[14px] font-semibold max-sm:min-h-11"
             style={{ background: 'var(--surface)', borderColor: 'var(--line-strong)', color: 'var(--ink)' }}>
       Pair a device
     </button>

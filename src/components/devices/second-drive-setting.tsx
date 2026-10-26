@@ -9,7 +9,7 @@ import { df1LineText } from '@/lib/df1-pick';
 import { requestEjectDf1 } from '@/components/devices/device-actions';
 import { NetworkChecklist } from '@/components/devices/network-checklist';
 import { TransferBox } from '@/components/devices/transfer-box';
-import { BOX_BTN_STYLE } from '@/components/devices/box-button';
+import { BOX_BTN, BOX_BTN_STYLE } from '@/components/devices/box-button';
 
 /** Second drive (DF1): Off | Next disk of the set | Any disk | Network. "Next disk of the set" and "Any disk" are both
  *  the stored 'df1' (spec 2026-10-14 D4's "On"): the menu shows Any disk while DF1 holds a disk mounted into it (a
@@ -38,6 +38,9 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
   const [step, setStep] = useState<0 | 1>(0);   // 1 = "are you sure" shown
   // "Any disk" chosen while DF1 holds no pick yet: shown as chosen until the page knows otherwise.
   const [wantAny, setWantAny] = useState(false);
+  // Below sm the radios hide behind "Change second drive" (C7 spec §6.2, Ruling 18). Local state: a save's refresh
+  // re-renders this card and keeps it open.
+  const [phoneOpen, setPhoneOpen] = useState(false);
   const hasPick = device.df1DiskId !== null;
   const shown: Radio = device.secondDrive === 'df1' && (hasPick || wantAny) ? 'any' : device.secondDrive;
   // While a save runs the radios are aria-disabled, not disabled: a disabled button drops focus to the body. Input
@@ -124,6 +127,10 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
               Second drive (DF1)
               <HelpTip topic="second-drive" />
             </span>
+            {/* Below sm the mode in words while the radios are closed (both values: the radios say it from sm). */}
+            <span data-df1-mode="" className="text-[13px] font-semibold sm:hidden" style={{ color: 'var(--ink)' }}>
+              {`DF1 · ${RADIOS.find((r) => r.value === shown)?.label ?? ''}`}
+            </span>
             {device.secondDriveCapable && (
               <span className="text-[12px]" style={{ color: 'var(--muted-2)' }} data-testid={`second-drive-help-${id}`}>
                 {secondDriveHelp(shown, hasPick)}
@@ -142,9 +149,14 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
             </span>
           </div>
         </div>
-        <div className="flex min-w-0 flex-col gap-1 lg:items-end">
-          <div role="radiogroup" aria-label="Second drive mode" data-testid={`second-drive-${id}`} data-value={shown}
-               onKeyDown={onKeyDown} className="seg seg--sm max-w-full flex-wrap">
+        <button type="button" data-testid={`df1-change-${id}`} aria-expanded={phoneOpen}
+                aria-controls={`second-drive-group-${id}`} onClick={() => setPhoneOpen((o) => !o)}
+                className={`${BOX_BTN} w-full sm:hidden`} style={BOX_BTN_STYLE}>
+          {phoneOpen ? 'Done' : 'Change second drive'}
+        </button>
+        <div className={`flex min-w-0 flex-col gap-1 lg:items-end ${phoneOpen ? '' : 'max-sm:hidden'}`}>
+          <div role="radiogroup" aria-label="Second drive mode" id={`second-drive-group-${id}`} data-testid={`second-drive-${id}`} data-value={shown}
+               onKeyDown={onKeyDown} className="seg seg--sm max-w-full flex-wrap max-sm:flex-col max-sm:items-stretch">
             {RADIOS.map((r) => (
               <button key={r.value} type="button" role="radio" aria-checked={shown === r.value}
                       tabIndex={r.value === stop ? 0 : -1} disabled={radioDisabled(r.value)} aria-disabled={saving}
