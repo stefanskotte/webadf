@@ -136,7 +136,7 @@ describe('DriveCard (C8 spec §3.3, §4, §5)', () => {
     expect(openTag(html, 'drive-entry-link-dev-a')).toContain('href="/devices#device-dev-a"');
     expect(html).toContain('· DF0');
     expect(openTag(html, 'drive-goto-dev-a')).toContain('href="/games/gam-1"');
-    expect(html).toMatch(/data-testid="drive-entry-disk-dev-a"[^>]*><a[^>]*>Turrican<\/a> · disk 1 of 2<\/span>/);
+    expect(html).toMatch(/data-testid="drive-entry-disk-dev-a"[^>]*><span[^>]*class="[^"]*\btruncate\b[^"]*"[^>]*><a[^>]*>Turrican<\/a><\/span><span[^>]*class="[^"]*\bshrink-0\b[^"]*"[^>]*> · disk 1 of 2<\/span><\/span>/);
     expect(html).toMatch(/data-testid="drive-entry-status-dev-a"[^>]*><span[^>]*><\/span>Online<\/span>/);
     expect(html).not.toContain('drive-entry-offline-dev-a');
   });
@@ -192,7 +192,7 @@ describe('DriveCard (C8 spec §3.3, §4, §5)', () => {
     expect(card({ ...base, phase: 'ejecting', state: 'pending', canToggleProtect: false, next: null }))
       .toMatch(/data-testid="drive-goto-dev-a" data-disabled="">Ejecting Turrican…<\/span>/);
     expect(card({ ...base, canGoTo: false, disk: { ...base.disk!, gameId: null } }))
-      .toMatch(/data-testid="drive-goto-dev-a" data-disabled="">Turrican<\/span> · disk 1 of 2/);
+      .toMatch(/data-testid="drive-goto-dev-a" data-disabled="">Turrican<\/span><\/span><span[^>]*> · disk 1 of 2/);
   });
   it('the preload and DF1 lines keep their ids', () => {
     const html = card({ ...base, next: { ...base.next!, preload: 'ready' }, df1: 'DF1: next disk of the set — empty' });

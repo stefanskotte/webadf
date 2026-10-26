@@ -97,3 +97,29 @@ test('C8-13 two boards at 390: "Drives 2", two cards under one head row, and the
   await expect(p.getByTestId(`drive-eject-${b.deviceId}`)).toBeInViewport();
   await noSideways(page);
 });
+
+test('C8-18 a long title at 390: the title truncates, "disk n of N" stays whole on the disk line', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const board = await onlineBoard(page, request, 'C8 Phone long');
+  const tag = runTag();
+  const s1 = sha(`c8m18-${tag}`);
+  const { gameId, diskId } = await seedDisk(orgId, { title: `A very long title that cannot fit a phone panel ${tag.slice(-5)}`, diskNo: 1, sha256: s1 });
+  await addDisk(orgId, gameId, { diskNo: 2, sha256: sha(`c8m18-${tag}-2`) });
+  const res = await page.request.post(`/api/devices/${board.deviceId}/mount`, { data: { diskId } });
+  const { version } = await res.json();
+  expect((await request.post('/api/device/status', {
+    headers: authHeader(board.token), data: { mountedSha256: s1, mountedDiskId: diskId, version },
+  })).status()).toBe(204);
+  await page.goto('/library');
+  await openCompact(page);
+  const line = page.getByTestId(`drive-entry-disk-${board.deviceId}`);
+  await expect(line).toContainText('disk 1 of 2');
+  const m = await line.evaluate((el) => {
+    const [title, count] = Array.from(el.children) as HTMLElement[];
+    return { titleClipped: title.scrollWidth > title.clientWidth, countRight: count.getBoundingClientRect().right,
+      countWidth: count.getBoundingClientRect().width, countScroll: count.scrollWidth, lineRight: el.getBoundingClientRect().right };
+  });
+  expect(m.titleClipped, 'the long title is what truncates').toBe(true);
+  expect(m.countRight).toBeLessThanOrEqual(m.lineRight + 0.5);
+  expect(m.countWidth).toBeGreaterThanOrEqual(m.countScroll - 0.5);
+});

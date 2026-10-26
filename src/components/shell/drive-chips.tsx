@@ -470,15 +470,18 @@ export function DriveCard({ chip, close }: { chip: DriveChip; close: () => void 
               {' · DF0'}
             </span>
           </span>
-          <span data-testid={`drive-entry-disk-${chip.id}`} className="truncate font-mono text-[12px] text-(--muted)">
-            {line.kind === 'title' && chip.canGoTo && disk?.gameId ? (
-              <Link href={`/games/${disk.gameId}`} data-testid={`drive-goto-${chip.id}`} onClick={closeOnPlainClick(close)}
-                    className="underline-offset-2 hover:underline">{line.title}</Link>
-            ) : (
-              // No link (Plan ruling): the words carry Go to disk's id, marked off, so it still reads as unavailable.
-              <span data-testid={`drive-goto-${chip.id}`} data-disabled="">{line.kind === 'title' ? line.title : line.text}</span>
-            )}
-            {line.kind === 'title' && line.count && ` · ${line.count}`}
+          {/* Flex, so a long title truncates and "disk n of N" always survives (by-hand finding, 390 px). */}
+          <span data-testid={`drive-entry-disk-${chip.id}`} className="flex min-w-0 font-mono text-[12px] text-(--muted)">
+            <span className="min-w-0 truncate">
+              {line.kind === 'title' && chip.canGoTo && disk?.gameId ? (
+                <Link href={`/games/${disk.gameId}`} data-testid={`drive-goto-${chip.id}`} onClick={closeOnPlainClick(close)}
+                      className="underline-offset-2 hover:underline">{line.title}</Link>
+              ) : (
+                // No link (Plan ruling): the words carry Go to disk's id, marked off, so it still reads as unavailable.
+                <span data-testid={`drive-goto-${chip.id}`} data-disabled="">{line.kind === 'title' ? line.title : line.text}</span>
+              )}
+            </span>
+            {line.kind === 'title' && line.count && <span className="shrink-0 whitespace-pre">{` · ${line.count}`}</span>}
           </span>
           {chip.next?.preload && (
             <span className="text-[12px] text-(--muted)" data-testid={`drive-preload-${chip.id}`} data-preload={chip.next.preload}>
