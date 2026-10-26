@@ -1,4 +1,4 @@
-import { deviceState, isOnline, type DeviceState } from '@/lib/device-state';
+import { deviceState, isOnline, relative, type DeviceState } from '@/lib/device-state';
 // The same predicate DeviceCard (also client-rendered) already imports.
 import { isDefaultDeviceName } from '@/lib/device-name';
 // Type-only: live-state.ts pulls in node:crypto, and this module's output is
@@ -42,8 +42,11 @@ export interface DriveChipDisk {
   /** For "Go to disk" -- the game page is where a disk lives (disk-row.tsx). */
   gameId: string | null;
   title: string;
-  /** Only on a multi-disk game; "disk 1" of a one-disk game says nothing. */
+  /** The disk's number in its title as reported (mountedDiskNo), or null when unknown. Shown on every title, a
+   *  one-disk title included ("disk 1 of 1", C8 Ruling 4). */
   diskNo: number | null;
+  /** How many disks its title has (mountedDiskCount, already in the live fingerprint), or null when unknown. */
+  diskCount: number | null;
   writeProtected: boolean | null;
   /**
    * Why this disk can never be made writable, or null: an HFE (spec D2). The
@@ -91,6 +94,11 @@ export interface DriveChip {
    * set, or the disk mounted into DF1, both in words. Null when DF1 is not On: there is no DF1 to describe.
    */
   df1: string | null;
+  /**
+   * While offline: how long ago the board was last heard from, `relative()`'s words ("5m ago"). Null while online.
+   * The same text the live fingerprint hashes for every offline board, so the card's offline line never freezes.
+   */
+  seen: string | null;
 }
 
 export function toDriveChip(r: LiveStateRow, now: number): DriveChip {
@@ -111,7 +119,8 @@ export function toDriveChip(r: LiveStateRow, now: number): DriveChip {
           id: r.mountedDiskId,
           gameId: r.mountedGameId,
           title: r.mountedGameTitle ?? 'Untitled',
-          diskNo: (r.mountedDiskCount ?? 0) > 1 ? r.mountedDiskNo : null,
+          diskNo: r.mountedDiskNo,
+          diskCount: r.mountedDiskCount,
           writeProtected: r.mountedDiskWriteProtected,
           readOnly: r.mountedImageFormat === 'hfe' ? 'HFE' : null,
         }
@@ -124,6 +133,7 @@ export function toDriveChip(r: LiveStateRow, now: number): DriveChip {
       ? `…${r.macAddress.slice(-5)}`
       : r.name,
     online: isOnline(r.lastSeenAt, now),
+    seen: isOnline(r.lastSeenAt, now) ? null : relative(r.lastSeenAt, now),
     state,
     phase,
     disk,
@@ -149,36 +159,28 @@ export function driveChips(rows: readonly LiveStateRow[], now: number): DriveChi
     .sort((a, b) => a.name.localeCompare(b.name) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
-/** At most `max` chips in the header; the rest go behind a "+k" chip. */
-export const MAX_CHIPS = 3;
+/** At most `max` chips in the header; the rest go behind a "+k" chip. No width fits three 240 px chips. */
+export const MAX_CHIPS = 2;
 
 /**
- * How many chips fit beside the wordmark at a viewport width (0 below xl,
- * where the compact "Drives" control is used instead). `showAdmin` is the
- * layout's own flag: the Admin item widens the pill, and with it the slots
- * shrink.
+ * How many chips fit beside the wordmark at a viewport width (0 below xl, where the compact control is used
+ * instead). `showAdmin` is the layout's own flag (the Admin item widens the pill) and `boards` how many boards the org
+ * has (whether a "+k" chip has to fit too).
  *
- * Measured 2026-09-25 in Chromium, not guessed; re-measured 2026-10-24 for
- * the Phase B header (Geist, the 18px Bricolage "webfloppy" wordmark,
- * segmented nav). The chips start 16px after the wordmark (x=168) and must
- * stop 16px short of the nav pill, which is centred on the VIEWPORT (the
- * layout's comment on why) and 317px wide -- 394px with the Admin item. The
- * widest chip (long name, long title, WP tag, both texts at their caps) is
- * ~180px, chips sit 6px apart, and the "+k" chip is ~45-48px. So the widest
- * case, n chips + "+k", ends at about 168 + 186n + 48:
- *   - member  (pill left 481 / 609 / 801 at 1280 / 1536 / 1920):
- *       1 chip ends at ~402, 2 at ~588, 3 at ~774 -> 1 / 2 / 3, each >= 16px clear
- *   - with Admin (pill left 443 / 571 / 763):
- *       1 chip ends at ~402; 2 at ~588 would run under the pill at 1536, and
- *       3 at ~774 under it at 1920 -> 1 / 1 / 2
- * drive-chips.spec measures that widest case for both, at all three widths.
- * The CSS in drive-chips.tsx mirrors these breakpoints literally (Tailwind
- * cannot read them from here).
+ * C8 (spec §2.1), by arithmetic on 2026-10-26: the chips start 16 px after the wordmark (x = 168) and stop 16 px
+ * short of the viewport-centred pill (left edge 481 / 609 / 801 for a member, 443 / 571 / 763 with Admin, at 1280 /
+ * 1536 / 1920). The widest chip is its 240 px cap, chips sit 6 px apart, and "+k" keeps its compact ~45 px. So
+ * n chips + "+k" end at 168 + 246n + 45:
+ *   - member:     1 + "+k" ends at 459 (<= 465) / 459 (<= 593) / 2 + "+k" 705 (<= 785)  -> 1 / 1 / 2
+ *   - with Admin: one board alone ends at 408 (<= 427), but 1 + "+k" at 459 runs past 427 at 1280 -> 0 there,
+ *                 the compact control instead; 459 (<= 555) at 1536; 705 (<= 747) at 1920    -> 0 or 1 / 1 / 2
+ * drive-chips.spec measures the widest case for both, at all three widths; Task 2 of the C8 plan records the measured
+ * widths here. The CSS in drive-chips.tsx mirrors these breakpoints literally (Tailwind cannot read them from here).
  */
-export function chipSlots(viewportWidth: number, showAdmin = false): number {
-  if (viewportWidth >= 1920) return showAdmin ? 2 : 3;
-  if (viewportWidth >= 1536) return showAdmin ? 1 : 2;
-  if (viewportWidth >= 1280) return 1;
+export function chipSlots(viewportWidth: number, showAdmin = false, boards = 1): number {
+  if (viewportWidth >= 1920) return 2;
+  if (viewportWidth >= 1536) return 1;
+  if (viewportWidth >= 1280) return showAdmin && boards >= 2 ? 0 : 1;
   return 0;
 }
 
@@ -206,4 +208,33 @@ export function protectTag(c: DriveChip): 'WP' | 'RW' | null {
   if (c.disk.readOnly || c.disk.writeProtected === true) return 'WP';
   if (c.disk.writeProtected === false) return 'RW';
   return null;
+}
+
+/** The card's second line (C8 spec §3.3): the title (a link when there is a game) and its count, or words. */
+export type DiskLine = { kind: 'title'; title: string; count: string | null } | { kind: 'text'; text: string };
+
+export function diskLine(c: DriveChip): DiskLine {
+  switch (c.phase) {
+    case 'empty': return { kind: 'text', text: 'Drive empty' };
+    case 'loading': return { kind: 'text', text: `Loading ${c.loadingTitle ?? 'a disk'}…` };
+    case 'ejecting': return { kind: 'text', text: `Ejecting ${c.disk?.title ?? 'a disk'}…` };
+    case 'loaded':
+      if (!c.disk) return { kind: 'text', text: 'A disk' };
+      return {
+        kind: 'title',
+        title: c.disk.title,
+        count: c.disk.diskNo !== null && c.disk.diskCount !== null ? `disk ${c.disk.diskNo} of ${c.disk.diskCount}` : null,
+      };
+  }
+}
+
+/**
+ * The Next button's words (the Devices card's) and its accessible name. The name starts with the visible words, so a
+ * speech user can say what they see (WCAG 2.5.3); the count and the wrap follow.
+ */
+export function nextLabel(next: NextInfo): { text: string; name: string } {
+  return {
+    text: `Next: disk ${next.diskNo}`,
+    name: `Next: disk ${next.diskNo} of ${next.diskCount}${next.wraps ? ' (wraps)' : ''}`,
+  };
 }
