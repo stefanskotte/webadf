@@ -1,7 +1,8 @@
 import { adminListUsers, adminCountUsers } from '@/lib/admin-queries';
-import { isSuperAdminEmail } from '@/lib/superadmin';
+import { isSuperAdminEmail, requireSuperAdmin } from '@/lib/superadmin';
 import { AdminPageHead, ADMIN_BODY } from '@/components/admin/admin-page-head';
 import { DeleteUserDialog } from '@/components/admin/delete-user-dialog';
+import { ResetPasswordDialog } from '@/components/admin/reset-password-dialog';
 import { PagerLink } from '@/components/admin/pager-link';
 
 export const dynamic = 'force-dynamic';
@@ -25,6 +26,8 @@ export default async function AdminUsersPage({
   // Next 16: searchParams is a Promise. Do NOT import PageProps -- it is ambient.
   searchParams: Promise<{ page?: string }>;
 }) {
+  // The layout already checked; this is for the admin's own id (their row's Password… is Settings › Account).
+  const me = await requireSuperAdmin();
   const total = await adminCountUsers();
   const lastPage = Math.max(1, Math.ceil(total / PER_PAGE));
 
@@ -38,15 +41,15 @@ export default async function AdminUsersPage({
       <AdminPageHead title="Users" subtitle={`${total} users · newest first · page ${page} of ${lastPage}`} />
       <div className={ADMIN_BODY}>
         {/* Still a real table (Ruling 8): header association, and getByRole('row') semantics. It scrolls sideways
-            inside the card from sm up; the page does not. 760px is the seven columns at honest widths, and only a
+            inside the card from sm up; the page does not. 810px is the seven columns at honest widths, and only a
             floor: a long e2e address is one unbreakable token unless it wraps, which it does. Below sm (390 px) the
-            rows stack instead -- email, organization, then the figures with Delete… at the end of the line -- so the
+            rows stack instead -- email, organization, then the figures with Password… and Delete… at the end of the line -- so the
             action never sits past a sideways scroll. The roles are explicit because display:block drops a table's
             semantics in some browsers; the header row stays for them and is visually hidden there. */}
         <section aria-label="Users" className="overflow-hidden rounded-[16px]"
                  style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
           <div className="overflow-x-auto">
-            <table role="table" className="w-full text-[14px] max-sm:block sm:min-w-[760px]" style={{ color: 'var(--ink)' }}>
+            <table role="table" className="w-full text-[14px] max-sm:block sm:min-w-[810px]" style={{ color: 'var(--ink)' }}>
               <thead role="rowgroup" className="max-sm:sr-only">
                 <tr role="row" className="h-11 border-b text-[12px] max-sm:block" style={{ borderColor: 'var(--line)', color: 'var(--muted-2)' }}>
                   <th role="columnheader" scope="col" className="px-5 text-left font-medium">Email</th>
@@ -55,7 +58,7 @@ export default async function AdminUsersPage({
                   <th role="columnheader" scope="col" className="w-[70px] px-3.5 text-right font-medium">Titles</th>
                   <th role="columnheader" scope="col" className="w-[70px] px-3.5 text-right font-medium">Disks</th>
                   <th role="columnheader" scope="col" className="w-20 px-3.5 text-right font-medium">Boards</th>
-                  <th role="columnheader" scope="col" className="w-[150px] px-3.5 text-right font-medium">Action</th>
+                  <th role="columnheader" scope="col" className="w-[200px] px-3.5 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody role="rowgroup" className="max-sm:block">
@@ -89,7 +92,8 @@ export default async function AdminUsersPage({
                       <td role="cell" data-label="Titles" className={NUM}>{r.games}</td>
                       <td role="cell" data-label="Disks" className={NUM}>{r.disks}</td>
                       <td role="cell" data-label="Boards" className={NUM}>{r.devices}</td>
-                      <td role="cell" className="px-3.5 py-3 text-right max-sm:ml-auto max-sm:p-0">
+                      <td role="cell" className="whitespace-nowrap px-3.5 py-3 text-right max-sm:ml-auto max-sm:p-0">
+                        <ResetPasswordDialog userId={r.userId} email={r.email} isSelf={r.userId === me.userId} />
                         <DeleteUserDialog userId={r.userId} email={r.email} games={r.games} disks={r.disks}
                                           devices={r.devices} orgName={r.orgName} isAdmin={isAdmin} />
                       </td>
