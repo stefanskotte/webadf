@@ -862,7 +862,7 @@ test('in a collection at 390px: a finger walked slowly into a card\'s centre lea
   expect(left).toHaveLength(2);
 });
 
-test('the Upload page stacks its two columns at 390px, and a 200-byte saved path wraps', async ({ page, request }) => {
+test('the Upload page puts its two drop tiles side by side at 390px, and a 200-byte saved path wraps', async ({ page, request }) => {
   await signUpFresh(page);
   const { token } = await pairDevice(page, request, 'A board with a rather long name for a phone screen');
   await request.post('/api/device/status', { headers: authHeader(token),
@@ -880,8 +880,13 @@ test('the Upload page stacks its two columns at 390px, and a 200-byte saved path
   await request.post(`/api/device/send/${id}/done`, { headers: authHeader(token), data: { ok: true, savedAs: long } });
   await expect(page.getByTestId(`staging-status-send:${id}`)).toContainText('Delivered', { timeout: 15_000 });
   await expect(page.locator(`[data-testid="staging-row"][data-key="send:${id}"]`)).toContainText(`saved as ${long}`);
-  const add = await page.getByTestId('dropzone').boundingBox();
-  const send = await page.getByTestId('send-dropzone').boundingBox();
-  expect(send!.y).toBeGreaterThan(add!.y + add!.height);              // stacked, not side by side
+  // C7 (spec §7, Ruling 19): the two file labels are the board's tiles, side by side, at least 96 px tall, the URL
+  // row under them.
+  const add = (await page.getByTestId('add-browse').boundingBox())!;
+  const send = (await page.getByTestId('send-browse').boundingBox())!;
+  expect(Math.abs(add.y - send.y)).toBeLessThan(1);
+  expect(send.x).toBeGreaterThan(add.x + add.width - 1);
+  for (const t of [add, send]) expect(t.height).toBeGreaterThanOrEqual(96);
+  expect((await page.getByTestId('url-fetch-form').boundingBox())!.y).toBeGreaterThan(add.y + add.height);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 });

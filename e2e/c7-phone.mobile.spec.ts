@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
-import { signUpFresh, runTag, createAdf } from './helpers';
+import { signUpFresh, runTag, createAdf, stagingReady } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
@@ -624,4 +624,85 @@ test('C7-09c touch targets and no sideways scroll: Devices with a board holding 
   await page.goto('/devices');
   await expect(page.getByTestId('pair-device')).toBeVisible();
   await touchSweep(page, 'devices');
+});
+
+// ---- Upload (spec §7, Ruling 19) ---------------------------------------------------------------------------
+
+async function sendBoard(page: Page, request: Parameters<typeof pairDevice>[1]) {
+  const { token } = await pairDevice(page, request, 'C7 Upload');
+  await request.post('/api/device/status', { headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.21.1+gabc1234', secondDrive: 'net', driveVersion: 0 } });
+  await request.get('/api/device/poll?since=999999&xferAck=0&rx=c', { headers: authHeader(token) });
+}
+
+test('C7-06 Upload at 390: two 96 px tiles side by side; a tap opens its chooser; Staging starts on the first screen', async ({ page, request }) => {
+  await signUpFresh(page);
+  await sendBoard(page, request);
+  await page.goto('/ingest');
+  await stagingReady(page);
+  const add = page.getByTestId('add-browse');
+  const send = page.getByTestId('send-browse');
+  const a = (await add.boundingBox())!;
+  const s = (await send.boundingBox())!;
+  expect(Math.abs(a.y - s.y)).toBeLessThan(1);
+  expect(s.x).toBeGreaterThan(a.x + a.width - 1);
+  for (const t of [a, s]) {
+    expect(t.height).toBeGreaterThanOrEqual(96);
+    expect(t.x).toBeGreaterThanOrEqual(0);
+    expect(t.x + t.width).toBeLessThanOrEqual(390);
+  }
+  await hydrated(page, 'file-input', 'onChange');
+  for (const [tile, input] of [[add, 'file-input'], [send, 'send-file-input']] as const) {
+    const chooser = page.waitForEvent('filechooser');
+    await tile.tap();
+    expect(await (await chooser).element().getAttribute('data-testid')).toBe(input);
+  }
+  expect((await page.locator('#staging-heading').boundingBox())!.y).toBeLessThan(844);
+  await noSideways(page);
+});
+
+test('C7-06b Upload at 390 with no board: the Send tile says Pair a board first, opens no chooser, and the hint says why (Review Focus 3)', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/ingest');
+  await stagingReady(page);
+  const tile = page.locator('[data-tile="Pair a board first"]');
+  await expect(tile).toBeVisible();
+  const a = (await page.getByTestId('add-browse').boundingBox())!;
+  const t = (await tile.boundingBox())!;
+  expect(Math.abs(a.y - t.y)).toBeLessThan(1);
+  expect(t.height).toBeGreaterThanOrEqual(96);
+  expect(await tile.evaluate((el) => getComputedStyle(el, '::before').content)).toBe('"Pair a board first"');
+  let opened = false;
+  page.on('filechooser', () => { opened = true; });
+  await tile.tap();
+  await page.waitForTimeout(300);
+  expect(opened).toBe(false);
+  await expect(page.getByTestId('send-no-board')).toBeVisible();
+});
+
+test('C7-09d touch targets and no sideways scroll: Upload with a board', async ({ page, request }) => {
+  test.setTimeout(90_000);
+  await signUpFresh(page);
+  await sendBoard(page, request);
+  await page.goto('/ingest');
+  await stagingReady(page);
+  await touchSweep(page, 'upload');
+});
+
+// Pre-flight ruling: the section is display:contents below sm; its region must stay in the accessibility tree and a
+// drop must still reach it.
+test('C7-06c Upload at 390: each card stays a named region and still takes a drop', async ({ page, request }) => {
+  await signUpFresh(page);
+  await sendBoard(page, request);
+  await page.goto('/ingest');
+  await stagingReady(page);
+  await expect(page.getByRole('region', { name: 'Add disks to the library' })).toHaveCount(1);
+  await expect(page.getByRole('region', { name: 'Send files to the Amiga' })).toHaveCount(1);
+  await hydrated(page, 'send-dropzone', 'onDrop');
+  await page.getByTestId('send-dropzone').evaluate((el) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(['x'], 'c7-drop.txt', { type: 'text/plain' }));
+    el.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+  });
+  await expect(page.locator('[data-testid="staging-row"]', { hasText: 'c7-drop.txt' })).toHaveCount(1, { timeout: 15_000 });
 });

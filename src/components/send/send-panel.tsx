@@ -5,9 +5,13 @@ import { SEND_FILE_MAX, XFER_FW } from '@/lib/send-limits';
 import { longOffline, orderTargets, receiverLine, sendErrorText, targetState, type SendTarget } from '@/lib/send-ui';
 import { useSendBoard } from './use-send-board';
 import { HelpTip } from '@/components/help/help-tip';
-import { DropCard, INK_LABEL, INK_STYLE } from '@/components/ingest/drop-card';
+import { DropCard, INK_LABEL, INK_STYLE, TILE, TILE_LOOK } from '@/components/ingest/drop-card';
 import { useStaging } from '@/components/ingest/staging-provider';
 import { SIGNED_OUT_TEXT, isSignedOutAnswer } from '@/lib/upload-staging';
+
+/** Below sm the "?" sits in the Send tile's top-right corner (C7 spec §7): a sibling of the label, so a tap on it
+ *  opens its popover and not the file chooser. */
+const SEND_HELP = 'max-sm:z-20 max-sm:col-start-2 max-sm:row-start-1 max-sm:m-1.5 max-sm:self-start max-sm:justify-self-end';
 
 /**
  * The Upload page's Send drop area (spec 2026-10-23 §1): which board new files go to, whether Transfer runs there,
@@ -24,14 +28,17 @@ export function SendPanel({ targets: initialTargets, initialBoard, serverNow }: 
 
   if (targets.length === 0) {
     return (
-      <DropCard testId="send-dropzone" headingId="send-heading" title="Send files to the Amiga" help={<HelpTip topic="send" />}
-        disk={{ color: 'grey', set: 'Any file · 4 MB', title: 'To the Amiga' }}
+      <DropCard testId="send-dropzone" headingId="send-heading" title="Send files to the Amiga" help={<HelpTip topic="send" className={SEND_HELP} />}
+        disk={{ color: 'grey', set: 'Any file · 4 MB', title: 'To the Amiga' }} tileCol={2}
         hint={
           <p data-testid="send-no-board">
             No board can receive files yet. Sending needs a board on firmware {XFER_FW} or newer.{' '}
             <Link href="/devices" className="font-semibold underline underline-offset-2" style={{ color: 'var(--ink)' }}>Devices</Link>
           </p>
-        } />
+        }>
+        {/* Below sm the Send tile, unpressable: it says why, and the hint under the tiles names the fix (C7 Task 7). */}
+        <div data-tile="Pair a board first" className={`hidden ${TILE_LOOK} ${TILE[2]} max-sm:flex max-sm:items-center`} />
+      </DropCard>
     );
   }
 
@@ -81,30 +88,31 @@ export function SendPanel({ targets: initialTargets, initialBoard, serverNow }: 
 
   const single = targets.length === 1 ? (current ?? targets[0]) : null;
   return (
-    <DropCard testId="send-dropzone" headingId="send-heading" title="Send files to the Amiga" help={<HelpTip topic="send" />}
-      disk={{ color: 'blue', set: 'Any file · 4 MB', title: 'To the Amiga' }}
+    <DropCard testId="send-dropzone" headingId="send-heading" title="Send files to the Amiga" help={<HelpTip topic="send" className={SEND_HELP} />}
+      disk={{ color: 'blue', set: 'Any file · 4 MB', title: 'To the Amiga' }} tileCol={2}
       hint="Any file up to 4 MB. It waits here until Transfer on the Amiga takes it, into the folder Transfer saves to."
       onFiles={(f) => void handleFiles(f)}>
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
-        <label htmlFor="send-file-input" data-testid="send-browse" className={INK_LABEL} style={INK_STYLE}>
-          Choose files
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 max-sm:contents">
+        <label htmlFor="send-file-input" data-testid="send-browse" data-tile="Send to Amiga"
+               className={`${INK_LABEL} ${TILE_LOOK} ${TILE[2]}`} style={INK_STYLE}>
+          <span className="max-sm:hidden">Choose files</span>
           <input id="send-file-input" type="file" multiple className="sr-only" data-testid="send-file-input"
                  onChange={(e) => { const f = e.target.files; if (f) void handleFiles(f); e.target.value = ''; }} />
         </label>
         {single && (
-          <span className="text-[13px]" data-testid="send-board" style={{ color: 'var(--muted)' }}>
+          <span className="text-[13px] max-sm:order-3 max-sm:col-span-2" data-testid="send-board" style={{ color: 'var(--muted)' }}>
             To <strong className="font-semibold" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>{single.name}</strong> · {targetState(single, now)}
           </span>
         )}
         {line && (
-          <span role="status" data-testid="send-receiver" data-ok={String(line.ok)} className="text-[13px] font-medium"
+          <span role="status" data-testid="send-receiver" data-ok={String(line.ok)} className="text-[13px] font-medium max-sm:order-3 max-sm:col-span-2"
                 style={{ color: line.ok ? 'var(--success-fg)' : 'var(--warning-fg)' }}>
             {line.ok ? '✓ ' : '• '}{line.text}
           </span>
         )}
       </div>
       {!single && (
-        <fieldset className="flex flex-col gap-1 rounded-[12px] p-2.5" data-testid="send-board-picker"
+        <fieldset className="flex flex-col gap-1 rounded-[12px] p-2.5 max-sm:order-4 max-sm:col-span-2" data-testid="send-board-picker"
                   style={{ background: 'var(--surface-2)' }}>
           <legend className="sr-only">Board to send to</legend>
           {shown.map((t) => (
