@@ -448,7 +448,7 @@ card to navigate never turn selecting on, so no existing spec changes.
    The rail stays usable, and navigating ends the selection.** — One meaning per click. No accidental filing or disk
    set halfway through a selection. Hidden rather than inert, so nothing interactive sits inside the `<label>`. — Cost
    if wrong: someone who wants to mount a title mid-selection must Cancel first.
-8. **The OK is the dialog's confirm button, labelled by the action ("Move 12 titles", "Delete 12 titles"), not the
+8. *(Operator-confirmed 2026-10-26.)* **The OK is the dialog's confirm button, labelled by the action ("Move 12 titles", "Delete 12 titles"), not the
    literal word "OK".** — Every confirm in the app names its action (the single Delete dialog, Promote, user delete),
    and a count on the button is the last check before a bulk change. — Cost if wrong: two strings change to "OK".
 9. **One dialog both picks the target collection and confirms the move.** — It is the single move's dialog made plural,
@@ -463,7 +463,7 @@ card to navigate never turn selecting on, so no existing spec changes.
     mixed-source selection is fine.** — `collection_games` is many-to-many, and the single dialog already defines
     "move". The bulk version must not invent a stronger "leave every other collection". — Cost if wrong: someone
     expecting "only in X afterwards" finds the title still in its other collections.
-12. **A bulk delete KEEPS titles a board holds (DF0 mounted, fetching or requested, DF1 pick or content, or an open
+12. *(Operator-confirmed 2026-10-26.)* **A bulk delete KEEPS titles a board holds (DF0 mounted, fetching or requested, DF1 pick or content, or an open
     write session) and reports them. It does not eject them, unlike the single delete.** — A sweep over dozens of
     titles at a glance must not eject a running Amiga's disk as a side effect. The task's "never delete a disk a board
     has mounted or is writing" is applied here. The preview names each kept title's drive, so the person knows what to
