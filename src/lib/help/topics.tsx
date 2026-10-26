@@ -666,7 +666,7 @@ export const HELP_TOPICS = {
           everyone in your organization.
         </p>
         <p>
-          <strong>Changing them.</strong> Settings (the gear at the top) lists every preference in one place, and
+          <strong>Changing them.</strong> Settings (the gear at the top; More, then Settings, on a phone) lists every preference in one place, and
           each change there is kept as soon as you make it.
         </p>
         <p>

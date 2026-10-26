@@ -94,26 +94,25 @@ for (const [w, h] of [[1280, 800], [390, 844]] as const) {
   });
 }
 
-test('at 390px the admin header fits: no horizontal overflow, gear and Sign out visible, two lines at most', async ({ page }) => {
+test('at 390px the admin header is one row: no overflow, no gear or Sign out there; they are in the More menu', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signInAsSuperAdmin(page);
   await page.goto('/admin');
   const header = page.getByTestId('admin-header');
-  await expect(header.getByTestId('settings-link')).toBeVisible();
-  await expect(header.getByTestId('sign-out')).toBeVisible();
+  expect((await header.boundingBox())!.height).toBeLessThanOrEqual(61);
+  await expect(header.getByTestId('settings-link')).toBeHidden();
+  await expect(header.getByTestId('sign-out')).toBeHidden();
+  await expect(header.getByTestId('admin-email')).toBeHidden();
   const o = await page.evaluate(() => ({
     sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth,
   }));
   expect(o.sw).toBeLessThanOrEqual(o.cw);
-  for (const id of ['settings-link', 'sign-out']) {
-    const b = (await header.getByTestId(id).boundingBox())!;
-    expect(b.x + b.width).toBeLessThanOrEqual(390);
-  }
-  // wordmark on line one; search, gear and Sign out together on line two (not a third line)
-  const search = (await header.getByTestId('search-input').boundingBox())!;
-  const out = (await header.getByTestId('sign-out').boundingBox())!;
-  expect(Math.abs((search.y + search.height / 2) - (out.y + out.height / 2)), 'search and Sign out share a line').toBeLessThan(8);
-  await expect(header.getByTestId('admin-email')).toBeHidden();
+  await hydrated(page, 'nav-more');
+  await page.getByTestId('nav-more').click();
+  await expect(page.getByTestId('nav-more-menu')).toBeVisible();
+  await expect(page.getByTestId('more-settings')).toBeVisible();
+  await expect(page.getByTestId('more-sign-out')).toBeVisible();
+  await expect(page.getByTestId('more-admin')).toHaveAttribute('aria-current', 'page');
 });
 
 // ---- Overview (spec §2, Rulings 13–16) --------------------------------------------------------------------

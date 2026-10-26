@@ -39,9 +39,8 @@ import { chipSlots, diskText, preloadText, protectTag, splitChips, type DriveChi
  * Two presentations, one set of props, switched by CSS at `xl`:
  *   - xl and up: chips beside the wordmark, then a "+k" chip whose menu lists
  *     the boards that did not get a chip of their own.
- *   - below xl: ONE compact "Drives" control listing every board. On a phone
- *     that sits on the header's top line -- NOT in the fixed bottom bar,
- *     which already scrolls with four items at 390px.
+ *   - below xl: ONE compact "Drives" control listing every board. Below lg it fills the header row's middle -- NOT in the
+ *     fixed bottom bar.
  * Menus render their contents only while open, so the two presentations
  * never put a device's actions in the DOM twice.
  *
@@ -63,12 +62,11 @@ export function DriveChips({ chips, showAdmin = false }: { chips: DriveChip[]; s
         {shown.map((c, i) => <Chip key={c.id} chip={c} className={visibility[i]} />)}
         {chips.length > 1 && <MoreChip chips={chips} showAdmin={showAdmin} />}
       </div>
-      {/* ml-auto below sm puts it at the right end of the wordmark's line
-          (the search box and sign-out wrap to line two there); from sm the
-          header no longer wraps and it simply follows the wordmark. */}
-      <div className="ml-auto sm:ml-0 xl:hidden">
+      {/* Below lg the chip slot of the header's single row (C7 spec §2.2, §5, Ruling 3): full width, 44 px, the same
+          content until C8. From lg to xl it follows the wordmark as before. */}
+      <div className="min-w-0 flex-1 lg:flex-none xl:hidden">
         <DropdownMenu>
-          <DropdownMenuTrigger data-testid="drives-compact" className={`${CHIP_CLASS} flex`} style={CHIP_STYLE}>
+          <DropdownMenuTrigger data-testid="drives-compact" className={`${CHIP_CLASS} flex max-lg:h-11 max-lg:w-full`} style={CHIP_STYLE}>
             {/* The dot summarises: filled when every board is online, a ring
                 when any is not -- each board's own reading is in the list. */}
             <StatusDot online={chips.every((c) => c.online)} />

@@ -7,7 +7,7 @@ import { devices } from '@/db/schema/devices';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume } from '@/lib/adffs';
 import { signUpFresh, runTag, createAdf, stagingReady, openTitleMenu, openRowMenu } from './helpers';
-import { cleanupSeeded, seedDisk, addDisk, pairDevice, authHeader } from './device-helpers';
+import { cleanupSeeded, seedDisk, addDisk, pairDevice, authHeader, hydrated } from './device-helpers';
 import { synthDrop } from './drag-drop-helpers';
 import { zoneOf } from '@/lib/set-folder';
 import { seedProduction, seedSuggestion, cleanupDemozoo } from './demozoo-helpers';
@@ -83,7 +83,7 @@ async function seedLibrary(page: Page, count: number) {
   return { u, run };
 }
 
-test('the bottom bar reaches every route, and there is only one nav', async ({ page }) => {
+test('the bottom bar reaches every route through four tabs and More, and there is only one nav', async ({ page }) => {
   await seedLibrary(page, 2);
   await page.goto('/library');
 
@@ -99,12 +99,25 @@ test('the bottom bar reaches every route, and there is only one nav', async ({ p
   // Actually at the bottom of the 844px viewport, not merely styled for it.
   expect(box.y + box.height).toBeGreaterThan(760);
 
+  // C7 (spec §2.3): Library, Devices, Upload and More, each a finger's height.
+  const tabs = bar.locator(':scope > a, :scope > button').filter({ visible: true });
+  await expect(tabs).toHaveText(['Library', 'Devices', 'Upload', 'More']);
+  for (const t of await tabs.all()) expect((await t.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+
   await page.getByRole('link', { name: 'Devices' }).tap();
   await expect(page).toHaveURL(/\/devices$/);
   await page.getByRole('link', { name: 'Upload' }).tap();
   await expect(page).toHaveURL(/\/ingest$/);
-  await page.getByRole('link', { name: 'Library' }).tap();
+  // The right edge of the cell: the dev server's Next.js indicator sits over the bottom-left corner of the first tab,
+  // and a tap at the centre of the Library cell lands on it (a dev-mode artefact; production has no indicator).
+  const libraryBox = (await page.getByRole('link', { name: 'Library' }).boundingBox())!;
+  await page.getByRole('link', { name: 'Library' }).tap({ position: { x: libraryBox.width - 12, y: libraryBox.height / 2 } });
   await expect(page).toHaveURL(/\/library/);
+  // Help lives in More now.
+  await hydrated(page, 'nav-more');
+  await page.getByTestId('nav-more').tap();
+  await page.getByTestId('more-help').tap();
+  await expect(page).toHaveURL(/\/help$/);
 });
 
 test('the library grid is two columns, and nothing overflows the viewport', async ({ page }) => {

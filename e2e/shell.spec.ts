@@ -32,15 +32,23 @@ test('the shell renders on the ground with the right fonts', async ({ page }) =>
   await expect(page).toHaveTitle('Help · WebFloppy');
 });
 
-test('below sm the search box keeps 16px from the (i) button, as it does from sm up', async ({ page }) => {
+test('below lg the header is one 60 px row (home, search); from lg the search box keeps 16px from the next control', async ({ page }) => {
   await signUpFresh(page);
-  for (const width of [390, 1280]) {
-    await page.setViewportSize({ width, height: 844 });
-    await page.goto('/library');
-    const search = (await page.getByTestId('search-input').boundingBox())!;
-    const about = (await page.getByTestId('about-link').boundingBox())!;
-    // Same line, and spec §6.1's 16px between them (mr-2 + the group's gap-2).
-    expect(Math.abs((search.y + search.height / 2) - (about.y + about.height / 2)), `same line at ${width}`).toBeLessThan(4);
-    expect(about.x - (search.x + search.width), `gap at ${width}`).toBeCloseTo(16, 0);
-  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/library');
+  const header = (await page.getByTestId('app-header').boundingBox())!;
+  expect(header.height, 'one row').toBeLessThanOrEqual(61);
+  const home = (await page.getByTestId('wordmark-home').boundingBox())!;
+  // The search control is the field until Task 3 and the 44 px button after it: whichever is shown.
+  const search = (await page.getByTestId('app-header')
+    .locator('[data-testid="search-open"]:visible, [data-testid="search-input"]:visible').first().boundingBox())!;
+  expect(Math.abs((home.y + home.height / 2) - (search.y + search.height / 2)), 'same line at 390').toBeLessThan(4);
+
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await page.goto('/library');
+  const box = (await page.getByTestId('search-input').boundingBox())!;
+  const next = (await page.getByTestId('about-link').boundingBox())!;
+  // Same line, and spec §6.1's 16px between them (mr-2 + the group's gap-2).
+  expect(Math.abs((box.y + box.height / 2) - (next.y + next.height / 2)), 'same line at 1280').toBeLessThan(4);
+  expect(next.x - (box.x + box.width), 'gap at 1280').toBeCloseTo(16, 0);
 });

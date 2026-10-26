@@ -48,106 +48,78 @@ export default async function AppLayout({
   return (
     <>
       <LiveRefresh initial={fingerprint} />
-      {/* The bottom padding is the room the fixed mobile nav bar occupies (see
-          the wrapper below). It lives here, once, rather than on each page:
-          every page under this layout is behind that bar, and a page that
-          forgot the padding would hide its own last row under it. */}
-      <div className="min-h-screen pb-[calc(4.5rem+env(safe-area-inset-bottom))] sm:pb-0">
-        {/* Below sm the header wraps: the wordmark keeps line one and the
-            search box plus sign-out take line two full-width. At 390px they do
-            not fit on one line, and nowrap would push the sign-out button off
-            the right edge rather than shrinking anything. */}
+      {/* The bottom padding is the room the fixed tab bar occupies below lg (see the wrapper below). It lives here,
+          once, rather than on each page: every page under this layout is behind that bar, and a page that forgot the
+          padding would hide its own last row under it. 4.5rem >= the bar's 6 + 52 + 8 px. */}
+      <div className="min-h-screen pb-[calc(4.5rem+env(safe-area-inset-bottom))] lg:pb-0">
+        {/* Below lg one 60 px row (C7 spec §2.2, Rulings 1-3): home, the drive chip filling the middle, search. The
+            gear, Sign out and the (i) are in the bar's More menu there. From lg this is today's 72 px bar. */}
         <header
           data-testid="app-header"
-          className="relative flex flex-wrap items-center gap-3 border-b px-4 py-3 sm:h-[72px] sm:flex-nowrap sm:gap-4 sm:px-7 sm:py-0"
+          className="relative flex h-[60px] items-center gap-2.5 border-b px-4 lg:h-[72px] lg:gap-4 lg:px-7"
           style={{ background: "var(--surface)", borderColor: "var(--line)" }}
         >
           {/* The wordmark and, after it, a lane that centres the drive chips
               between the wordmark and the pill -- see HeaderStart for the
-              geometry. The estimate is only the first paint's; the pill is
-              measured on the client. */}
+              geometry (from xl). Below lg the lane is a plain flex row whose
+              chip slot fills the middle. */}
           <HeaderStart pillEstimate={showAdmin ? 394 : 317}>
-            {/* The wordmark is the way home. Every other shell in the app has an
-                explicit way back to the library; this one only had the nav pill,
-                and the mark is where people click first (operator, 2026-09-21). */}
+            {/* The wordmark is the way home (operator, 2026-09-21). 44 x 44 at
+                least for a finger; the word shows from sm and is sr-only below
+                it, so the link keeps its name. */}
             <Link
               href="/library"
               data-testid="wordmark-home"
-              className="flex items-center gap-2.5 text-[18px] font-bold tracking-[-0.02em]"
+              className="flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-2.5 text-[18px] font-bold tracking-[-0.02em] sm:justify-start"
               style={{ color: "var(--ink)", fontFamily: "var(--font-display)" }}
             >
               <Logo size={24} />
-              webfloppy
+              <span className="max-sm:sr-only">webfloppy</span>
             </Link>
-            {/* Beside the wordmark, in flow, rather than beside the pill: the
-                pill is absolutely centred (below), so anything placed next to
-                it would have to be absolute too, and would run into the search
-                box on the right. Here the chips take real width and the pill's
-                own centring is untouched. Full chips only from xl; see
-                DriveChips for the compact control used below that. The lane
-                centres them from sm up (HeaderStart); below sm the compact
-                control's own ml-auto still puts it at the line's right end. */}
-            <div className="flex flex-1 items-center sm:justify-center">
+            {/* The chip slot: below lg it fills the row (the compact Drives
+                control is full width, 44 px); from lg HeaderStart centres the
+                chips beside the wordmark as before. No board: empty space. */}
+            <div className="flex min-w-0 flex-1 items-center lg:justify-center">
               <DriveChips chips={chips} showAdmin={showAdmin} />
             </div>
           </HeaderStart>
-        {/* The nav is centred on the VIEWPORT, which means taking it out of
-            flow. Two weaker versions were tried and measured first: mx-auto
-            only centres within the space its siblings leave over, so the
-            wider right-hand group pushed the pill left (and by a different
-            amount in each shell, which is what made the two look misaligned
-            when moving between them); and a 1fr/auto/1fr grid centred it
-            exactly but forced both sides into equal columns, which is less
-            room than the right side needs -- "Back to library" wrapped onto
-            two lines. Absolute centring is the only one of the three that
-            centres the pill AND lets each side take the width it actually
-            needs. Narrow viewports overlap, and below sm that overlap is the
-            whole problem: at 390px the pill lands on top of the wordmark and
-            the search box, with the click going to whichever paints last. So
-            below sm this same wrapper stops being a centred strip and becomes
-            a fixed bottom bar, where a thumb is (spec D-6-2). Moved by CSS,
-            never duplicated -- a second, mobile copy of the nav would make
-            getByRole('link') ambiguous under strict mode and fail the suite
-            at 1280.
+        {/* The nav is centred on the VIEWPORT from xl, which means taking it
+            out of flow (mx-auto and a 1fr/auto/1fr grid were both tried and
+            measured first; see git history). Between lg and xl it is in flow,
+            flex-1, and the pill scrolls inside its clamp when space is short
+            (Phase B final review F1: centred, it ran under the search box).
 
-            Absolute centring only from xl, though. Between sm and xl it ran
-            under the search box (~55px at 1024; Phase B final review F1),
-            so there the wrapper is in flow, flex-1, centring the pill in the
-            space HeaderStart and the right-hand group leave, and the pill
-            scrolls inside its clamp when that space is short.
-            e2e/header-overlap.spec.ts pins both. */}
+            Below lg the same wrapper is the fixed bottom tab bar (C7 spec §2.3,
+            Ruling 1): with a board the header pill showed 0 px of 317 at
+            640-700 and was clipped up to 1000; from 1024 it fits in every case.
+            Moved by CSS, never duplicated -- a second, phone copy of the nav
+            would make getByRole('link') ambiguous under strict mode and fail
+            the suite at 1280. e2e/header-overlap.spec.ts pins both. */}
           <div
             // h-[34px] matching the flow content's height, with items-center,
-            // so the pill's centre lines up with the search box's rather than
-            // its TOP edge lining up with the search box's top -- the pill is
-            // 42px tall (34 + its own 4px padding), so aligning tops left it
-            // sitting 4px high. From xl, pointer-events-none on the
-            // full-width wrapper, auto on the pill: there the wrapper spans
-            // the header and would otherwise swallow clicks meant for the
-            // search box behind it. In flow (sm to xl) it covers nothing.
+            // so the pill's centre lines up with the search box's. From xl,
+            // pointer-events-none on the full-width wrapper, auto on the pill:
+            // there the wrapper spans the header and would otherwise swallow
+            // clicks meant for the search box behind it.
             //
-            // xl:top-[19px] is (72 - 34) / 2: the 72px bar's middle. Below sm
-            // the bar's look comes from --nav-scrim / --nav-scrim-hairline, a
-            // light surface now like the header itself, carrying the same
-            // segmented nav (ink on the track).
-            className="pointer-events-auto fixed inset-x-0 bottom-0 z-40 flex items-center justify-center border-t border-(--nav-scrim-hairline) bg-(--nav-scrim) px-3 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-md sm:static sm:z-auto sm:min-w-0 sm:flex-1 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none xl:pointer-events-none xl:absolute xl:inset-x-0 xl:top-[19px] xl:bottom-auto xl:h-[34px]"
+            // xl:top-[19px] is (72 - 34) / 2: the 72px bar's middle. Below lg
+            // the bar's look comes from --nav-scrim / --nav-scrim-hairline.
+            className="pointer-events-auto fixed inset-x-0 bottom-0 z-40 flex items-center justify-center border-t border-(--nav-scrim-hairline) bg-(--nav-scrim) px-2 pt-1.5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-md lg:static lg:z-auto lg:min-w-0 lg:flex-1 lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none xl:pointer-events-none xl:absolute xl:inset-x-0 xl:top-[19px] xl:bottom-auto xl:h-[34px]"
           >
-            {/* The pill scrolls inside this clamp rather than the bar
-                scrolling around it: a justify-center scroll container puts
-                the start of its own content out of reach once it overflows,
-                which with four items is a 320px-wide phone away. */}
-            {/* data-nav-pill: what HeaderStart measures. */}
-            <div data-nav-pill className="pointer-events-auto max-w-full overflow-x-auto">
+            {/* data-nav-pill: what HeaderStart measures. Full width below lg,
+                so the tab bar can take its 560 px. */}
+            <div data-nav-pill className="pointer-events-auto max-w-full overflow-x-auto max-lg:w-full">
               <TopNav showAdmin={showAdmin} />
             </div>
           </div>
-          {/* Full-width on its own wrapped line below sm, so the search box
-              has somewhere to grow into; ml-auto is inert at that width. */}
-          <div className="ml-auto flex w-full items-center gap-2 sm:w-auto sm:shrink-0">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             <SearchBox />
-            <AboutLink />
-            <SettingsLink />
-            <SignOutButton />
+            {/* From lg only: below it these are the More menu's (C7 spec §2.2). */}
+            <span className="hidden items-center gap-2 lg:flex">
+              <AboutLink />
+              <SettingsLink />
+              <SignOutButton />
+            </span>
           </div>
         </header>
         {children}

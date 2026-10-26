@@ -320,7 +320,7 @@ export function SearchBox() {
     // Static, so the panel anchors to the header (both shells' headers are `relative`); see the plan ruling in C5
     // Task 5. Full width below sm, where the header wraps the box onto a line it shares with the icon buttons; mr-2
     // keeps it 16px clear of them (they sit 8px apart).
-    <div className="mr-2 w-full sm:w-auto">
+    <div className="lg:mr-2">
       <div className="relative w-full sm:w-auto">
         <SearchIcon aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2"
                     style={{ color: 'var(--muted-2)' }} />
@@ -345,7 +345,7 @@ export function SearchBox() {
           onBlur={() => { setFocused(false); setOpen(false); }}
           // w-48 (not w-56): at w-56 the admin shell's centred pill and this input overlapped by 15px at 1280. The
           // focus ring is a box-shadow in the full --ring (>= 3:1 on the bar, WCAG 1.4.11).
-          className="h-10 w-full rounded-[10px] border pl-9 pr-4 text-[14px] outline-none transition-colors placeholder:text-(--muted-2) focus-visible:ring-2 focus-visible:ring-(--ring) sm:w-48 sm:pr-9"
+          className="h-10 w-40 rounded-[10px] border pl-9 pr-4 text-[14px] outline-none transition-colors placeholder:text-(--muted-2) focus-visible:ring-2 focus-visible:ring-(--ring) sm:w-48 sm:pr-9"
           style={{ background: 'var(--surface-2)', borderColor: 'var(--line)', color: 'var(--ink)' }}
         />
         {/* The "/" shortcut, advertised while the box is idle (aria-hidden: the title attribute says it). Hidden below
