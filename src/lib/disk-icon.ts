@@ -27,7 +27,6 @@ export function diskIconMetrics(size: number) {
     showText: w >= 72,
     pad: Math.max(3, Math.round(w * 0.05)),
     gap: Math.max(2, Math.round(w * 0.025)),
-    stripe: Math.max(2, Math.round(w * 0.018)),
     setSize: Math.max(7, Math.round(w * 0.56) / 10),
     titleSize: Math.max(9, Math.round(w * 1.05) / 10),
     badgeSize: Math.max(9, Math.round(w * 0.07)),

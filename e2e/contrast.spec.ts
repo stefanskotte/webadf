@@ -22,8 +22,10 @@ import { test, expect, type Page } from '@playwright/test';
  * this repo names. Assert the composited pixels.
  */
 import { randomUUID } from 'node:crypto';
-import { signUpFresh, runTag, createAdf, openRowMenu, openVersion } from './helpers';
-import { cleanupSeeded, seedDisk, pairDevice, authHeader, openBoardSettings, hydrated } from './device-helpers';
+import { signUpFresh, runTag, createAdf, openRowMenu, openVersion, mintInviteCode } from './helpers';
+import { cleanupSeeded, seedDisk, pairDevice, authHeader, openBoardSettings, hydrated, seedDevices, publishTestRelease, cleanupTestReleases } from './device-helpers';
+import { readCurrentRelease } from '@/lib/firmware-releases';
+import { revokeInvite } from '@/lib/invites';
 import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
 import { getDb } from '@/db';
 import { blobs, games, disks } from '@/db/schema/catalog';
@@ -33,12 +35,13 @@ import { amigaUploads } from '@/db/schema/amiga-uploads';
 import { transfers } from '@/db/schema/transfers';
 import { and, eq, inArray } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
-import { signInAsSuperAdmin } from './admin-helpers';
+import { signInAsSuperAdmin, SUPERADMIN_EMAIL, gotoAdminUserRow } from './admin-helpers';
 
 // Upload test rows: all belong to that test's own fresh org; amiga_uploads are removed by id here (the org's other
 // rows go with its teardown), transfers cascade with the paired device in cleanupSeeded().
 const uploadIdsToDelete: string[] = [];
 test.afterAll(async () => {
+  await cleanupTestReleases();
   if (uploadIdsToDelete.length) await getDb().delete(amigaUploads).where(inArray(amigaUploads.id, uploadIdsToDelete)).catch(() => undefined);
   await cleanupTosec(); await cleanupSeeded();
 });
@@ -226,6 +229,16 @@ test('the library card and row pairs are legible: type pill, DF0 pill, count lin
   }
 });
 
+test('the admin sans subtitle (--muted on the ground) is legible', async ({ page }) => {
+  // No admin page sets subtitleFont="sans" until C6 Tasks 2 and 5. So take the live subtitle element of
+  // /admin/invites (real ground behind it) and give it exactly what the sans variant gives it: --muted.
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/invites');
+  const sub = 'div:has(> h1) + span';
+  await page.locator(sub).evaluate((el) => { (el as HTMLElement).style.color = 'var(--muted)'; });
+  await legible(page, 'admin', [['sans subtitle, --muted', sub]]);
+});
+
 test('a toast description is legible', async ({ page }) => {
   await signUpFresh(page);
   await signInAsSuperAdmin(page);
@@ -233,7 +246,7 @@ test('a toast description is legible', async ({ page }) => {
   // Force the fetch to fail: that is the branch raising a toast WITH a
   // description. The success path renders the code inline instead.
   await page.route('**/api/admin/invites', (r) => r.abort());
-  await page.getByRole('button', { name: /issue invite/i }).click();
+  await page.getByRole('button', { name: /issue an invite/i }).click();
 
   await expect(page.locator('[data-description]').first()).toBeVisible({ timeout: 10_000 });
   // Let the entrance animation finish: a toast measured mid-fade reports the
@@ -682,4 +695,93 @@ test('the Sign-in and Create account pairs are legible: switch, error, hint, and
   await legible(page, 'sign-in', [['error', '[data-testid="auth-error"]']]);
   await page.goto('/sign-up');
   await legible(page, 'sign-up', [['invite hint', '#invite-code-hint'], ['password hint', '#password-hint']]);
+});
+
+// Phase C6 spec §11, measured on real elements. Seeded: a board with an error on the current release (an attention
+// row and, with a current release, ` · current`), a TEST build, a live code, a revoked code and the fresh sign-up's
+// used code. Live-data-only elements (warning tiles, the no-live note, attention-invites) are measured when present.
+test('the Admin pairs are legible: tiles, firmware rows, attention, Users, Invites, Scan, Firmware, tabs', async ({ page }) => {
+  test.setTimeout(150_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const u = await signUpFresh(page);
+  const current = await readCurrentRelease();
+  const [errored] = await seedDevices(u.orgId, 1, current?.version ?? '0.0.0+e2e-c6-contrast');
+  await getDb().update(devices).set({ lastError: 'e2e contrast', lastErrorAt: new Date() }).where(eq(devices.id, errored));
+  await publishTestRelease('0.0.0+e2e63', { notes: 'TEST build c6 contrast' });
+  await mintInviteCode();
+  const revoked = await mintInviteCode();
+  await revokeInvite(revoked);
+
+  await page.context().clearCookies();
+  await signInAsSuperAdmin(page);
+  const when = async (area: string, pairs: ReadonlyArray<readonly [string, string]>) => {
+    for (const pair of pairs) {
+      if (await page.locator(pair[1]).count()) await legible(page, area, [pair]);
+      else console.log(`${area.padEnd(9)} ${pair[0].padEnd(36)} not on the page in this database state`);
+    }
+  };
+
+  await page.goto('/admin');
+  await page.mouse.move(0, 0);
+  const row = `[data-testid="attention-row"][data-device-id="${errored}"]`;
+  await legible(page, 'overview', [
+    ['tile label', 'a:has(> [data-testid="count-users"]) > span:first-child'],
+    ['tile value', '[data-testid="count-users"]'],
+    ['tile note', 'a:has(> [data-testid="count-users"]) > span:last-child'],
+    ['firmware row count', '[data-testid="fw-dist-row"] > span:last-child'],
+    ['attention title (surface-2)', `${row} [data-attn="title"]`],
+    ['attention reason (surface-2)', `${row} [data-kind="error"]`],
+    ['tab (current)', '[data-testid="admin-sections"] a[aria-current="page"]'],
+    ['tab', '[data-testid="admin-sections"] a:not([aria-current])'],
+  ]);
+  await when('overview', [
+    [' · current', '[data-dist="current"]'],
+    ['warning tile value', 'a[data-warn="true"] > span:nth-child(2)'],
+    ['warning tile note', 'a[data-warn="true"] > span:last-child'],
+    ['attention title (warning-bg)', '[data-testid="attention-invites"] [data-attn="title"]'],
+    ['attention text (warning-bg)', '[data-testid="attention-invites"] [data-attn="text"]'],
+  ]);
+
+  await gotoAdminUserRow(page, SUPERADMIN_EMAIL);
+  await page.mouse.move(0, 0);
+  await legible(page, 'users', [
+    ['column head', 'section[aria-label="Users"] th'],
+    ['joined date', '[data-testid="admin-user-row"] td:nth-child(3)'],
+    ['Admin pill', '[data-admin-pill]'],
+    ['Delete… trigger', '[data-testid^="delete-user-"]:not([aria-disabled])'],
+    ['footer', '[data-users-foot]'],
+  ]);
+
+  await page.goto('/admin/invites');
+  await page.mouse.move(0, 0);
+  await legible(page, 'invites', [
+    ['Live pill', '[data-state="live"]'],
+    ['Used pill', `[data-testid="invite-${u.inviteCode}"] [data-state="consumed"]`],
+    ['Revoked pill', `[data-testid="invite-${revoked}"] [data-state="revoked"]`],
+  ]);
+  await when('invites', [['no-live note', '[data-testid="invites-none-live"] > span:last-child']]);
+
+  await page.goto('/admin/scan');
+  await page.mouse.move(0, 0);
+  await legible(page, 'scan', [
+    ['source line', '[data-testid="scan-identity"] [data-source]'],
+    ['count label', '[data-testid="scan-identity"] [data-count-label]'],
+    ['count value', '[data-testid="scan-blobs"]'],
+    ['status line', '[data-testid="scan-note"] > span:last-child'],
+  ]);
+
+  await page.goto('/admin/firmware');
+  await page.mouse.move(0, 0);
+  await legible(page, 'firmware', [
+    ['meta line', '[data-testid="firmware-release-row"] [data-fw-meta]'],
+    ['Test build tag', '[data-testid="firmware-release-row"][data-version="0.0.0+e2e63"] [data-testid="fw-tag-test"]'],
+    ['filter (current)', '[data-testid="fw-filter"] a[aria-current="page"]'],
+    ['filter (other)', '[data-testid="fw-filter"] a:not([aria-current])'],
+  ]);
+  await page.goto('/admin/firmware?show=releases');
+  await page.mouse.move(0, 0);
+  await when('firmware', [
+    ['Current release tag', '[data-testid="fw-tag-current"]'],
+    ['GitHub release', '[data-testid="fw-github"]'],
+  ]);
 });

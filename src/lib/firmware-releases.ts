@@ -4,6 +4,7 @@ import { getDb, type Db } from '@/db';
 import { firmwareReleases } from '@/db/schema/firmware';
 import { isTestOrgSql } from '@/lib/test-org';
 import type { ReleaseRef } from '@/lib/firmware-state';
+import type { FirmwareShow } from '@/lib/admin-firmware';
 import { decidePublish, PublishRefused, type ExistingRelease } from '@/lib/firmware-publish-rules';
 
 export interface PublishInput {
@@ -173,12 +174,24 @@ export interface FirmwareReleaseListItem {
 }
 
 /**
+ * The admin list's `?show=` filter (C6 Ruling 30): the same TEST_BUILD_NOTES_PATTERN isTestBuild and
+ * releaseVisibleToSql use. `all` (or nothing) adds no condition, so the default query is today's.
+ */
+function showSql(show: FirmwareShow = 'all'): SQL | undefined {
+  if (show === 'test') return sql`${firmwareReleases.notes} like ${TEST_BUILD_NOTES_PATTERN}`;
+  if (show === 'releases') {
+    return sql`(${firmwareReleases.notes} is null or ${firmwareReleases.notes} not like ${TEST_BUILD_NOTES_PATTERN})`;
+  }
+  return undefined;
+}
+
+/**
  * For /admin/firmware: one page, newest first (countReleases gives "Page N of M" its M). Only the columns the page
  * renders -- sha256, blobPath and the base64 signature are ~180 bytes a row that it never shows. Board counts per
  * version are a cross-tenant devices read, so they live in admin-queries.ts (adminBoardsByVersion), not here.
  */
 export async function listReleasesFull(
-  opts: { limit: number; offset: number },
+  opts: { limit: number; offset: number; show?: FirmwareShow },
 ): Promise<FirmwareReleaseListItem[]> {
   const { user } = await import('@/db/schema/auth');
   const { eq } = await import('drizzle-orm');
@@ -201,15 +214,16 @@ export async function listReleasesFull(
     })
     .from(firmwareReleases)
     .leftJoin(user, eq(user.id, firmwareReleases.publishedByUserId))
+    .where(showSql(opts.show))
     .orderBy(desc(firmwareReleases.sequence))
     .limit(opts.limit)
     .offset(opts.offset);
   return rows.map((r) => ({ ...r, isCurrent: r.isCurrent === true }));
 }
 
-/** Every release row, for /admin/firmware's page count. */
-export async function countReleases(): Promise<number> {
-  const [row] = await getDb().select({ n: sql<number>`count(*)::int` }).from(firmwareReleases);
+/** Release rows, for /admin/firmware's page count -- all of them, or those the `show` filter keeps. */
+export async function countReleases(opts: { show?: FirmwareShow } = {}): Promise<number> {
+  const [row] = await getDb().select({ n: sql<number>`count(*)::int` }).from(firmwareReleases).where(showSql(opts.show));
   return Number(row.n);
 }
 

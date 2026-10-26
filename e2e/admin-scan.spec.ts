@@ -4,7 +4,7 @@ import { getDb } from '@/db';
 import { games, disks, blobs } from '@/db/schema/catalog';
 import { signUpFresh, createAdf } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
-import { cleanupSeeded } from './device-helpers';
+import { cleanupSeeded, hydrated } from './device-helpers';
 import { trackTosecSet, cleanupTosec } from './tosec-helpers';
 
 test.afterAll(async () => { await cleanupTosec(); await cleanupSeeded(); });
@@ -62,6 +62,7 @@ test('the operator can run a scan by clicking Run now', async ({ page }) => {
   await expect(button).toHaveText('Run now');
   await button.click();
   await expect(button).toHaveText('Scanning…');
+  await expect(page.getByTestId('run-scan-status')).toContainText('Scanning');
   // sonner's <Toaster/> is now mounted in src/app/layout.tsx (see
   // e2e/admin-invites.spec.ts's "a success toast is actually visible"
   // test, which was the regression that proved it), so the toast this
@@ -72,7 +73,8 @@ test('the operator can run a scan by clicking Run now', async ({ page }) => {
   // remains the primary assertion; the toast check below is a real but
   // loosely-worded addition, not a replacement for it.
   await expect(button).toHaveText('Run now', { timeout: 250_000 });
-  await expect(page.getByText(/Scan complete|Batch done/)).toBeVisible();
+  // The outcome is also in words on the page, in a live region (the toast is gone in seconds).
+  await expect(page.getByTestId('run-scan-status')).toHaveText(/^(Scan complete|Batch done — more to do)\./);
   await expect(page.getByTestId('scan-blobs')).toHaveText(/^\d+$/);
 });
 
@@ -98,6 +100,8 @@ game (
 
   await signInAsSuperAdmin(page);
   await page.goto('/admin/scan');
+  // A file chosen before hydration fires a change no React handler hears: nothing uploads, no toast.
+  await hydrated(page, 'dat-upload', 'onChange');
 
   await page.getByTestId('dat-upload').setInputFiles({
     name: 'test.dat', mimeType: 'text/plain', buffer: Buffer.from(datText),
@@ -107,7 +111,7 @@ game (
   // the success toast is asserted directly below. The table assertion stays
   // too, and is still the one that actually proves dat-upload.tsx's
   // router.refresh() re-rendered the page with the imported set.
-  await expect(page.getByText(`Imported 1 entries from 1 file`)).toBeVisible();
+  await expect(page.getByTestId('dat-status')).toHaveText('Imported 1 entries from 1 file.');
   const row = page.getByRole('row', { name: setName });
   await expect(row).toBeVisible({ timeout: 15_000 });
   // Assert the Entries cell specifically, not the whole row: the row also

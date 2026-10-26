@@ -2,40 +2,33 @@
 import { Link } from '@/components/shell/link';
 import { usePathname } from 'next/navigation';
 
-// The app shell's TopNav look (.seg / .seg-item), over the admin routes. Exact
-// matching on href, not startsWith: '/admin' is a prefix of every other entry,
-// so startsWith would light up Overview on every other page.
-const ITEMS = [
+/**
+ * The in-page Admin sections tabs (C6 spec §1.2, Ruling 2): the header holds the app's Main nav now, so the five
+ * sections move under each page's heading. Exact match on href, not startsWith: '/admin' is a prefix of every other
+ * entry, so startsWith would light up Overview everywhere. No count badge (Ruling 2): the Overview tile, its
+ * attention item and the Invites subtitle already say "0 live" in words.
+ */
+export const ADMIN_SECTIONS = [
   { href: '/admin', label: 'Overview' },
   { href: '/admin/users', label: 'Users' },
   { href: '/admin/invites', label: 'Invites' },
   { href: '/admin/scan', label: 'Scan' },
   { href: '/admin/firmware', label: 'Firmware' },
-];
+] as const;
 
-export function AdminNav() {
+export function AdminSections() {
   const pathname = usePathname();
   return (
-    <nav
-      aria-label="Admin"
-      // w-max at every width, matching TopNav: inside the layout's clamp the
-      // pill is in a clamped scroll container, and at auto width its items
-      // would spill outside the track rather than widen it.
-      className="seg w-max"
-    >
-      {ITEMS.map((item) => {
-        const active = pathname === item.href;
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            aria-current={active ? 'page' : undefined}
-            className="seg-item whitespace-nowrap"
-          >
+    // The clamp scrolls on a phone (five tabs are ~420 px); w-max keeps the track as wide as its items.
+    <div className="max-w-full overflow-x-auto">
+      <nav aria-label="Admin sections" data-testid="admin-sections" className="seg w-max">
+        {ADMIN_SECTIONS.map((item) => (
+          <Link key={item.href} href={item.href} aria-current={pathname === item.href ? 'page' : undefined}
+                className="seg-item whitespace-nowrap">
             {item.label}
           </Link>
-        );
-      })}
-    </nav>
+        ))}
+      </nav>
+    </div>
   );
 }

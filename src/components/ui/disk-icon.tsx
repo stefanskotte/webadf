@@ -5,10 +5,10 @@ import { DISK_BODIES, diskIconMetrics, type DiskColor } from '@/lib/disk-icon';
 
 /**
  * A 3.5" disk, ported from the approved board (ModernDisk.dc.html): body colour, metal shutter, label with the
- * four-colour stripe, set line and title, and optionally a disk behind it (`stack` > 1), the HD hole, a closed
- * write-protect tab (`wp`) and the DF0 badge (`mounted`). Decorative: the root is aria-hidden and the caller
- * labels whatever it sits in. The gradient ids carry a per-instance suffix so two icons on one page do not
- * share a `wfSheen` (an SVG id is document-wide); that is why this is a client component.
+ * set line and title (the board's four-colour stripe left out, operator 2026-10-25), and optionally a disk behind
+ * it (`stack` > 1), the HD hole, a closed write-protect tab (`wp`) and the DF0 badge (`mounted`). Decorative: the
+ * root is aria-hidden and the caller labels whatever it sits in. The gradient ids carry a per-instance suffix so
+ * two icons on one page do not share a `wfSheen` (an SVG id is document-wide); that is why this is a client component.
  */
 export function DiskIcon({
   color = 'black',
@@ -94,12 +94,6 @@ export function DiskIcon({
         position: 'absolute', left: '8.5%', top: '47.5%', width: '77.4%', height: '46%', boxSizing: 'border-box',
         padding: `${m.pad}px`, display: 'flex', flexDirection: 'column', gap: `${m.gap}px`, overflow: 'hidden',
       }}>
-        <div aria-hidden="true" style={{ display: 'flex', gap: '2px', height: `${m.stripe}px`, flexShrink: 0 }}>
-          <span style={{ flexGrow: 1, background: '#D9453A', borderRadius: '1px' }} />
-          <span style={{ flexGrow: 1, background: '#EE8A2A', borderRadius: '1px' }} />
-          <span style={{ flexGrow: 1, background: '#4F9D4A', borderRadius: '1px' }} />
-          <span style={{ flexGrow: 1, background: '#2F6FB5', borderRadius: '1px' }} />
-        </div>
         {m.showText && (
           <>
             <span style={{

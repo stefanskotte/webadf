@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Locator } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -9,6 +9,7 @@ import { invites } from '@/db/schema/devices';
 import { deleteUserCascade } from '@/lib/admin-delete';
 import { mintInviteCode, signedUpOrgIds, libRows, stagingReady } from './helpers';
 import { pairDevice, cleanupSeeded } from './device-helpers';
+import { signInAsSuperAdmin } from './admin-helpers';
 
 /**
  * The README screenshots, from a demo org made for the purpose.
@@ -97,7 +98,7 @@ function squeeze(file: string) {
  * app's background is fixed to the viewport, so a fullPage shot ends in a band
  * of bare white.
  */
-async function shoot(page: Page, name: string, opts: { tall?: boolean } = {}) {
+async function shoot(page: Page, name: string, opts: { tall?: boolean; mask?: Locator[] } = {}) {
   // Let covers decode and toasts fade before the picture is taken.
   await page.waitForLoadState('networkidle').catch(() => {});
   await page.evaluate(() => Promise.all([...document.images].map((i) => (i.complete ? null : i.decode().catch(() => null)))));
@@ -110,7 +111,7 @@ async function shoot(page: Page, name: string, opts: { tall?: boolean } = {}) {
   }
   await page.waitForTimeout(800);
   const file = path.join(OUT, `${name}.png`);
-  await page.screenshot({ path: file });
+  await page.screenshot({ path: file, mask: opts.mask, maskColor: '#F6F2E9' });
   if (opts.tall && before) await page.setViewportSize(before);
   squeeze(file);
 }
@@ -263,4 +264,22 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   await page.goto('/settings');
   await expect(page.getByTestId('settings-nav')).toBeVisible();
   await shoot(page, 'settings', { tall: true });
+
+  // --- the admin Overview (C6, Ruling 38) ------------------------------------
+  // The database is the live one and the README image is public. Everything that can name a person or a board is
+  // masked in the --surface-2 fill: the header's account address, every Needs-attention row (a board's name and its
+  // owner's address), and any other text on the page that carries an address or a board name.
+  await page.context().clearCookies();   // the demo account is signed in
+  await signInAsSuperAdmin(page);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/admin');
+  await expect(page.getByTestId('admin-sections')).toBeVisible();
+  await shoot(page, 'admin', {
+    mask: [
+      page.getByTestId('admin-email'),
+      page.getByTestId('attention-row'),
+      page.getByText(/[^\s@]+@[^\s@]+/),
+    ],
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
 });

@@ -4,21 +4,21 @@ import { DISK_BODIES, diskIconMetrics } from './disk-icon';
 describe('diskIconMetrics', () => {
   it('matches the board at 160 px (its default)', () => {
     expect(diskIconMetrics(160)).toEqual({
-      w: 160, h: 163, showText: true, pad: 8, gap: 4, stripe: 3, setSize: 9, titleSize: 16.8, badgeSize: 11,
+      w: 160, h: 163, showText: true, pad: 8, gap: 4, setSize: 9, titleSize: 16.8, badgeSize: 11,
       shadowY: 8, shadowBlur: 13,
     });
   });
 
   it('matches the board at 96 px (the empty library)', () => {
     expect(diskIconMetrics(96)).toEqual({
-      w: 96, h: 98, showText: true, pad: 5, gap: 2, stripe: 2, setSize: 7, titleSize: 10.1, badgeSize: 9,
+      w: 96, h: 98, showText: true, pad: 5, gap: 2, setSize: 7, titleSize: 10.1, badgeSize: 9,
       shadowY: 5, shadowBlur: 8,
     });
   });
 
   it('clamps every size to its floor at 24 px and drops the label text', () => {
     expect(diskIconMetrics(24)).toEqual({
-      w: 24, h: 24, showText: false, pad: 3, gap: 2, stripe: 2, setSize: 7, titleSize: 9, badgeSize: 9,
+      w: 24, h: 24, showText: false, pad: 3, gap: 2, setSize: 7, titleSize: 9, badgeSize: 9,
       shadowY: 1, shadowBlur: 2,
     });
   });

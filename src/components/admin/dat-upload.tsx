@@ -7,6 +7,8 @@ import { toast } from 'sonner';
 export function DatUpload() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
+  // The outcome in words, kept after the toast is gone (a live region reads it out).
+  const [result, setResult] = useState('');
   const input = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
@@ -17,6 +19,8 @@ export function DatUpload() {
   // this keeps it manual without making it tedious. Sequential, not parallel:
   // each import is a large parse and the route is not worth stampeding.
   async function onChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (busy) return;
+    setResult('');
     const files = [...(e.target.files ?? [])];
     if (files.length === 0) return;
     setBusy(true);
@@ -43,6 +47,7 @@ export function DatUpload() {
           toast.error('Could not reach the server', {
             description: `Stopped at ${file.name}. ${ok} of ${files.length} imported.`,
           });
+          setResult(`Could not reach the server. Stopped at ${file.name}. ${ok} of ${files.length} imported.`);
           return;
         }
         const body = await res.json().catch(() => ({}));
@@ -60,10 +65,12 @@ export function DatUpload() {
         toast.success(`Imported ${entries} entries from ${ok} file${ok === 1 ? '' : 's'}`, {
           description: failed.length > 0 ? `${failed.length} skipped: ${failed.join(', ')}` : undefined,
         });
+        setResult(`Imported ${entries} entries from ${ok} file${ok === 1 ? '' : 's'}.${failed.length > 0 ? ` ${failed.length} skipped: ${failed.join(', ')}.` : ''}`);
       } else {
         toast.error('Nothing imported', {
           description: `${failed.length} file(s) rejected — are these really TOSEC DATs?`,
         });
+        setResult(`Nothing imported. ${failed.length} file(s) rejected — are these really TOSEC DATs?`);
       }
       router.refresh();
     } finally {
@@ -74,26 +81,30 @@ export function DatUpload() {
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <label htmlFor="dat-file" className="text-[12.5px] font-semibold">
-        Import a TOSEC DAT
-      </label>
+    <div className="flex flex-col gap-2.5">
+      {/* Hidden, not a tab stop: the Choose button is (C6 spec §5.4, Ruling 25). setInputFiles still reaches it. */}
       <input
-        id="dat-file"
         ref={input}
         type="file"
         accept=".dat,.xml"
         multiple
-        disabled={busy}
+        aria-hidden="true"
         onChange={onChange}
         data-testid="dat-upload"
-        className="text-[13px]"
+        className="sr-only"
+        tabIndex={-1}
       />
-      <span className="text-[12px]" style={{ color: 'var(--muted)' }}>
-        {busy
-          ? `Importing ${progress ?? '…'}`
-          : 'Select one or more .dat files. ClrMamePro or XML; re-importing a set updates it in place.'}
-      </span>
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" data-testid="dat-choose" aria-disabled={busy || undefined}
+                onClick={() => { if (!busy) input.current?.click(); }}
+                className="h-10 rounded-[10px] border border-(--line) bg-(--surface) px-4 text-[14px] font-medium text-(--ink) hover:bg-(--track) aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)">
+          {busy ? 'Importing…' : 'Choose .dat files'}
+        </button>
+        {/* A live region from the first paint, empty while idle. */}
+        <span role="status" data-testid="dat-status" className="text-[13px]" style={{ color: 'var(--muted)' }}>
+          {busy ? `Importing ${progress ?? '…'}` : result}
+        </span>
+      </div>
     </div>
   );
 }

@@ -17,6 +17,13 @@ describe('DiskIcon', () => {
     expect(html).toContain('>New box</span>');
   });
 
+  it('draws no colour stripe on the label (operator 2026-10-25: it serves no purpose)', () => {
+    for (const size of [24, 96, 160]) {
+      const html = render({ size, set: 'Set', title: 'Title' });
+      for (const c of ['#D9453A', '#EE8A2A', '#4F9D4A', '#2F6FB5']) expect(html).not.toContain(c);
+    }
+  });
+
   it('defaults to a single black 160 px disk with no HD, WP, stack or badge', () => {
     const html = render({});
     expect(html).toContain('width:160px;height:163px');

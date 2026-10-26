@@ -51,6 +51,7 @@ describe('design tokens (globals.css)', () => {
     ['--warning-line', '#E2C48F'], ['--on-ink-fill', '#3E3B36'],
     ['--danger-line', '#F2C9BF'], ['--danger-strong', '#9A2A1C'], ['--prose', '#3E392F'], ['--on-ink-2', '#E8E1D2'],
     ['--on-ink-muted', '#A39B8B'], ['--on-ink-accent', '#EE8A2A'],
+    ['--bar-ok', '#4F9D4A'],
   ])('%s is %s', (name, value) => {
     expect(tokens()[name]).toBe(value);
   });
@@ -85,6 +86,9 @@ describe('design tokens (globals.css)', () => {
     ['--muted-2', '--ground'], ['--success-fg', '--surface'], ['--danger-fg', '--ground'], ['--danger-fg', '--track'],
     ['--danger-strong', '--surface'], ['--danger-strong', '--danger-bg'], ['--prose', '--surface'],
     ['--on-ink-2', '--ink'], ['--on-ink-accent', '--ink'], ['--on-ink-muted', '--ink'],
+    // Admin spec §11 (its other pairs are already above: muted-2 / amber-text on the grounds, danger-strong on
+    // danger-bg, success-fg on surface, surface on ink, white on danger-fg)
+    ['--ink', '--warning-bg'], ['--muted', '--warning-bg'], ['--danger-fg', '--surface-2'],
   ];
   it.each(pairs)('%s on %s clears AA (4.5:1)', (fg, bg) => {
     const read = (n: string) => (n.startsWith('#') ? n : tok(n));

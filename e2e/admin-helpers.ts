@@ -1,6 +1,6 @@
 import { type Page, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { inArray } from 'drizzle-orm';
+import { inArray, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { user } from '@/db/schema/auth';
 import { mintInviteCode } from './helpers';
@@ -80,4 +80,25 @@ export async function cleanupSeededUsers(): Promise<void> {
   } catch (e) {
     console.warn('cleanupSeededUsers: best effort —', (e as Error).message);
   }
+}
+
+/**
+ * The /admin/users page that holds `email`'s row: the rows adminListUsers puts before it (created_at desc, id desc),
+ * 50 to a page. A user with two memberships shows twice, so this can be one off; gotoAdminUserRow allows for that.
+ */
+export async function adminUsersPageOf(email: string): Promise<number> {
+  const { rows } = await getDb().execute<{ n: number }>(sql`
+    select count(*)::int as n from auth."user" u, auth."user" a
+    where a.email = ${email} and (u.created_at > a.created_at or (u.created_at = a.created_at and u.id > a.id))`);
+  return Math.floor(Number(rows[0]?.n ?? 0) / ADMIN_PER_PAGE) + 1;
+}
+
+/** Open the Users page that shows `email`'s row (that page, else a neighbour); throws when none does. */
+export async function gotoAdminUserRow(page: Page, email: string): Promise<void> {
+  const p = await adminUsersPageOf(email);
+  for (const n of [p, p + 1, p - 1].filter((x) => x >= 1)) {
+    await page.goto(`/admin/users?page=${n}`);
+    if (await page.getByTestId(`user-row-${email}`).count()) return;
+  }
+  throw new Error(`no /admin/users page shows ${email}`);
 }

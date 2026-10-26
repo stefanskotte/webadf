@@ -10,6 +10,7 @@ export function PageHeader({
   help,
   size = 'md',
   flush = false,
+  subtitleFont = 'mono',
 }: {
   /**
    * A plain label for a page that is not a drill-down ("Admin", "Hardware"),
@@ -31,6 +32,8 @@ export function PageHeader({
   size?: 'md' | 'lg';
   /** Drops the outer gutter: the page's own column supplies it (Settings, Help; C5 spec §1.3). */
   flush?: boolean;
+  /** `sans` is a sentence in Geist 14 px (Admin Overview and Scan); `mono` the summary line (C6 spec §1.4, Ruling 4). */
+  subtitleFont?: 'mono' | 'sans';
 }) {
   const lg = size === 'lg';
   return (
@@ -60,7 +63,8 @@ export function PageHeader({
             // 26px below sm: at 34px a two-word title ("Disk contents") wraps
             // on a 390px screen, and leading-none makes a wrapped heading read
             // as one solid block.
-            className={`focus:outline-none ${lg
+            // A visible ring (C6 Ruling 5): only a script focuses it, as the fallback after a removal.
+            className={`rounded-[6px] focus:outline-2 focus:outline-offset-2 focus:outline-(--ring) ${lg
               ? 'text-[30px] font-bold leading-none sm:text-[44px] sm:tracking-[-0.02em]'
               : 'text-[26px] font-bold leading-none tracking-[-0.032em] sm:text-[34px]'}`}
             style={{ color: "var(--on-dark)" }}
@@ -69,14 +73,16 @@ export function PageHeader({
           </h1>
           {help && <HelpTip topic={help} />}
         </div>
-        {subtitle && (
+        {subtitle && (subtitleFont === 'sans' ? (
+          <span className="mt-1 text-[14px]" style={{ color: 'var(--muted)' }}>{subtitle}</span>
+        ) : (
           <span
             className={lg ? 'mt-1 font-mono text-[13px]' : 'mt-1 font-mono text-[11.5px]'}
             style={{ color: 'var(--on-dark-muted)' }}
           >
             {subtitle}
           </span>
-        )}
+        ))}
       </div>
       {actions}
     </div>

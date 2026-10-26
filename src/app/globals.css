@@ -305,6 +305,7 @@
   --on-ink-muted:  #A39B8B;   /* the sign-in hero's footer line: 5.82 on ink */
   --on-ink-accent: #EE8A2A;   /* the popover's link: 6.35 on ink */
   --search-scrim:  rgb(36 33 27 / 0.12);   /* the light scrim under the open search panel; decoration */
+  --bar-ok:        #4F9D4A;   /* the green fill of the admin coverage and firmware bars; decoration beside a number */
 }
 
 @theme inline {
