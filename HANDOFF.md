@@ -1480,11 +1480,22 @@ separately.
 
 **Current order (re-checked 2026-10-24):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d; C5 Settings/Help/Search/Sign in SHIPPED 2026-10-25, merge f6d1941; C6 Admin SHIPPED 2026-10-26, merge 8d943f7; C7 Phone + About into Settings SHIPPED 2026-10-26, merge 4efffae; C8 header drive menu SHIPPED 2026-10-26, merge 79d7c07; C9 GitHub page SHIPPED 2026-10-26** -- Phase C DONE; **library multi-select SHIPPED 2026-10-26, merge 4a435e9**; **admin password reset SHIPPED 2026-10-26, merge 8022d34**; next: backlog -- the device/phone visual items) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
+**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d; C5 Settings/Help/Search/Sign in SHIPPED 2026-10-25, merge f6d1941; C6 Admin SHIPPED 2026-10-26, merge 8d943f7; C7 Phone + About into Settings SHIPPED 2026-10-26, merge 4efffae; C8 header drive menu SHIPPED 2026-10-26, merge 79d7c07; C9 GitHub page SHIPPED 2026-10-26** -- Phase C DONE; **library multi-select SHIPPED 2026-10-26, merge 4a435e9**; **admin password reset SHIPPED 2026-10-26, merge 8022d34**; device/phone polish + disk-sets crawl fix SHIPPED 2026-10-27, merge 75f8be2) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **Polish -- SHIPPED 2026-10-27, merge 75f8be2.** (1) Devices: the card's four figures are a wrapping row, not four
+  equal columns; the MAC never breaks and the firmware breaks at spaces first (`overflow-wrap: break-word`), so neither
+  splits mid-token at 1024-1440 (`e2e/devices-card-layout.spec.ts`, 1440/1280/1024/390, RED->GREEN). (2) Library: a
+  phone card's footer wraps instead of truncating the kind pill and disk count; the ⋯ keeps to the right edge
+  (`library-card-footer.mobile.spec.ts`, RED->GREEN; seeds the kind by pointing its own blob at a real Amiga demo
+  TOSEC entry). (3) disk-sets "a crawl through the edge ring" was a load-sensitive TEST defect, not a product bug: a
+  boundingBox() after every 1 px step slowed the crawl's events to ~1 px / 50-100 ms, below the edge's inward-creep
+  floor (3 px per EDGE_REST_MS, ~15 px/s) where a crawl counts as a rest by design. Proven with a simulated 20 ms
+  per-step load (old walk 4/4 red). Now the crawl is measured in the page every frame and its speed kept by the clock;
+  passes 4/4 under six busy-loop processes; full disk-sets 25/25. Rule break: the all-mobile batch ran 11.1 min
+  (62/62 green).
 - **Admin password reset -- SHIPPED 2026-10-26, merge 8022d34** (operator request; bounded, no spec). Admin › Users gets
   "Password…" beside "Delete…". The ADMIN types their own current password (the throttled `stepUpGate`, same tally as
   the firmware update), then the server generates a password (4x4 from an alphabet without I/O/l/0/1, ~93 bits),
