@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { pageHeading } from '@/components/admin/page-heading';
 import { useCollectionsContext } from '@/components/collections/collection-provider';
 import { countText, offPageCount, offPageText } from '@/lib/library-selection';
 import { useLibrarySelection } from './selection-provider';
@@ -38,6 +39,18 @@ export function LibrarySelectionBar({ collectionId, collectionName }: {
   const deleteRef = useRef<HTMLButtonElement>(null);
   // Set by a successful OK: the dialog's close then hands focus to the toggle (or the h1), not to its opener.
   const done = useRef(false);
+  // The dialog open now, for the unmount rescue below.
+  const openDialog = useRef<typeof dialog>(null);
+
+  useEffect(() => { openDialog.current = dialog; }, [dialog]);
+  // The view emptied under an open dialog: this whole bar unmounts with it, the dialog's own finalFocus never runs and
+  // focus (inside the dialog) falls to <body>. Hand it to the h1 once the dust settles; only if it did fall.
+  useEffect(() => () => {
+    if (openDialog.current === null) return;
+    requestAnimationFrame(() => {
+      if (!document.activeElement || document.activeElement === document.body) pageHeading()?.focus();
+    });
+  }, []);
 
   const ids = useMemo(() => [...sel.selected.keys()], [sel.selected]);
   const n = ids.length;
@@ -114,7 +127,8 @@ export function LibrarySelectionBar({ collectionId, collectionName }: {
       />
       <BulkDeleteDialog
         key={deleteOpens}
-        open={dialog === 'delete'}
+        // Closed with the selection: a view that emptied under the dialog leaves no stale count to press.
+        open={dialog === 'delete' && sel.selecting}
         onClose={() => setDialog(null)}
         ids={ids}
         busy={busy}

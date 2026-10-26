@@ -151,3 +151,12 @@ export function deleteToast(r: BulkDeleteResult): { title: string; description: 
     description: parts.length > 0 ? parts.join(' ') : undefined,
   };
 }
+
+/** Why a preview has nothing to delete (spec §2.2): held, already gone, kept by the drift guard, or a mix. */
+export function nothingToDeleteText(kept: readonly KeptTitle[], missing: number): string {
+  const { held, stuck } = keptGroups(kept);
+  if (missing > 0) return 'Nothing to delete: the selected titles are in a drive or already gone.';
+  if (held.length > 0 && stuck.length === 0) return NOTHING_TO_DELETE;
+  if (stuck.length > 0) return 'Nothing could be deleted.';
+  return 'Nothing to delete.';
+}

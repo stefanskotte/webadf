@@ -60,7 +60,7 @@ export function BulkMoveDialog({
       let result: MoveResult | null = null;
       try { result = await res.json() as MoveResult; } catch { /* answered 200 but unreadable: the move may have happened */ }
       if (result === null) {
-        toast.error('The titles may have moved. Refresh to check.');
+        toast.error("The server's answer could not be read. Check the library to see what was moved.");
       } else {
         toast.success(moveToast(result, name));
       }

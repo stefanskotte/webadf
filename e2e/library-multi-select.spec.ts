@@ -451,7 +451,7 @@ test('MS-11 a title in a drive is kept: the preview says where, OK deletes only 
   await expect(page.getByTestId('bulk-delete-dialog')).toContainText('1 title and its 1 disk will be removed from your library.');
   await expect(confirmDelete(page)).toHaveText('Delete 1 title');
   await confirmDelete(page).click();
-  await expect(page.getByText(`Kept 1 that is in a drive: ${held.title}.`)).toBeVisible();
+  await expect(page.getByText('Deleted 1 title')).toBeVisible();   // the held title was never sent
   await expect(card(page, free.gameId)).toHaveCount(0);
   await expect(card(page, held.gameId)).toBeVisible();
   const [row0] = await getDb().select({ d: devices.desiredDiskId }).from(devices).where(eq(devices.id, board.deviceId));
@@ -546,7 +546,7 @@ test('MS-16 an OK whose 200 answer is not JSON says the titles may have changed 
   await expect(confirmDelete(page)).toHaveText('Delete 1 title');
   await page.route('**/api/games/bulk', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<html>' }));
   await confirmDelete(page).click();
-  await expect(page.getByText('The titles may have been deleted. Refresh to check.')).toBeVisible();
+  await expect(page.getByText("The server's answer could not be read. Check the library to see what was deleted.")).toBeVisible();
   await expect(page.getByText('Could not reach the server')).toHaveCount(0);
   await expect(page.getByTestId('bulk-delete-dialog')).toBeHidden();
 });
@@ -565,6 +565,49 @@ test('MS-17 a Move whose 200 answer is not JSON says the titles may have moved a
   await dlg.getByRole('radio', { name: dst.name }).check();
   await page.route('**/api/games/bulk', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<html>' }));
   await page.getByTestId('bulk-move-confirm').click();
-  await expect(page.getByText('The titles may have moved. Refresh to check.')).toBeVisible();
+  await expect(page.getByText("The server's answer could not be read. Check the library to see what was moved.")).toBeVisible();
   await expect(page.getByText('Could not reach the server')).toHaveCount(0);
+});
+
+test('MS-18 a title shown as kept stays kept: its drive empties before OK, OK still deletes only what the preview listed', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const [held, free] = await seedTitles(orgId, 'Late', 2);
+  const board = await pairDevice(page, request, 'Bench Late');
+  const res = await page.request.post(`/api/devices/${board.deviceId}/mount`, { data: { diskId: held.diskId } });
+  const { version } = await res.json();
+  expect((await request.post('/api/device/status', {
+    headers: authHeader(board.token), data: { mountedSha256: held.sha, mountedDiskId: held.diskId, version },
+  })).status()).toBe(204);
+  await page.goto('/library');
+  await startSelecting(page);
+  await hydrated(page, 'select-title', 'onChange');
+  await boxOf(card(page, held.gameId)).click();
+  await boxOf(card(page, free.gameId)).click();
+  await openDelete(page);
+  await expect(page.getByTestId('bulk-delete-kept')).toContainText(held.title);
+  await expect(confirmDelete(page)).toHaveText('Delete 1 title');
+  // The drive empties after the preview: eject, and the board reports it.
+  expect((await page.request.post(`/api/devices/${board.deviceId}/eject`, { data: {} })).status()).toBe(200);
+  expect((await request.post('/api/device/status', {
+    headers: authHeader(board.token), data: { mountedSha256: null, mountedDiskId: null },
+  })).status()).toBe(204);
+  await confirmDelete(page).click();
+  await expect(page.getByText('Deleted 1 title')).toBeVisible();
+  await expect(card(page, free.gameId)).toHaveCount(0);
+  await expect(card(page, held.gameId)).toBeVisible();
+});
+
+test('MS-19 the view empties while the Delete dialog is open: the dialog closes, no stale "Delete 2 titles"', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const t = await seedTitles(orgId, 'Vanish', 2);
+  await page.goto('/library');
+  await startSelecting(page);
+  await hydrated(page, 'library-select-page', 'onChange');
+  await page.getByTestId('library-select-page').click();
+  await openDelete(page);
+  await expect(confirmDelete(page)).toHaveText('Delete 2 titles');
+  for (const x of t) expect((await page.request.delete(`/api/games/${x.gameId}`)).status()).toBe(200);
+  await page.evaluate(() => (window as unknown as { next: { router: { refresh(): void } } }).next.router.refresh());
+  await expect(page.getByTestId('bulk-delete-dialog')).toBeHidden();
+  await expect(page.locator('h1')).toBeFocused();
 });

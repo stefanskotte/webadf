@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   SELECTION_CAP, canSelectPage, countText, initSelection, offPageCount, offPageText, pageCheck, selectionReducer,
-  titlesWord, disksWord, moveToast, deleteToast, keptIntro, keptLine, keptGroups, viewKeyOf, reconcileSelection, isFormControl, type PageTitle, type SelectionState,
+  titlesWord, disksWord, moveToast, deleteToast, keptIntro, keptLine, keptGroups, nothingToDeleteText, NOTHING_TO_DELETE, viewKeyOf, reconcileSelection, isFormControl, type PageTitle, type SelectionState,
 } from './library-selection';
 
 const t = (id: string): PageTitle => ({ id, title: `T ${id}`, year: 1990, diskCount: 1 });
@@ -143,5 +143,12 @@ describe('delete words (spec §2.2, §2.3)', () => {
     });
     expect(deleteToast({ ...base, kept: [drift] }).description).toBe('1 could not be deleted: Lotus III.');
     expect(deleteToast({ ...base, deleted: [], kept: [kept] }).title).toBe('Nothing was deleted');
+  });
+  it('the nothing-to-delete line names the real reason', () => {
+    expect(nothingToDeleteText([kept], 0)).toBe(NOTHING_TO_DELETE);
+    expect(nothingToDeleteText([kept], 2)).toBe('Nothing to delete: the selected titles are in a drive or already gone.');
+    expect(nothingToDeleteText([], 3)).toBe('Nothing to delete: the selected titles are in a drive or already gone.');
+    expect(nothingToDeleteText([drift], 0)).toBe('Nothing could be deleted.');
+    expect(nothingToDeleteText([], 0)).toBe('Nothing to delete.');
   });
 });

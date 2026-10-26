@@ -180,8 +180,10 @@ line, and the three buttons fill the second line, `flex-1` each.
 - **Footer.** Cancel (`bulk-delete-cancel`), then **"Delete 10 titles"** (`bulk-delete-confirm`, danger), counting only
   the deletable ones. If every selected title is held, the confirm is `aria-disabled` and the body says "Nothing to
   delete: every selected title is in a drive. Eject it there first."
-- **What OK does.** `POST /api/games/bulk { op: 'delete', gameIds }`, sending the **whole** selection, not the preview's
-  list. The server decides again at OK time (§3.3).
+- **What OK does.** `POST /api/games/bulk { op: 'delete', gameIds }`, sending the titles the preview listed as
+  deletable, not the whole selection. The server decides again at OK time (§3.3): a disk mounted since is still kept, and
+  a title already gone is reported as such.
+  *Controller amendment (Task 5 review): OK never deletes more than the dialog showed — a title shown as kept stays kept even if its drive empties before OK.*
 
 ### 2.3 Results and errors
 
