@@ -218,3 +218,19 @@ describe('fix round 1', () => {
     expect(closed).toBe(1);
   });
 });
+
+describe('the compact control below xl (C8 spec §8, Rulings 5, 6)', () => {
+  it('one board: that board\'s chip -- name, disk, tag -- under the compact ids, never the xl chip\'s', () => {
+    const html = chips([base]);
+    expect(html).toMatch(/data-testid="drives-compact-name"[^>]*>Bench</);
+    expect(html).toMatch(/data-testid="drives-compact-disk"[^>]*>Turrican</);
+    expect(html).toMatch(/data-testid="drives-compact-wp"[^>]*>WP</);
+    expect(html.match(/data-testid="drive-chip-name-dev-a"/g)?.length).toBe(1);   // the xl chip's only
+    expect(openTag(html, 'drives-compact')).toContain('title="Bench — online"');
+  });
+  it('two or more boards: "Drives n", a count of boards', () => {
+    const html = chips(two);
+    expect(html).not.toContain('drives-compact-name');
+    expect(html).toMatch(/data-testid="drives-compact"[^>]*>.*Drives<\/span><span[^>]*>2<\/span>/);
+  });
+});

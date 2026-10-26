@@ -80,8 +80,9 @@ function moreVisibility(n: number): string {
 // while its panel is open. Colours are classes, not inline styles, so data-[popup-open] can change them. No `display`
 // here: every caller supplies its own (`flex`, or a breakpoint-switched `hidden min-[1920px]:flex`). The 240 px cap
 // is the width chipSlots is measured against; below lg the compact control that shares this look fills its row.
-const CHIP_CLASS =
-  'h-10 max-lg:h-11 lg:max-w-[240px] min-w-0 items-center gap-2 rounded-[10px] border border-(--line) bg-(--surface-2) pl-3 pr-2.5 text-[14px] text-(--ink) outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)] data-[popup-open]:border-(--ink) data-[popup-open]:bg-(--surface)';
+const CHIP_BASE =
+  'h-10 max-lg:h-11 min-w-0 items-center gap-2 rounded-[10px] border border-(--line) bg-(--surface-2) pl-3 pr-2.5 text-[14px] text-(--ink) outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)] data-[popup-open]:border-(--ink) data-[popup-open]:bg-(--surface)';
+const CHIP_CLASS = `${CHIP_BASE} lg:max-w-[240px]`;
 // "+k" keeps its compact padding, px-1.5 (C8 plan ruling; Task 3 narrowed it so a two-digit "+10" still clears the
 // member pill by 16 px at 1280).
 const MORE_CLASS =
@@ -318,18 +319,31 @@ export function MoreList({ chips, showAdmin }: { chips: DriveChip[]; showAdmin: 
   return <>{restFor(chips, showAdmin).map((c) => <DriveCard key={c.id} chip={c} close={() => {}} />)}</>;
 }
 
-/** Below xl: one control for every board (spec §8). */
+/** Below xl: one control (spec §8). One board: that board's chip (Ruling 6). Two or more: "Drives n" (Ruling 5). */
 function CompactControl({ chips }: { chips: DriveChip[] }) {
   const [p, triggerRef] = usePanel();
+  const one = chips.length === 1 ? chips[0] : null;
   return (
     <Popover.Root open={p.open} onOpenChange={p.onOpenChange}>
-      <Popover.Trigger ref={triggerRef} data-testid="drives-compact" className={`${CHIP_CLASS} flex max-lg:w-full`}>
-        {/* The dot summarises: filled when every board is online, a ring when any is not -- each board's own reading
-            is in its card. The number is how many boards, not the removed "n of N" position (Ruling 5). */}
-        <StatusDot online={chips.every((c) => c.online)} />
-        <span className="font-semibold">Drives</span>
-        <span className="font-mono text-[13px] text-(--muted)">{chips.length}</span>
-        <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" aria-hidden />
+      <Popover.Trigger
+        ref={triggerRef}
+        data-testid="drives-compact"
+        title={one ? `${one.name} — ${one.online ? 'online' : 'offline'}` : undefined}
+        className={`${CHIP_BASE} flex max-lg:w-full lg:max-w-[140px] xl:max-w-[240px]`}
+        style={one && !one.online ? { opacity: 0.8 } : undefined}
+      >
+        {one ? (
+          <ChipFace chip={one} ids="compact" />
+        ) : (
+          <>
+            {/* The dot summarises: filled when every board is online, a ring when any is not -- each board's own
+                reading is in its card. The number is how many boards, not the removed "n of N" position (Ruling 5). */}
+            <StatusDot online={chips.every((c) => c.online)} />
+            <span className="font-semibold">Drives</span>
+            <span className="font-mono text-[13px] text-(--muted)">{chips.length}</span>
+            <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" aria-hidden />
+          </>
+        )}
       </Popover.Trigger>
       {/* align="end": on a phone the trigger reaches the right edge; collisionPadding keeps the popup 16 px in. */}
       <PanelPopup panel={p} testId="drives-compact-menu" label="Drives" align="end">

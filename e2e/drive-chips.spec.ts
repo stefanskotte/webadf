@@ -465,14 +465,13 @@ test('at 390px one Drives control on the header row lists every board, and nothi
   await expect(list).toBeVisible();
   await expect(page.getByTestId(`drive-entry-${a.deviceId}`)).toBeVisible();
   await expect(page.getByTestId(`drive-entry-${b.deviceId}`)).toBeVisible();
-  // Base UI does not clamp a popup back on screen (HANDOFF §3t): measured.
-  const box = (await list.boundingBox())!;
-  expect(box.x).toBeGreaterThanOrEqual(0);
-  expect(box.x + box.width).toBeLessThanOrEqual(390);
-  // An item is finger-sized -- polled, because the popup opens with a
-  // zoom-in-95 animation and a box read mid-animation is 95% of the truth.
+  // The panel keeps the 16 px gutters (C8 spec §8, collisionPadding), and every action is 44 px below lg.
+  await expect.poll(async () => {
+    const box = (await list.boundingBox())!;
+    return box.x >= 15.5 && box.x + box.width <= 390 - 15.5;
+  }).toBe(true);
   await expect.poll(async () => (await page.getByTestId(`drive-eject-${a.deviceId}`).boundingBox())!.height)
-    .toBeGreaterThanOrEqual(32);
+    .toBeGreaterThanOrEqual(44);
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);

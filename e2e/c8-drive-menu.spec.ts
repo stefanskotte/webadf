@@ -421,3 +421,29 @@ test('C8-07 the gear opens the board\'s Board settings on /devices, strips the U
   await page.waitForTimeout(1_000);
   await expect(dialog).toHaveCount(0);
 });
+
+test('C8-17 one board, long name and title, at 1024 and 1180: the compact chip leaves the pill whole and clear of search (Review Focus 4)', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  await loadedBoard(page, request, orgId, 'A rather long board name', 1);
+  for (const width of [1024, 1180]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto('/library');
+    await expect(page.getByTestId('drives-compact-name')).toBeVisible();
+    await page.waitForTimeout(150);   // HeaderStart's ResizeObserver settles on the real pill
+    const m = await page.evaluate(() => {
+      const header = document.querySelector<HTMLElement>('[data-testid="app-header"]')!;
+      const nav = header.querySelector('nav')!;
+      const clamp = nav.parentElement!.getBoundingClientRect();
+      const search = header.querySelector('[data-testid="search-input"]')!.getBoundingClientRect();
+      const compact = header.querySelector('[data-testid="drives-compact"]')!.getBoundingClientRect();
+      const tabs = [...nav.querySelectorAll('a')].filter((a) => a.offsetWidth > 0).map((a) => a.getBoundingClientRect());
+      return {
+        clampL: clamp.left, clampR: clamp.right, searchL: search.left, compactR: compact.right,
+        clipped: tabs.filter((t) => t.left < clamp.left - 0.5 || t.right > clamp.right + 0.5).length,
+      };
+    });
+    expect(m.clampR, `${width}: pill under the search box ${JSON.stringify(m)}`).toBeLessThanOrEqual(m.searchL + 0.5);
+    expect(m.clampL, `${width}: pill into the chip ${JSON.stringify(m)}`).toBeGreaterThanOrEqual(m.compactR - 0.5);
+    expect(m.clipped, `${width}: a tab is clipped ${JSON.stringify(m)}`).toBe(0);
+  }
+});
