@@ -611,3 +611,79 @@ test('MS-19 the view empties while the Delete dialog is open: the dialog closes,
   await expect(page.getByTestId('bulk-delete-dialog')).toBeHidden();
   await expect(page.locator('h1')).toBeFocused();
 });
+
+const refresh = (page: Page) => page.evaluate(() => (window as unknown as { next: { router: { refresh(): void } } }).next.router.refresh());
+
+test('MS-20 the view empties under an open dialog: Move closes too, and neither dialog comes back on the next Select', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const sent = bulkRequests(page);
+  await makeCollection(page, `Target ${runTag()}`);
+  for (const which of ['move', 'delete'] as const) {
+    const t = await seedTitles(orgId, `Gone ${which}`, 2);
+    await page.goto('/library');
+    await startSelecting(page);
+    await hydrated(page, 'library-select-page', 'onChange');
+    await page.getByTestId('library-select-page').click();
+    if (which === 'delete') {
+      await openDelete(page);
+      await expect(confirmDelete(page)).toHaveText('Delete 2 titles');
+    } else {
+      await page.getByTestId('library-bulk-move').click();
+      await expect(page.getByTestId('bulk-move-dialog')).toBeVisible();
+    }
+    for (const x of t) expect((await page.request.delete(`/api/games/${x.gameId}`)).status()).toBe(200);
+    await refresh(page);
+    await expect(page.getByTestId(`bulk-${which}-dialog`)).toBeHidden();
+    await expect(page.locator('h1')).toBeFocused();
+
+    // A title arrives (an upload in another tab); the next Select opens no dialog by itself.
+    const [n] = await seedTitles(orgId, `New ${which}`, 1);
+    await refresh(page);
+    await expect(card(page, n.gameId)).toBeVisible();
+    await startSelecting(page);
+    await expect(page.getByTestId('bulk-move-dialog')).toBeHidden();
+    await expect(page.getByTestId('bulk-delete-dialog')).toBeHidden();
+    expect((await page.request.delete(`/api/games/${n.gameId}`)).status()).toBe(200);
+  }
+  expect(sent.filter((s) => s.includes('"op":"delete"') && !s.includes('"dryRun":true'))).toHaveLength(0);
+});
+
+test('MS-21 Back to another view with a dialog open: Move closes, and neither dialog comes back on the next Select', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const [a, b] = await seedTitles(orgId, 'Hist', 2);
+  const src = await makeCollection(page, `Hist ${runTag()}`, [a.gameId, b.gameId]);
+  await makeCollection(page, `Other ${runTag()}`);
+  const sent = bulkRequests(page);
+  await page.goto('/library?collection=all');
+  await page.goto(`/library?collection=${src.id}`);
+
+  // Move: Back ends the selection, so the dialog goes with it.
+  await startSelecting(page);
+  await hydrated(page, 'select-title', 'onChange');
+  await boxOf(card(page, a.gameId)).click();
+  await page.getByTestId('library-bulk-move').click();
+  await expect(page.getByTestId('bulk-move-dialog')).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/collection=all/);
+  await expect(toggle(page)).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByTestId('bulk-move-dialog')).toBeHidden();
+  await startSelecting(page);
+  await expect(page.getByTestId('bulk-move-dialog')).toBeHidden();
+  await toggle(page).click();
+
+  // Delete: the old preview never comes back armed.
+  await page.goForward();
+  await expect(page).toHaveURL(new RegExp(`collection=${src.id}`));
+  await startSelecting(page);
+  await hydrated(page, 'library-select-page', 'onChange');
+  await page.getByTestId('library-select-page').click();
+  await openDelete(page);
+  await expect(confirmDelete(page)).toHaveText('Delete 2 titles');
+  await page.goBack();
+  await expect(page).toHaveURL(/collection=all/);
+  await expect(page.getByTestId('bulk-delete-dialog')).toBeHidden();
+  await startSelecting(page);
+  await expect(page.getByTestId('bulk-delete-dialog')).toBeHidden();
+  expect(sent.filter((s) => s.includes('"op":"delete"') && !s.includes('"dryRun":true'))).toHaveLength(0);
+  await expect(card(page, a.gameId)).toBeVisible();
+});
