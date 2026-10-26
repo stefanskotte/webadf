@@ -312,7 +312,8 @@ test('the chips are centred between the wordmark and the pill, and stay centred 
  * at 1536). Slots per width are chipSlots' (drive-chips.ts).
  */
 for (const who of ['super-admin', 'member'] as const) {
-  const slotsAt = who === 'super-admin' ? { 1280: 1, 1536: 1, 1920: 2 } : { 1280: 1, 1536: 2, 1920: 3 };
+  // C8 (spec §2.1): the 240 px chip. The super-admin with these four boards gets the compact control at 1280.
+  const slotsAt = who === 'super-admin' ? { 1280: 0, 1536: 1, 1920: 2 } : { 1280: 1, 1536: 1, 1920: 2 };
   test(`as a ${who}, chips with long names, long titles and WP stay 16px clear of the pill at 1280, 1536 and 1920`,
     async ({ page, request }) => {
       test.setTimeout(90_000);
@@ -340,6 +341,13 @@ for (const who of ['super-admin', 'member'] as const) {
         for (const width of [1280, 1536, 1920] as const) {
           await page.setViewportSize({ width, height: 800 });
           await page.goto('/library');
+          if (slotsAt[width] === 0) {
+            // No chip fits beside the Admin pill once "+k" is needed: the compact control instead (spec §2.1).
+            await expect(page.getByTestId('drives-compact')).toBeVisible();
+            await expect(page.getByTestId('drives-compact')).toContainText('Drives');
+            await expect(page.getByTestId('drive-chips')).toBeHidden();
+            continue;
+          }
           await expect(page.getByTestId('drive-chip-more')).toBeVisible();
           // The worst case really is on screen: exactly this width's slots,
           // every one ours, naming its disk and wearing its tag.
@@ -355,6 +363,10 @@ for (const who of ['super-admin', 'member'] as const) {
           expect((await more.evaluate((el: HTMLElement) => el.innerText)).trim(), `"+k" at ${width}`)
             .toBe(`+${4 - slotsAt[width]}`);
           const g = await chipGaps(page);
+          // Logged for the chipSlots comment (C8 plan Task 2 Step 5): every painted chip's and "+k"'s width.
+          const widths = await page.getByTestId('drive-chips').evaluate((el) => [...el.children]
+            .map((c) => Math.round(c.getBoundingClientRect().width * 10) / 10).filter((w) => w > 0));
+          console.log(`${who} ${width}: widths ${JSON.stringify(widths)} gaps ${JSON.stringify(g)}`);
           expect(g.right, `gap to the pill at ${width}: ${JSON.stringify(g)}`).toBeGreaterThanOrEqual(16);
           expect(g.left, `gap to the wordmark at ${width}: ${JSON.stringify(g)}`).toBeGreaterThanOrEqual(16);
           // The "+k" list is chosen from the same slots in JS: it holds exactly the rest.
@@ -392,8 +404,8 @@ test('the "+k" chip shows exactly one number, the right one, at every chip width
   test.setTimeout(60_000);
   await signUpFresh(page);
   for (const n of ['One', 'Two', 'Three', 'Four']) await onlineBoard(page, request, n);
-  // 4 boards: 1 chip + "+3" at 1280, 2 + "+2" at 1536, 3 + "+1" at 1920.
-  for (const [width, label] of [[1280, '+3'], [1536, '+2'], [1920, '+1']] as const) {
+  // 4 boards (C8 spec §2.1): 1 chip + "+3" at 1280 and 1536, 2 + "+2" at 1920.
+  for (const [width, label] of [[1280, '+3'], [1536, '+3'], [1920, '+2']] as const) {
     await page.setViewportSize({ width, height: 800 });
     await page.goto('/library');
     const more = page.getByTestId('drive-chip-more');
@@ -454,7 +466,8 @@ test('the admin plane never renders the chips', async ({ page, request }) => {
   await signInAsSuperAdmin(page);
   const { deviceId } = await onlineBoard(page, request, 'Admin bench');
   await page.goto('/library');
-  await expect(chip(page, deviceId)).toBeVisible();
+  // The super-admin's org may hold other boards: with two or more the compact control stands in at 1280 (C8 §2.1).
+  await expect(page.locator(`[data-testid="drive-chip-${deviceId}"]:visible, [data-testid="drives-compact"]:visible`).first()).toBeVisible();
 
   await page.goto('/admin');
   await expect(page).toHaveURL(/\/admin/);

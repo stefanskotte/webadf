@@ -238,6 +238,14 @@ describe('diskLine: the card\'s second line, in words for every phase (C8 spec Â
   it('an unknown count leaves the count off rather than guessing', () => {
     expect(diskLine(chip({ ...loaded, mountedDiskCount: null }))).toEqual({ kind: 'title', title: 'Turrican', count: null });
   });
+  it('stale numbers ("disk 3 of 2", "disk 1 of 0", "disk 0 of 2") leave the count off', () => {
+    for (const [no, count] of [[3, 2], [1, 0], [0, 2], [-1, 2]] as const) {
+      expect(diskLine(chip({ ...loaded, mountedDiskNo: no, mountedDiskCount: count })), `${no} of ${count}`)
+        .toEqual({ kind: 'title', title: 'Turrican', count: null });
+    }
+    expect(diskLine(chip({ ...loaded, mountedDiskNo: 2, mountedDiskCount: 2 })))
+      .toEqual({ kind: 'title', title: 'Turrican', count: 'disk 2 of 2' });
+  });
   it('an empty drive, a load and an eject are words', () => {
     expect(diskLine(chip(empty))).toEqual({ kind: 'text', text: 'Drive empty' });
     expect(diskLine(chip({ ...loaded, desiredDiskId: 'disk-2', desiredSha256: B, desiredGameTitle: 'Lotus' })))

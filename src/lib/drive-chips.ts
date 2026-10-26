@@ -174,8 +174,12 @@ export const MAX_CHIPS = 2;
  *   - member:     1 + "+k" ends at 459 (<= 465) / 459 (<= 593) / 2 + "+k" 705 (<= 785)  -> 1 / 1 / 2
  *   - with Admin: one board alone ends at 408 (<= 427), but 1 + "+k" at 459 runs past 427 at 1280 -> 0 there,
  *                 the compact control instead; 459 (<= 555) at 1536; 705 (<= 747) at 1920    -> 0 or 1 / 1 / 2
- * drive-chips.spec measures the widest case for both, at all three widths; Task 2 of the C8 plan records the measured
- * widths here. The CSS in drive-chips.tsx mirrors these breakpoints literally (Tailwind cannot read them from here).
+ * drive-chips.spec measures the widest case for both, at all three widths.
+ * Measured 2026-10-26 in Chromium (widths of each painted chip and "+k"; gaps to the wordmark / the pill, px). "+k" is
+ * 50.1 px, not the ~45 estimated, so member 1280 clears the pill by only 16.36 px (the test demands 16):
+ *   member 1280 [240, 50.1] gaps 16.3 / 16.4;  1536 [240, 50.1] 80.3 / 80.4;  1920 [240, 240, 50.1] 53.3 / 53.3
+ *   super-admin 1536 [240, 50.1] 61.3 / 61.3;  1920 [240, 240, 50.1] 34.3 / 34.3  (1280: compact control, no chip)
+ * Any widening of the chip, "+k" or the gaps at 1280 breaks the member case first. The CSS in drive-chips.tsx mirrors these breakpoints literally (Tailwind cannot read them from here).
  */
 export function chipSlots(viewportWidth: number, showAdmin = false, boards = 1): number {
   if (viewportWidth >= 1920) return 2;
@@ -223,7 +227,9 @@ export function diskLine(c: DriveChip): DiskLine {
       return {
         kind: 'title',
         title: c.disk.title,
-        count: c.disk.diskNo !== null && c.disk.diskCount !== null ? `disk ${c.disk.diskNo} of ${c.disk.diskCount}` : null,
+        // Only a sane pair: stale data ("disk 3 of 2", "disk 1 of 0") is left off rather than shown.
+        count: c.disk.diskNo !== null && c.disk.diskCount !== null && c.disk.diskNo >= 1 && c.disk.diskNo <= c.disk.diskCount
+          ? `disk ${c.disk.diskNo} of ${c.disk.diskCount}` : null,
       };
   }
 }
