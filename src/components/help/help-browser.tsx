@@ -1,6 +1,6 @@
 'use client';
 
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { SearchIcon } from 'lucide-react';
 import { useMediaQuery } from '@base-ui/react/unstable-use-media-query';
 import { PageHeader } from '@/components/shell/page-header';
@@ -33,15 +33,6 @@ export function HelpBrowser() {
   const [navPick, setNavPick] = useState<boolean | null>(null);
   const lg = useMediaQuery('(min-width: 1024px)', {});
   const navOpen = navPick ?? !hydrated;
-  // C7 (spec §9.2, Ruling 26): on a phone the Topics list closes right after hydration, and the articles move up under
-  // a reader who loaded /help#topic. Put the topic back at the top in the same frame, once.
-  const jumped = useRef(false);
-  useLayoutEffect(() => {
-    if (jumped.current || !hydrated || lg || navPick !== null) return;
-    jumped.current = true;
-    const id = window.location.hash.slice(1);
-    if (id && id in HELP_TOPICS) document.getElementById(id)?.scrollIntoView();
-  }, [hydrated, lg, navPick]);
   const f = filterHelpTopics(q);
   const shown = (id: HelpTopicId) => !f.active || f.ids.has(id);
   const none = f.active && f.ids.size === 0;
