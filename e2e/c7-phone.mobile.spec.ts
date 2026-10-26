@@ -1,7 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
-import { signUpFresh } from './helpers';
+import { randomBytes } from 'node:crypto';
+import { signUpFresh, runTag } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
-import { cleanupSeeded, hydrated, pairDevice } from './device-helpers';
+import { cleanupSeeded, hydrated, pairDevice, seedDisk } from './device-helpers';
 
 /**
  * Phase C7 (spec 2026-10-26-phase-c7-phone-about-design.md §14): the phone pass, measured rather than read off
@@ -195,4 +196,64 @@ test('C7-07 Settings at 390: About this server is the fourth card with its six g
   await expect(page).toHaveURL(/\/settings#about$/);
   await expect(page.locator('#about-heading')).toBeInViewport();
   await noSideways(page);
+});
+
+// ---- Search below sm (spec §2.4, Rulings 6, 7) -------------------------------------------------------------
+
+test('C7-03 search at 390: the button opens the field focused, the panel sits under the row, a tap outside closes it, Cancel returns focus', async ({ page }) => {
+  const u = await signUpFresh(page);
+  const run = runTag();
+  await seedDisk(u.orgId, { title: `Phone Search ${run}`, diskNo: 1, sha256: randomBytes(32).toString('hex') });
+  await page.goto('/library');
+  const open = page.getByTestId('search-open');
+  const input = page.getByTestId('search-input');
+  const ob = (await open.boundingBox())!;
+  expect(ob.width).toBeGreaterThanOrEqual(44);
+  expect(ob.height).toBeGreaterThanOrEqual(44);
+  await expect(input).toBeHidden();
+  await hydrated(page, 'search-open');
+  await open.tap();
+  await expect(input).toBeFocused();
+  expect((await input.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await expect(page.getByTestId('search-cancel')).toBeVisible();
+  await input.fill(`Phone Search ${run}`);
+  const panel = page.getByTestId('search-panel');
+  await expect(panel).toBeVisible();
+  const header = (await page.getByTestId('app-header').boundingBox())!;
+  const p = (await panel.boundingBox())!;
+  expect(p.y).toBeGreaterThanOrEqual(header.y + header.height);
+  expect(p.x).toBeGreaterThanOrEqual(0);
+  expect(p.x + p.width).toBeLessThanOrEqual(390);
+  // The phone scrim is there and colourless (C5 deferred: iOS tap-away); a tap on it closes the panel.
+  await expect(page.getByTestId('search-scrim')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await page.touchscreen.tap(195, 700);
+  await expect(panel).toBeHidden();
+  // Cancel clears, closes the row, and hands focus back to the button.
+  await input.tap();
+  await page.getByTestId('search-cancel').tap();
+  await expect(input).toBeHidden();
+  await expect(open).toBeVisible();
+  await expect(open).toBeFocused();
+  await open.tap();
+  await expect(input).toHaveValue('');
+  await noSideways(page);
+});
+
+test('C7-03b search at 390: a tapped result navigates once, the row closes, focus is not on the body (Review Focus 2)', async ({ page }) => {
+  const u = await signUpFresh(page);
+  const run = runTag();
+  const { gameId } = await seedDisk(u.orgId, { title: `Phone Result ${run}`, diskNo: 1, sha256: randomBytes(32).toString('hex') });
+  await page.goto('/library');
+  await hydrated(page, 'search-open');
+  await page.getByTestId('search-open').tap();
+  await page.getByTestId('search-input').fill(`Phone Result ${run}`);
+  const result = page.locator(`[data-testid="search-result"][data-result-id="${gameId}"]`);
+  await expect(result).toBeVisible();
+  const before = await page.evaluate(() => history.length);
+  await result.tap();
+  await expect(page).toHaveURL(new RegExp(`/games/${gameId}`));
+  expect(await page.evaluate(() => history.length)).toBe(before + 1);
+  await expect(page.getByTestId('search-input')).toBeHidden();
+  await expect(page.getByTestId('search-open')).toBeVisible();
+  expect(await page.evaluate(() => document.activeElement !== document.body)).toBe(true);
 });
