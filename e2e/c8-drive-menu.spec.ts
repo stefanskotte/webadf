@@ -386,3 +386,38 @@ test('C8-17 a live update that removes Next leaves focus on the popup, not on Ej
   await expect(page.getByTestId(`drive-eject-${b.deviceId}`)).not.toBeFocused();
   await expect(panel(page, b.deviceId)).toBeFocused();
 });
+
+test('C8-07 the gear opens the board\'s Board settings on /devices, strips the URL, works again from /devices, and a foreign id opens nothing', async ({ page, request }) => {
+  test.setTimeout(60_000);
+  await signUpFresh(page);
+  const { deviceId } = await onlineBoard(page, request, 'Bench');
+  await page.goto('/library');
+  await openPanel(page, deviceId);
+  const gear = page.getByTestId(`drive-settings-${deviceId}`);
+  await expect(gear).toHaveAttribute('href', `/devices?settings=${deviceId}`);
+  await gear.click();
+  const dialog = page.getByTestId('board-settings-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveAttribute('data-device-id', deviceId);
+  await expect(page).toHaveURL(new RegExp(`/devices#device-${deviceId}$`));
+  expect(page.url()).not.toContain('settings=');
+  await page.getByTestId('board-settings-cancel').click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByTestId(`board-settings-${deviceId}`)).toBeFocused();
+
+  // Review Focus 1: the same gear again, from /devices, after the strip.
+  await openPanel(page, deviceId);
+  await page.getByTestId(`drive-settings-${deviceId}`).click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveAttribute('data-device-id', deviceId);
+  expect(page.url()).not.toContain('settings=');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByTestId(`board-settings-${deviceId}`)).toBeFocused();
+
+  // An id that is not this org's: nothing opens and the parameter goes.
+  await page.goto('/devices?settings=dev_not_this_orgs');
+  await expect(page).toHaveURL(/\/devices$/);
+  await page.waitForTimeout(1_000);
+  await expect(dialog).toHaveCount(0);
+});

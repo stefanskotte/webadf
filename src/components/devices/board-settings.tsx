@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useRef, useState, useTransition, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition, type RefObject } from 'react';
 import { useRouter } from 'next/navigation';
 import { Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -24,7 +24,11 @@ function needsAttention(device: DeviceListItem): boolean {
  * modal and opens the delete confirmation (Ruling 23). Cancel, the X, Escape and the backdrop send nothing, and none
  * of them works while the save runs.
  */
-export function BoardSettings({ device }: { device: DeviceListItem }) {
+export function BoardSettings({ device, openOnArrival = false }: {
+  device: DeviceListItem;
+  /** The header drive panel's gear (C8 spec §4.4, Ruling 12) landed here as /devices?settings=<this id>. */
+  openOnArrival?: boolean;
+}) {
   const id = device.id;
   const router = useRouter();
   const [, startRefresh] = useTransition();
@@ -52,6 +56,20 @@ export function BoardSettings({ device }: { device: DeviceListItem }) {
     setFailed(null);
     setOpen(true);
   }
+
+  // Opened once on arrival from the header's gear: the card into the middle of the view, then the modal, with its own
+  // initial focus; Cancel returns focus to this card's Board settings button (finalFocus). In a frame, because
+  // setting state in the effect body trips react-hooks/set-state-in-effect; NOT cancelled on cleanup, because
+  // DeviceList strips the parameter in the same commit and that re-render must not take the open back.
+  useEffect(() => {
+    if (!openOnArrival) return;
+    requestAnimationFrame(() => {
+      document.getElementById(`device-${id}`)?.scrollIntoView({ block: 'center' });
+      setDraft(device.bootDisk);
+      setFailed(null);
+      setOpen(true);
+    });
+  }, [openOnArrival, id, device.bootDisk]);
 
   async function save() {
     setBusy(true);
