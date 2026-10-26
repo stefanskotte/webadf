@@ -1480,11 +1480,25 @@ separately.
 
 **Current order (re-checked 2026-10-24):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d; C5 Settings/Help/Search/Sign in SHIPPED 2026-10-25, merge f6d1941; C6 Admin SHIPPED 2026-10-26, merge 8d943f7; C7 Phone + About into Settings SHIPPED 2026-10-26, merge 4efffae; C8 header drive menu SHIPPED 2026-10-26, merge 79d7c07; C9 GitHub page SHIPPED 2026-10-26** -- Phase C DONE; next library multi-select) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
+**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d; C5 Settings/Help/Search/Sign in SHIPPED 2026-10-25, merge f6d1941; C6 Admin SHIPPED 2026-10-26, merge 8d943f7; C7 Phone + About into Settings SHIPPED 2026-10-26, merge 4efffae; C8 header drive menu SHIPPED 2026-10-26, merge 79d7c07; C9 GitHub page SHIPPED 2026-10-26** -- Phase C DONE; **library multi-select SHIPPED 2026-10-26, merge 4a435e9**; next: backlog -- admin resets any user's password, then the device/phone visual items) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **Library multi-select -- SHIPPED 2026-10-26, merge 4a435e9** (spec `2026-10-26-library-multi-select-design.md`, 20
+  rulings; 8 "Delete 12 titles" and 12 "bulk delete keeps titles a board holds" operator-confirmed). A "Select titles"
+  toggle by the grid/table switch; boxes on cards and title rows; a sticky bar (All on this page, count incl. other
+  pages, Move to collection..., Delete..., Cancel). Selection survives paging, grid/table and sort; another view ends it.
+  `POST /api/games/bulk` (`move` | `delete`, zod strict); delete previews first (`dryRun`) and OK sends only the
+  preview's deletable ids. Held = DF0 mounted (any state), DF1 pick, DF1 content; late-holder ejects run before the
+  transaction and match by disk id, by sha only when no other disk of the org shares it. Phone: 44 px targets, bar
+  clear of the tab bar. Final review 0 Critical; its one Important (a dialog outliving its selection) was not reachable
+  -- the bar remounts on Back and unmounts on an emptied view -- pinned by MS-20/MS-21 instead. Deferred minors: DF1
+  content hold over-keeps a selected duplicate whose twin is the DF1 pick (and names the wrong drive); a disk moved
+  into a deletable title in the ms between read and delete goes without an eject; Move keeps a target deleted
+  elsewhere (repeated 404); an abandoned write session holds its title indefinitely; a title deleted during a move
+  gives 500; "Move to collection..." wraps at 390. Pre-existing e2e failure (also at e1cc582): disk-sets "a crawl
+  through the edge ring". Flake once: create-adf "renaming on the card".
 - **Phase C9 GitHub page -- SHIPPED 2026-10-26** (Phase C done). Every README image retaken from the redesign (13, two
   new: `drive-menu.png`, `phone-more.png`); README checked line by line (WebFloppy name, drive menu, phone tab bar,
   PaulaNET, URL upload, .dmz, PN532, the /about redirect, firmware 1.21.1) and a "Bugs and ideas" section inviting GitHub
