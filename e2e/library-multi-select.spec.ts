@@ -1,7 +1,10 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { signUpFresh, runTag } from './helpers';
-import { seedDisk, cleanupSeeded, hydrated } from './device-helpers';
+import { seedDisk, cleanupSeeded, hydrated, pairDevice, authHeader } from './device-helpers';
+import { eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { devices } from '@/db/schema/devices';
 
 // Library multi-select (spec docs/superpowers/specs/2026-10-26-library-multi-select-design.md §8 e2e).
 // Tests are named MS-NN so batches can select them.
@@ -152,7 +155,7 @@ test('MS-02 grid: a box on every card, a click ticks instead of navigating, the 
   // The toggle unmounting under its own focus (the view emptied by a refresh): focus goes to the h1, never <body>.
   await toggle(page).focus();
   for (const t of [a, b]) expect((await page.request.delete(`/api/games/${t.gameId}`)).status()).toBe(200);
-  // Depends on Next's debug global (window.next.router); fail clearly if a Next upgrade drops it.
+  // Depends on Next's debug global (window.next.router), verified on Next 16.3.2; fail clearly if a Next upgrade drops it.
   expect(await page.evaluate(() => typeof (window as unknown as { next?: { router?: { refresh?: unknown } } }).next?.router?.refresh),
     'window.next.router.refresh is missing: Next changed its debug global, so this test needs another way to refresh').toBe('function');
   await page.evaluate(() => (window as unknown as { next: { router: { refresh(): void } } }).next.router.refresh());
@@ -362,4 +365,206 @@ test('MS-08 All on this page, its indeterminate state, the count of titles on ot
   await expect(bar(page)).toBeHidden();
   await expect(toggle(page)).toBeFocused();
   await expect(toggle(page)).toHaveAttribute('aria-pressed', 'false');
+});
+
+const confirmDelete = (page: Page) => page.getByTestId('bulk-delete-confirm');
+async function openDelete(page: Page) {
+  await page.getByTestId('library-bulk-delete').click();
+  await expect(page.getByTestId('bulk-delete-dialog')).toBeVisible();
+}
+
+test('MS-09 table, Delete: the preview counts, OK removes the rows, focus goes to the toggle', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const [a, b, c] = await seedTitles(orgId, 'Del', 3);
+  await page.goto('/library?view=table');
+  await startSelecting(page);
+  await hydrated(page, 'select-title', 'onChange');
+  await boxOf(row(page, a.gameId)).click();
+  await boxOf(row(page, b.gameId)).click();
+  await openDelete(page);
+  const dlg = page.getByTestId('bulk-delete-dialog');
+  await expect(dlg).toContainText('Delete titles?');
+  await expect(dlg).toContainText('2 titles and their 2 disks will be removed from your library.');
+  await expect(page.getByTestId('bulk-delete-list')).toContainText(a.title);
+  await expect(page.getByTestId('bulk-delete-list')).toContainText(b.title);
+  await expect(page.getByTestId('bulk-delete-kept')).toHaveCount(0);
+  await expect(dlg).toContainText('The disk image itself is kept if anyone else has the same one.');
+  await expect(dlg).not.toContainText('ejected');
+  await expect(confirmDelete(page)).toHaveText('Delete 2 titles');
+  await confirmDelete(page).click();
+  await expect(page.getByText('Deleted 2 titles')).toBeVisible();
+  await expect(dlg).toBeHidden();
+  await expect(row(page, a.gameId)).toHaveCount(0);
+  await expect(row(page, b.gameId)).toHaveCount(0);
+  await expect(row(page, c.gameId)).toBeVisible();
+  await expect(toggle(page)).toBeFocused();
+});
+
+test('MS-10 keyboard only: Tab to a box, Space, Delete…, Escape closes the dialog and focus returns to Delete…', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  await seedTitles(orgId, 'Keys', 2);
+  await page.goto('/library');
+  await hydrated(page, 'library-select-toggle');
+  await toggle(page).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('library-select-page')).toBeFocused();
+  // All on this page, Move…, Delete…, Cancel, then the first title's box.
+  for (let i = 0; i < 4; i++) await page.keyboard.press('Tab');
+  await expect(page.getByTestId('select-title').first()).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(count(page)).toHaveText('1 title selected');
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.getByTestId('library-bulk-delete')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('bulk-delete-dialog')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('bulk-delete-dialog')).toBeHidden();
+  await expect(page.getByTestId('library-bulk-delete')).toBeFocused();
+  await expect(bar(page)).toBeVisible();   // Review Focus 2: only the dialog closed
+  await expect(count(page)).toHaveText('1 title selected');
+});
+
+test('MS-11 a title in a drive is kept: the preview says where, OK deletes only the rest, the board is not ejected', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const [held, free] = await seedTitles(orgId, 'Held', 2);
+  const board = await pairDevice(page, request, 'Bench MS');
+  const res = await page.request.post(`/api/devices/${board.deviceId}/mount`, { data: { diskId: held.diskId } });
+  const { version } = await res.json();
+  expect((await request.post('/api/device/status', {
+    headers: authHeader(board.token), data: { mountedSha256: held.sha, mountedDiskId: held.diskId, version },
+  })).status()).toBe(204);
+
+  await page.goto('/library');
+  await startSelecting(page);
+  await hydrated(page, 'select-title', 'onChange');
+  await boxOf(card(page, held.gameId)).click();
+  await openDelete(page);
+  await expect(page.getByTestId('bulk-delete-dialog')).toContainText('Nothing to delete: every selected title is in a drive. Eject it there first.');
+  await expect(confirmDelete(page)).toHaveAttribute('aria-disabled', 'true');
+  await page.getByTestId('bulk-delete-cancel').click();
+
+  await boxOf(card(page, free.gameId)).click();
+  await openDelete(page);
+  await expect(page.getByTestId('bulk-delete-kept')).toContainText('1 title is in a drive and will be kept:');
+  await expect(page.getByTestId('bulk-delete-kept')).toContainText(`${held.title} — In Bench MS (DF0)`);
+  await expect(page.getByTestId('bulk-delete-dialog')).toContainText('1 title and its 1 disk will be removed from your library.');
+  await expect(confirmDelete(page)).toHaveText('Delete 1 title');
+  await confirmDelete(page).click();
+  await expect(page.getByText(`Kept 1 that is in a drive: ${held.title}.`)).toBeVisible();
+  await expect(card(page, free.gameId)).toHaveCount(0);
+  await expect(card(page, held.gameId)).toBeVisible();
+  const [row0] = await getDb().select({ d: devices.desiredDiskId }).from(devices).where(eq(devices.id, board.deviceId));
+  expect(row0.d).toBe(held.diskId);
+});
+
+test('MS-12 deleting every title of the view puts focus on the h1, never on the page body', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  await seedTitles(orgId, 'Last', 2);
+  await page.goto('/library');
+  await startSelecting(page);
+  await hydrated(page, 'library-select-page', 'onChange');
+  await page.getByTestId('library-select-page').click();
+  await openDelete(page);
+  await expect(confirmDelete(page)).toHaveText('Delete 2 titles');
+  await confirmDelete(page).click();
+  await expect(page.getByText('Deleted 2 titles')).toBeVisible();
+  await expect(page.getByTestId('game-grid')).toHaveAttribute('data-empty', 'library');
+  await expect(toggle(page)).toHaveCount(0);
+  await expect(page.locator('h1')).toBeFocused();
+});
+
+test('MS-13 a dropped connection on OK keeps the dialog and the selection, and a second press works', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const [a, b] = await seedTitles(orgId, 'Drop', 2);
+  await page.goto('/library');
+  await startSelecting(page);
+  await hydrated(page, 'select-title', 'onChange');
+  await boxOf(card(page, a.gameId)).click();
+  await openDelete(page);
+  await expect(confirmDelete(page)).toHaveText('Delete 1 title');   // the preview has answered
+  await page.route('**/api/games/bulk', (r) => r.abort('failed'));
+  await confirmDelete(page).click();
+  await expect(page.getByText('Could not reach the server')).toBeVisible();
+  await expect(page.getByText('Trying again is safe.')).toBeVisible();
+  await expect(page.getByTestId('bulk-delete-dialog')).toBeVisible();
+  await expect(confirmDelete(page)).toHaveText('Delete 1 title');
+  await expect(confirmDelete(page)).not.toHaveAttribute('aria-disabled', /.*/);
+  await page.unroute('**/api/games/bulk');
+  await confirmDelete(page).click();
+  await expect(page.getByText('Deleted 1 title')).toBeVisible();
+  await expect(card(page, a.gameId)).toHaveCount(0);
+  await expect(card(page, b.gameId)).toBeVisible();
+});
+
+test('MS-14 a failed preview deletes nothing and offers Try again', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const [a] = await seedTitles(orgId, 'Retry', 1);
+  await page.goto('/library');
+  await startSelecting(page);
+  await hydrated(page, 'select-title', 'onChange');
+  await boxOf(card(page, a.gameId)).click();
+  await page.route('**/api/games/bulk', (r) => r.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
+  await openDelete(page);
+  await expect(page.getByTestId('bulk-delete-dialog')).toContainText('Could not check the drives.');
+  await expect(confirmDelete(page)).toHaveAttribute('aria-disabled', 'true');
+  await page.unroute('**/api/games/bulk');
+  await page.getByTestId('bulk-delete-retry').click();
+  await expect(page.getByTestId('bulk-delete-dialog')).toContainText('1 title and its 1 disk will be removed from your library.');
+  await page.getByTestId('bulk-delete-close').click();
+  await expect(page.getByTestId('library-bulk-delete')).toBeFocused();
+  await page.reload();
+  await expect(card(page, a.gameId)).toBeVisible();
+});
+
+test('MS-15 moving every title out of the collection puts focus on the h1, never on the page body', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const [a, b] = await seedTitles(orgId, 'Out', 2);
+  const src = await makeCollection(page, `Src ${runTag()}`, [a.gameId, b.gameId]);
+  const dst = await makeCollection(page, `Dst ${runTag()}`);
+  await page.goto(`/library?collection=${src.id}`);
+  await startSelecting(page);
+  await hydrated(page, 'library-select-page', 'onChange');
+  await page.getByTestId('library-select-page').click();
+  await page.getByTestId('library-bulk-move').click();
+  await page.getByTestId('bulk-move-dialog').getByRole('radio', { name: dst.name }).check();
+  await page.getByTestId('bulk-move-confirm').click();
+  await expect(page.getByText(`Moved 2 titles to ${dst.name}`)).toBeVisible();
+  await expect(toggle(page)).toHaveCount(0);
+  await expect(bar(page)).toHaveCount(0);
+  await expect(page.locator('h1')).toBeFocused();
+});
+
+test('MS-16 an OK whose 200 answer is not JSON says the titles may have changed and to refresh, not "could not reach"', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const [a] = await seedTitles(orgId, 'Junk', 2);
+  await page.goto('/library');
+  await startSelecting(page);
+  await hydrated(page, 'select-title', 'onChange');
+  await boxOf(card(page, a.gameId)).click();
+  await openDelete(page);
+  await expect(confirmDelete(page)).toHaveText('Delete 1 title');
+  await page.route('**/api/games/bulk', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<html>' }));
+  await confirmDelete(page).click();
+  await expect(page.getByText('The titles may have been deleted. Refresh to check.')).toBeVisible();
+  await expect(page.getByText('Could not reach the server')).toHaveCount(0);
+  await expect(page.getByTestId('bulk-delete-dialog')).toBeHidden();
+});
+
+test('MS-17 a Move whose 200 answer is not JSON says the titles may have moved and to refresh', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const [a] = await seedTitles(orgId, 'JunkMove', 1);
+  const dst = await makeCollection(page, `Junk ${runTag()}`);
+  await page.goto('/library');
+  await startSelecting(page);
+  await hydrated(page, 'select-title', 'onChange');
+  await boxOf(card(page, a.gameId)).click();
+  await page.getByTestId('library-bulk-move').click();
+  const dlg = page.getByTestId('bulk-move-dialog');
+  for (const r of await dlg.getByRole('radio').all()) await expect(r).not.toHaveAttribute('aria-disabled', /.*/);
+  await dlg.getByRole('radio', { name: dst.name }).check();
+  await page.route('**/api/games/bulk', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<html>' }));
+  await page.getByTestId('bulk-move-confirm').click();
+  await expect(page.getByText('The titles may have moved. Refresh to check.')).toBeVisible();
+  await expect(page.getByText('Could not reach the server')).toHaveCount(0);
 });

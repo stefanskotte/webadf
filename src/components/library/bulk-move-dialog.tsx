@@ -57,7 +57,13 @@ export function BulkMoveDialog({
         toast.error('Could not move the titles', { description: `The server answered ${res.status}.` });
         return;
       }
-      toast.success(moveToast(await res.json() as MoveResult, name));
+      let result: MoveResult | null = null;
+      try { result = await res.json() as MoveResult; } catch { /* answered 200 but unreadable: the move may have happened */ }
+      if (result === null) {
+        toast.error('The titles may have moved. Refresh to check.');
+      } else {
+        toast.success(moveToast(result, name));
+      }
       setTarget(null);
       onMoved();
     } catch {
@@ -99,6 +105,7 @@ export function BulkMoveDialog({
           <label key={c.id}
                  className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-3 hover:bg-(--track) has-checked:bg-(--track) sm:min-h-10">
             <input type="radio" name="bulk-move-target" value={c.id} checked={target === c.id}
+                   aria-disabled={busy || undefined}
                    onChange={() => { if (!busy) setTarget(c.id); }}
                    className="size-4 accent-(--primary-action)" />
             <span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-(--ink)">{c.name}</span>

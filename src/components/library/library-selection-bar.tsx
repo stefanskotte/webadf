@@ -7,6 +7,7 @@ import { countText, offPageCount, offPageText } from '@/lib/library-selection';
 import { useLibrarySelection } from './selection-provider';
 import { PageSelectBox } from './select-box';
 import { BulkMoveDialog } from './bulk-move-dialog';
+import { BulkDeleteDialog } from './bulk-delete-dialog';
 
 // 30 px from sm, 44 px below; flex-1 on the phone's second line (spec §1.3, §6, Ruling 20).
 const BTN = 'grid h-11 flex-1 place-items-center rounded-[7px] px-3 text-[13px] font-semibold sm:h-[30px] sm:flex-none '
@@ -31,6 +32,7 @@ export function LibrarySelectionBar({ collectionId, collectionName }: {
   const { collections } = useCollectionsContext();
   const [dialog, setDialog] = useState<'move' | 'delete' | null>(null);
   const [busy, setBusy] = useState(false);
+  const [deleteOpens, setDeleteOpens] = useState(0);
   const pageBox = useRef<HTMLInputElement>(null);
   const moveRef = useRef<HTMLButtonElement>(null);
   const deleteRef = useRef<HTMLButtonElement>(null);
@@ -50,6 +52,8 @@ export function LibrarySelectionBar({ collectionId, collectionName }: {
   function open(which: 'move' | 'delete', reason: string | null) {
     if (reason || busy) return;
     done.current = false;
+    // A fresh Delete dialog per open: its preview starts again from "Checking the drives…".
+    if (which === 'delete') setDeleteOpens((n) => n + 1);
     setDialog(which);
   }
   /** After a successful OK (spec §1.6): selecting ends, the dialog closes, the library refreshes. */
@@ -107,6 +111,16 @@ export function LibrarySelectionBar({ collectionId, collectionName }: {
         setBusy={setBusy}
         onMoved={finished}
         finalFocus={() => (done.current ? sel.focusTarget() : moveRef.current)}
+      />
+      <BulkDeleteDialog
+        key={deleteOpens}
+        open={dialog === 'delete'}
+        onClose={() => setDialog(null)}
+        ids={ids}
+        busy={busy}
+        setBusy={setBusy}
+        onDeleted={finished}
+        finalFocus={() => (done.current ? sel.focusTarget() : deleteRef.current)}
       />
     </>
   );

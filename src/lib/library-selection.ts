@@ -2,6 +2,8 @@
 // unit-tested in node and imported by the client components. Server result types come in with `import type` only.
 import type { LibraryView } from '@/lib/library-view';
 import type { MoveResult } from '@/lib/collections';
+import type { BulkDeleteResult } from '@/lib/disk-delete';
+import type { HoldWhere, KeptTitle } from '@/lib/bulk-delete-plan';
 
 /** One request's cap, the same as the disk files' bulk route (Ruling 6). */
 export const SELECTION_CAP = 1000;
@@ -120,4 +122,32 @@ export function moveToast(r: MoveResult, name: string): string {
   if (r.alreadyThere > 0) s += `, ${wasWere(r.alreadyThere)} already there`;
   if (r.missing.length > 0) s += `, ${wasWere(r.missing.length)} already gone`;
   return s;
+}
+
+export const NOTHING_TO_DELETE = 'Nothing to delete: every selected title is in a drive. Eject it there first.';
+export const holdText = (h: HoldWhere) => `${h.label} (${h.drive})`;
+/**
+ * "Turrican — In A500 (DF0)": the kept line, in holdLabel's words, so the person knows what to eject (spec §2.2).
+ * A title kept with no holds was kept by the server's drift guard, not by a drive: it is never "in a drive".
+ */
+export const keptLine = (k: KeptTitle) => `${k.title} — ${k.holds.length === 0 ? 'could not be deleted' : k.holds.map(holdText).join(' · ')}`;
+export const keptIntro = (n: number) => `${titlesWord(n)} ${n === 1 ? 'is' : 'are'} in a drive and will be kept:`;
+export const stuckIntro = (n: number) => `${titlesWord(n)} could not be deleted and will be kept:`;
+/** Kept titles split by why: a drive holds them, or the server's drift guard kept them (no holds). */
+export function keptGroups(kept: readonly KeptTitle[]): { held: KeptTitle[]; stuck: KeptTitle[] } {
+  return { held: kept.filter((k) => k.holds.length > 0), stuck: kept.filter((k) => k.holds.length === 0) };
+}
+
+/** The Delete toast (spec §2.3): what really happened at OK, which can differ from the preview. */
+export function deleteToast(r: BulkDeleteResult): { title: string; description: string | undefined } {
+  const { held, stuck } = keptGroups(r.kept);
+  const parts: string[] = [];
+  if (held.length > 0) parts.push(`Kept ${held.length} that ${held.length === 1 ? 'is' : 'are'} in a drive: ${held.map((k) => k.title).join(', ')}.`);
+  if (stuck.length > 0) parts.push(`${stuck.length} could not be deleted: ${stuck.map((k) => k.title).join(', ')}.`);
+  if (r.missing.length > 0) parts.push(`${wasWere(r.missing.length)} already gone.`);
+  if (r.ejected.length > 0) parts.push(`Ejected from ${r.ejected.join(', ')}.`);
+  return {
+    title: r.deleted.length === 0 ? 'Nothing was deleted' : `Deleted ${titlesWord(r.deleted.length)}`,
+    description: parts.length > 0 ? parts.join(' ') : undefined,
+  };
 }

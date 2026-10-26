@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   SELECTION_CAP, canSelectPage, countText, initSelection, offPageCount, offPageText, pageCheck, selectionReducer,
-  titlesWord, disksWord, moveToast, viewKeyOf, reconcileSelection, isFormControl, type PageTitle, type SelectionState,
+  titlesWord, disksWord, moveToast, deleteToast, keptIntro, keptLine, keptGroups, viewKeyOf, reconcileSelection, isFormControl, type PageTitle, type SelectionState,
 } from './library-selection';
 
 const t = (id: string): PageTitle => ({ id, title: `T ${id}`, year: 1990, diskCount: 1 });
@@ -116,5 +116,32 @@ describe('move words (spec §2.3)', () => {
     expect(moveToast({ added: 9, alreadyThere: 3, removedFrom: 9, missing: [] }, 'X')).toBe('Moved 12 titles to X, 3 were already there');
     expect(moveToast({ added: 1, alreadyThere: 1, removedFrom: 0, missing: ['g'] }, 'X'))
       .toBe('Moved 2 titles to X, 1 was already there, 1 was already gone');
+  });
+});
+
+describe('delete words (spec §2.2, §2.3)', () => {
+  const kept = { id: 'k', title: 'Turrican', holds: [{ deviceName: 'A500', drive: 'DF0' as const, label: 'In A500' },
+    { deviceName: 'A1200', drive: 'DF1' as const, label: 'In A1200' }] };
+  const drift = { id: 'd', title: 'Lotus III', holds: [] };
+  it('a kept title says where it is, drive by drive', () => {
+    expect(keptLine(kept)).toBe('Turrican — In A500 (DF0) · In A1200 (DF1)');
+    expect(keptIntro(1)).toBe('1 title is in a drive and will be kept:');
+    expect(keptIntro(2)).toBe('2 titles are in a drive and will be kept:');
+  });
+  it('a title the drift guard kept (no holds) is never described as in a drive', () => {
+    expect(keptLine(drift)).toBe('Lotus III — could not be deleted');
+    const g = keptGroups([kept, drift]);
+    expect(g.held).toEqual([kept]);
+    expect(g.stuck).toEqual([drift]);
+  });
+  it('the toast counts what went, and says what was kept, already gone or ejected', () => {
+    const base = { deleted: ['a', 'b'], diskIds: [], kept: [], missing: [], ejected: [], releasedSha256: [] };
+    expect(deleteToast(base)).toEqual({ title: 'Deleted 2 titles', description: undefined });
+    expect(deleteToast({ ...base, kept: [kept, { ...kept, id: 'l', title: 'Lotus II' }], missing: ['m'], ejected: ['A500'] })).toEqual({
+      title: 'Deleted 2 titles',
+      description: 'Kept 2 that are in a drive: Turrican, Lotus II. 1 was already gone. Ejected from A500.',
+    });
+    expect(deleteToast({ ...base, kept: [drift] }).description).toBe('1 could not be deleted: Lotus III.');
+    expect(deleteToast({ ...base, deleted: [], kept: [kept] }).title).toBe('Nothing was deleted');
   });
 });

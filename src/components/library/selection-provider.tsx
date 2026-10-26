@@ -57,9 +57,11 @@ export function LibrarySelectionProvider({ viewKey, pageTitles, canSelect, child
   const reconciled = reconcileSelection(state, viewKey, canSelect);
   if (reconciled !== state) setState(reconciled);
   const dispatch = useCallback((a: SelectionAction) => setState((s) => selectionReducer(s, a)), []);
-  // Drop the selection if this page is hidden (Activity) without unmounting. React's development double-invoke of
-  // effects, and a late-hydrating boundary, run cleanup then setup in the same tick: that is not a hide, so the reset is
-  // deferred a microtask and skipped when the setup has run again (it flaked MS-08 by wiping a selection just started).
+  // Drop the selection if this page is hidden (Activity) without unmounting. The reset is deferred a microtask and skipped
+  // when setup has run again, and that deferral is load-bearing: React 19's development StrictMode double-invokes effects
+  // (cleanup, then setup) in the mounting commit's deferred passive phase, which can land after a fast first click and
+  // would wipe a selection just started (it flaked MS-08 about one run in three). A real unmount or hide leaves `alive`
+  // false, so the reset still happens. Do not "fix" the deferral away.
   const alive = useRef(false);
   useLayoutEffect(() => {
     alive.current = true;
