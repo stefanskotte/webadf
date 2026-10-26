@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useSyncExternalStore } from 'react';
+import { useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { SearchIcon } from 'lucide-react';
 import { useMediaQuery } from '@base-ui/react/unstable-use-media-query';
 import { PageHeader } from '@/components/shell/page-header';
@@ -33,6 +33,15 @@ export function HelpBrowser() {
   const [navPick, setNavPick] = useState<boolean | null>(null);
   const lg = useMediaQuery('(min-width: 1024px)', {});
   const navOpen = navPick ?? !hydrated;
+  // C7 (spec §9.2, Ruling 26): on a phone the Topics list closes right after hydration, and the articles move up under
+  // a reader who loaded /help#topic. Put the topic back at the top in the same frame, once.
+  const jumped = useRef(false);
+  useLayoutEffect(() => {
+    if (jumped.current || !hydrated || lg || navPick !== null) return;
+    jumped.current = true;
+    const id = window.location.hash.slice(1);
+    if (id && id in HELP_TOPICS) document.getElementById(id)?.scrollIntoView();
+  }, [hydrated, lg, navPick]);
   const f = filterHelpTopics(q);
   const shown = (id: HelpTopicId) => !f.active || f.ids.has(id);
   const none = f.active && f.ids.size === 0;
@@ -49,7 +58,7 @@ export function HelpBrowser() {
     <div className="px-4 pb-10 pt-6 sm:px-7 lg:grid lg:grid-cols-[260px_minmax(0,720px)] lg:items-start lg:gap-8">
       <aside className="mb-5 flex flex-col lg:sticky lg:top-6 lg:mb-0 lg:max-h-[calc(100vh-3rem)] lg:self-start lg:overflow-y-auto">
         <div className="mb-2 flex flex-col gap-1">
-          <label className="flex h-[38px] items-center gap-2 rounded-[10px] border px-2.5 focus-within:ring-2 focus-within:ring-(--ring)"
+          <label className="flex h-[38px] max-sm:min-h-11 items-center gap-2 rounded-[10px] border px-2.5 focus-within:ring-2 focus-within:ring-(--ring)"
                  style={{ background: 'var(--surface)', borderColor: 'var(--line)' }}>
             <SearchIcon aria-hidden className="size-3.5 shrink-0" style={{ color: 'var(--muted-2)' }} />
             <input type="search" data-testid="help-filter" aria-label="Search help" placeholder="Search help"
@@ -64,7 +73,7 @@ export function HelpBrowser() {
         </div>
         <details open={lg || navOpen} onToggle={(e) => { if (!lg) setNavPick(e.currentTarget.open); }}
                  onClick={(e) => { if (!lg && (e.target as HTMLElement).closest('nav a')) setNavPick(false); }}>
-          <summary data-testid="help-nav-toggle" className="flex h-10 cursor-pointer items-center px-1 text-[14px] font-semibold lg:hidden"
+          <summary data-testid="help-nav-toggle" className="flex h-10 max-sm:min-h-11 cursor-pointer items-center px-1 text-[14px] font-semibold lg:hidden"
                    style={{ color: 'var(--ink)' }}>
             {f.active ? `Topics · ${f.ids.size} of ${TOTAL}` : `Topics · ${TOTAL}`}
           </summary>

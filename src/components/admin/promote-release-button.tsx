@@ -107,7 +107,7 @@ export function PromoteReleaseButton({
           type="button"
           onClick={() => { setNotes(initialNotes); gone.current = false; setOpen(true); }}
           data-testid={`fw-promote-${id}`}
-          className="h-8 rounded-[8px] border border-(--line) px-2.5 text-[13px] font-medium text-(--ink) hover:bg-(--track) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)"
+          className="h-8 max-sm:min-h-11 rounded-[8px] border border-(--line) px-2.5 text-[13px] font-medium text-(--ink) hover:bg-(--track) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)"
         >
           Promote to release…
         </button>

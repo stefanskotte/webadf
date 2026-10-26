@@ -377,4 +377,12 @@
     .nav-tabs .seg-item:hover { background: transparent; color: var(--ink); }
     .nav-tabs .seg-item[aria-current="page"] { color: var(--ink); font-weight: 700; background: transparent; box-shadow: none; }
   }
+  /* Below sm every segmented item is a finger's height, and a track that runs out of room wraps (C7 spec §3.1,
+     Ruling 12): the auth switch, Settings' radios, the DF1 / Disk-at-startup / display radios, the staging filter,
+     the view toggle, admin-sections, the firmware filter. After the rules above, so it wins at the same specificity;
+     .nav-tabs (the tab bar) sets its own 52 px. */
+  @media (width < 40rem) {
+    .seg, .seg--sm { flex-wrap: wrap; }
+    .seg-item, :where(.seg--sm) .seg-item { min-height: 44px; height: auto; }
+  }
 }

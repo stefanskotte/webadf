@@ -121,7 +121,7 @@ export function FirmwarePasswordSetting({ skipPassword }: { skipPassword: boolea
               (5.58:1 on the card) so "off" is visible as well as said. */}
           <button ref={switchRef} type="button" role="switch" aria-checked={checked} aria-labelledby={labelId}
                   aria-describedby={warnId} aria-disabled={busy} data-testid="fw-skip-password" onClick={onSwitch}
-                  className="flex h-[26px] w-11 shrink-0 rounded-full border p-[3px] aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)"
+                  className="relative flex h-[26px] w-11 shrink-0 max-sm:before:absolute max-sm:before:inset-x-0 max-sm:before:-inset-y-[9px] max-sm:before:content-[''] rounded-full border p-[3px] aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)"
                   style={checked
                     ? { background: 'var(--ink)', borderColor: 'var(--ink)' }
                     : { background: 'var(--line-strong)', borderColor: 'var(--muted-2)' }}>

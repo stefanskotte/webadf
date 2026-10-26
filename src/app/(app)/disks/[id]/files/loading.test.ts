@@ -26,4 +26,10 @@ describe('DiskFilesLoading (spec 8.1)', () => {
   it('uses the page\'s base single column below xl, so a long row cannot widen it', () => {
     expect(html).toContain('grid-cols-[minmax(0,1fr)]');
   });
+  it('below lg the disk bone is the stacked Disk card: a 56 px disk beside a 26 px heading, then the space bar (C7 spec §8)', () => {
+    const disk = html.slice(html.indexOf('data-skeleton-disk'), html.indexOf('grid-cols-[minmax(0,1fr)]'));
+    expect(disk).toContain('h-14 w-14 shrink-0 sm:h-[76px] sm:w-[76px]');
+    expect(disk).toContain('h-[27px] w-1/2 sm:h-[36px]');
+    expect(disk.indexOf('h-14 w-14')).toBeLessThan(disk.indexOf('h-2 w-full'));
+  });
 });

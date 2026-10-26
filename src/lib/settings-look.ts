@@ -38,9 +38,9 @@ export const FIELD =
   'h-10 w-full rounded-[10px] border px-3 text-[14px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)';
 export const FIELD_STYLE = { background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' } as const;
 export const OUTLINE_BTN =
-  'h-9 shrink-0 justify-self-start rounded-[9px] border px-3 text-[13px] font-medium disabled:opacity-60 aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)';
+  'h-9 shrink-0 justify-self-start rounded-[9px] border px-3 text-[13px] font-medium disabled:opacity-60 aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring) max-sm:min-h-11';
 export const OUTLINE_STYLE = { background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' } as const;
 /** `text-white` is the hover rule's key for dark buttons (globals.css); the inline colour wins over it. */
 export const INK_BTN =
-  'h-9 rounded-[9px] px-3.5 text-[13px] font-semibold text-white disabled:opacity-60 aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)';
+  'h-9 rounded-[9px] px-3.5 text-[13px] font-semibold text-white disabled:opacity-60 aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring) max-sm:min-h-11';
 export const INK_STYLE = { background: 'var(--ink)', color: 'var(--surface)' } as const;

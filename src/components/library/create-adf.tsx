@@ -89,7 +89,7 @@ export function CreateAdf() {
   const trigger = {
     'data-testid': 'create-adf',
     // The board's secondary button (spec 1.1): surface fill, line border, plus before and a muted chevron after.
-    className: 'flex h-10 items-center gap-2 rounded-[10px] border px-3.5 text-[14px] font-medium disabled:opacity-50',
+    className: 'flex h-10 max-sm:min-h-11 items-center gap-2 rounded-[10px] border px-3.5 text-[14px] font-medium disabled:opacity-50',
     style: { background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' },
     children: (
       <>

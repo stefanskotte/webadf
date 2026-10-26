@@ -209,7 +209,7 @@ export function EditDetails({ game }: { game: GameDetail }) {
             disabled={busy}
             data-testid="edit-save"
             onClick={save}
-            className="h-[38px] rounded-[10px] px-4 text-[13px] font-semibold text-white disabled:opacity-50"
+            className="h-[38px] max-sm:min-h-11 rounded-[10px] px-4 text-[13px] font-semibold text-white disabled:opacity-50"
             style={{ background: 'var(--primary-action)' }}
           >
             {busy ? 'Saving…' : 'Save'}
@@ -219,7 +219,7 @@ export function EditDetails({ game }: { game: GameDetail }) {
             disabled={busy}
             data-testid="edit-cancel"
             onClick={() => setOpen(false)}
-            className="h-[38px] rounded-[10px] px-3.5 text-[13px] font-medium disabled:opacity-50"
+            className="h-[38px] max-sm:min-h-11 rounded-[10px] px-3.5 text-[13px] font-medium disabled:opacity-50"
             style={{ color: 'var(--muted)' }}
           >
             Cancel
@@ -246,7 +246,7 @@ export function EditDetails({ game }: { game: GameDetail }) {
         type="button"
         data-testid="edit-details"
         onClick={() => { setValues(initial(game)); setOpen(true); }}
-        className="inline-flex h-[38px] items-center gap-2 rounded-[10px] border px-3.5 text-[13px] font-medium"
+        className="inline-flex h-[38px] max-sm:min-h-11 items-center gap-2 rounded-[10px] border px-3.5 text-[13px] font-medium"
         style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"

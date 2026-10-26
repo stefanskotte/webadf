@@ -7,7 +7,7 @@ import { HELP_TOPICS, type HelpTopicId } from '@/lib/help/topics';
  * A "?" that explains the control beside it (spec 2026-10-05-context-help; look C5 §4, board InfHelp's right
  * column). Tap, click or keyboard opens it -- never hover-only, because a phone has no hover. Clicks are stopped
  * here so a "?" inside a clickable row, card or toggle never also triggers the thing it explains. The round track
- * button turns ink when hovered or open (both values visible, Ruling 18); 24 px for WCAG 2.2's target size.
+ * button turns ink when hovered or open (both values visible, Ruling 18); 24 px for WCAG 2.2's target size; below sm a 40 x 40 hit area around it (C7 Ruling 14).
  */
 export function HelpTip({ topic, className }: { topic: HelpTopicId; className?: string }) {
   const t = HELP_TOPICS[topic];
@@ -18,7 +18,7 @@ export function HelpTip({ topic, className }: { topic: HelpTopicId; className?: 
         aria-label={`About ${t.title}`}
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
-        className={`inline-flex size-6 shrink-0 items-center justify-center rounded-full align-middle font-sans text-[12px] font-bold leading-none bg-(--track) text-(--muted) hover:bg-(--ink) hover:text-(--surface) data-[popup-open]:bg-(--ink) data-[popup-open]:text-(--surface) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring) ${className ?? ''}`}
+        className={`relative inline-flex size-6 shrink-0 items-center justify-center rounded-full align-middle font-sans text-[12px] font-bold leading-none bg-(--track) text-(--muted) hover:bg-(--ink) hover:text-(--surface) data-[popup-open]:bg-(--ink) data-[popup-open]:text-(--surface) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring) max-sm:before:absolute max-sm:before:-inset-2 max-sm:before:content-[''] ${className ?? ''}`}
       >
         <span aria-hidden="true">?</span>
       </Popover.Trigger>

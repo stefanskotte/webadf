@@ -1,6 +1,6 @@
 import { Link } from '@/components/shell/link';
 
-const BOX = 'inline-flex h-8 items-center rounded-[8px] px-3 text-[13px] font-medium';
+const BOX = 'inline-flex h-8 items-center rounded-[8px] px-3 text-[13px] font-medium max-sm:min-h-11';
 
 /**
  * One pager end (C6 spec §3.3, §6.4, Ruling 12): a link to the page, or at an end an aria-disabled span of the same

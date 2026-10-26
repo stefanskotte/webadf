@@ -71,7 +71,7 @@ export function DeleteDiskDialog({
        * accessible name still says what will be deleted, because "trash
        * icon" is not a description of anything to a screen reader.
        */
-      className="grid size-[38px] shrink-0 place-items-center rounded-[10px] transition-colors hover:bg-[var(--danger-bg)]"
+      className="grid size-[38px] max-sm:size-11 shrink-0 place-items-center rounded-[10px] transition-colors hover:bg-[var(--danger-bg)]"
       style={{ color: 'var(--danger-fg)' }}
       title={`Delete ${title}`}
     >

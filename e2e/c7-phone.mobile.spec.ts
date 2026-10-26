@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
-import { signUpFresh, runTag } from './helpers';
+import { signUpFresh, runTag, createAdf } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
 import { cleanupSeeded, hydrated, pairDevice, seedDisk } from './device-helpers';
 
@@ -330,4 +330,76 @@ test('C7-03f widening to sm closes the row; narrowing with the field focused mov
   await expect(page.getByTestId('search-input')).toBeHidden();
   await expect(page.getByTestId('search-open')).toBeVisible();
   await expect(page.getByTestId('search-open')).toBeFocused();
+});
+
+// ---- Touch targets (spec §3, §14.9, Rulings 12-14, 29) ------------------------------------------------------
+
+/** Every control a finger presses -- outside prose, the "?" and aria-hidden -- whose hit area is under 44 px tall. */
+async function smallTargets(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const out: string[] = [];
+    const sel = 'button, a.btn-like, [role="radio"], [role="tab"], select, summary, [data-testid="auth-switch"] a';
+    for (const el of document.querySelectorAll<HTMLElement>(sel)) {
+      if (el.matches('[data-testid^="help-tip-"]') || el.closest('p, [aria-hidden="true"], [data-sonner-toaster]')) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2 || getComputedStyle(el).visibility === 'hidden') continue;   // not shown
+      // A ::before hit area (the "?", the firmware switch) counts: its negative insets grow the target.
+      const b = getComputedStyle(el, '::before');
+      const grow = b.position === 'absolute'
+        ? Math.max(0, -(parseFloat(b.top) || 0)) + Math.max(0, -(parseFloat(b.bottom) || 0)) : 0;
+      const h = r.height + grow;
+      if (h < 43.5) {
+        const name = el.dataset.testid ?? el.getAttribute('aria-label') ?? (el.textContent ?? '').trim().slice(0, 32);
+        out.push(`${name} (${Math.round(h)} px)`);
+      }
+    }
+    return out;
+  });
+}
+
+/** spec §14.9 on the page as it stands: no small control at 390, no sideways scroll at 360, 390 or 414. Soft, so one
+ *  run lists every failure; ends at 390. */
+async function touchSweep(page: Page, label: string) {
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect.soft(await smallTargets(page), `${label}: controls under 44 px`).toEqual([]);
+  for (const width of [360, 390, 414]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect.soft(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),
+      `${label} scrolls sideways at ${width}`).toBe(true);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+}
+
+test('C7-09a touch targets and no sideways scroll: a title, its disk files, Settings, Help, sign-in, sign-up', async ({ page }) => {
+  test.setTimeout(150_000);
+  await signUpFresh(page);
+  await createAdf(page, 'FFS');
+  const title = await page.locator('a[href^="/games/"]').first().getAttribute('href');
+  await page.goto(title!);
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  await touchSweep(page, 'title page');
+  const files = await page.locator('[data-testid^="browse-"]').first().getAttribute('href');
+  await page.goto(files!);
+  await expect(page.getByTestId('disk-card')).toBeVisible();
+  await touchSweep(page, 'disk files');
+  for (const path of ['/settings', '/help']) {
+    await page.goto(path);
+    await expect(page.locator('h1').first()).toBeVisible();
+    await touchSweep(page, path);
+  }
+  await page.context().clearCookies();
+  for (const path of ['/sign-in', '/sign-up']) {
+    await page.goto(path);
+    await expect(page.getByTestId('auth-switch')).toBeVisible();
+    await touchSweep(page, path);
+  }
+});
+
+test('C7-11 Help at 390: a /help#topic load leaves the topic at the top after the Topics list closes', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/help#second-drive');
+  await expect(page.getByTestId('help-nav-toggle')).toHaveText('Topics · 17');
+  await expect(page.locator('details:has([data-testid="help-nav-toggle"])')).not.toHaveAttribute('open');
+  await expect.poll(async () => Math.round((await page.locator('#second-drive').boundingBox())!.y)).toBeLessThan(200);
+  await expect(page.locator('#second-drive')).toBeInViewport();
 });

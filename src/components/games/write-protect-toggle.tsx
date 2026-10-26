@@ -26,7 +26,7 @@ export function WriteProtectToggle({ diskId, writeProtected }: {
             title={writeProtected
               ? 'Write protected — the device will refuse writes'
               : 'Writable — the Amiga can save to this disk; each save becomes a new version'}
-            className="flex h-[38px] items-center gap-2.5 rounded-[10px] px-3 text-[13px] font-medium disabled:opacity-50"
+            className="flex h-[38px] items-center gap-2.5 rounded-[10px] px-3 text-[13px] font-medium disabled:opacity-50 max-sm:min-h-11"
             style={{ color: 'var(--ink)' }}>
       <WpSwitch on={writeProtected} />
       {writeProtected ? 'Protected' : 'Writable'}
