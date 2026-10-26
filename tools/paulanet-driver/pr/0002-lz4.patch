@@ -1,4 +1,4 @@
-From 1615d144d985f985c5d683b61dfdcbb3f41b8207 Mon Sep 17 00:00:00 2001
+From e7e3f2b4b1f8c14794fec3d07d1c6ef618f9f425 Mon Sep 17 00:00:00 2001
 From: Stefan Skotte <sfs@enhance-it.dk>
 Date: Sun, 18 Oct 2026 19:39:30 +0200
 Subject: [PATCH] NetDevice: LZ4 both ways, per CPU (68020+ uploads), linked
@@ -1310,7 +1310,7 @@ index 0000000..2bdc3e6
 +#endif
 +#endif
 diff --git a/NetDevice/paulanetio.c b/NetDevice/paulanetio.c
-index 7bb435e..8ad4d44 100644
+index 7bb435e..e9bf667 100644
 --- a/NetDevice/paulanetio.c
 +++ b/NetDevice/paulanetio.c
 @@ -19,6 +19,7 @@ _____             _       _   _ ___________
@@ -1390,7 +1390,7 @@ index 7bb435e..8ad4d44 100644
 +            } else {   // no LZ4 memory: Rob's own decode
 +                mfmDecode(pkt, dataLength, (UBYTE*)dev->compressionSpace, CHIPBUFFER_SIZE);
 +                wlFrame = (const UBYTE*)dev->compressionSpace;
-+            }            
++            }
 +            if (wlFrame) callback(userContext, (UBYTE*)wlFrame, cHeader.originalSize);
          } else {
 +            if (dev->wlMem) wl_rx_break(&dev->wlRx);   // webadf LZ4: raw RLE decodes outside the window; nothing may link past it
