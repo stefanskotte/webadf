@@ -22,6 +22,7 @@ import { getUserPrefs } from '@/lib/user-prefs';
 import { LibrarySortPicker } from '@/components/library/library-sort-picker';
 import { LibraryPager } from '@/components/library/library-pager';
 import { resolvePage, librarySubtitle } from '@/lib/library-paging';
+import { LibrarySelectionBar } from '@/components/library/library-selection-bar';
 import { LibrarySelectionProvider, SelectionScope } from '@/components/library/selection-provider';
 import { SelectToggle } from '@/components/library/select-toggle';
 import { viewKeyOf } from '@/lib/library-selection';
@@ -184,6 +185,10 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         <div className="flex flex-col gap-4 md:flex-row md:items-start">
           <CollectionRail viewMode={viewMode} />
           <SelectionScope className="min-w-0 flex-1">
+            {canSelect && (
+              <LibrarySelectionBar collectionId={filteredCollectionId}
+                                   collectionName={view.kind === 'collection' ? heading : null} />
+            )}
             {showOverview
               ? (
                 <CategoryOverview

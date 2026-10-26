@@ -200,7 +200,8 @@ function TitleRow({ game: g, collectionId, fob, drives, pendingHide }: {
     return (
       <label ref={setNodeRef} data-testid="game-row" data-game-id={g.id} data-selected={checked ? 'true' : 'false'}
              data-drive={driveState(drives, g.id)}
-             className={`${cls} cursor-pointer ${checked ? 'outline-2 -outline-offset-2 outline-(--primary-action)' : ''}`}
+             aria-hidden={pendingHide ? true : undefined}
+             className={`${cls} cursor-pointer select-none ${checked ? 'outline-2 -outline-offset-2 outline-(--primary-action)' : ''}`}
              style={style}>
         <span className="grid place-items-center"><SelectBox game={g} /></span>
         <RowCells game={g} collectionId={collectionId} fob={fob} drives={drives} selecting />

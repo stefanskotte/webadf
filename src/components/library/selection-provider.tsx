@@ -57,7 +57,17 @@ export function LibrarySelectionProvider({ viewKey, pageTitles, canSelect, child
   const reconciled = reconcileSelection(state, viewKey, canSelect);
   if (reconciled !== state) setState(reconciled);
   const dispatch = useCallback((a: SelectionAction) => setState((s) => selectionReducer(s, a)), []);
-  useLayoutEffect(() => () => setState((s) => initSelection(s.viewKey)), []);
+  // Drop the selection if this page is hidden (Activity) without unmounting. React's development double-invoke of
+  // effects, and a late-hydrating boundary, run cleanup then setup in the same tick: that is not a hide, so the reset is
+  // deferred a microtask and skipped when the setup has run again (it flaked MS-08 by wiping a selection just started).
+  const alive = useRef(false);
+  useLayoutEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      queueMicrotask(() => { if (!alive.current) setState((s) => initSelection(s.viewKey)); });
+    };
+  }, []);
 
   const toggleRef = useRef<HTMLButtonElement>(null);
   const focusTarget = useCallback((): HTMLElement | null => {
@@ -87,7 +97,7 @@ export function SelectionScope({ className, children }: { className: string; chi
       className={className}
       onKeyDown={(e) => {
         if (e.key !== 'Escape' || !selecting || e.defaultPrevented) return;
-        if (isFormControl(e.target as Element)) return;
+        if (isFormControl(e.target as HTMLInputElement)) return;
         if (e.target instanceof Element && e.target.closest('[role="dialog"],[role="menu"]')) return;
         e.preventDefault();
         cancel();

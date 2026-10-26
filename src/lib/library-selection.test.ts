@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   SELECTION_CAP, canSelectPage, countText, initSelection, offPageCount, offPageText, pageCheck, selectionReducer,
-  titlesWord, disksWord, viewKeyOf, reconcileSelection, isFormControl, type PageTitle, type SelectionState,
+  titlesWord, disksWord, moveToast, viewKeyOf, reconcileSelection, isFormControl, type PageTitle, type SelectionState,
 } from './library-selection';
 
 const t = (id: string): PageTitle => ({ id, title: `T ${id}`, year: 1990, diskCount: 1 });
@@ -101,5 +101,20 @@ describe('library selection (spec §1.5, §8 unit)', () => {
     expect(isFormControl({ tagName: 'TEXTAREA' })).toBe(true);
     expect(isFormControl({ tagName: 'BUTTON' })).toBe(false);
     expect(isFormControl(null)).toBe(false);
+  });
+
+  it('a checkbox or radio holds no text: Escape from the bar\'s own box or a card\'s box still ends selecting', () => {
+    expect(isFormControl({ tagName: 'INPUT', type: 'checkbox' })).toBe(false);
+    expect(isFormControl({ tagName: 'INPUT', type: 'radio' })).toBe(false);
+    expect(isFormControl({ tagName: 'INPUT', type: 'text' })).toBe(true);
+  });
+});
+
+describe('move words (spec §2.3)', () => {
+  it('names how many went where, and adds what was already there or already gone', () => {
+    expect(moveToast({ added: 12, alreadyThere: 0, removedFrom: 0, missing: [] }, 'Shooters')).toBe('Moved 12 titles to Shooters');
+    expect(moveToast({ added: 9, alreadyThere: 3, removedFrom: 9, missing: [] }, 'X')).toBe('Moved 12 titles to X, 3 were already there');
+    expect(moveToast({ added: 1, alreadyThere: 1, removedFrom: 0, missing: ['g'] }, 'X'))
+      .toBe('Moved 2 titles to X, 1 was already there, 1 was already gone');
   });
 });

@@ -168,7 +168,8 @@ function SelectableCard({ ref, game: g, collectionId, fob, drives, pendingHide }
       data-game-id={g.id}
       data-selected={checked ? 'true' : 'false'}
       data-drive={driveState(drives, g.id)}
-      className={`${CARD_CLASS} cursor-pointer ${checked ? 'outline-2 outline-(--primary-action)' : ''}`}
+      aria-hidden={pendingHide ? true : undefined}
+      className={`${CARD_CLASS} cursor-pointer select-none ${checked ? 'outline-2 outline-(--primary-action)' : ''}`}
       style={pendingHideStyle(pendingHide)}
     >
       <span className="absolute left-3 top-3 z-10 grid size-[30px] place-items-center rounded-full bg-(--surface)">

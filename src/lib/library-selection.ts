@@ -1,6 +1,7 @@
 // Library multi-select (spec 2026-10-26): the selection's state and words. Pure -- no React, no database -- so it is
 // unit-tested in node and imported by the client components. Server result types come in with `import type` only.
 import type { LibraryView } from '@/lib/library-view';
+import type { MoveResult } from '@/lib/collections';
 
 /** One request's cap, the same as the disk files' bulk route (Ruling 6). */
 export const SELECTION_CAP = 1000;
@@ -63,10 +64,14 @@ export function reconcileSelection(s: SelectionState, viewKey: string, canSelect
   return s;
 }
 
-/** A native text/select control: Escape there belongs to the control, not to the selection. */
-export function isFormControl(target: { tagName?: string } | null): boolean {
+/**
+ * A native text/select control: Escape there belongs to the control, not to the selection. A checkbox or radio holds
+ * nothing to cancel, so the selection boxes (the bar's "All on this page", a card's) do not count.
+ */
+export function isFormControl(target: { tagName?: string; type?: string } | null): boolean {
   const tag = target?.tagName?.toUpperCase();
-  return tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA';
+  if (tag === 'INPUT') return target?.type !== 'checkbox' && target?.type !== 'radio';
+  return tag === 'SELECT' || tag === 'TEXTAREA';
 }
 
 export function selectionReducer(s: SelectionState, a: SelectionAction): SelectionState {
@@ -106,3 +111,13 @@ export const disksWord = (n: number) => `${n0(n)} ${n === 1 ? 'disk' : 'disks'}`
 export const countText = (n: number) => (n === 0 ? 'No titles selected' : `${titlesWord(n)} selected`);
 /** The disk files' "(n not shown)" in this bar's words, so a Delete never surprises (spec §1.3). */
 export const offPageText = (k: number) => ` · ${n0(k)} on other pages`;
+
+const wasWere = (n: number) => `${n} ${n === 1 ? 'was' : 'were'}`;
+
+/** The Move toast (spec §2.3): every owned title ended up in the target; the rest of the line says how. */
+export function moveToast(r: MoveResult, name: string): string {
+  let s = `Moved ${titlesWord(r.added + r.alreadyThere)} to ${name}`;
+  if (r.alreadyThere > 0) s += `, ${wasWere(r.alreadyThere)} already there`;
+  if (r.missing.length > 0) s += `, ${wasWere(r.missing.length)} already gone`;
+  return s;
+}

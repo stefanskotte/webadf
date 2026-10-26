@@ -29,3 +29,17 @@ export function isIdle(now: number, lastInputAt: number): boolean {
   // NTP step) reads as "input just now" rather than as ten minutes of idleness.
   return now - lastInputAt >= LIVE_IDLE_AFTER_MS;
 }
+
+/**
+ * Whether the focused element is somewhere a person is mid-edit, so a refresh must wait. A checkbox or radio holds no
+ * text to lose: the library's selection boxes keep focus after a click and must not pause live drive updates.
+ * `data-live-ok` is the header search box's opt-out.
+ */
+export function isTypingTarget(el: {
+  tagName: string; type?: string; isContentEditable?: boolean; hasAttribute(name: string): boolean;
+} | null): boolean {
+  if (!el) return false;
+  if (el.hasAttribute('data-live-ok')) return false;
+  if (el.tagName === 'INPUT') return el.type !== 'checkbox' && el.type !== 'radio';
+  return el.tagName === 'TEXTAREA' || !!el.isContentEditable;
+}

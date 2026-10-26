@@ -41,6 +41,14 @@ async function smallPages(page: Page) {
   const res = await page.request.patch('/api/me/prefs', { data: { library: { pageSize: 24, sort: { key: 'title', dir: 'asc' } } } });
   expect(res.status()).toBe(200);
 }
+const bar = (page: Page) => page.getByTestId('library-selection-bar');
+const count = (page: Page) => page.getByTestId('library-selection-count');
+/** The bodies of every /api/games/bulk request the page sends. */
+function bulkRequests(page: Page) {
+  const sent: string[] = [];
+  page.on('request', (r) => { if (r.url().includes('/api/games/bulk')) sent.push(r.postData() ?? ''); });
+  return sent;
+}
 const toggle = (page: Page) => page.getByTestId('library-select-toggle');
 async function startSelecting(page: Page) {
   await hydrated(page, 'library-select-toggle');
@@ -144,6 +152,9 @@ test('MS-02 grid: a box on every card, a click ticks instead of navigating, the 
   // The toggle unmounting under its own focus (the view emptied by a refresh): focus goes to the h1, never <body>.
   await toggle(page).focus();
   for (const t of [a, b]) expect((await page.request.delete(`/api/games/${t.gameId}`)).status()).toBe(200);
+  // Depends on Next's debug global (window.next.router); fail clearly if a Next upgrade drops it.
+  expect(await page.evaluate(() => typeof (window as unknown as { next?: { router?: { refresh?: unknown } } }).next?.router?.refresh),
+    'window.next.router.refresh is missing: Next changed its debug global, so this test needs another way to refresh').toBe('function');
   await page.evaluate(() => (window as unknown as { next: { router: { refresh(): void } } }).next.router.refresh());
   await expect(toggle(page)).toHaveCount(0);
   await expect(page.locator('h1')).toBeFocused();
@@ -217,4 +228,138 @@ test('MS-04 a selection keeps across pages and grid/table, ends on another view 
   await expect(page).toHaveURL(/\/library/);
   await expect(toggle(page)).toHaveAttribute('aria-pressed', 'false');
   await expect(page.getByTestId('select-title')).toHaveCount(0);
+});
+
+test('MS-05 Cancel changes nothing: no request is sent, both titles stay, focus goes to the toggle', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const [a, b] = await seedTitles(orgId, 'Cancel', 2);
+  await makeCollection(page, `Target ${runTag()}`);
+  const sent = bulkRequests(page);
+  await page.goto('/library');
+  await expect(bar(page)).toBeHidden();
+  await startSelecting(page);
+  await expect(bar(page)).toBeVisible();
+  await expect(page.getByTestId('library-select-page')).toBeFocused();
+  await expect(count(page)).toHaveText('No titles selected');
+  for (const id of ['library-bulk-move', 'library-bulk-delete']) {
+    await expect(page.getByTestId(id)).toHaveAttribute('aria-disabled', 'true');
+    await expect(page.getByTestId(id)).toHaveAttribute('title', 'Select titles first');
+  }
+  await hydrated(page, 'select-title', 'onChange');
+  await boxOf(card(page, a.gameId)).click();
+  await boxOf(card(page, b.gameId)).click();
+  await expect(count(page)).toHaveText('2 titles selected');
+
+  await page.getByTestId('library-bulk-move').click();
+  await expect(page.getByTestId('bulk-move-dialog')).toBeVisible();
+  await page.getByTestId('bulk-move-cancel').click();
+  await expect(page.getByTestId('bulk-move-dialog')).toBeHidden();
+  await expect(page.getByTestId('library-bulk-move')).toBeFocused();
+  await expect(count(page)).toHaveText('2 titles selected');
+
+  await page.getByTestId('library-selection-cancel').click();
+  await expect(bar(page)).toBeHidden();
+  await expect(toggle(page)).toBeFocused();
+  await expect(toggle(page)).toHaveAttribute('aria-pressed', 'false');
+  await page.reload();
+  await expect(card(page, a.gameId)).toBeVisible();
+  await expect(card(page, b.gameId)).toBeVisible();
+  expect(sent).toEqual([]);
+});
+
+test('MS-06 grid, Move: two titles from Uncategorized into a collection; they leave the inbox, the rail counts follow', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const [a, b, c] = await seedTitles(orgId, 'Move', 3);
+  const dst = await makeCollection(page, `Shooters ${runTag()}`);
+  await page.goto('/library');
+  await startSelecting(page);
+  await hydrated(page, 'select-title', 'onChange');
+  await boxOf(card(page, a.gameId)).click();
+  await boxOf(card(page, b.gameId)).click();
+  await page.getByTestId('library-bulk-move').click();
+
+  const dlg = page.getByTestId('bulk-move-dialog');
+  await expect(dlg).toContainText('Move to collection');
+  await expect(dlg).toContainText('2 titles go into the collection you pick. Titles already in other collections stay there too.');
+  const confirm = page.getByTestId('bulk-move-confirm');
+  await expect(confirm).toHaveText('Move 2 titles');
+  await expect(confirm).toHaveAttribute('aria-disabled', 'true');
+  await dlg.getByRole('radio', { name: dst.name }).check();
+  await expect(confirm).not.toHaveAttribute('aria-disabled', /.*/);
+  await confirm.click();
+
+  await expect(page.getByText(`Moved 2 titles to ${dst.name}`)).toBeVisible();
+  await expect(dlg).toBeHidden();
+  await expect(toggle(page)).toBeFocused();
+  await expect(toggle(page)).toHaveAttribute('aria-pressed', 'false');
+  await expect(card(page, a.gameId)).toHaveCount(0);
+  await expect(card(page, b.gameId)).toHaveCount(0);
+  await expect(card(page, c.gameId)).toBeVisible();
+  await expect(railRow(page, dst.id).getByTestId('collection-count')).toHaveText('2');
+  await expect(page.getByTestId('collection-uncategorized')).toHaveText(/Uncategorized\s*1$/);
+});
+
+test('MS-07 inside a collection, Move leaves it; Escape in the dialog closes only the dialog; a double press sends one request', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const [a, b, c] = await seedTitles(orgId, 'Inside', 3);
+  const src = await makeCollection(page, `Source ${runTag()}`, [a.gameId, b.gameId, c.gameId]);
+  const dst = await makeCollection(page, `Dest ${runTag()}`);
+  const sent = bulkRequests(page);
+  await page.goto(`/library?collection=${src.id}`);
+  await startSelecting(page);
+  await hydrated(page, 'select-title', 'onChange');
+  await boxOf(card(page, a.gameId)).click();
+  await boxOf(card(page, b.gameId)).click();
+  await page.getByTestId('library-bulk-move').click();
+  const dlg = page.getByTestId('bulk-move-dialog');
+  await expect(dlg).toContainText(`2 titles leave ${src.name} and go into the collection you pick.`);
+  await expect(dlg.getByRole('radio', { name: src.name })).toHaveCount(0);   // never the one you are in
+
+  // Review Focus 2: Escape inside the dialog bubbles through React's portal tree; only the dialog closes.
+  await page.keyboard.press('Escape');
+  await expect(dlg).toBeHidden();
+  await expect(bar(page)).toBeVisible();
+  await expect(count(page)).toHaveText('2 titles selected');
+  await expect(page.getByTestId('library-bulk-move')).toBeFocused();
+
+  await page.getByTestId('library-bulk-move').click();
+  await dlg.getByRole('radio', { name: dst.name }).check();
+  // Review Focus 3: a double press sends one move.
+  await page.getByTestId('bulk-move-confirm').dblclick();
+  await expect(page.getByText(`Moved 2 titles to ${dst.name}`)).toBeVisible();
+  expect(sent.filter((s) => s.includes('"op":"move"'))).toHaveLength(1);
+  expect(JSON.parse(sent[0])).toMatchObject({ op: 'move', to: dst.id, from: src.id });
+  await expect(card(page, a.gameId)).toHaveCount(0);
+  await expect(card(page, c.gameId)).toBeVisible();
+  await expect(railRow(page, dst.id).getByTestId('collection-count')).toHaveText('2');
+  await expect(railRow(page, src.id).getByTestId('collection-count')).toHaveText('1');
+});
+
+test('MS-08 All on this page, its indeterminate state, the count of titles on other pages, Escape from the bar', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const t = await seedTitles(orgId, 'Pages', 26);
+  await smallPages(page);
+  await page.goto('/library');
+  await startSelecting(page);
+  const all = page.getByTestId('library-select-page');
+  await hydrated(page, 'library-select-page', 'onChange');
+  await all.click();
+  await expect(count(page)).toHaveText('24 titles selected');
+  await expect(all).toBeChecked();
+
+  await page.getByTestId('pager-next').click();
+  await expect(page).toHaveURL(/page=2/);
+  await expect(count(page)).toHaveText('24 titles selected · 24 on other pages');
+  await expect(page.getByTestId('library-selection-offpage')).toHaveText(/·\s*24 on other pages$/);
+  await expect(all).not.toBeChecked();
+  await boxOf(card(page, t[25].gameId)).click();
+  expect(await all.evaluate((el: HTMLInputElement) => el.indeterminate)).toBe(true);
+  await expect(count(page)).toHaveText('25 titles selected · 24 on other pages');
+
+  // Escape with focus in the bar ends selecting; focus goes to the toggle.
+  await all.focus();
+  await page.keyboard.press('Escape');
+  await expect(bar(page)).toBeHidden();
+  await expect(toggle(page)).toBeFocused();
+  await expect(toggle(page)).toHaveAttribute('aria-pressed', 'false');
 });

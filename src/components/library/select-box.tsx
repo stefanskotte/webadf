@@ -11,6 +11,10 @@ import { useLibrarySelection } from './selection-provider';
 // unticked box is an empty ring, never nothing (the "show both values" rule). The unticked ring is --muted-2, which
 // clears 3:1 on the surface; --line-strong would not (Plan ruling, Task 3).
 const BOX = 'peer size-[22px] shrink-0 cursor-pointer appearance-none rounded-[6px] border-2 '
+  // Windows High Contrast drops backgrounds: the checked and mixed states are told apart by a thicker, Highlight-coloured
+  // border and the tick (which takes CanvasText there), so a ticked box never reads as an empty ring.
+  + 'forced-colors:border-[CanvasText] forced-colors:checked:border-[Highlight] forced-colors:checked:border-[6px] '
+  + 'forced-colors:indeterminate:border-[Highlight] forced-colors:indeterminate:border-[6px] '
   + 'focus-visible:outline-2 focus-visible:outline-offset-2 aria-disabled:cursor-default aria-disabled:opacity-50';
 const ON_SURFACE = 'border-(--muted-2) bg-(--surface) checked:border-(--primary-action) checked:bg-(--primary-action) '
   + 'indeterminate:border-(--primary-action) indeterminate:bg-(--primary-action) focus-visible:outline-(--ring)';
