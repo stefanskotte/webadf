@@ -89,9 +89,10 @@ test('the bottom bar reaches every route through four tabs and More, and there i
 
   // One site nav, not a desktop copy plus a mobile copy -- a duplicate
   // would make getByRole('link') ambiguous here AND in the 1280 specs. The
-  // library's pager is a <nav> of its own (aria-label "Pages"), so it is left
+  // library's pager is a <nav> of its own (aria-label "Pages"), and so is the
+  // collections chip row (aria-label "Collections", C7 Task 5): both are left
   // out by name rather than counted.
-  const navs = page.locator('nav:not([aria-label="Pages"])');
+  const navs = page.locator('nav:not([aria-label="Pages"]):not([aria-label="Collections"])');
   await expect(navs).toHaveCount(1);
 
   const bar = navs;

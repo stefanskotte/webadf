@@ -432,7 +432,7 @@ export function Dropzone() {
         <label htmlFor="add-file-input" data-testid="add-browse" data-tile={busy ? 'Working…' : 'Add to library'}
                className={`${INK_LABEL} ${TILE_LOOK} ${TILE[1]}`} style={INK_STYLE}>
           <span className="max-sm:hidden">{busy ? 'Working…' : 'Browse files'}</span>
-          <input id="add-file-input" type="file" multiple accept=".adf,.dsk,.adz,.dms,.dmz,.hfe" className="sr-only"
+          <input id="add-file-input" type="file" multiple aria-label="Browse files" accept=".adf,.dsk,.adz,.dms,.dmz,.hfe" className="sr-only"
                  data-testid="file-input" disabled={busy}
                  onChange={(e) => { const f = e.target.files; if (f) void handleFiles(f); }} />
         </label>

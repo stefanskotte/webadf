@@ -37,7 +37,7 @@ export function SendPanel({ targets: initialTargets, initialBoard, serverNow }: 
           </p>
         }>
         {/* Below sm the Send tile, unpressable: it says why, and the hint under the tiles names the fix (C7 Task 7). */}
-        <div data-tile="Pair a board first" className={`hidden ${TILE_LOOK} ${TILE[2]} max-sm:flex max-sm:items-center`} />
+        <div data-tile="Pair a board first" aria-hidden="true" className={`hidden ${TILE_LOOK} ${TILE[2]} max-sm:flex max-sm:items-center`} />
       </DropCard>
     );
   }
@@ -96,7 +96,7 @@ export function SendPanel({ targets: initialTargets, initialBoard, serverNow }: 
         <label htmlFor="send-file-input" data-testid="send-browse" data-tile="Send to Amiga"
                className={`${INK_LABEL} ${TILE_LOOK} ${TILE[2]}`} style={INK_STYLE}>
           <span className="max-sm:hidden">Choose files</span>
-          <input id="send-file-input" type="file" multiple className="sr-only" data-testid="send-file-input"
+          <input id="send-file-input" type="file" multiple aria-label="Choose files" className="sr-only" data-testid="send-file-input"
                  onChange={(e) => { const f = e.target.files; if (f) void handleFiles(f); e.target.value = ''; }} />
         </label>
         {single && (

@@ -247,7 +247,7 @@ test('at 1280 the chips stay between the wordmark and the centred pill, and "+k"
     await expect(more.locator('span:visible')).toHaveText('+3');
 
     const wordmark = (await page.getByTestId('wordmark-home').boundingBox())!;
-    const pill = (await page.locator('nav').boundingBox())!;
+    const pill = (await page.getByRole('navigation', { name: 'Main' }).boundingBox())!;
     const first = (await chip(page, ids[0]).boundingBox())!;
     const moreBox = (await more.boundingBox())!;
     expect(first.x).toBeGreaterThanOrEqual(wordmark.x + wordmark.width);

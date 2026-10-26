@@ -429,6 +429,25 @@ const newCollection = async (page: Page, name: string) =>
   (await (await page.request.post('/api/collections', { data: { name } })).json()).id as string;
 const chipOf = (page: Page, id: string) => page.locator(`[data-testid="collection-row"][data-collection-id="${id}"]`);
 
+// Found in the Task 9 by-hand check: ROW's own max-md:bg-(--surface) beat CURRENT's max-md:bg-(--ink), so the current
+// chip drew surface-coloured words on a surface background -- invisible.
+test('C7-04f Library at 390: the current chip is an ink chip and its words are legible on it (Uncategorized, and a collection)', async ({ page }) => {
+  await signUpFresh(page);
+  const id = await newCollection(page, `Current ${runTag()}`);
+  const bgText = (loc: ReturnType<Page['locator']>) => loc.evaluate((el) => {
+    const name = el.querySelector('span.truncate, a span.truncate') as HTMLElement;
+    return { bg: getComputedStyle(el).backgroundColor, fg: getComputedStyle(name).color };
+  });
+  await page.goto('/library');
+  await hydrated(page, 'collections-new');
+  const inbox = await bgText(page.getByTestId('collection-uncategorized'));
+  expect(inbox.bg, 'Uncategorized chip bg vs words').not.toBe(inbox.fg);
+  await page.goto(`/library?collection=${id}`);
+  await hydrated(page, 'collections-new');
+  const cur = await bgText(chipOf(page, id));
+  expect(cur.bg, 'collection chip bg vs words').not.toBe(cur.fg);
+});
+
 test('C7-04 Library at 390: the collections are one row of 44 px chips, the current one in view with its ⋯; + New makes one', async ({ page }) => {
   await signUpFresh(page);
   const run = runTag();
@@ -679,6 +698,27 @@ test('C7-06b Upload at 390 with no board: the Send tile says Pair a board first,
   await page.waitForTimeout(300);
   expect(opened).toBe(false);
   await expect(page.getByTestId('send-no-board')).toBeVisible();
+});
+
+// Task 7 review carry: below sm the tiles' visible text is hidden and the name came only from ::before content.
+test('C7-06d Upload at 390: each file input has an always-present name, and the disabled Send tile is hidden from assistive tech', async ({ page, request }) => {
+  await signUpFresh(page);
+  await sendBoard(page, request);
+  await page.goto('/ingest');
+  await stagingReady(page);
+  await expect(page.getByLabel('Browse files')).toHaveAttribute('data-testid', 'file-input');
+  await expect(page.getByLabel('Choose files')).toHaveAttribute('data-testid', 'send-file-input');
+  // The computed name, not a text match: the visible words are display:none here and drop out of it.
+  await expect(page.getByTestId('file-input')).toHaveAccessibleName('Browse files');
+  await expect(page.getByTestId('send-file-input')).toHaveAccessibleName('Choose files');
+});
+
+test('C7-06e Upload at 390 with no board: the Pair a board first tile is aria-hidden', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/ingest');
+  await stagingReady(page);
+  await expect(page.locator('[data-tile="Pair a board first"]')).toHaveAttribute('aria-hidden', 'true');
+  await expect(page.getByLabel('Browse files')).toHaveAttribute('data-testid', 'file-input');
 });
 
 test('C7-09d touch targets and no sideways scroll: Upload with a board', async ({ page, request }) => {

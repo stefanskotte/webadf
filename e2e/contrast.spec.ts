@@ -784,3 +784,20 @@ test('the Admin pairs are legible: tiles, firmware rows, attention, Users, Invit
     ['GitHub release', '[data-testid="fw-github"]'],
   ]);
 });
+
+// Phase C7 (spec §2.3, Ruling 5): the phone shell's text on real elements at 390 -- the current tab (ink 700) and
+// another (--muted-2) on the bar's --nav-scrim, and a More menu item on the popup's surface.
+test('the phone shell pairs are legible at 390: the current tab, another tab, a More menu item', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signUpFresh(page);
+  await page.goto('/library');
+  await page.mouse.move(0, 0);
+  await legible(page, 'phone', [
+    ['tab (current)', 'nav[aria-label="Main"] a[aria-current="page"]'],
+    ['tab', 'nav[aria-label="Main"] a:not([aria-current]):not(.max-lg\\:hidden)'],
+  ]);
+  await hydrated(page, 'nav-more');
+  await page.getByTestId('nav-more').click();
+  await expect(page.getByTestId('nav-more-menu')).toBeVisible();
+  await legible(page, 'phone', [['More menu item', '[data-testid="more-help"]']]);
+});
