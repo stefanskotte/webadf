@@ -108,10 +108,7 @@ test('the bottom bar reaches every route through four tabs and More, and there i
   await expect(page).toHaveURL(/\/devices$/);
   await page.getByRole('link', { name: 'Upload' }).tap();
   await expect(page).toHaveURL(/\/ingest$/);
-  // The right edge of the cell: the dev server's Next.js indicator sits over the bottom-left corner of the first tab,
-  // and a tap at the centre of the Library cell lands on it (a dev-mode artefact; production has no indicator).
-  const libraryBox = (await page.getByRole('link', { name: 'Library' }).boundingBox())!;
-  await page.getByRole('link', { name: 'Library' }).tap({ position: { x: libraryBox.width - 12, y: libraryBox.height / 2 } });
+  await page.getByRole('link', { name: 'Library' }).tap();
   await expect(page).toHaveURL(/\/library/);
   // Help lives in More now.
   await hydrated(page, 'nav-more');

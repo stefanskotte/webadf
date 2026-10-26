@@ -14,6 +14,9 @@ const WEBADF_NEXT_VERSION = (JSON.parse(
 ) as { version: string }).version;
 
 const nextConfig: NextConfig = {
+  // The dev server's Next.js indicator sits bottom-left, over the phone tab bar's first tab, and intercepts taps on
+  // it in e2e. Dev-only (production never has it); schema checked in node_modules/next/dist/server/config-schema.js.
+  devIndicators: false,
   env: {
     WEBADF_COMMIT,
     WEBADF_BUILT_AT: new Date().toISOString(),

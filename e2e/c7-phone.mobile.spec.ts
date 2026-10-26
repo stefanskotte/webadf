@@ -108,6 +108,26 @@ test('C7-02b the More menu: items at least 44 px and on screen, each reaches its
   await expect(page).toHaveURL(/\/sign-in/);
 });
 
+test('C7-02d the More menu closes on Escape and on a tap outside it, and focus returns to the More tab, never <body>', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/library');
+  await hydrated(page, 'nav-more');
+  const more = page.getByTestId('nav-more');
+  const menu = page.getByTestId('nav-more-menu');
+  const open = async () => { await more.tap(); await expect(menu).toBeVisible(); };
+
+  await open();
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(more).toBeFocused();
+
+  await open();
+  // Somewhere on the page body that is not a control: the top-left of the main area, below the header.
+  await page.touchscreen.tap(8, 200);
+  await expect(menu).toBeHidden();
+  await expect(more).toBeFocused();
+});
+
 test('C7-02c the admin bar: four tabs that fit on every admin page, More current, Admin current in the menu', async ({ page }) => {
   test.setTimeout(90_000);
   await signInAsSuperAdmin(page);
