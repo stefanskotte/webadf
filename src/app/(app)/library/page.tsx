@@ -22,6 +22,9 @@ import { getUserPrefs } from '@/lib/user-prefs';
 import { LibrarySortPicker } from '@/components/library/library-sort-picker';
 import { LibraryPager } from '@/components/library/library-pager';
 import { resolvePage, librarySubtitle } from '@/lib/library-paging';
+import { LibrarySelectionProvider, SelectionScope } from '@/components/library/selection-provider';
+import { SelectToggle } from '@/components/library/select-toggle';
+import { viewKeyOf } from '@/lib/library-selection';
 
 export default async function LibraryPage(props: PageProps<'/library'>) {
   const { orgId, userId } = await requireOrg();
@@ -135,12 +138,17 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   const upHref = viewMode === prefs.library.view ? '/library' : `/library?view=${viewMode}`;
   const eyebrow = view.kind === 'uncategorized' ? 'Amiga collection' : [{ label: 'Library', href: upHref }];
 
+  // Library multi-select (spec 2026-10-26 §1.1, §1.5): the toggle shows only while the grid or table shows titles;
+  // the selection belongs to this view and names each title so a dialog can list titles on other pages.
+  const canSelect = !showOverview && games.length > 0;
+  const pageTitles = games.map((g) => ({ id: g.id, title: g.title, year: g.year, diskCount: g.diskCount }));
   return (
     <>
       {/* Regression net for the org-bootstrap flow (e2e/auth.spec.ts): captured
           before sign-out and asserted identical after sign-in. Not part of the
           design — kept invisible on screen but present in the DOM. */}
       <span data-testid="active-org" className="sr-only">{orgId}</span>
+      <LibrarySelectionProvider viewKey={viewKeyOf(view)} pageTitles={pageTitles} canSelect={canSelect}>
       <PageHeader
         size="lg"
         eyebrow={eyebrow}
@@ -154,6 +162,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             <DemozooBadge count={reviewQueueCount} />
             {view.kind !== 'collection' && !emptyInbox && <LibrarySortPicker sort={sort} />}
             <CreateAdf />
+            {canSelect && <SelectToggle />}
             <ViewToggle mode={viewMode} view={view} page={paging.page} />
           </div>
         }
@@ -174,7 +183,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             content width instead of letting them fill the screen. */}
         <div className="flex flex-col gap-4 md:flex-row md:items-start">
           <CollectionRail viewMode={viewMode} />
-          <div className="min-w-0 flex-1">
+          <SelectionScope className="min-w-0 flex-1">
             {showOverview
               ? (
                 <CategoryOverview
@@ -194,9 +203,10 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             {!showOverview && (
               <LibraryPager page={paging.page} pages={paging.pages} pageSize={prefs.library.pageSize} total={totals.titles} />
             )}
-          </div>
+          </SelectionScope>
         </div>
       </CollectionsProvider>
+      </LibrarySelectionProvider>
     </>
   );
 }
