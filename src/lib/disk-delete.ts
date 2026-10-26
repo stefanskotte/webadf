@@ -281,15 +281,9 @@ export async function deleteGames(
   const shared = new Set(sharedRows.map((r) => r.sha256));
   const unshared = plan.deletableShas.filter((s) => !shared.has(s));
   const ejected = await ejectHolders(orgId, plan.deletableDiskIds, unshared);
-  // A late DF1 CONTENT holder: ejectDf1Holders matches df1DiskId only, so a board reporting these bytes in DF1 under
-  // another pick would be missed. Same unshared-sha rule as DF0.
-  if (unshared.length > 0) {
-    const late = await db.update(devices)
-      .set({ df1DiskId: null, df1Version: sql`${devices.df1Version} + 1` })
-      .where(and(eq(devices.orgId, orgId), inArray(devices.df1Sha256, unshared)))
-      .returning({ name: devices.name });
-    for (const d of late) if (!ejected.includes(d.name)) ejected.push(d.name);
-  }
+  // No separate DF1-content net (re-review C-new): a board still reporting deleted bytes in DF1 under ANOTHER pick is
+  // already replacing them, and clearing its pick would drop the surviving disk the user chose. A pick of a deleted
+  // disk is cleared by ejectDf1Holders (inside ejectHolders); the planner keeps any title whose bytes are in DF1.
 
   const [goneDisks, goneGames] = await atomic((tx) => [
     tx.delete(disks).where(and(eq(disks.orgId, orgId), inArray(disks.gameId, deletableIds)))

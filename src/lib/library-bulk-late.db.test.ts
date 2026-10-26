@@ -74,11 +74,13 @@ describe('deleteGames: a board that mounted after the read', () => {
     expect(b2).toMatchObject({ df1DiskId: null, df1Version: 3 });
   });
 
-  it("ejects a late board that reports the deleted bytes in DF1 under a different pick (the content holder)", async () => {
+  it("leaves a board's DF1 pick of a surviving title alone, even while it still reports the deleted bytes (re-review C-new)", async () => {
+    // CD32 has been told to load Other (g3-d1) in DF1 and still reports the old T bytes: it is already replacing them,
+    // and clearing its pick would drop the disk the user just chose.
     const r = await deleteGames(ORG, ['g2'], { now: NOW });
     expect(r.deleted).toEqual(['g2']);
-    expect(r.ejected).toEqual(['CD32']);
+    expect(r.ejected).toEqual([]);
     const [b3] = await getDb().select().from(devices).where(eq(devices.id, 'b3'));
-    expect(b3).toMatchObject({ df1DiskId: null, df1Version: 7 });
+    expect(b3).toMatchObject({ df1DiskId: 'g3-d1', df1Version: 6 });
   });
 });
