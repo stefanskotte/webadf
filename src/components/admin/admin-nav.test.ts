@@ -17,7 +17,7 @@ describe('AdminSections (C6 spec §1.2, Ruling 2)', () => {
     const html = renderToStaticMarkup(createElement(AdminSections));
     expect(html).toContain('aria-label="Admin sections"');
     expect(html).toContain('data-testid="admin-sections"');
-    expect(html).toMatch(/class="seg w-max"/);
+    expect(html).toMatch(/class="seg w-max max-sm:w-full"/);
     expect(html).toMatch(/^<div class="max-w-full overflow-x-auto"/);
     expect([...html.matchAll(/<a\b[^>]*>([^<]*)<\/a>/g)].map((m) => m[1]))
       .toEqual(['Overview', 'Users', 'Invites', 'Scan', 'Firmware']);

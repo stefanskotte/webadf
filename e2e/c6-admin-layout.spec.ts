@@ -600,7 +600,7 @@ test('Promote on the default filter: the row turns into a Release at once, and C
 
 // ---- Phone (spec §9: only what the boards and today's specs pin; the full pass is C7) -------------------------
 
-test('at 390 px: the bottom bar holds the Main nav, tabs scroll inside themselves, nothing scrolls the page sideways', async ({ page }) => {
+test('at 390 px: the bottom tab bar, admin-sections wrapped with every tab on screen, Invites stacked, nothing scrolls the page sideways', async ({ page }) => {
   test.setTimeout(120_000);
   await signInAsSuperAdmin(page);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -611,8 +611,12 @@ test('at 390 px: the bottom bar holds the Main nav, tabs scroll inside themselve
     await expect(page.getByTestId('admin-sections')).toBeVisible();
     const main = page.getByTestId('admin-header').getByRole('navigation', { name: 'Main' });
     expect((await main.boundingBox())!.y).toBeGreaterThan(844 - 120);   // the fixed bottom bar
-    const clamp = (await page.getByTestId('admin-sections').locator('xpath=..').boundingBox())!;
-    expect(clamp.x + clamp.width).toBeLessThanOrEqual(390 - 16 + 1);
+    // C7 (spec §11.1, Ruling 10): the five tabs wrap onto two rows of 44 px instead of scrolling in the clamp.
+    for (const s of await page.getByTestId('admin-sections').getByRole('link').all()) {
+      const b = (await s.boundingBox())!;
+      expect(b.x + b.width).toBeLessThanOrEqual(390 - 16 + 1);
+      expect(b.height).toBeGreaterThanOrEqual(44);
+    }
     await noSideways();
   }
 
@@ -625,9 +629,9 @@ test('at 390 px: the bottom bar holds the Main nav, tabs scroll inside themselve
   const att = (await page.getByRole('heading', { name: 'Needs attention' }).boundingBox())!;
   expect(att.y).toBeGreaterThan(fw.y);                              // the cards stack
 
-  // Users stacks its rows below sm (its own test below); Invites still scrolls inside its card.
+  // Users and (C7 Ruling 9) Invites stack their rows below sm: nothing scrolls inside the card.
   await page.goto('/admin/invites');
-  expect(await page.locator('section[aria-label="Invite codes"] > div').first().evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(true);
+  expect(await page.locator('section[aria-label="Invite codes"] > div').first().evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(false);
 
   await page.goto('/admin/firmware');
   const first = page.getByTestId('firmware-release-row').first();

@@ -46,7 +46,7 @@ export function RevokeInviteButton({ code }: { code: string }) {
 
   return (
     <button type="button" onClick={onClick} aria-disabled={working || undefined} data-testid={`revoke-${code}`}
-            className="h-[30px] rounded-[8px] px-2.5 text-[13px] font-medium text-(--danger-fg) hover:bg-(--danger-bg) aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)">
+            className="h-[30px] max-sm:min-h-11 rounded-[8px] px-2.5 text-[13px] font-medium text-(--danger-fg) hover:bg-(--danger-bg) aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)">
       {working ? 'Revoking…' : 'Revoke'}
     </button>
   );

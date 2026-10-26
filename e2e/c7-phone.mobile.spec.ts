@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
-import { signUpFresh, runTag, createAdf, stagingReady } from './helpers';
+import { signUpFresh, runTag, createAdf, stagingReady, mintInviteCode } from './helpers';
+import { revokeInvite } from '@/lib/invites';
 import { signInAsSuperAdmin } from './admin-helpers';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
@@ -705,4 +706,50 @@ test('C7-06c Upload at 390: each card stays a named region and still takes a dro
     el.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
   });
   await expect(page.locator('[data-testid="staging-row"]', { hasText: 'c7-drop.txt' })).toHaveCount(1, { timeout: 15_000 });
+});
+
+// ---- Admin (spec §11, Rulings 8-10) ------------------------------------------------------------------------
+
+test('C7-08 Admin at 390: no tab clipped, Invites rows stacked with Copy code / Copy link / Revoke 44 px in view, no sideways scroll', async ({ page }) => {
+  test.setTimeout(120_000);
+  const code = await mintInviteCode();
+  try {
+    await signInAsSuperAdmin(page);
+    for (const path of ADMIN_PAGES) {
+      await page.goto(path);
+      const sections = page.getByTestId('admin-sections').getByRole('link');
+      await expect(sections).toHaveCount(5);
+      for (const s of await sections.all()) {
+        const b = (await s.boundingBox())!;
+        expect(b.x, path).toBeGreaterThanOrEqual(0);
+        expect(b.x + b.width, path).toBeLessThanOrEqual(390);
+        expect(b.height, path).toBeGreaterThanOrEqual(44);
+      }
+      for (const t of await tabs(page).all()) expect((await t.boundingBox())!.x + (await t.boundingBox())!.width).toBeLessThanOrEqual(390);
+      await noSideways(page);
+    }
+    await page.goto('/admin/invites');
+    await expect(page.getByTestId(`invite-${code}`)).toBeVisible();
+    for (const id of [`invite-copy-code-${code}`, `invite-copy-link-${code}`, `revoke-${code}`]) {
+      const b = (await page.getByTestId(id).boundingBox())!;
+      expect(b.height, id).toBeGreaterThanOrEqual(44);
+      expect(b.x, id).toBeGreaterThanOrEqual(0);
+      expect(b.x + b.width, id).toBeLessThanOrEqual(390);
+    }
+    expect(await page.locator('section[aria-label="Invite codes"] > div').first().evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(false);
+    // Still a table to a screen reader.
+    await expect(page.locator('section[aria-label="Invite codes"]').getByRole('row').first()).toBeAttached();
+  } finally {
+    await revokeInvite(code);
+  }
+});
+
+test('C7-09e touch targets and no sideways scroll: the five admin pages', async ({ page }) => {
+  test.setTimeout(150_000);
+  await signInAsSuperAdmin(page);
+  for (const path of ADMIN_PAGES) {
+    await page.goto(path);
+    await expect(page.getByTestId('admin-sections')).toBeVisible();
+    await touchSweep(page, path);
+  }
 });
