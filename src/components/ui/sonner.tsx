@@ -31,6 +31,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme="light"
       className="toaster group"
+      // Above the phone and tablet tab bar (C7 spec §3.4, Ruling 15): sonner's own mobile breakpoint is 600 px, and the
+      // bar is there up to 1023 px, so the desktop offset reads --toast-bottom, which globals.css raises below lg.
+      offset={{ bottom: "var(--toast-bottom)" }}
+      mobileOffset={{ bottom: "calc(4.75rem + env(safe-area-inset-bottom))" }}
       icons={{
         success: (
           <CircleCheckIcon className="size-4" />

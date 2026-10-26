@@ -1,6 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 import { signUpFresh } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
+import { cleanupSeeded, pairDevice } from './device-helpers';
+
+test.afterAll(async () => { await cleanupSeeded(); });
 
 /**
  * The nav pill never runs under the search box, nor into the wordmark / drive
@@ -12,9 +15,11 @@ import { signInAsSuperAdmin } from './admin-helpers';
  * The pill's box is its scroll clamp (the nav's parent), not the nav itself:
  * when space is short the nav may scroll inside that clamp, and only the
  * clamp's box is what is painted.
+ *
+ * Below lg (C7 spec §2.1, Ruling 1) the nav is the bottom tab bar instead; the tablet sweep at the end pins that.
  */
 
-const WIDTHS = [640, 768, 1024, 1180, 1280, 1440, 1536, 1920];
+const WIDTHS = [1024, 1180, 1280, 1440, 1536, 1920];
 
 type Box = { left: number; right: number };
 
@@ -73,4 +78,46 @@ test('admin shell: the pill clears the search box and the wordmark at every widt
   test.setTimeout(90_000);
   await signInAsSuperAdmin(page);
   await sweep(page, 'admin', '/admin');
+});
+
+// C7 (spec §2.1, Ruling 1): below lg the nav is the bottom tab bar: four tabs, every one fully on screen, no
+// scrolling inside it, and a header of one 60 px row.
+const TABLET = [640, 768, 1000];
+
+async function tabletSweep(page: Page, shell: 'app' | 'admin', path: string) {
+  const failures: string[] = [];
+  for (const width of TABLET) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto(path);
+    const nav = page.getByTestId(`${shell}-header`).getByRole('navigation', { name: 'Main' });
+    await expect(nav).toBeVisible();
+    const m = await nav.evaluate((n) => ({
+      bottom: n.getBoundingClientRect().bottom,
+      fits: n.scrollWidth <= n.clientWidth,
+      cells: [...n.children].filter((c) => (c as HTMLElement).offsetWidth > 0)
+        .map((c) => ({ l: c.getBoundingClientRect().left, r: c.getBoundingClientRect().right })),
+      vw: window.innerWidth,
+      header: n.closest('header')!.getBoundingClientRect().height,
+    }));
+    if (m.bottom < 800 - 80) failures.push(`${width}: the bar is not at the bottom (nav bottom ${m.bottom.toFixed(1)})`);
+    if (!m.fits) failures.push(`${width}: the tabs scroll`);
+    if (m.cells.length !== 4) failures.push(`${width}: ${m.cells.length} tabs, not 4`);
+    if (m.cells.some((c) => c.l < 0 || c.r > m.vw + 0.5)) failures.push(`${width}: a tab is off screen`);
+    if (m.header > 61) failures.push(`${width}: the header is ${m.header.toFixed(1)} px tall`);
+  }
+  expect(failures, failures.join('\n')).toEqual([]);
+}
+
+test('below lg, a member with a board: the tab bar at the bottom, four whole tabs, a one-row header', async ({ page, request }) => {
+  test.setTimeout(90_000);
+  await signUpFresh(page);
+  await pairDevice(page, request, 'Tablet board');
+  await tabletSweep(page, 'app', '/library');
+});
+
+test('below lg, the super-admin in the app shell and in the admin shell: the same', async ({ page }) => {
+  test.setTimeout(120_000);
+  await signInAsSuperAdmin(page);
+  await tabletSweep(page, 'app', '/library');
+  await tabletSweep(page, 'admin', '/admin');
 });

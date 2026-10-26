@@ -680,7 +680,7 @@ test('on a phone a device card uses the whole width', async ({ page, request }) 
 /** LiveRefresh polls every 3 s while the tab is in use; allow a few ticks plus the RSC refresh. */
 const LIVE = 15_000;
 
-test('a board on a custom server shows no server line on its card (the About page says how this server is hosted)', async ({ page, request }) => {
+test('a board on a custom server shows no server line on its card (About this server says how this server is hosted)', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
   const res = await request.post('/api/device/status', {

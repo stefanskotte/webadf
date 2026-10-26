@@ -66,7 +66,7 @@ export function DiskRow({ disk, choices, from, view = null, fobDevices = [], sen
   const mounted = inDf0 || choices.some((c) => c.df1Held);
   const name = disk.tosecName ?? disk.sourceFilename ?? `Disk ${disk.diskNo}`;
   const color = titleDiskColor({ id: disk.id, hasHd: isHd, kind, formats: [disk.imageFormat], authored });
-  const GHOST = 'btn-like inline-flex h-[38px] shrink-0 items-center rounded-[10px] border px-3 text-[13px] font-medium';
+  const GHOST = 'btn-like inline-flex h-[38px] shrink-0 items-center rounded-[10px] border px-3 text-[13px] font-medium max-sm:min-h-11';
   const GHOST_STYLE = { background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' };
   const uploadedAs = disk.sourceFilename && disk.sourceFilename !== disk.tosecName ? disk.sourceFilename : null;
 

@@ -8,7 +8,7 @@ const html = renderToStaticMarkup(createElement(SideNav, {
   groups: [{ label: 'Your account', testId: 'g-1', items: [
     { href: '#prefs', label: 'Preferences', focusId: 'prefs-heading' },
     { href: '#account', label: 'Sign-in & password' },
-    { href: '/about', label: 'About this server' },
+    { href: '/help', label: 'Help' },
     { href: '#danger', label: 'Delete account', tone: 'danger' },
   ] }],
 }));
@@ -24,8 +24,8 @@ describe('SideNav (C5 spec §1.2)', () => {
     expect(html).toMatch(/<a href="#prefs" aria-current="true"/);
   });
   it('a route item is a link and never current; danger is red in both values', () => {
-    expect(html).toMatch(/<a [^>]*href="\/about"/);
-    expect(html).not.toMatch(/href="\/about"[^>]*aria-current/);
+    expect(html).toMatch(/<a [^>]*href="\/help"/);
+    expect(html).not.toMatch(/href="\/help"[^>]*aria-current/);
     expect(html).toMatch(/href="#danger"[^>]*color:var\(--danger-fg\)/);
   });
   it('names wrap rather than truncate', () => {

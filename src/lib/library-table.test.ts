@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tableRows, emptyTableNote } from './library-table';
+import { tableRows, emptyTableNote, titleMeta } from './library-table';
 
 const A = { id: 'c-a', name: 'Demos' };
 const B = { id: 'c-b', name: 'Games' };
@@ -63,5 +63,16 @@ describe('emptyTableNote', () => {
   it('is null when there are titles, and at the root (folders or the empty-library state speak there)', () => {
     expect(emptyTableNote({ kind: 'collection', id: 'c1' }, 2)).toBeNull();
     expect(emptyTableNote({ kind: 'uncategorized' }, 0)).toBeNull();
+  });
+});
+
+describe('titleMeta (C7 spec §4.3, Plan ruling)', () => {
+  const g = { kind: 'Game', year: 1991, publisher: 'Team 17', diskCount: 2, sizeBytes: 1_802_240, hasHd: false };
+  it('joins the hidden columns with " · ", in column order', () => {
+    expect(titleMeta(g)).toBe('Game · 1991 · Team 17 · 2 disks · 1.72 MB');
+  });
+  it('skips what is unknown, and says 1 disk and HD in words', () => {
+    expect(titleMeta({ ...g, kind: null, year: null, publisher: null, diskCount: 1, sizeBytes: 901_120 })).toBe('1 disk · 880 KB');
+    expect(titleMeta({ ...g, hasHd: true })).toBe('Game · 1991 · Team 17 · 2 disks · 1.72 MB HD');
   });
 });

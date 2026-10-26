@@ -18,7 +18,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
  * the wordmark and the gap to the pill come out equal.
  *
  * All of that holds from xl, where the pill is centred on the header. Between
- * sm and xl the pill is in flow (it ran under the search box when centred;
+ * lg and xl the pill is in flow (it ran under the search box when centred;
  * see the app layout), so this zone is flex-none and uncapped: just the
  * wordmark and the compact Drives control, with the pill's own flex-1 wrapper
  * taking the rest.
@@ -42,9 +42,8 @@ import { useLayoutEffect, useRef, useState } from 'react';
  * the chips at all (narrow xl widths), min-width:auto wins over max-width and
  * the zone is exactly as wide as its content -- the same layout the header
  * had before this zone existed -- rather than squashing a chip or taking
- * width from the search box. Below sm the cap is off: the zone fills the
- * wordmark's line and the compact control keeps its own ml-auto to sit at
- * the right end of it, as before.
+ * width from the search box. Below lg the cap is off and the zone is a plain row:
+ * the wordmark, then the chip slot filling the rest (C7 spec §2.2).
  */
 export function HeaderStart({ pillEstimate, children }: { pillEstimate: number; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -69,7 +68,7 @@ export function HeaderStart({ pillEstimate, children }: { pillEstimate: number; 
       ref={ref}
       data-testid="header-start"
       data-pill-estimate={pillEstimate}
-      className="flex flex-1 items-center gap-3 sm:flex-none sm:gap-4 xl:flex-1 xl:max-w-[calc(50%-var(--nav-pill-w)/2-1rem)]"
+      className="flex max-lg:min-w-0 flex-1 items-center gap-2.5 lg:flex-none lg:gap-4 xl:flex-1 xl:max-w-[calc(50%-var(--nav-pill-w)/2-1rem)]"
       style={{ '--nav-pill-w': `${pillWidth}px` } as React.CSSProperties}
     >
       {children}

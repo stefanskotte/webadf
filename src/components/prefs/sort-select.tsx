@@ -38,7 +38,7 @@ export function SortSelect<S extends { key: string; dir: SortDir }>({
           const next = sortFromOptionId(options, e.target.value);
           if (next) onChange(next);
         }}
-        className="h-9 w-full min-w-[180px] rounded-[10px] border px-3 text-[13px] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring) sm:w-auto"
+        className="h-9 w-full min-w-[180px] rounded-[10px] border px-3 text-[13px] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring) sm:w-auto max-sm:min-h-11"
         style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}
       >
         {options.map((o) => (
@@ -61,7 +61,7 @@ export function SortSelect<S extends { key: string; dir: SortDir }>({
           if (next) onChange(next);
         }}
         className={toolbar
-          ? 'h-10 rounded-[10px] border px-3 text-[14px] disabled:opacity-60'
+          ? 'h-10 max-sm:min-h-11 rounded-[10px] border px-3 text-[14px] disabled:opacity-60'
           : 'h-8 rounded-lg border px-2 text-[12px] disabled:opacity-60'}
         style={toolbar
           ? { borderColor: 'var(--line)', background: 'var(--surface)', color: 'var(--ink)' }

@@ -87,7 +87,7 @@ export function LibraryPager({ page, pages, pageSize, total }: {
             const next = LIBRARY_PAGE_SIZES.find((s) => String(s) === e.target.value);
             if (next !== undefined) void change(next);
           }}
-          className="h-[34px] rounded-[9px] border px-2 text-[13px]"
+          className="h-[34px] max-sm:min-h-11 rounded-[9px] border px-2 text-[13px]"
           style={{ borderColor: 'var(--line)', background: 'var(--surface)', color: 'var(--ink)' }}
         >
           {LIBRARY_PAGE_SIZES.map((s) => <option key={s} value={String(s)}>{pageSizeLabel(s)}</option>)}

@@ -35,8 +35,8 @@ export function CopyInviteButtons({ code, idPrefix, look = 'row', linkLabel = 'C
   }
 
   const cls = look === 'button'
-    ? 'h-[38px] rounded-[10px] border border-(--line) bg-(--surface) px-3.5 text-[13px] font-medium text-(--ink) hover:bg-(--track) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)'
-    : 'h-[30px] rounded-[8px] px-2.5 text-[13px] font-medium text-(--ink) hover:bg-(--track) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)';
+    ? 'h-[38px] max-sm:min-h-11 rounded-[10px] border border-(--line) bg-(--surface) px-3.5 text-[13px] font-medium text-(--ink) hover:bg-(--track) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)'
+    : 'h-[30px] max-sm:min-h-11 rounded-[8px] px-2.5 text-[13px] font-medium text-(--ink) hover:bg-(--track) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)';
   return (
     <span className={look === 'button' ? 'inline-flex flex-wrap items-center gap-2' : 'inline-flex items-center gap-1'}>
       <button type="button" onClick={() => copy('code')} data-testid={tid('code')} className={cls}>

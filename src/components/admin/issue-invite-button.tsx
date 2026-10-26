@@ -38,7 +38,7 @@ export function IssueInviteButton() {
 
   return (
     <button type="button" onClick={onClick} aria-disabled={working || undefined}
-            className="inline-flex h-[42px] items-center gap-2 rounded-[10px] px-[18px] text-[14px] font-semibold text-white aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)"
+            className="inline-flex h-[42px] max-sm:min-h-11 items-center gap-2 rounded-[10px] px-[18px] text-[14px] font-semibold text-white aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)"
             style={{ background: 'var(--ink)', color: 'var(--surface)' }}>
       <PlusIcon aria-hidden className="size-4" />
       {working ? 'Issuing…' : 'Issue an invite'}

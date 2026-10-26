@@ -46,7 +46,7 @@ export function RunScanButton() {
     <div className="flex flex-wrap items-center gap-3">
       <span role="status" data-testid="run-scan-status" className="text-[13px]" style={{ color: 'var(--muted)' }}>{status}</span>
       <button type="button" onClick={onClick} aria-disabled={busy || undefined} data-testid="run-scan"
-              className="inline-flex h-[42px] items-center gap-2 rounded-[10px] px-[18px] text-[14px] font-semibold text-white aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)"
+              className="inline-flex h-[42px] max-sm:min-h-11 items-center gap-2 rounded-[10px] px-[18px] text-[14px] font-semibold text-white aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)"
               style={{ background: 'var(--ink)', color: 'var(--surface)' }}>
         <PlayIcon aria-hidden className="size-3.5" />
         {/* A pass is bounded at ~240 s, so say it is working rather than looking hung. */}

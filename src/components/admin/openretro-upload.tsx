@@ -72,7 +72,7 @@ export function OpenRetroUpload() {
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" data-testid="openretro-choose" aria-disabled={busy || undefined}
                 onClick={() => { if (!busy) input.current?.click(); }}
-                className="h-10 rounded-[10px] border border-(--line) bg-(--surface) px-4 text-[14px] font-medium text-(--ink) hover:bg-(--track) aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)">
+                className="h-10 max-sm:min-h-11 rounded-[10px] border border-(--line) bg-(--surface) px-4 text-[14px] font-medium text-(--ink) hover:bg-(--track) aria-disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)">
           {busy ? 'Importing…' : 'Choose Amiga.sqlite'}
         </button>
         <span role="status" data-testid="openretro-status" className="text-[13px]" style={{ color: 'var(--muted)' }}>

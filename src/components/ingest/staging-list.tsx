@@ -241,7 +241,7 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
         <span className="flex-1" />
         <RefreshState loaded={s.loaded} failed={s.refreshFailed} />
         <button type="button" data-testid="staging-clear-finished" disabled={clearN === 0 || busy.has('clear-finished')}
-                className="h-[34px] rounded-[9px] px-3 text-[13px] font-medium hover:bg-[var(--track)] disabled:cursor-default disabled:hover:bg-transparent"
+                className="h-[34px] max-sm:min-h-11 rounded-[9px] px-3 text-[13px] font-medium hover:bg-[var(--track)] disabled:cursor-default disabled:hover:bg-transparent"
                 style={{ border: '1px solid var(--line)', color: clearN === 0 ? 'var(--muted-2)' : 'var(--ink)' }}
                 onClick={() => void clear({ local: view.clearLocal, server: view.clearServer }, 'clear-finished')}>
           Clear finished ({clearN})

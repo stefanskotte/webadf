@@ -66,7 +66,7 @@ export function UrlFetch({
   return (
     <>
       <form onSubmit={submit} data-testid="url-fetch-form" noValidate
-            className="flex h-[46px] w-full min-w-0 items-center gap-1.5 rounded-[10px] border px-2.5 sm:h-[38px] sm:w-auto sm:min-w-[220px] sm:flex-1"
+            className="flex h-[46px] w-full min-w-0 items-center max-sm:order-2 max-sm:col-span-2 gap-1.5 rounded-[10px] border px-2.5 sm:h-[38px] sm:w-auto sm:min-w-[220px] sm:flex-1"
             style={{ borderColor: 'var(--line)', background: 'var(--surface-2)' }}>
         <input
           id="ingest-url"
@@ -94,7 +94,7 @@ export function UrlFetch({
           {busy ? 'Working…' : 'Fetch'}
         </button>
       </form>
-      <span id="ingest-url-hint" className="basis-full text-[12px]" style={{ color: 'var(--muted-2)' }}>
+      <span id="ingest-url-hint" className="basis-full text-[12px] max-sm:order-2 max-sm:col-span-2" style={{ color: 'var(--muted-2)' }}>
         A URL can also be a .zip or .lha of them, up to 20 MB, from a public http(s) address.
       </span>
       <p
@@ -102,7 +102,7 @@ export function UrlFetch({
         role="status"
         aria-live="polite"
         data-testid="url-status"
-        className="min-h-[1em] basis-full text-[12px]"
+        className="min-h-[1em] basis-full text-[12px] max-sm:order-2 max-sm:col-span-2"
         style={{ color }}
       >
         {status?.text ?? ''}

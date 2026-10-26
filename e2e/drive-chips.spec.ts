@@ -247,7 +247,7 @@ test('at 1280 the chips stay between the wordmark and the centred pill, and "+k"
     await expect(more.locator('span:visible')).toHaveText('+3');
 
     const wordmark = (await page.getByTestId('wordmark-home').boundingBox())!;
-    const pill = (await page.locator('nav').boundingBox())!;
+    const pill = (await page.getByRole('navigation', { name: 'Main' }).boundingBox())!;
     const first = (await chip(page, ids[0]).boundingBox())!;
     const moreBox = (await more.boundingBox())!;
     expect(first.x).toBeGreaterThanOrEqual(wordmark.x + wordmark.width);
@@ -404,7 +404,7 @@ test('the "+k" chip shows exactly one number, the right one, at every chip width
   }
 });
 
-test('at 390px one Drives control on the top line lists every board, and nothing overflows', async ({ page, request }) => {
+test('at 390px one Drives control on the header row lists every board, and nothing overflows', async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signUpFresh(page);
   const a = await onlineBoard(page, request, 'Phone A');
@@ -420,13 +420,17 @@ test('at 390px one Drives control on the top line lists every board, and nothing
   await expect(compact).toContainText('Drives');
   await expect(compact).toContainText('2');
 
-  // On the wordmark's line, clear of it, and clear of the search box below.
+  // On the header's single 60 px row (C7 spec §2.2, §5): after the home link, 44 px tall, filling the middle, and
+  // clear of the search control on its right (the field until C7 Task 3, the 44 px button after it).
+  const header = (await page.getByTestId('app-header').boundingBox())!;
   const wordmark = (await page.getByTestId('wordmark-home').boundingBox())!;
   const trigger = (await compact.boundingBox())!;
-  const search = (await page.locator('header input').boundingBox())!;
+  const search = (await page.getByTestId('app-header')
+    .locator('[data-testid="search-open"]:visible, [data-testid="search-input"]:visible').first().boundingBox())!;
+  expect(trigger.height).toBeGreaterThanOrEqual(44);
   expect(trigger.x).toBeGreaterThanOrEqual(wordmark.x + wordmark.width);
-  expect(Math.abs((trigger.y + trigger.height / 2) - (wordmark.y + wordmark.height / 2))).toBeLessThan(8);
-  expect(trigger.y + trigger.height).toBeLessThanOrEqual(search.y);
+  expect(trigger.x + trigger.width).toBeLessThanOrEqual(search.x);
+  for (const b of [wordmark, trigger, search]) expect(b.y + b.height).toBeLessThanOrEqual(header.y + header.height + 0.5);
 
   await compact.click();
   const list = page.getByTestId('drives-compact-menu');

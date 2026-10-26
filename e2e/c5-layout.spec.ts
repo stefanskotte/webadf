@@ -72,7 +72,7 @@ test('Settings: the section list marks the section in view, and a click moves fo
   await expect(nav).toBeVisible();
   await expect(nav.getByRole('link', { name: 'Preferences' })).toHaveAttribute('aria-current', 'true');
   const about = nav.getByRole('link', { name: 'About this server' });
-  await expect(about).toHaveAttribute('href', '/about');
+  await expect(about).toHaveAttribute('href', '#about');
   // The nav and the radios hydrate in the same pass (no Suspense boundary between them).
   await hydrated(page, 'pref-start-page', 'onKeyDown');
   const danger = nav.getByRole('link', { name: 'Delete account' });
@@ -85,6 +85,11 @@ test('Settings: the section list marks the section in view, and a click moves fo
   await expect(danger).toHaveAttribute('aria-current', 'true');
   await expect(nav.getByRole('link', { name: 'Preferences' })).not.toHaveAttribute('aria-current', 'true');
   await expect(about).not.toHaveAttribute('aria-current', 'true');
+  // C7 (spec §10.2): About this server is an in-page section now; a click marks it and focuses its heading.
+  await about.click();
+  await expect(page).toHaveURL(/#about$/);
+  await expect(page.locator('#about-heading')).toBeFocused();
+  await expect(about).toHaveAttribute('aria-current', 'true');
 });
 
 test('Settings: closing a form hands focus back to its opener; Sign out everywhere else hands it to the heading', async ({ page, browser }) => {
@@ -548,6 +553,10 @@ test('Search: at 390 px the panel stays on screen and below the box', async ({ p
   await page.setViewportSize({ width: 390, height: 800 });
   await page.goto('/library');
   await hydrated(page, 'search-input', 'onChange');
+  // C7 (spec §2.4): below sm the field opens from the 44 px button.
+  await hydrated(page, 'search-open');
+  await page.getByTestId('search-open').click();
+  await expect(page.getByTestId('search-input')).toBeFocused();
   await page.getByTestId('search-input').fill(`Phone Panel ${run}`);
   const panel = page.getByTestId('search-panel');
   await expect(panel).toBeVisible();
@@ -556,7 +565,7 @@ test('Search: at 390 px the panel stays on screen and below the box', async ({ p
   expect(b.x).toBeGreaterThanOrEqual(0);
   expect(b.x + b.width).toBeLessThanOrEqual(390);
   expect(b.y).toBeGreaterThanOrEqual(i.y + i.height);
-  await expect(page.getByTestId('search-scrim')).toBeHidden();
+  await expect(page.getByTestId('search-scrim')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');   // there, colourless (C7 Ruling 7)
 });
 
 // ---- Search, fix round 1 --------------------------------------------------------------------------------------
@@ -664,7 +673,7 @@ test('Create account: invite code first with its hint, the words for a bad code,
 
 // ---- Phone (spec §8: only what the boards and today's specs pin; the full pass is C7) -------------------------
 
-test('at 390 px: Settings stacks with no list, Help folds its topics, Search has no scrim or keys, sign-in has no hero', async ({ page }) => {
+test('at 390 px: Settings stacks with no list, Help folds its topics, Search has a colourless scrim and no keys, sign-in has no hero', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const noSideways = async () =>
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
@@ -692,10 +701,12 @@ test('at 390 px: Settings stacks with no list, Help folds its topics, Search has
   await expect(page.getByTestId('help-nav-toggle')).toHaveText('Topics · 17');
   await noSideways();
 
+  await hydrated(page, 'search-open');
+  await page.getByTestId('search-open').click();
   await page.getByTestId('search-input').fill(`Phone Find ${run}`);
   const panel = page.getByTestId('search-panel');
   await expect(panel).toBeVisible();
-  await expect(page.getByTestId('search-scrim')).toBeHidden();
+  await expect(page.getByTestId('search-scrim')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await expect(page.getByTestId('search-keys')).toBeHidden();
   const box = (await panel.boundingBox())!;
   expect(box.x).toBeGreaterThanOrEqual(0);

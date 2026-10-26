@@ -7,7 +7,7 @@ import { devices } from '@/db/schema/devices';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume } from '@/lib/adffs';
 import { signUpFresh, runTag, createAdf, stagingReady, openTitleMenu, openRowMenu } from './helpers';
-import { cleanupSeeded, seedDisk, addDisk, pairDevice, authHeader } from './device-helpers';
+import { cleanupSeeded, seedDisk, addDisk, pairDevice, authHeader, hydrated } from './device-helpers';
 import { synthDrop } from './drag-drop-helpers';
 import { zoneOf } from '@/lib/set-folder';
 import { seedProduction, seedSuggestion, cleanupDemozoo } from './demozoo-helpers';
@@ -83,15 +83,16 @@ async function seedLibrary(page: Page, count: number) {
   return { u, run };
 }
 
-test('the bottom bar reaches every route, and there is only one nav', async ({ page }) => {
+test('the bottom bar reaches every route through four tabs and More, and there is only one nav', async ({ page }) => {
   await seedLibrary(page, 2);
   await page.goto('/library');
 
   // One site nav, not a desktop copy plus a mobile copy -- a duplicate
   // would make getByRole('link') ambiguous here AND in the 1280 specs. The
-  // library's pager is a <nav> of its own (aria-label "Pages"), so it is left
+  // library's pager is a <nav> of its own (aria-label "Pages"), and so is the
+  // collections chip row (aria-label "Collections", C7 Task 5): both are left
   // out by name rather than counted.
-  const navs = page.locator('nav:not([aria-label="Pages"])');
+  const navs = page.locator('nav:not([aria-label="Pages"]):not([aria-label="Collections"])');
   await expect(navs).toHaveCount(1);
 
   const bar = navs;
@@ -99,12 +100,22 @@ test('the bottom bar reaches every route, and there is only one nav', async ({ p
   // Actually at the bottom of the 844px viewport, not merely styled for it.
   expect(box.y + box.height).toBeGreaterThan(760);
 
+  // C7 (spec §2.3): Library, Devices, Upload and More, each a finger's height.
+  const tabs = bar.locator(':scope > a, :scope > button').filter({ visible: true });
+  await expect(tabs).toHaveText(['Library', 'Devices', 'Upload', 'More']);
+  for (const t of await tabs.all()) expect((await t.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+
   await page.getByRole('link', { name: 'Devices' }).tap();
   await expect(page).toHaveURL(/\/devices$/);
   await page.getByRole('link', { name: 'Upload' }).tap();
   await expect(page).toHaveURL(/\/ingest$/);
   await page.getByRole('link', { name: 'Library' }).tap();
   await expect(page).toHaveURL(/\/library/);
+  // Help lives in More now.
+  await hydrated(page, 'nav-more');
+  await page.getByTestId('nav-more').tap();
+  await page.getByTestId('more-help').tap();
+  await expect(page).toHaveURL(/\/help$/);
 });
 
 test('the library grid is two columns, and nothing overflows the viewport', async ({ page }) => {
@@ -268,26 +279,32 @@ test('a file tree row shows its name AND its download control', async ({ page })
   ).toHaveCount(1);
 });
 
-test('the table view keeps every column reachable by scrolling', async ({ page }) => {
-  await seedLibrary(page, 3);
+test('the table view at 390: each name wraps whole with its facts under it, the ⋯ is in view, nothing scrolls sideways', async ({ page }) => {
+  const { u, run } = await seedLibrary(page, 3);
+  const long = `Mobile ${run} A very long title that has to wrap onto a second line`.slice(0, 70);
+  await seedDisk(u.orgId, { title: long, diskNo: 1, sha256: sha(`${run}-long`) });
   await page.goto('/library');
   // getByLabel, not a testid: the toggle is two <Link>s identified by
   // aria-label (view-toggle.tsx), which is also how view-toggle.spec.ts
   // finds them.
   await page.getByLabel('Table view').tap();
-
   const table = page.getByTestId('game-table');
   await expect(table).toBeVisible();
-  // The rows are deliberately wider than the phone; what matters is that the
-  // container SCROLLS to them rather than clipping them, which is what
-  // overflow-hidden alone did before.
-  const scrollable = await table.evaluate((el) => {
-    const box = el.querySelector('[class*="overflow-x-auto"]') as HTMLElement | null;
-    if (!box) return null;
-    return { scrollWidth: box.scrollWidth, clientWidth: box.clientWidth };
-  });
-  expect(scrollable).not.toBeNull();
-  expect(scrollable!.scrollWidth).toBeGreaterThan(scrollable!.clientWidth);
+  const row = page.getByTestId('game-row').filter({ hasText: long });
+  await expect(row).toBeVisible();
+  // C7 (spec §4.3, Ruling 17): the whole name, no ellipsis; the hidden columns' facts on a line under it.
+  const name = row.getByText(long, { exact: true });
+  expect(await name.evaluate((el) => el.scrollWidth <= el.clientWidth + 1 && getComputedStyle(el).textOverflow !== 'ellipsis')).toBe(true);
+  await expect(row.locator('[data-meta]')).toContainText('1 disk');
+  const menu = (await row.locator('[data-testid^="title-menu-"]').boundingBox())!;
+  expect(menu.width).toBeGreaterThanOrEqual(44);
+  expect(menu.x + menu.width).toBeLessThanOrEqual(390);
+  expect(await table.evaluate((el) => {
+    const box = el.querySelector('[class*="overflow-x-auto"]') as HTMLElement;
+    return box.scrollWidth <= box.clientWidth;
+  })).toBe(true);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
 });
 
 test('a touch drag scrolls the library, and a press-and-hold drags a card', async ({ page }) => {
@@ -846,7 +863,7 @@ test('in a collection at 390px: a finger walked slowly into a card\'s centre lea
   expect(left).toHaveLength(2);
 });
 
-test('the Upload page stacks its two columns at 390px, and a 200-byte saved path wraps', async ({ page, request }) => {
+test('the Upload page puts its two drop tiles side by side at 390px, and a 200-byte saved path wraps', async ({ page, request }) => {
   await signUpFresh(page);
   const { token } = await pairDevice(page, request, 'A board with a rather long name for a phone screen');
   await request.post('/api/device/status', { headers: authHeader(token),
@@ -864,8 +881,13 @@ test('the Upload page stacks its two columns at 390px, and a 200-byte saved path
   await request.post(`/api/device/send/${id}/done`, { headers: authHeader(token), data: { ok: true, savedAs: long } });
   await expect(page.getByTestId(`staging-status-send:${id}`)).toContainText('Delivered', { timeout: 15_000 });
   await expect(page.locator(`[data-testid="staging-row"][data-key="send:${id}"]`)).toContainText(`saved as ${long}`);
-  const add = await page.getByTestId('dropzone').boundingBox();
-  const send = await page.getByTestId('send-dropzone').boundingBox();
-  expect(send!.y).toBeGreaterThan(add!.y + add!.height);              // stacked, not side by side
+  // C7 (spec §7, Ruling 19): the two file labels are the board's tiles, side by side, at least 96 px tall, the URL
+  // row under them.
+  const add = (await page.getByTestId('add-browse').boundingBox())!;
+  const send = (await page.getByTestId('send-browse').boundingBox())!;
+  expect(Math.abs(add.y - send.y)).toBeLessThan(1);
+  expect(send.x).toBeGreaterThan(add.x + add.width - 1);
+  for (const t of [add, send]) expect(t.height).toBeGreaterThanOrEqual(96);
+  expect((await page.getByTestId('url-fetch-form').boundingBox())!.y).toBeGreaterThan(add.y + add.height);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 });

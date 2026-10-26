@@ -115,7 +115,7 @@ export function DeviceAlias({ deviceId, name, isDefault }: {
       <button type="button" onClick={beginEdit}
               data-testid={`alias-edit-${deviceId}`}
               aria-label={isDefault ? 'Name' : 'Rename'}
-              className="grid size-8 shrink-0 place-items-center rounded-lg transition-colors hover:bg-[var(--track)]"
+              className="grid size-8 shrink-0 place-items-center max-sm:size-11 rounded-lg transition-colors hover:bg-[var(--track)]"
               style={{ color: 'var(--muted)' }}>
         <Pencil size={16} strokeWidth={2} aria-hidden />
         <span className="sr-only">{isDefault ? 'Name' : 'Rename'}</span>

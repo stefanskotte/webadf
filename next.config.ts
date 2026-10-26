@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import type { NextConfig } from "next";
 import { resolveCommit } from "./src/lib/about/build-info";
 
-// The About page's build facts, fixed now so the running server reports its
+// About this server's build facts (Settings), fixed now so the running server reports its
 // own build (spec 2026-10-15-about-page D7: no Vercel-only source without a
 // fallback -- a Docker build passes GIT_SHA).
 const WEBADF_COMMIT = resolveCommit(process.env, () =>
@@ -14,10 +14,19 @@ const WEBADF_NEXT_VERSION = (JSON.parse(
 ) as { version: string }).version;
 
 const nextConfig: NextConfig = {
+  // The dev server's Next.js indicator sits bottom-left, over the phone tab bar's first tab, and intercepts taps on
+  // it in e2e. Dev-only (production never has it); schema checked in node_modules/next/dist/server/config-schema.js.
+  devIndicators: false,
   env: {
     WEBADF_COMMIT,
     WEBADF_BUILT_AT: new Date().toISOString(),
     WEBADF_NEXT_VERSION,
+  },
+  // /about became Settings' About this server section (C7 spec §10.3, Ruling 22). A config redirect runs before the
+  // filesystem and before Proxy, so a bookmark, the Help topic's link and a signed-out visit all work (the signed-out
+  // one then goes on to /sign-in, like any Settings visit). 307, not 308: browsers cache a 308 for good.
+  async redirects() {
+    return [{ source: '/about', destination: '/settings#about', permanent: false }];
   },
   // Self-hosting P2: the Docker build sets WEBADF_STANDALONE=1; Vercel's build never does.
   ...(process.env.WEBADF_STANDALONE === '1' ? { output: 'standalone' as const } : {}),

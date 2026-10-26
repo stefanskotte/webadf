@@ -15,7 +15,7 @@ export type MountTarget = MountChoice;
 type Drive = 'df0' | 'df1';
 const JSON_HEADERS = { 'content-type': 'application/json' };
 
-const BTN = 'inline-flex h-[38px] items-center gap-2 rounded-[10px] border px-4 text-[13px] font-semibold disabled:opacity-50';
+const BTN = 'inline-flex h-[38px] items-center gap-2 rounded-[10px] border px-4 text-[13px] font-semibold disabled:opacity-50 max-sm:min-h-11';
 const cls = BTN;
 // The board's Mount: ink fill, light text.
 const style = { background: 'var(--ink)', borderColor: 'var(--ink)', color: 'var(--surface)' };
@@ -120,7 +120,7 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
   if (choices.length === 0) {
     return (
       <Link href="/devices" data-testid={`mount-${diskId}-none`}
-            className="btn-like inline-flex h-[38px] items-center rounded-[10px] border px-3 text-[13px] font-medium"
+            className="btn-like inline-flex h-[38px] items-center rounded-[10px] border px-3 text-[13px] font-medium max-sm:min-h-11"
             style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--muted)' }}>
         Pair a device
       </Link>

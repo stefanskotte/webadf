@@ -11,9 +11,13 @@ export default function DiskFilesLoading() {
       <span className="sr-only">Loading…</span>
       <div className="flex flex-col gap-5 px-4 pb-10 pt-6 sm:px-7">
         <Bone className="h-3 w-56" />
-        <div data-skeleton-disk className="flex flex-col gap-4 rounded-[20px] p-5 lg:flex-row lg:items-center" style={card}>
-          <Bone className="h-[76px] w-[76px] shrink-0" />
-          <div className="flex flex-1 flex-col gap-2"><Bone className="h-[34px] w-1/2" /><Bone className="h-3 w-2/3" /></div>
+        {/* The Disk card's shape (disk-card.tsx): below lg it stacks -- a 56 px disk beside the 26 px heading, then the
+            space bar -- so a phone does not jump ~90 px when the page lands (C7 spec §8, Ruling 27). */}
+        <div data-skeleton-disk className="flex flex-col gap-4 rounded-[20px] p-4 sm:px-6 sm:py-5 lg:flex-row lg:items-center lg:gap-6" style={card}>
+          <div className="flex min-w-0 flex-1 items-center gap-4 sm:gap-6">
+            <Bone className="h-14 w-14 shrink-0 sm:h-[76px] sm:w-[76px]" />
+            <div className="flex flex-1 flex-col gap-2"><Bone className="h-[27px] w-1/2 sm:h-[36px]" /><Bone className="h-3 w-2/3" /></div>
+          </div>
           <Bone className="h-2 w-full lg:w-[300px]" />
         </div>
         <div className="grid grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">

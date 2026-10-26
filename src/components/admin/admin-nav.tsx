@@ -19,9 +19,10 @@ export const ADMIN_SECTIONS = [
 export function AdminSections() {
   const pathname = usePathname();
   return (
-    // The clamp scrolls on a phone (five tabs are ~420 px); w-max keeps the track as wide as its items.
+    // The clamp scrolls where one row nearly fits; below sm the track wraps onto two rows of 44 px (C7 Ruling 10), so it
+    // is the clamp's width there rather than w-max.
     <div className="max-w-full overflow-x-auto">
-      <nav aria-label="Admin sections" data-testid="admin-sections" className="seg w-max">
+      <nav aria-label="Admin sections" data-testid="admin-sections" className="seg w-max max-sm:w-full">
         {ADMIN_SECTIONS.map((item) => (
           <Link key={item.href} href={item.href} aria-current={pathname === item.href ? 'page' : undefined}
                 className="seg-item whitespace-nowrap">

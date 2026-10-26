@@ -60,7 +60,7 @@ export function FobButton({ testId, title, disks, devices, mode = 'disk' }: {
   }
   const trigger = mode === 'next' ? (
     <button type="button" data-testid="write-next-card" onClick={onOpen}
-            className="flex h-10 items-center gap-1.5 rounded-[10px] border px-3.5 text-[14px] font-medium"
+            className="flex h-10 items-center gap-1.5 whitespace-nowrap rounded-[10px] border px-3.5 text-[14px] font-medium max-sm:min-h-11 max-sm:flex-1 max-sm:justify-center"
             style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}>
       <Nfc size={14} strokeWidth={1.75} aria-hidden /> Write a Next-disk card
     </button>
@@ -74,7 +74,7 @@ export function FobButton({ testId, title, disks, devices, mode = 'disk' }: {
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       onTouchStart={(e) => e.stopPropagation()}
-      className="grid size-[38px] shrink-0 place-items-center rounded-[10px] transition-colors hover:bg-[var(--surface-2)]"
+      className="grid size-[38px] max-sm:size-11 shrink-0 place-items-center rounded-[10px] transition-colors hover:bg-[var(--surface-2)]"
       style={{ color: 'var(--muted)' }}
     >
       <Nfc size={18} strokeWidth={2} aria-hidden />

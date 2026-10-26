@@ -91,7 +91,7 @@ export function DeleteUserDialog({
         aria-disabled={isAdmin ? 'true' : undefined}
         title={isAdmin ? 'An admin account cannot be deleted' : undefined}
         onClick={() => { if (isAdmin) return; deleted.current = false; setOpen(true); }}
-        className="h-[34px] rounded-[9px] px-3 text-[13px] font-medium text-(--danger-fg) hover:bg-(--danger-bg) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring) aria-disabled:cursor-default aria-disabled:text-(--muted-2) aria-disabled:hover:bg-transparent"
+        className="h-[34px] max-sm:min-h-11 rounded-[9px] px-3 text-[13px] font-medium text-(--danger-fg) hover:bg-(--danger-bg) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring) aria-disabled:cursor-default aria-disabled:text-(--muted-2) aria-disabled:hover:bg-transparent"
       >
         Delete…
       </button>

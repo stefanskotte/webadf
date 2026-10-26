@@ -66,13 +66,13 @@ export function Modal({
               )}
             </div>
             <Dialog.Close data-testid={closeTestId} aria-label="Close" disabled={!dismissible}
-                          className="flex size-9 shrink-0 items-center justify-center rounded-[10px] hover:bg-[var(--track)] disabled:opacity-45"
+                          className="flex size-9 max-sm:size-11 shrink-0 items-center justify-center rounded-[10px] hover:bg-[var(--track)] disabled:opacity-45"
                           style={{ color: 'var(--muted)' }}>
               <XIcon className="size-4" aria-hidden />
             </Dialog.Close>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
-          <div className="flex items-center gap-2.5 border-t px-6 py-3.5"
+          <div className="flex items-center gap-2.5 border-t px-6 py-3.5 max-sm:[&_a]:min-h-11 max-sm:[&_button]:min-h-11"
                style={{ borderColor: 'var(--line)', background: 'var(--modal-foot)' }}>
             {footer}
           </div>

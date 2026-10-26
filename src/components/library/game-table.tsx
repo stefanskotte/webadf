@@ -9,7 +9,7 @@ import { fromQuery } from '@/lib/trail';
 import { useTrailView } from './use-trail-view';
 import type { GameListItem } from '@/lib/queries';
 import { fmtSize } from '@/lib/format';
-import { emptyTableNote, tableRows } from '@/lib/library-table';
+import { emptyTableNote, tableRows, titleMeta } from '@/lib/library-table';
 import { viewModeHref } from '@/lib/library-view';
 import { HdTag } from '@/components/disks/hd-tag';
 import type { FobContext } from '@/components/nfc/fob-button';
@@ -28,9 +28,14 @@ import { EmptyLibrary, HoldsLabel, TitleControls, TitleName, driveState, pending
 // TYPE sits between title and year: it qualifies what the row IS, so it belongs next to the name rather than out
 // among the numbers. 104px, not the board's 96: "Educational" is the longest label and at 96 its pill ran into the
 // YEAR column (Ruling 12). SIZE 96 so "1.72 MB HD" fits. The last track holds the ⋯ trigger.
-const COLS = 'grid-cols-[36px_minmax(0,1fr)_104px_56px_150px_52px_96px_44px]';
-const MIN_W = 'min-w-[760px]';
-const ROW = `grid ${COLS} ${MIN_W} items-center gap-x-[14px] border-b px-[18px] font-sans text-[13px]`;
+//
+// Below sm (C7 spec §4.3, Ruling 17) a row is three tracks -- the icon, the name over a line of the facts the other
+// columns held (titleMeta), the ⋯ -- and nothing scrolls sideways; from sm it is today's 760 px table.
+const COLS = 'grid-cols-[40px_minmax(0,1fr)_44px] sm:grid-cols-[36px_minmax(0,1fr)_104px_56px_150px_52px_96px_44px]';
+const MIN_W = 'sm:min-w-[760px]';
+const ROW = `grid ${COLS} ${MIN_W} items-center gap-x-3 border-b px-4 font-sans text-[13px] sm:gap-x-[14px] sm:px-[18px]`;
+/** A column the phone row folds into its fact line. */
+const WIDE = 'max-sm:hidden';
 const HOVER = 'hover:bg-[color:var(--surface-2)]';
 const ROW_BORDER = { borderColor: 'var(--hairline)' };
 
@@ -66,15 +71,11 @@ export function GameTable({ games, collectionId = null, fob = null, drives = nul
 
   return (
     <div className="glass-card mx-4 overflow-hidden sm:mx-7" data-testid="game-table">
-      {/* The fixed tracks total ~770px, and the card above clips
-          (overflow-hidden, which is what rounds its corners). So on a phone
-          the last columns would not merely be cramped -- they would be cut
-          off with no way to reach them. This wrapper scrolls them into reach,
-          and the min-width is what gives it something to scroll: without it
-          the grid would just compress the 1fr title column to nothing and
-          never overflow. Both are inert at desktop. */}
+      {/* From sm the fixed tracks total ~770px and the card clips (overflow-hidden rounds its corners), so this
+          wrapper scrolls the last columns into reach. Below sm the row is three tracks and nothing overflows
+          (C7 Ruling 17). */}
       <div className="overflow-x-auto">
-        <div className={`grid ${COLS} ${MIN_W} h-11 items-center gap-x-[14px] border-b px-[18px] font-sans text-[12px] font-medium`}
+        <div className={`grid ${COLS} ${MIN_W} h-11 items-center gap-x-[14px] border-b px-[18px] font-sans text-[12px] font-medium max-sm:hidden`}
              style={{ borderColor: 'var(--line)', color: 'var(--muted-2)' }}>
           <span /><span>Name</span><span>Type</span><span>Year</span><span>Publisher</span>
           <span className="text-right">Disks</span><span className="text-right">Size</span>
@@ -111,7 +112,7 @@ function UpRow({ href }: { href: string }) {
     <Link href={href} data-testid="up-row" aria-label="Up to Library" className={`${ROW} ${HOVER} h-11`} style={ROW_BORDER}>
       {/* One arrow, the text's (final review M8: the icon and "↑" drew two; Ruling 13). */}
       <span />
-      <span className="col-span-7 text-[14px] font-medium" style={{ color: 'var(--muted)' }}>
+      <span className="col-span-2 text-[14px] font-medium sm:col-span-7" style={{ color: 'var(--muted)' }}>
         ↑ Library
       </span>
     </Link>
@@ -129,23 +130,27 @@ function FolderRow({ collection: c, disks, href }: { collection: CollectionSumma
   return (
     <Link href={href} data-testid="folder-row" data-collection-id={c.id}
           aria-label={`Open collection ${c.name}, ${titles}${diskWords}`}
-          className={`${ROW} ${HOVER} h-[46px]`} style={ROW_BORDER}>
+          className={`${ROW} ${HOVER} min-h-[56px] py-2 sm:h-[46px] sm:min-h-0 sm:py-0`} style={ROW_BORDER}>
       {/* The board's folder: the collection's dot colour with a light overlay on the front face. */}
       <svg data-testid="folder-glyph" width="24" height="20" viewBox="0 0 24 20" aria-hidden>
         <path d="M1 3a2 2 0 0 1 2-2h6l2 2.5h10a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2z" fill={collectionDot(c.id)} />
         <path d="M1 6.5h22V17a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2z" fill="#FFFDF8" opacity="0.25" />
       </svg>
-      <span className="flex min-w-0 items-baseline gap-2">
-        <span className="truncate text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>{c.name}</span>
-        <span className="shrink-0 text-[12px]" style={{ color: 'var(--muted-2)' }} data-testid="folder-titles">{titles}</span>
+      <span className="flex min-w-0 flex-col sm:flex-row sm:items-baseline sm:gap-2">
+        <span className="text-[14px] font-semibold [overflow-wrap:anywhere] sm:truncate" style={{ color: 'var(--ink)' }}>{c.name}</span>
+        {/* Below sm the fact line (Plan ruling, C7 Task 5); from sm the count beside the name, as before. */}
+        <span data-meta="" className="text-[12px] sm:shrink-0 sm:whitespace-nowrap" style={{ color: 'var(--muted-2)' }}>
+          <span className="sm:hidden">Collection · </span>
+          <span data-testid="folder-titles">{titles}</span>
+        </span>
       </span>
-      <span className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Collection</span>
-      <span /><span />
-      <span className="text-right font-mono" style={{ color: 'var(--muted)' }} data-testid="folder-disks">
+      <span className={`text-[12px] ${WIDE}`} style={{ color: 'var(--muted-2)' }}>Collection</span>
+      <span className={WIDE} /><span className={WIDE} />
+      <span className={`text-right font-mono ${WIDE}`} style={{ color: 'var(--muted)' }} data-testid="folder-disks">
         {disks ?? ''}
       </span>
       {/* Size is blank: no folder aggregate yet (Ruling 14). */}
-      <span />
+      <span className={WIDE} />
       <span aria-hidden className="text-right" style={{ color: 'var(--muted-2)' }}>›</span>
     </Link>
   );
@@ -182,7 +187,7 @@ function TitleRow({ game: g, collectionId, fob, drives, pendingHide }: {
       aria-hidden={pendingHide ? true : undefined}
       // See DraggableCard on why an anchor must opt out of native dragging.
       draggable={false}
-      className={`${ROW} ${HOVER} h-[46px]`}
+      className={`${ROW} ${HOVER} min-h-[56px] py-2 sm:h-[46px] sm:min-h-0 sm:py-0`}
       style={style}
       {...attributes}
       {...listeners}
@@ -195,11 +200,15 @@ function TitleRow({ game: g, collectionId, fob, drives, pendingHide }: {
         <DriveRing holds={drives?.holds[g.id]} compact />
         <HoldsLabel game={g} drives={drives} />
       </div>
-      <span className="flex min-w-0 items-center gap-2">
-        <TitleName game={g} className="truncate text-[13px] font-medium" />
-        <DriveBadge holds={drives?.holds[g.id]} diskCount={g.diskCount} inline />
+      <span className="flex min-w-0 flex-col sm:flex-row sm:items-center sm:gap-2">
+        <span className="flex min-w-0 items-center gap-2">
+          {/* Below sm the whole name wraps (no ellipsis); from sm it truncates in its column, as before. */}
+          <TitleName game={g} className="text-[14px] font-semibold [overflow-wrap:anywhere] sm:truncate sm:text-[13px] sm:font-medium" />
+          <DriveBadge holds={drives?.holds[g.id]} diskCount={g.diskCount} inline />
+        </span>
+        <span data-meta="" className="text-[12px] sm:hidden" style={{ color: 'var(--muted-2)' }}>{titleMeta(g)}</span>
       </span>
-      <span data-testid="game-kind">
+      <span data-testid="game-kind" className={WIDE}>
         {g.kind
           ? (
             <span className="rounded-full px-2 py-0.5 text-[12px] font-medium"
@@ -212,13 +221,13 @@ function TitleRow({ game: g, collectionId, fob, drives, pendingHide }: {
              "not identified" rather than as a category of its own. */
           : <span style={{ color: 'var(--muted-2)' }}>—</span>}
       </span>
-      <span style={{ color: g.year ? 'var(--ink)' : 'var(--muted-2)' }}>{g.year ?? '—'}</span>
-      <span className="truncate" style={{ color: g.publisher ? 'var(--muted)' : 'var(--muted-2)' }}>{g.publisher ?? '—'}</span>
-      <span className="text-right font-mono"
+      <span className={WIDE} style={{ color: g.year ? 'var(--ink)' : 'var(--muted-2)' }}>{g.year ?? '—'}</span>
+      <span className={`truncate ${WIDE}`} style={{ color: g.publisher ? 'var(--muted)' : 'var(--muted-2)' }}>{g.publisher ?? '—'}</span>
+      <span className={`text-right font-mono ${WIDE}`}
             style={{ color: g.diskCount > 1 ? 'var(--amber-text)' : 'var(--ink)' }}>
         {g.diskCount}
       </span>
-      <span className="flex items-center justify-end gap-1.5 text-right font-mono" style={{ color: 'var(--ink)' }}>
+      <span className={`flex items-center justify-end gap-1.5 text-right font-mono ${WIDE}`} style={{ color: 'var(--ink)' }}>
         {fmtSize(g.sizeBytes)}{g.hasHd && <HdTag testId="game-hd-tag" />}
       </span>
       {/* Inside the row's <a href>, as on the card: each control stops every

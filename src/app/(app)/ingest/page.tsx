@@ -27,9 +27,10 @@ export default async function IngestPage(props: PageProps<'/ingest'>) {
       <PageHeader size="lg" eyebrow="Move files" title="Upload"
                   subtitle="Disks into the library, files to and from the Amiga — all through one staging list." />
       <div className="flex flex-col gap-6 px-4 pb-10 sm:px-7">
-        {/* The two drop cards side by side from 1024 px (spec 2026-10-25 §1), stacked below; then the one Staging
-            list of everything both of them (and the Amiga) set moving. */}
-        <div className="grid gap-5 lg:grid-cols-2 lg:items-stretch">
+        {/* The two drop cards side by side from 1024 px (spec 2026-10-25 §1), stacked from sm; below sm the board's two
+            96 px tiles side by side with the hint lines, the URL row and the board picker under them (C7 spec §7,
+            Ruling 19). Then the one Staging list. */}
+        <div className="grid grid-cols-2 gap-x-2.5 gap-y-2 sm:grid-cols-1 sm:gap-5 lg:grid-cols-2 lg:items-stretch">
           <Dropzone />
           <SendPanel targets={targets} initialBoard={board} serverNow={now} />
         </div>

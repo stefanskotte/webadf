@@ -66,7 +66,7 @@ export function CoverControl({ gameId, hasOverride }: { gameId: string; hasOverr
   }
 
   // Small ghost buttons under the art (spec §5.2): the cover is changed where it is shown.
-  const buttonClass = 'shrink-0 rounded-lg px-2.5 py-1 text-[12px] font-medium hover:bg-[var(--track)] disabled:opacity-60';
+  const buttonClass = 'shrink-0 rounded-lg px-2.5 py-1 text-[12px] font-medium hover:bg-[var(--track)] disabled:opacity-60 max-sm:min-h-11';
   const buttonStyle = { color: 'var(--muted)' };
 
   return (

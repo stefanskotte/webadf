@@ -71,7 +71,7 @@ export function DeleteAccount() {
         </div>
         {!open && (
           <button ref={openerRef} type="button" onClick={() => setOpen(true)} data-testid="account-delete-open"
-                  className="h-[38px] justify-self-start rounded-[10px] border px-3.5 text-[13px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)"
+                  className="h-[38px] max-sm:min-h-11 justify-self-start rounded-[10px] border px-3.5 text-[13px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)"
                   style={{ background: 'var(--surface)', borderColor: 'var(--danger-line)', color: 'var(--danger-fg)' }}>
             Delete account…
           </button>

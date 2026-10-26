@@ -44,7 +44,7 @@ jobs:
         run: |
           # Classic `docker build` (no buildx builder) so the image lands in the daemon for the smoke and `docker save`.
           # The in-image `next build` downloads Google Fonts; one transient failure has been seen, so retry once.
-          # GIT_SHA is the full commit (the About page links it); the registry tag uses the 7-char short form.
+          # GIT_SHA is the full commit (Settings' About section links it); the registry tag uses the 7-char short form.
           for attempt in 1 2; do
             docker build -f docker/Dockerfile --build-arg GIT_SHA="$GITHUB_SHA" -t webadf:smoke . && exit 0
             echo "docker build failed (attempt $attempt)" >&2

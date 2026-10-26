@@ -12,7 +12,8 @@
 // below instead, kept in sync with src/lib/search.ts by hand.
 
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { flushSync } from 'react-dom';
+import { usePathname, useRouter } from 'next/navigation';
 import { SearchIcon } from 'lucide-react';
 import { Link } from '@/components/shell/link';
 import { DiskIcon } from '@/components/ui/disk-icon';
@@ -85,6 +86,17 @@ function rowParts(e: Entry): { id: string; name: string; sub: string; clamp: boo
 export function SearchBox() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const openerRef = useRef<HTMLButtonElement>(null);
+  // Below sm the field lives behind the search-open button and opens as a row over the header (C7 spec §2.4, Ruling 6);
+  // from sm it always shows, as before. The max-sm: classes below read this state, so it is inert from sm.
+  const [phoneOpen, setPhoneOpen] = useState(false);
+  // A route change closes the row (adjusting state during render, not in an effect).
+  const pathname = usePathname();
+  const [seenPath, setSeenPath] = useState(pathname);
+  if (seenPath !== pathname) {
+    setSeenPath(pathname);
+    if (phoneOpen) setPhoneOpen(false);
+  }
 
   const [q, setQ] = useState('');
   const [results, setResults] = useState<SearchResults>(EMPTY_RESULTS);
@@ -131,6 +143,22 @@ export function SearchBox() {
   function reset() {
     clearSearchState();
     setQ('');
+  }
+
+  /** Below sm (the opener's width): read when a key or a choice decides where focus goes. */
+  const isPhone = () => window.matchMedia('(max-width: 639.98px)').matches;
+
+  // flushSync: the field must be displayed before focus() runs, inside the tap's own gesture -- iOS raises the
+  // keyboard only for a focus made there.
+  function openPhone() {
+    flushSync(() => setPhoneOpen(true));
+    inputRef.current?.focus();
+  }
+
+  /** Close the phone row and hand focus to the opener: the field just went, and focus must not fall to <body>. */
+  function closePhone() {
+    flushSync(() => setPhoneOpen(false));
+    openerRef.current?.focus();
   }
 
   useEffect(() => {
@@ -188,15 +216,34 @@ export function SearchBox() {
   // Unmounting mid-flight must not leave a fetch running against a dead component.
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  // Crossing the sm line: widening closes the phone row (the field is always shown from sm); narrowing while the
+  // desktop field has focus hands focus to the opener, because the field is about to be hidden.
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 639.98px)');
+    function onChange(e: MediaQueryListEvent) {
+      if (e.matches) {
+        if (document.activeElement === inputRef.current) openerRef.current?.focus();
+      } else {
+        setPhoneOpen(false);
+      }
+    }
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
   // Global shortcuts: Cmd/Ctrl+K always focuses; `/` focuses UNLESS focus is
   // already inside another input, textarea or contenteditable -- otherwise
   // this steals the key from the collection rename field and the
-  // create-collection input on /library.
+  // create-collection input on /library. Below sm either one opens the row first.
   useEffect(() => {
+    function focusField() {
+      if (window.matchMedia('(max-width: 639.98px)').matches) flushSync(() => setPhoneOpen(true));
+      inputRef.current?.focus();
+    }
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        inputRef.current?.focus();
+        focusField();
         return;
       }
       if (e.key === '/') {
@@ -206,7 +253,7 @@ export function SearchBox() {
           tag === 'INPUT' || tag === 'TEXTAREA' || (active as HTMLElement | null)?.isContentEditable;
         if (isEditable) return;
         e.preventDefault();
-        inputRef.current?.focus();
+        focusField();
       }
     }
     window.addEventListener('keydown', onKey);
@@ -275,7 +322,9 @@ export function SearchBox() {
     // whatever was typed keeps running and can repopulate the panel with the PREVIOUS search's rows the next time it
     // opens.
     reset();
-    inputRef.current?.blur();
+    // Below sm the row closes and focus goes to the opener (Plan ruling, C7 Task 3); from sm, as before.
+    if (phoneOpen && isPhone()) closePhone();
+    else inputRef.current?.blur();
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -308,7 +357,8 @@ export function SearchBox() {
     }
     if (e.key === 'Escape') {
       reset();
-      inputRef.current?.blur();
+      if (phoneOpen && isPhone()) closePhone();
+      else inputRef.current?.blur();
     }
   }
 
@@ -318,52 +368,86 @@ export function SearchBox() {
 
   return (
     // Static, so the panel anchors to the header (both shells' headers are `relative`); see the plan ruling in C5
-    // Task 5. Full width below sm, where the header wraps the box onto a line it shares with the icon buttons; mr-2
-    // keeps it 16px clear of them (they sit 8px apart).
-    <div className="mr-2 w-full sm:w-auto">
-      <div className="relative w-full sm:w-auto">
-        <SearchIcon aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2"
-                    style={{ color: 'var(--muted-2)' }} />
-        <input
-          ref={inputRef}
-          data-testid="search-input"
-          // LiveRefresh's typing() guard skips this box (src/components/shell/live-refresh.tsx): it lives in the
-          // layout, and focus lingering here must not hold back live updates the way a rename field should.
-          data-live-ok
-          role="combobox"
-          aria-expanded={listboxShown}
-          aria-controls={listboxShown ? 'search-listbox' : undefined}
-          aria-autocomplete="list"
-          aria-activedescendant={listboxShown ? `search-opt-${active}` : undefined}
-          aria-label="Search titles"
-          title="Search titles — press / to focus"
-          placeholder="Search titles"
-          value={q}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={onKeyDown}
-          onFocus={() => { setFocused(true); if (q.trim() !== '') setOpen(true); }}
-          onBlur={() => { setFocused(false); setOpen(false); }}
-          // w-48 (not w-56): at w-56 the admin shell's centred pill and this input overlapped by 15px at 1280. The
-          // focus ring is a box-shadow in the full --ring (>= 3:1 on the bar, WCAG 1.4.11).
-          className="h-10 w-full rounded-[10px] border pl-9 pr-4 text-[14px] outline-none transition-colors placeholder:text-(--muted-2) focus-visible:ring-2 focus-visible:ring-(--ring) sm:w-48 sm:pr-9"
-          style={{ background: 'var(--surface-2)', borderColor: 'var(--line)', color: 'var(--ink)' }}
-        />
-        {/* The "/" shortcut, advertised while the box is idle (aria-hidden: the title attribute says it). Hidden below
-            sm: a phone has no key to press. */}
-        {!focused && q === '' && (
-          <kbd aria-hidden data-testid="search-hint"
-               className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded-md border px-1.5 font-mono text-[11px] leading-[15px] sm:block"
-               style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--muted)' }}>
-            /
-          </kbd>
-        )}
+    // Task 5. lg:mr-2 keeps the field 16 px clear of the gear group (they sit 8 px apart).
+    <div className="lg:mr-2">
+      {/* Below sm: a 44 px button that opens the row (C7 spec §2.4). Hidden while the row is open and from sm. */}
+      <button ref={openerRef} type="button" data-testid="search-open" aria-label="Search" aria-expanded={phoneOpen}
+              aria-controls="search-row" onClick={openPhone}
+              className={`${phoneOpen ? 'hidden' : 'flex'} size-11 items-center justify-center rounded-[10px] text-(--ink) hover:bg-(--track) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring) sm:hidden`}>
+        <SearchIcon aria-hidden className="size-5" />
+      </button>
+      {/* Below sm, while open, the row covers the header's 60 px row: the field, then Cancel. From sm it is a plain
+          block holding the field, as before. */}
+      <div id="search-row"
+           className={phoneOpen
+             ? 'max-sm:absolute max-sm:inset-0 max-sm:z-50 max-sm:flex max-sm:items-center max-sm:gap-2.5 max-sm:bg-(--surface) max-sm:px-4'
+             : 'max-sm:hidden'}>
+        <div className="relative max-sm:min-w-0 max-sm:flex-1">
+          <SearchIcon aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2"
+                      style={{ color: 'var(--muted-2)' }} />
+          <input
+            ref={inputRef}
+            data-testid="search-input"
+            // LiveRefresh's typing() guard skips this box (src/components/shell/live-refresh.tsx): it lives in the
+            // layout, and focus lingering here must not hold back live updates the way a rename field should.
+            data-live-ok
+            role="combobox"
+            aria-expanded={listboxShown}
+            aria-controls={listboxShown ? 'search-listbox' : undefined}
+            aria-autocomplete="list"
+            aria-activedescendant={listboxShown ? `search-opt-${active}` : undefined}
+            aria-label="Search titles"
+            title="Search titles — press / to focus"
+            placeholder="Search titles"
+            value={q}
+            onChange={(e) => onChange(e.target.value)}
+            onKeyDown={onKeyDown}
+            onFocus={() => { setFocused(true); if (q.trim() !== '') setOpen(true); }}
+            onBlur={() => {
+              setFocused(false);
+              setOpen(false);
+              // The viewport shrank below sm under a focused desktop field: it is now display:none, and focus would
+              // fall to <body>. (The matchMedia listener below covers the engines that fire it first.)
+              const el = inputRef.current;
+              if (el && !phoneOpen && el.getClientRects().length === 0 && window.matchMedia('(max-width: 639.98px)').matches) {
+                openerRef.current?.focus();
+              }
+            }}
+            // w-48 (not w-56) from sm: at w-56 the admin shell's centred pill and this input overlapped by 15px at
+            // 1280. 44 px tall below sm (a finger). The focus ring is a box-shadow in the full --ring (>= 3:1, WCAG
+            // 1.4.11).
+            className="h-11 w-full rounded-[10px] border pl-9 pr-4 text-[14px] outline-none transition-colors placeholder:text-(--muted-2) focus-visible:ring-2 focus-visible:ring-(--ring) sm:h-10 sm:w-48 sm:pr-9"
+            style={{ background: 'var(--surface-2)', borderColor: 'var(--line)', color: 'var(--ink)' }}
+          />
+          {/* The "/" shortcut, advertised while the box is idle (aria-hidden: the title attribute says it). Hidden
+              below sm: a phone has no key to press. */}
+          {!focused && q === '' && (
+            <kbd aria-hidden data-testid="search-hint"
+                 className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded-md border px-1.5 font-mono text-[11px] leading-[15px] sm:block"
+                 style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--muted)' }}>
+              /
+            </kbd>
+          )}
+        </div>
+        {/* Today's Escape, for a thumb: clears, closes the row, focus back on the opener. */}
+        <button type="button" data-testid="search-cancel" onClick={() => { reset(); closePhone(); }}
+                className="h-11 shrink-0 rounded-[10px] px-3 text-[14px] font-semibold text-(--ink) hover:bg-(--track) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring) sm:hidden">
+          Cancel
+        </button>
       </div>
 
       {panelOpen && (
-        // A light scrim from sm (spec §5.3). Not a focus trap: this is a combobox popup, not a dialog. A press on it
-        // also blurs the input, which closes the panel on its own; the handler makes the close not depend on that.
-        <div data-testid="search-scrim" aria-hidden onPointerDown={() => setOpen(false)}
-             className="fixed inset-x-0 bottom-0 top-[72px] z-40 hidden sm:block" style={{ background: 'var(--search-scrim)' }} />
+        // From sm a light scrim (C5 spec §5.3); below sm the same scrim, colourless, so a tap outside the panel
+        // closes it (C7 Ruling 7: iOS's tap-away did not blur). Not a focus trap: this is a combobox popup.
+        // Below sm it closes on click, not pointerdown: the scrim must still be the click target when the touch's
+        // synthesized click arrives, or the click falls through to the link underneath. mousedown is cancelled there so
+        // the input does not blur (and unmount the scrim) first. z-30: under the tab bar (z-40), so a tab still takes
+        // its first tap. From sm, pointerdown closes as in C5.
+        <div data-testid="search-scrim" aria-hidden
+             onPointerDown={() => { if (!isPhone()) setOpen(false); }}
+             onMouseDown={(e) => { if (isPhone()) e.preventDefault(); }}
+             onClick={() => setOpen(false)}
+             className="fixed inset-x-0 bottom-0 top-[60px] z-30 bg-transparent sm:bg-(--search-scrim) lg:z-40 lg:top-[72px]" />
       )}
 
       {panelOpen && (
@@ -371,7 +455,7 @@ export function SearchBox() {
           data-testid="search-panel"
           // No press inside the panel may blur the input (Ruling 22): the row would vanish under the pointer.
           onMouseDown={(e) => e.preventDefault()}
-          className="absolute left-4 right-4 top-[calc(100%+4px)] z-50 flex flex-col overflow-hidden rounded-[16px] border sm:left-auto sm:right-7 sm:top-[64px] sm:w-[min(600px,calc(100vw-56px))]"
+          className="absolute left-4 right-4 top-[calc(100%+4px)] z-50 flex flex-col overflow-hidden rounded-[16px] border sm:left-auto sm:w-[min(600px,calc(100vw-32px))] lg:right-7 lg:top-[64px] lg:w-[min(600px,calc(100vw-56px))]"
           style={{ background: 'var(--surface)', borderColor: 'var(--line)', boxShadow: 'var(--shadow-card)' }}
         >
           {error ? (
@@ -397,7 +481,7 @@ export function SearchBox() {
                             aria-selected={highlighted} tabIndex={-1}
                             data-testid="search-result" data-result-kind={entry.kind} data-result-id={p.id}
                             onMouseEnter={() => setHighlight(index)}
-                            onClick={() => { reset(); inputRef.current?.blur(); }}
+                            onClick={() => { reset(); if (phoneOpen && isPhone()) closePhone(); else inputRef.current?.blur(); }}
                             className="flex min-h-[50px] items-center gap-3 rounded-[10px] px-2.5 py-1.5"
                             style={highlighted ? { background: 'var(--surface-2)' } : undefined}>
                         <span aria-hidden className="flex size-[30px] shrink-0 items-center justify-center">{p.icon}</span>

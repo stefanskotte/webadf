@@ -108,7 +108,7 @@ export function DiskCard(p: DiskCardProps) {
         {p.actions}
         <a href={`/api/disks/${p.diskId}/adf`} aria-label={`Download ${p.filename}`} title={`Download ${p.filename}`}
            data-testid={`download-${p.diskId}`}
-           className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-[10px] border hover:bg-[var(--track)]"
+           className="grid h-[38px] w-[38px] max-sm:size-11 shrink-0 place-items-center rounded-[10px] border hover:bg-[var(--track)]"
            style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 4v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></svg>

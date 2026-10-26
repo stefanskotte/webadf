@@ -557,7 +557,7 @@ export function FileTree({
 
   const controls = (
     <>
-      <label className="flex h-9 flex-1 items-center gap-2 rounded-[9px] px-2.5 focus-within:outline-2 focus-within:outline-(--ring) sm:w-[220px] sm:flex-none"
+      <label className="flex h-9 max-sm:min-h-11 flex-1 items-center gap-2 rounded-[9px] px-2.5 focus-within:outline-2 focus-within:outline-(--ring) sm:w-[220px] sm:flex-none"
              style={{ background: 'var(--surface-2)', boxShadow: 'inset 0 0 0 1px var(--line)' }}>
         <Search size={14} aria-hidden style={{ color: 'var(--muted-2)' }} className="shrink-0" />
         <input
@@ -574,7 +574,7 @@ export function FileTree({
       </label>
       <button type="button" role="switch" aria-checked={hideInfo} onClick={() => changeHideInfo(!hideInfo)}
               data-testid="fs-hide-info"
-              className="flex h-9 items-center gap-2 rounded-[9px] px-2.5 text-[13px] font-medium hover:bg-[var(--track)] focus-visible:outline-2 focus-visible:outline-(--ring)"
+              className="flex h-9 max-sm:min-h-11 items-center gap-2 rounded-[9px] px-2.5 text-[13px] font-medium hover:bg-[var(--track)] focus-visible:outline-2 focus-visible:outline-(--ring)"
               style={{ color: 'var(--muted)' }}>
         <span aria-hidden className={`flex h-4 w-7 shrink-0 rounded-full p-0.5 ${hideInfo ? 'justify-end' : 'justify-start'}`}
               style={hideInfo ? { background: 'var(--ink)' } : { background: 'var(--line-strong)', boxShadow: 'inset 0 0 0 1px var(--muted-2)' }}>

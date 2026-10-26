@@ -49,7 +49,7 @@ export function ReinsertButton({ deviceId, diskId, title, diskNo }: {
 
   return (
     <button type="button" data-testid={`reinsert-${deviceId}`} disabled={busy || refreshing} onClick={() => void reinsert()}
-            className={`${BOX_BTN} w-fit max-w-full flex-col !items-start !gap-0 py-1 text-left`} style={BOX_BTN_STYLE}>
+            className={`${BOX_BTN} w-fit max-sm:w-full max-w-full flex-col !items-start !gap-0 py-1 text-left`} style={BOX_BTN_STYLE}>
       <span className="text-[13px] font-semibold">Re-insert last disk</span>
       <span className="text-[11px]" style={{ color: 'var(--muted)', overflowWrap: 'anywhere' }}>{label}</span>
     </button>

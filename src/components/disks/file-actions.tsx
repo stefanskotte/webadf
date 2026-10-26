@@ -345,11 +345,11 @@ export function FileToolbar() {
     cancelFolder();
   }
 
-  const field = 'h-9 rounded-[9px] border px-2.5 text-[13px] focus-visible:outline-2 focus-visible:outline-(--ring)';
+  const field = 'h-9 rounded-[9px] border px-2.5 text-[13px] focus-visible:outline-2 focus-visible:outline-(--ring) max-sm:min-h-11';
   const fieldStyle = { background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' };
-  const ink = 'flex h-9 items-center gap-2 rounded-[9px] px-3 text-[13px] font-semibold disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)';
+  const ink = 'flex h-9 items-center gap-2 rounded-[9px] px-3 text-[13px] font-semibold disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring) max-sm:min-h-11';
   const inkStyle = { background: 'var(--ink)', color: 'var(--surface)' };
-  const outline = 'flex h-9 items-center gap-2 rounded-[9px] border px-3 text-[13px] font-medium hover:bg-[var(--track)] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-(--ring)';
+  const outline = 'flex h-9 items-center gap-2 rounded-[9px] border px-3 text-[13px] font-medium hover:bg-[var(--track)] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-(--ring) max-sm:min-h-11';
   const outlineStyle = { background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' };
 
   return (

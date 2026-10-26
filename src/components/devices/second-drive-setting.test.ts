@@ -47,3 +47,16 @@ describe('SecondDriveSetting radiogroup', () => {
     expect(rs.filter((b) => b.includes('tabindex="0"') && !/\sdisabled=""/.test(b))).toHaveLength(1);
   });
 });
+
+describe('SecondDriveSetting below sm (C7 spec §6.2, Ruling 18)', () => {
+  it('says the mode in one line and offers Change second drive, which controls the radiogroup', () => {
+    const html = render(board({ secondDrive: 'net', secondDriveReported: 'net', df1DiskId: null }));
+    expect(html).toMatch(/<span data-df1-mode="" class="[^"]*sm:hidden[^"]*"[^>]*>DF1 · Network \(PaulaNET\)<\/span>/);
+    const btn = html.match(/<button[^>]*data-testid="df1-change-d1"[^>]*>[^<]*<\/button>/)![0];
+    expect(btn).toContain('aria-expanded="false"');
+    expect(btn).toContain('aria-controls="second-drive-group-d1"');
+    expect(btn).toContain('sm:hidden');
+    expect(btn).toContain('>Change second drive</button>');
+    expect(html).toMatch(/<div[^>]*class="[^"]*max-sm:hidden[^"]*"[^>]*>\s*<div role="radiogroup"[^>]*id="second-drive-group-d1"/);
+  });
+});

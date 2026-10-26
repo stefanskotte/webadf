@@ -15,7 +15,7 @@ const CLICK_LOCK_MS = 600;
 /**
  * The section list Settings and Help have on their boards (C5 spec §1.2). "Current" is the section in view: an
  * IntersectionObserver over the in-page targets marks the topmost one in the top 40 % of the viewport; before any
- * scroll, the hash target, else the first. A route item (`/about`) is never current. A click lets the browser jump,
+ * scroll, the hash target, else the first. A route item (a route such as /help) is never current. A click lets the browser jump,
  * then focuses the target's heading so the keyboard continues from there.
  */
 export function SideNav({ label, testId, groups, size = 'md' }: {

@@ -10,10 +10,10 @@ describe('SettingsLoading (C5 spec §2.7)', () => {
     expect(html).toContain('role="status"');
     expect(html).toContain('Loading…');
   });
-  it("is the page's grid: five nav bones from lg, a heading, four cards, the first with four rows", () => {
+  it("is the page's grid: five nav bones from lg, a heading, five cards, the first with four rows", () => {
     expect(html).toContain('lg:grid-cols-[240px_minmax(0,860px)]');
     expect(html.match(/data-skeleton-nav/g)?.length).toBe(5);
-    expect(html.match(/data-skeleton-card/g)?.length).toBe(4);
+    expect(html.match(/data-skeleton-card/g)?.length).toBe(5);
     expect(html.match(/data-skeleton-row/g)?.length).toBe(4);
     expect(html).toContain('h-[30px]');
     expect(html).toContain('sm:h-[44px]');
