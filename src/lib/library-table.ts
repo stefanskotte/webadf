@@ -1,3 +1,5 @@
+import { fmtSize } from '@/lib/format';
+import type { GameListItem } from '@/lib/queries';
 import type { LibraryView } from '@/lib/library-view';
 
 /**
@@ -43,4 +45,18 @@ export function emptyTableNote(view: LibraryView, titleCount: number): string | 
   return view.kind === 'collection'
     ? 'No titles in this collection yet. Drag one onto it in the list of collections.'
     : 'No titles yet. Add disks on the Upload page.';
+}
+
+/**
+ * A phone row's fact line (C7 spec §4.3, Ruling 17): the columns a row folds away below sm -- Type, Year, Publisher,
+ * Disks, Size -- joined with " · ", unknown ones skipped.
+ */
+export function titleMeta(g: Pick<GameListItem, 'kind' | 'year' | 'publisher' | 'diskCount' | 'sizeBytes' | 'hasHd'>): string {
+  return [
+    g.kind,
+    g.year != null ? String(g.year) : null,
+    g.publisher,
+    `${g.diskCount} ${g.diskCount === 1 ? 'disk' : 'disks'}`,
+    `${fmtSize(g.sizeBytes)}${g.hasHd ? ' HD' : ''}`,
+  ].filter((s): s is string => !!s).join(' · ');
 }

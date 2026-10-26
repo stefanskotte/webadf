@@ -278,26 +278,32 @@ test('a file tree row shows its name AND its download control', async ({ page })
   ).toHaveCount(1);
 });
 
-test('the table view keeps every column reachable by scrolling', async ({ page }) => {
-  await seedLibrary(page, 3);
+test('the table view at 390: each name wraps whole with its facts under it, the ⋯ is in view, nothing scrolls sideways', async ({ page }) => {
+  const { u, run } = await seedLibrary(page, 3);
+  const long = `Mobile ${run} A very long title that has to wrap onto a second line`.slice(0, 70);
+  await seedDisk(u.orgId, { title: long, diskNo: 1, sha256: sha(`${run}-long`) });
   await page.goto('/library');
   // getByLabel, not a testid: the toggle is two <Link>s identified by
   // aria-label (view-toggle.tsx), which is also how view-toggle.spec.ts
   // finds them.
   await page.getByLabel('Table view').tap();
-
   const table = page.getByTestId('game-table');
   await expect(table).toBeVisible();
-  // The rows are deliberately wider than the phone; what matters is that the
-  // container SCROLLS to them rather than clipping them, which is what
-  // overflow-hidden alone did before.
-  const scrollable = await table.evaluate((el) => {
-    const box = el.querySelector('[class*="overflow-x-auto"]') as HTMLElement | null;
-    if (!box) return null;
-    return { scrollWidth: box.scrollWidth, clientWidth: box.clientWidth };
-  });
-  expect(scrollable).not.toBeNull();
-  expect(scrollable!.scrollWidth).toBeGreaterThan(scrollable!.clientWidth);
+  const row = page.getByTestId('game-row').filter({ hasText: long });
+  await expect(row).toBeVisible();
+  // C7 (spec §4.3, Ruling 17): the whole name, no ellipsis; the hidden columns' facts on a line under it.
+  const name = row.getByText(long, { exact: true });
+  expect(await name.evaluate((el) => el.scrollWidth <= el.clientWidth + 1 && getComputedStyle(el).textOverflow !== 'ellipsis')).toBe(true);
+  await expect(row.locator('[data-meta]')).toContainText('1 disk');
+  const menu = (await row.locator('[data-testid^="title-menu-"]').boundingBox())!;
+  expect(menu.width).toBeGreaterThanOrEqual(44);
+  expect(menu.x + menu.width).toBeLessThanOrEqual(390);
+  expect(await table.evaluate((el) => {
+    const box = el.querySelector('[class*="overflow-x-auto"]') as HTMLElement;
+    return box.scrollWidth <= box.clientWidth;
+  })).toBe(true);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
 });
 
 test('a touch drag scrolls the library, and a press-and-hold drags a card', async ({ page }) => {

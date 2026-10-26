@@ -63,8 +63,9 @@ export function PageHeader({
             // 26px below sm: at 34px a two-word title ("Disk contents") wraps
             // on a 390px screen, and leading-none makes a wrapped heading read
             // as one solid block.
+            // [overflow-wrap:anywhere]: a long unbroken name (a collection's) wraps instead of widening the page at 390.
             // A visible ring (C6 Ruling 5): only a script focuses it, as the fallback after a removal.
-            className={`rounded-[6px] focus:outline-2 focus:outline-offset-2 focus:outline-(--ring) ${lg
+            className={`min-w-0 [overflow-wrap:anywhere] rounded-[6px] focus:outline-2 focus:outline-offset-2 focus:outline-(--ring) ${lg
               ? 'text-[30px] font-bold leading-none sm:text-[44px] sm:tracking-[-0.02em]'
               : 'text-[26px] font-bold leading-none tracking-[-0.032em] sm:text-[34px]'}`}
             style={{ color: "var(--on-dark)" }}

@@ -403,3 +403,124 @@ test('C7-11 Help at 390: a /help#topic load leaves the topic at the top after th
   await expect.poll(async () => Math.round((await page.locator('#second-drive').boundingBox())!.y)).toBeLessThan(200);
   await expect(page.locator('#second-drive')).toBeInViewport();
 });
+
+// ---- Library (spec §4, Rulings 16, 17) ---------------------------------------------------------------------
+
+/** A real finger via CDP (mobile.spec's touchDrag, in two dimensions): press, hold past the 250 ms delay, walk, lift. */
+async function touchDragTo(page: Page, from: { x: number; y: number }, to: { x: number; y: number }, holdMs: number) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [from] });
+  await page.waitForTimeout(holdMs);
+  for (const t of [0.1, 0.25, 0.5, 0.75, 0.9, 1]) {
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchMove', touchPoints: [{ x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t }],
+    });
+    await page.waitForTimeout(40);
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await cdp.detach();
+}
+
+const newCollection = async (page: Page, name: string) =>
+  (await (await page.request.post('/api/collections', { data: { name } })).json()).id as string;
+const chipOf = (page: Page, id: string) => page.locator(`[data-testid="collection-row"][data-collection-id="${id}"]`);
+
+test('C7-04 Library at 390: the collections are one row of 44 px chips, the current one in view with its ⋯; + New makes one', async ({ page }) => {
+  await signUpFresh(page);
+  const run = runTag();
+  const ids: string[] = [];
+  for (const n of ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo']) ids.push(await newCollection(page, `${n} collection ${run}`));
+  const last = ids[ids.length - 1];
+  await page.goto(`/library?collection=${last}`);
+  const rail = page.getByTestId('collection-rail');
+  await hydrated(page, 'collections-new');   // measure the settled DOM, not the server's
+  const chips = rail.locator('[data-testid="collection-uncategorized"], [data-testid="collection-row"], [data-testid="collection-all"], [data-testid="collections-new"]');
+  await expect(chips).toHaveCount(ids.length + 3);
+  const ys = new Set<number>();
+  for (const c of await chips.all()) {
+    const b = (await c.boundingBox())!;
+    expect(b.height).toBeGreaterThanOrEqual(44);
+    ys.add(Math.round(b.y));
+  }
+  expect(ys.size, 'one line').toBe(1);
+  await expect(chipOf(page, last)).toHaveAttribute('data-current', 'true');
+  await expect(chipOf(page, last)).toBeInViewport();
+  // Only the current collection shows its ⋯, 44 x 44, with today's Rename and Delete.
+  await expect(page.getByTestId(`collection-menu-${ids[0]}`)).toBeHidden();
+  const menu = page.getByTestId(`collection-menu-${last}`);
+  const mb = (await menu.boundingBox())!;
+  expect(mb.width).toBeGreaterThanOrEqual(44);
+  expect(mb.height).toBeGreaterThanOrEqual(44);
+  await hydrated(page, `collection-menu-${last}`);
+  await menu.tap();
+  await expect(page.getByTestId(`collection-rename-${last}`)).toBeVisible();
+  await expect(page.getByTestId(`collection-delete-${last}`)).toBeVisible();
+  await page.keyboard.press('Escape');
+  // + New opens today's form under the row, focused; a create closes it and the chip appears.
+  await expect(page.getByTestId('collection-create')).toBeHidden();
+  await hydrated(page, 'collections-new');
+  await page.getByTestId('collections-new').tap();
+  const field = page.getByTestId('collection-create');
+  await expect(field).toBeFocused();
+  const fb = (await field.boundingBox())!;
+  expect(fb.y).toBeGreaterThanOrEqual((await chipOf(page, last).boundingBox())!.y + 44);
+  expect(fb.height).toBeGreaterThanOrEqual(44);
+  await field.fill(`Foxtrot ${run}`);
+  await field.press('Enter');
+  await expect(rail.locator('[data-testid="collection-row"]').filter({ hasText: `Foxtrot ${run}` })).toHaveCount(1);
+  await expect(page.getByTestId('collection-create')).toBeHidden();
+  await expect(page.getByTestId('collections-new')).toBeFocused();
+  await noSideways(page);
+});
+
+test('C7-04b Library at 390: Rename opens a field under the chip row; Enter saves and focus returns to the ⋯ (Review Focus 5)', async ({ page }) => {
+  await signUpFresh(page);
+  const run = runTag();
+  const id = await newCollection(page, `Rename me ${run}`);
+  await page.goto(`/library?collection=${id}`);
+  await hydrated(page, `collection-menu-${id}`);
+  await page.getByTestId(`collection-menu-${id}`).tap();
+  await page.getByTestId(`collection-rename-${id}`).tap();
+  const field = page.getByRole('textbox', { name: 'Collection name' });
+  await expect(field).toBeFocused();
+  const chip = (await chipOf(page, id).boundingBox())!;
+  const f = (await field.boundingBox())!;
+  expect(f.y).toBeGreaterThanOrEqual(chip.y + chip.height);
+  expect(f.height).toBeGreaterThanOrEqual(44);
+  await field.fill(`Renamed ${run}`);
+  await field.press('Enter');
+  await expect(chipOf(page, id).getByTestId('collection-name')).toHaveText(`Renamed ${run}`);
+  await expect(page.getByTestId(`collection-menu-${id}`)).toBeFocused();
+});
+
+test('C7-04c Library at 390: a card held and dropped on a chip is filed into that collection', async ({ page }) => {
+  test.setTimeout(60_000);
+  const u = await signUpFresh(page);
+  const run = runTag();
+  await seedDisk(u.orgId, { title: `Drop ${run}`, diskNo: 1, sha256: randomBytes(32).toString('hex') });
+  const id = await newCollection(page, `Target ${run}`);
+  await page.goto('/library');
+  const card = page.getByTestId('game-card').filter({ hasText: `Drop ${run}` });
+  await expect(card).toBeVisible();
+  await expect(chipOf(page, id)).toBeInViewport();
+  const from = (await card.boundingBox())!;
+  const to = (await chipOf(page, id).boundingBox())!;
+  const filed = page.waitForResponse((r) => r.url().includes(`/api/collections/${id}/games`) && r.request().method() === 'POST');
+  await touchDragTo(page, { x: from.x + from.width / 2, y: from.y + from.height / 2 },
+    { x: to.x + to.width / 2, y: to.y + to.height / 2 }, 400);
+  expect((await filed).status()).toBe(200);
+});
+
+test('C7-09b touch targets and no sideways scroll: the Library grid and table', async ({ page }) => {
+  test.setTimeout(120_000);
+  const u = await signUpFresh(page);
+  const run = runTag();
+  for (let i = 0; i < 3; i++) await seedDisk(u.orgId, { title: `Sweep ${run} ${i}`, diskNo: 1, sha256: randomBytes(32).toString('hex') });
+  await newCollection(page, `Sweep set ${run}`);
+  await page.goto('/library');
+  await expect(page.getByTestId('game-card').first()).toBeVisible();
+  await touchSweep(page, 'library grid');
+  await page.getByLabel('Table view').tap();
+  await expect(page.getByTestId('game-table')).toBeVisible();
+  await touchSweep(page, 'library table');
+});

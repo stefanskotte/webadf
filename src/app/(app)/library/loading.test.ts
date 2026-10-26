@@ -4,17 +4,22 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import LibraryLoading from './loading';
 
 describe('LibraryLoading', () => {
-  it('lays out the collections rail beside the grid, as the library page does', () => {
+  it('lays out the collections as the page does: a chip row below md, the 240 px rail beside the grid from md', () => {
     const html = renderToStaticMarkup(createElement(LibraryLoading));
     // The page's own row (library/page.tsx): a column below md, rail + grid side by side from md up.
     expect(html).toContain('flex flex-col gap-4 md:flex-row md:items-start');
-    // The rail's shape (collection-rail.tsx): full width below md, 240 px from md up, with six 38 px row bones.
+    // Below md (C7 spec §4.2): one 44 px chip row.
+    const chips = html.match(/<[^>]*data-testid="library-skeleton-chips"[^>]*>/)?.[0] ?? '';
+    expect(chips).toContain('md:hidden');
+    const chipHtml = html.slice(html.indexOf('library-skeleton-chips'), html.indexOf('library-skeleton-rail'));
+    expect(chipHtml.match(/h-11/g)?.length).toBe(4);
+    // From md: the rail's shape (collection-rail.tsx), 240 px with six 38 px row bones.
     const rail = html.match(/<[^>]*data-testid="library-skeleton-rail"[^>]*>/)?.[0] ?? '';
     expect(rail).toContain('md:w-60');
-    expect(rail).not.toContain('md:w-56');
+    expect(rail).toContain('hidden');
+    expect(rail).toContain('md:flex');
     const railHtml = html.slice(html.indexOf('library-skeleton-rail'), html.indexOf('min-w-0 flex-1'));
     expect(railHtml.match(/h-\[38px\]/g)?.length).toBe(6);
-    // The grid comes after the rail, in the flex-1 column.
     expect(html.indexOf('library-skeleton-rail')).toBeLessThan(html.indexOf('min-w-0 flex-1'));
   });
 

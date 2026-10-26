@@ -1,15 +1,19 @@
 import { Bone, PageSkeleton } from '@/components/shell/skeleton';
 
 // The library while it loads (A1 States): the collections rail and the grid in the page's own row (library/page.tsx),
-// so nothing jumps when the page lands -- the rail stacks above the grid below md, as the real one does. Cards in the
+// so nothing jumps when the page lands -- below md the collections are a chip row above the grid, as the real page has. Cards in the
 // grid's own columns (game-grid.tsx). Card-shaped even when the table view is coming -- a loading page sees no search
 // params, so it cannot know which view was asked for.
 export default function LibraryLoading() {
   return (
     <PageSkeleton testId="library-skeleton">
       <div className="flex flex-col gap-4 md:flex-row md:items-start">
-        {/* collection-rail.tsx's box: a caption and six 38 px rows, no card. */}
-        <div className="ml-4 mr-4 flex w-auto shrink-0 flex-col gap-1 px-1 sm:ml-7 sm:mr-7 md:mr-0 md:w-60"
+        {/* Below md the collections are one 44 px chip row (collection-rail.tsx, C7 spec §4.2). */}
+        <div className="flex gap-2 overflow-hidden px-4 sm:px-7 md:hidden" data-testid="library-skeleton-chips">
+          {[28, 24, 24, 20].map((w, i) => <Bone key={i} className="h-11 shrink-0 rounded-full" style={{ width: `${w * 4}px` }} />)}
+        </div>
+        {/* From md, collection-rail.tsx's box: a caption and six 38 px rows, no card. */}
+        <div className="ml-7 hidden w-60 shrink-0 flex-col gap-1 px-1 md:flex md:w-60"
              data-testid="library-skeleton-rail">
           <Bone className="mb-1.5 h-3 w-24" />
           {Array.from({ length: 6 }, (_, i) => <Bone key={i} className="h-[38px] w-full" />)}
