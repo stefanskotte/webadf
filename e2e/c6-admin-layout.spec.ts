@@ -193,7 +193,7 @@ test("Users: the board's columns, the Admin pill with a Delete… that does noth
   await page.goto('/admin/users');
   await expect(page.getByText(/^\d+ users · newest first · page 1 of \d+$/)).toBeVisible();
   await expect(page.locator('section[aria-label="Users"] th'))
-    .toHaveText(['Email', 'Organization', 'Joined', 'Titles', 'Disks', 'Boards', 'Action']);
+    .toHaveText(['Email', 'Organization', 'Joined', 'Titles', 'Disks', 'Boards', 'Actions']);
   await expect(page.locator('[data-users-foot]')).toHaveText(
     'Deleting a user removes their organization, titles, disks and boards. Disk images are kept: other libraries may share them.');
   // Page 1: Previous is a disabled span (both values: a word in each), Next a link.
