@@ -5,7 +5,7 @@ import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { signUpFresh, runTag } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
-import { pairDevice, seedDisk, authHeader, cleanupSeeded, df1OnBoard } from './device-helpers';
+import { pairDevice, seedDisk, authHeader, cleanupSeeded, df1OnBoard, hydrated } from './device-helpers';
 
 /**
  * The header's drive chips (HANDOFF §4 backlog; src/components/shell/drive-chips.tsx).
@@ -65,7 +65,7 @@ test('a fresh org with no paired devices renders no chip and no Drives control',
   await expect(page.getByTestId('drives-compact')).toHaveCount(0);
 });
 
-test('an empty board: the chip shows its name and "empty", and the menu is reachable by keyboard with every action off',
+test('an empty board: the chip shows its name and "empty", and the panel is reachable by keyboard with every action off',
   async ({ page, request }) => {
     await signUpFresh(page);
     const { deviceId } = await onlineBoard(page, request, 'Bench');
@@ -77,29 +77,33 @@ test('an empty board: the chip shows its name and "empty", and the menu is reach
     await expect(page.getByTestId(`drive-chip-disk-${deviceId}`)).toHaveText('empty');
     await expect(c).toHaveAttribute('data-online', 'true');
     await expect(c).toHaveAttribute('title', /Bench/);
-    await expect(c).toHaveAttribute('aria-haspopup', 'menu');
+    // C8 Ruling 1: a dialog of controls, not a menu.
+    await expect(c).toHaveAttribute('aria-haspopup', 'dialog');
     await expect(c).toHaveAttribute('aria-expanded', 'false');
 
-    // Keyboard: focus, Enter opens, Escape closes.
+    // Keyboard: focus, Enter opens, Escape closes and gives the focus back to the chip.
+    await hydrated(page, `drive-chip-${deviceId}`);
     await c.focus();
     await page.keyboard.press('Enter');
     await expect(menu(page, deviceId)).toBeVisible();
     await expect(c).toHaveAttribute('aria-expanded', 'true');
-    // Both values in words at the top of the menu: the alias and online.
     await expect(page.getByTestId(`drive-entry-status-${deviceId}`)).toHaveText('Online');
-    await expect(page.getByTestId(`drive-entry-disk-${deviceId}`)).toHaveText('Empty');
+    await expect(page.getByTestId(`drive-entry-disk-${deviceId}`)).toHaveText('Drive empty');
     for (const action of ['goto', 'protect', 'eject']) {
       await expect(page.getByTestId(`drive-${action}-${deviceId}`)).toHaveAttribute('data-disabled', '');
     }
     await page.keyboard.press('Escape');
     await expect(menu(page, deviceId)).toHaveCount(0);
     await expect(c).toHaveAttribute('aria-expanded', 'false');
+    await expect(c).toBeFocused();
 
-    // Click outside closes it too.
+    // A press outside, on nothing focusable, closes it too, and focus goes to the chip (C8 Ruling 20).
     await c.click();
     await expect(menu(page, deviceId)).toBeVisible();
-    await page.mouse.click(700, 500);
+    const wm = (await page.getByTestId('wordmark-home').boundingBox())!;
+    await page.mouse.click(wm.x + wm.width + 6, wm.y + wm.height / 2);
     await expect(menu(page, deviceId)).toHaveCount(0);
+    await expect(c).toBeFocused();
   });
 
 test('the board\'s name in its menu links to its own card on /devices', async ({ page, request }) => {
@@ -133,6 +137,11 @@ test('a mount shows as loading until the board reports it, then the chip names t
     const { version } = await res.json();
     await expect(chip(page, board.deviceId)).toHaveAttribute('data-phase', 'loading', LIVE);
     await expect(page.getByTestId(`drive-chip-disk-${board.deviceId}`)).toHaveText('loading…');
+    // The card says what was asked for, in words (C8 spec §3.3).
+    await hydrated(page, `drive-chip-${board.deviceId}`);
+    await chip(page, board.deviceId).click();
+    await expect(page.getByTestId(`drive-entry-disk-${board.deviceId}`)).toHaveText(`Loading Chipgame ${tag.slice(-5)}…`);
+    await page.keyboard.press('Escape');
 
     // The board reports it: now, and only now, the chip names the disk.
     expect((await request.post('/api/device/status', {
@@ -150,7 +159,7 @@ test('a mount shows as loading until the board reports it, then the chip names t
     await expect(page.getByTestId(`disk-${disk.diskId}`)).toBeVisible();
   });
 
-test('the write-protect item flips the DISK between Protected and Writable', async ({ page, request }) => {
+test('the write-protect switch flips the DISK between protected and writable, with the panel left open', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
   const board = await onlineBoard(page, request, 'Bench');
   const tag = runTag();
@@ -163,17 +172,20 @@ test('the write-protect item flips the DISK between Protected and Writable', asy
   const item = page.getByTestId(`drive-protect-${board.deviceId}`);
   await expect(wpTag).toHaveText('WP');
 
+  await hydrated(page, `drive-chip-${board.deviceId}`);
   await chip(page, board.deviceId).click();
-  await expect(item).toContainText('Disk is Protected');
+  await expect(item).toHaveAttribute('role', 'switch');
+  await expect(item).toHaveAttribute('aria-checked', 'true');
   await expect(item).toHaveAttribute('data-protected', 'true');
   await item.click();
   await expect(wpTag).toHaveText('RW', LIVE);
-
-  await chip(page, board.deviceId).click();
-  await expect(item).toContainText('Disk is Writable');
+  // C8 §4.1: the panel stays open; the switch moves when the rows say so.
+  await expect(menu(page, board.deviceId)).toBeVisible();
+  await expect(item).toHaveAttribute('aria-checked', 'false');
   await expect(item).toHaveAttribute('data-protected', 'false');
   await item.click();
   await expect(wpTag).toHaveText('WP', LIVE);
+  await expect(item).toHaveAttribute('aria-checked', 'true');
 
   // It is the disk's own flag -- the game page's toggle agrees.
   await page.goto(`/games/${disk.gameId}`);
@@ -191,8 +203,10 @@ test('eject reads "ejecting…" until the board reports the drive empty', async 
   await page.goto('/library');
   await expect(chip(page, board.deviceId)).toHaveAttribute('data-phase', 'loaded');
 
+  await hydrated(page, `drive-chip-${board.deviceId}`);
   await chip(page, board.deviceId).click();
   await page.getByTestId(`drive-eject-${board.deviceId}`).click();
+  await expect(menu(page, board.deviceId)).toBeVisible();   // C8 Ruling 9: the panel stays open after Eject
   await expect(chip(page, board.deviceId)).toHaveAttribute('data-phase', 'ejecting', LIVE);
   await expect(page.getByTestId(`drive-chip-disk-${board.deviceId}`)).toHaveText('ejecting…');
 
@@ -225,6 +239,8 @@ test('an offline board is shown offline on the chip and in its menu, and can sti
   await expect(c.getByText('Offline')).toBeAttached(); // the screen-reader word beside the hollow ring
   await c.click();
   await expect(page.getByTestId(`drive-entry-status-${board.deviceId}`)).toHaveText('Offline');
+  await expect(page.getByTestId(`drive-entry-offline-${board.deviceId}`))
+    .toHaveText(/^Offline, last seen \d+[smhd] ago\. Changes reach it when it reconnects\.$/);
   await expect(page.getByTestId(`drive-eject-${board.deviceId}`)).not.toHaveAttribute('data-disabled', '');
 });
 

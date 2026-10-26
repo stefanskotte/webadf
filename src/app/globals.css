@@ -386,3 +386,15 @@
     .seg-item, :where(.seg--sm) .seg-item { min-height: 44px; height: auto; }
   }
 }
+
+/* The header drive panel (C8 spec §3.1, §8, Ruling 22): never taller than the room Base UI measured, and below lg
+   never down under the fixed bottom tab bar (60 px header, ~4.5rem bar, the safe area, a 16 px gutter). In CSS
+   rather than an arbitrary utility, so env() is not taken apart by the class scanner. */
+@layer components {
+  .drive-panel { max-height: var(--available-height); }
+  @media (width < 64rem) {
+    .drive-panel {
+      max-height: min(var(--available-height), calc(100dvh - 60px - 4.5rem - env(safe-area-inset-bottom) - 16px));
+    }
+  }
+}

@@ -5,8 +5,6 @@ import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { signUpFresh, runTag } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
-// `hydrated`, `LIVE` and `panel` are for the panel tests of Tasks 3 and 5 (they add them to this file).
-/* eslint-disable @typescript-eslint/no-unused-vars */
 import { pairDevice, seedDisk, addDisk, authHeader, cleanupSeeded, hydrated } from './device-helpers';
 
 /**
@@ -111,4 +109,265 @@ test('C8-11 the super-admin with two boards: the compact control at 1280, one ch
   }
 });
 
-/* eslint-enable @typescript-eslint/no-unused-vars */
+// ---- The panel (spec §3-§7) ----------------------------------------------------------------------------------
+
+async function openPanel(page: Page, id: string) {
+  await hydrated(page, `drive-chip-${id}`);
+  await chip(page, id).click();
+  await expect(panel(page, id)).toBeVisible();
+}
+
+/** Count `method` requests whose path matches `path`, from now on. */
+function countRequests(page: Page, method: string, path: RegExp) {
+  const seen = { n: 0 };
+  page.on('request', (r) => { if (r.method() === method && path.test(new URL(r.url()).pathname)) seen.n++; });
+  return seen;
+}
+
+/** Hold every `method` request to `glob` for `ms`, so a second press lands while the first is in flight. */
+async function slow(page: Page, glob: string, method: string, ms = 1_200) {
+  await page.route(glob, async (route) => {
+    if (route.request().method() !== method) return route.continue();
+    await new Promise((r) => setTimeout(r, ms));
+    await route.continue();
+  });
+}
+
+/** A point in the header just right of the wordmark, where nothing focusable is (checked, not assumed). */
+async function blankHeaderPoint(page: Page) {
+  const wm = (await page.getByTestId('wordmark-home').boundingBox())!;
+  const p = { x: Math.round(wm.x + wm.width + 6), y: Math.round(wm.y + wm.height / 2) };
+  expect(await page.evaluate(({ x, y }) =>
+    !document.elementFromPoint(x, y)?.closest('a,button,input,select,textarea,[tabindex]'), p), 'a blank point').toBe(true);
+  return p;
+}
+
+test('C8-01b the panel at 1280: 440 px, "Controlling" and "Manage devices", and the board\'s card', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const b = await loadedBoard(page, request, orgId, 'WifiFloppy1', 2);
+  await page.goto('/library');
+  await openPanel(page, b.deviceId);
+  const p = panel(page, b.deviceId);
+  await expect(p).toHaveAttribute('role', 'dialog');
+  await expect(p).toHaveAccessibleName('WifiFloppy1 drive');
+  await expect(chip(page, b.deviceId)).toHaveAttribute('aria-haspopup', 'dialog');
+  await expect.poll(async () => Math.round((await p.boundingBox())!.width)).toBe(440);
+  await expect(p).toContainText('Controlling');
+  const manage = page.getByTestId('drive-panel-manage');
+  await expect(manage).toHaveText('Manage devices');
+  await expect(manage).toHaveAttribute('href', '/devices');
+  const entry = page.getByTestId(`drive-entry-${b.deviceId}`);
+  await expect(entry).toHaveAccessibleName('WifiFloppy1 controls');
+  await expect(entry.locator('svg').first()).toBeVisible();                      // the disk icon
+  await expect(entry).toContainText('WifiFloppy1 · DF0');
+  await expect(page.getByTestId(`drive-entry-disk-${b.deviceId}`)).toHaveText(`${b.title} · disk 1 of 2`);
+  await expect(page.getByTestId(`drive-entry-status-${b.deviceId}`)).toHaveText('Online');
+  await expect(page.getByTestId(`drive-protect-${b.deviceId}`)).toHaveAttribute('role', 'switch');
+  await expect(page.getByTestId(`drive-next-${b.deviceId}`)).toHaveText('Next: disk 2');
+  await expect(page.getByTestId(`drive-eject-${b.deviceId}`)).toHaveText('Eject');
+  await expect(page.getByTestId(`drive-settings-${b.deviceId}`)).toHaveAccessibleName('WifiFloppy1 board settings');
+  // Hover (desktop only: the mobile project never hovers): Manage devices underlines.
+  await manage.hover();
+  await expect(manage).toHaveCSS('text-decoration-line', 'underline');
+  await manage.click();
+  await expect(page).toHaveURL(/\/devices$/);
+  await expect(p).toHaveCount(0);
+});
+
+test('C8-02 a one-disk title reads "disk 1 of 1", and offers no Next', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const b = await loadedBoard(page, request, orgId, 'Single', 1);
+  await page.goto('/library');
+  await openPanel(page, b.deviceId);
+  await expect(page.getByTestId(`drive-entry-disk-${b.deviceId}`)).toHaveText(`${b.title} · disk 1 of 1`);
+  await expect(page.getByTestId(`drive-next-${b.deviceId}`)).toHaveCount(0);
+});
+
+test('C8-03 Write-protect: one PATCH on a double press, busy while it runs, flipped by the refresh, panel and focus kept', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const b = await loadedBoard(page, request, orgId, 'Bench', 1);
+  await page.goto('/library');
+  const patches = countRequests(page, 'PATCH', /^\/api\/disks\/[^/]+$/);
+  await slow(page, '**/api/disks/*', 'PATCH');
+  await openPanel(page, b.deviceId);
+  const sw = page.getByTestId(`drive-protect-${b.deviceId}`);
+  await expect(sw).toHaveAttribute('aria-checked', 'true');
+  await sw.dblclick();
+  await expect(sw).toHaveAttribute('aria-busy', 'true');
+  await expect(sw).toHaveAttribute('aria-disabled', 'true');
+  await expect(sw).toHaveAttribute('aria-checked', 'false', LIVE);
+  await expect(sw).not.toHaveAttribute('aria-busy', 'true');
+  expect(patches.n).toBe(1);
+  await expect(panel(page, b.deviceId)).toBeVisible();
+  await expect(sw).toBeFocused();
+  await expect(page.getByTestId(`drive-chip-wp-${b.deviceId}`)).toHaveText('RW');
+});
+
+test('C8-04 Eject: "Ejecting…" while it runs, one POST on a double press, the panel stays, focus stays through empty', async ({ page, request }) => {
+  test.setTimeout(60_000);
+  const { orgId } = await signUpFresh(page);
+  const b = await loadedBoard(page, request, orgId, 'Bench', 1);
+  await page.goto('/library');
+  const posts = countRequests(page, 'POST', /^\/api\/devices\/[^/]+\/eject$/);
+  await slow(page, '**/api/devices/*/eject', 'POST');
+  await openPanel(page, b.deviceId);
+  const ej = page.getByTestId(`drive-eject-${b.deviceId}`);
+  await ej.dblclick();
+  await expect(ej).toHaveText('Ejecting…');
+  await expect(ej).toHaveAttribute('aria-busy', 'true');
+  await expect(chip(page, b.deviceId)).toHaveAttribute('data-phase', 'ejecting', LIVE);
+  await expect(page.getByTestId(`drive-entry-disk-${b.deviceId}`)).toHaveText(`Ejecting ${b.title}…`);
+  expect(posts.n).toBe(1);
+  await expect(panel(page, b.deviceId)).toBeVisible();
+  await expect(ej).toBeFocused();
+  // The board reports the drive empty: Eject turns off under the focus, and the focus stays on it.
+  expect((await request.post('/api/device/status', {
+    headers: authHeader(b.token), data: { mountedSha256: null, mountedDiskId: null },
+  })).status()).toBe(204);
+  await expect(page.getByTestId(`drive-entry-disk-${b.deviceId}`)).toHaveText('Drive empty', LIVE);
+  await expect(ej).toHaveAttribute('aria-disabled', 'true');
+  await expect(ej).toBeFocused();
+});
+
+test('C8-05 Next: one POST on a double press; when the button goes with the loading refresh, focus is on Eject', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const b = await loadedBoard(page, request, orgId, 'Bench', 2);
+  await page.goto('/library');
+  const posts = countRequests(page, 'POST', /^\/api\/devices\/[^/]+\/next$/);
+  await slow(page, '**/api/devices/*/next', 'POST');
+  await openPanel(page, b.deviceId);
+  const next = page.getByTestId(`drive-next-${b.deviceId}`);
+  await expect(next).toHaveAccessibleName('Next: disk 2 of 2');
+  await next.dblclick();
+  await expect(next).toHaveText('Switching…');
+  await expect(next).toHaveCount(0, LIVE);
+  await expect(page.getByTestId(`drive-entry-disk-${b.deviceId}`)).toHaveText(`Loading ${b.title}…`);
+  expect(posts.n).toBe(1);
+  await expect(page.getByTestId(`drive-eject-${b.deviceId}`)).toBeFocused();
+});
+
+test('C8-06 a dropped connection: the toast, and neither Eject nor Write-protect is left busy (Review Focus 5)', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const b = await loadedBoard(page, request, orgId, 'Bench', 1);
+  await page.goto('/library');
+  await page.route('**/api/devices/*/eject', (r) => r.abort());
+  await page.route('**/api/disks/*', (r) => (r.request().method() === 'PATCH' ? r.abort() : r.continue()));
+  await openPanel(page, b.deviceId);
+  const toast = page.locator('[data-sonner-toast]').filter({ hasText: 'Could not reach the server' });
+  const ej = page.getByTestId(`drive-eject-${b.deviceId}`);
+  await ej.click();
+  await expect(toast.first()).toBeVisible();
+  await expect(ej).toHaveText('Eject');
+  await expect(ej).not.toHaveAttribute('aria-busy', 'true');
+  await expect(ej).not.toHaveAttribute('aria-disabled', 'true');
+  const sw = page.getByTestId(`drive-protect-${b.deviceId}`);
+  await sw.click();
+  await expect(toast).toHaveCount(2);
+  await expect(sw).not.toHaveAttribute('aria-busy', 'true');
+  await expect(sw).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(sw).toHaveAttribute('aria-checked', 'true');
+  await expect(panel(page, b.deviceId)).toBeVisible();
+});
+
+test('C8-08 focus: open -> the popup; Escape and a blank press -> the chip; the search field keeps its focus; Tab past the gear closes', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await onlineBoard(page, request, 'Bench');
+  await page.goto('/library');
+  const c = chip(page, deviceId);
+  const p = panel(page, deviceId);
+  await hydrated(page, `drive-chip-${deviceId}`);
+
+  await c.click();
+  await expect(p).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(p).toHaveCount(0);
+  await expect(c).toBeFocused();
+
+  await c.click();
+  const pt = await blankHeaderPoint(page);
+  await page.mouse.click(pt.x, pt.y);
+  await expect(p).toHaveCount(0);
+  await expect(c).toBeFocused();
+
+  // Review Focus 2: a press on the search field closes the panel and leaves the caret there.
+  await c.click();
+  await expect(p).toBeVisible();
+  await page.getByTestId('search-input').click();
+  await expect(p).toHaveCount(0);
+  await expect(page.getByTestId('search-input')).toBeFocused();
+
+  // Keyboard: Enter opens on the popup too; Tab walks the panel to the gear, and one more Tab leaves and closes it.
+  await c.focus();
+  await page.keyboard.press('Enter');
+  await expect(p).toBeFocused();
+  const gear = page.getByTestId(`drive-settings-${deviceId}`);
+  for (let i = 0; i < 10 && !(await gear.evaluate((el) => el === document.activeElement)); i++) await page.keyboard.press('Tab');
+  await expect(gear).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(p).toHaveCount(0);
+  expect(await page.evaluate(() => {
+    const a = document.activeElement;
+    return !!a && a !== document.body && !a.closest('[data-drive-panel]');
+  })).toBe(true);
+});
+
+test('C8-09 live: the board goes offline under an open panel -> "Offline" and the line, panel open, focus unchanged', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const b = await loadedBoard(page, request, orgId, 'Attic', 1);
+  await page.goto('/library');
+  await openPanel(page, b.deviceId);
+  await expect(panel(page, b.deviceId)).toBeFocused();
+  await setDevice(b.deviceId, { lastSeenAt: new Date(Date.now() - 60 * 60_000) });
+  await expect(page.getByTestId(`drive-entry-status-${b.deviceId}`)).toHaveText('Offline', LIVE);
+  await expect(page.getByTestId(`drive-entry-offline-${b.deviceId}`))
+    .toHaveText(/^Offline, last seen \d+[smhd] ago\. Changes reach it when it reconnects\.$/);
+  await expect(panel(page, b.deviceId)).toBeVisible();
+  await expect(panel(page, b.deviceId)).toBeFocused();
+});
+
+test('C8-10 two boards at 1280: the chip\'s panel is its board\'s card only; "+1" holds the other under one head row', async ({ page, request }) => {
+  await signUpFresh(page);
+  const a = await onlineBoard(page, request, 'Aa C8 first');
+  const b = await onlineBoard(page, request, 'Ab C8 second');
+  await page.goto('/library');
+  await expect(chip(page, b.deviceId)).toBeHidden();
+  const more = page.getByTestId('drive-chip-more');
+  await expect(more.locator('span:visible')).toHaveText('+1');
+  await openPanel(page, a.deviceId);
+  await expect(panel(page, a.deviceId).locator('section[data-testid^="drive-entry-"]')).toHaveCount(1);
+  await expect(panel(page, a.deviceId).getByTestId(`drive-entry-${a.deviceId}`)).toBeVisible();
+  await page.keyboard.press('Escape');
+  await hydrated(page, 'drive-chip-more');
+  await more.click();
+  const list = page.getByTestId('drive-chip-more-menu');
+  await expect(list).toHaveAccessibleName('Drives');
+  await expect(list.getByTestId('drive-panel-manage')).toHaveCount(1);
+  await expect(list.locator('section[data-testid^="drive-entry-"]')).toHaveCount(1);
+  await expect(list.getByTestId(`drive-entry-${b.deviceId}`)).toBeVisible();
+});
+
+test('C8-14 an offline board: every action allowed, and Eject sends its request', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const b = await loadedBoard(page, request, orgId, 'Attic', 2);
+  await setDevice(b.deviceId, { lastSeenAt: new Date(Date.now() - 60 * 60_000) });
+  await page.goto('/library');
+  await openPanel(page, b.deviceId);
+  for (const id of ['protect', 'next', 'eject']) {
+    await expect(page.getByTestId(`drive-${id}-${b.deviceId}`)).not.toHaveAttribute('aria-disabled', 'true');
+  }
+  const posts = countRequests(page, 'POST', /^\/api\/devices\/[^/]+\/eject$/);
+  await page.getByTestId(`drive-eject-${b.deviceId}`).click();
+  await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'Eject requested' }).first()).toBeVisible();
+  expect(posts.n).toBe(1);
+});
+
+test('C8-16 the board is deleted while its panel is open: focus lands on the wordmark, not <body> (Review Focus 3)', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await onlineBoard(page, request, 'Doomed');
+  await page.goto('/library');
+  await openPanel(page, deviceId);
+  await expect(panel(page, deviceId)).toBeFocused();
+  await getDb().delete(devices).where(eq(devices.id, deviceId));
+  await expect(chip(page, deviceId)).toHaveCount(0, LIVE);
+  await expect(page.getByTestId('wordmark-home')).toBeFocused();
+});
