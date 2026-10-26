@@ -1,12 +1,14 @@
-# webadf
+# WebFloppy
 
-An Amiga disk library that puts a disk in a real Amiga's floppy drive over WiFi.
+An Amiga disk library that puts a disk in a real Amiga's floppy drive over WiFi. (The repository keeps the
+project's first name, `webadf`.)
 
 Two halves that work together:
 
 - **A web app** for keeping Amiga disk images. Upload them, have them identified
   against TOSEC, OpenRetro and Demozoo, organise them into collections, browse and
-  edit the files inside a disk, and rewind a disk to any earlier version.
+  edit the files inside a disk, rewind a disk to any earlier version, and send files to
+  and from the Amiga.
 - **A drive replacement.** An RP2350 board plugs into the Amiga's floppy connector,
   behaves like a DD or HD floppy drive, and plays whichever disk you pick in the web app.
   When the Amiga saves, the changes go back to the library.
@@ -25,7 +27,13 @@ in the web app as new versions of the disk.
 *Rev B, designed by Shanshe: 34-pin floppy header, floppy power connector, OLED
 display, buzzer, a 4-pin header (J4), and a Pimoroni Pico Plus 2 W.
 The KiCad project is in `wifi-floppy/hardware/`; check it with `pnpm hw:verify` before
-ordering. The current bench board is rev A2.*
+ordering. Rev B has been the bench board since October 2026.*
+
+## Bugs and ideas
+
+Found a bug, or want something WebFloppy does not do yet? Anyone can open an issue at
+<https://github.com/stefanskotte/webadf/issues>, for a bug report or a feature request alike. For a bug, say what
+you did, what you saw and, for a board, which firmware it runs (Devices shows it).
 
 ## Quickstart
 
@@ -42,8 +50,8 @@ You need the board, a USB cable, a phone and an account on <https://webadf.verce
 2. Download `wifi-floppy-install-<version>.uf2` from the
    [latest release](https://github.com/stefanskotte/webadf/releases/latest) and drag it onto
    that drive. The board writes it and restarts by itself; the drive disappears.
-3. In the web app, open **Devices** and press **Pair a device** to get a code (it lasts 10
-   minutes). On your phone, join the board's setup Wi-Fi, `wifi-floppy-XXXX` (password
+3. In the web app, open **Devices**, press **Pair a device**, give the board a name and press
+   **Get a code** (the code lasts 10 minutes). On your phone, join the board's setup Wi-Fi, `wifi-floppy-XXXX` (password
    `wififloppy`). The setup page opens by itself, or browse to `http://192.168.4.1/`. Enter
    your Wi-Fi network, its password and the code.
 4. Done. The board joins your network and appears under Devices. Firmware updates now arrive
@@ -85,52 +93,71 @@ detail, and what to do when a join fails, is in
 
 The pictures come from a demo account holding freely redistributable disks: scene demos and
 freeware tools. `PORT=3100 pnpm screenshots` takes them again (see
-`e2e/screenshots.shots.ts`).
+`e2e/screenshots.shots.ts`); every email address on them is masked, and the board is a
+stand-in called A500.
 
-![The library: seven titles in a grid, with Demozoo covers for the demos](docs/screenshots/library.png)
+![The library: seven titles in a grid, Demozoo pictures on the demos, and the 9 Fingers card outlined with a DF0 pill](docs/screenshots/library.png)
 
 *The library. Titles are identified against TOSEC and Demozoo; the 9 Fingers card is
-highlighted because its disk is in a drive.*
+outlined and carries a DF0 pill because its disk is in a drive.*
 
-![A title page for 9 Fingers: Demozoo facts and screenshots, then its two disks with Download, Browse, Eject and Mount](docs/screenshots/game.png)
+![The header's drive menu open under the A500 chip: the board online with 9 Fingers disk 1 of 2, a write-protect switch, Next: disk 2, Eject and a settings gear](docs/screenshots/drive-menu.png)
+
+*The drive menu in the header: from any page, see what each board is playing, switch write
+protection, step to the next disk or eject.*
+
+![A title page for 9 Fingers: a Demo tag, two disks, Demozoo facts and five screenshots, and the Demozoo link panel](docs/screenshots/game.png)
 
 *A title page: facts and screenshots from Demozoo, then each disk with its actions.*
 
-![The file browser for the SysInfo disk: volume details, the file tree, and a history panel with three versions](docs/screenshots/disk-files.png)
+![The file browser for the SysInfo disk: volume details and free space, the file list with Notes and ReadMe marked new, and a history panel with three versions](docs/screenshots/disk-files.png)
 
-*Inside a disk. Each edit made here is a new version in the history panel at the bottom.*
+*Inside a disk. Each edit made here is a new version in the history panel.*
 
-![The Devices page: one board, A500, online, with a drive-front card whose display shows 9 Fingers loaded](docs/screenshots/devices.png)
+![The Devices page: the A500 board online and up to date, its drive drawing with the OLED showing 9 Fingers, the disk in the drive, and the Second drive (DF1) choices](docs/screenshots/devices.png)
 
-*A board on the Devices page. The card's display shows what the board's OLED shows.*
+*A board on the Devices page. The drawing's screen shows what the board's OLED shows.*
 
-![The display editor open on the A500 card: a 128x32 preview and a list of elements with size options](docs/screenshots/display-editor.png)
+![The Board display editor: a 128x32 preview, preview states, panel size and rotation, and a list of elements with 1x and 2x sizes](docs/screenshots/display-editor.png)
 
 *The display editor: choose the panel, then which elements the OLED draws and where.*
 
-![The Help page, open at Boards: pairing, online and offline, firmware updates](docs/screenshots/help.png)
+![The Upload page: Add disks to the library and Send files to the Amiga side by side, and a Staging list of eight disks added to the library](docs/screenshots/upload.png)
+
+*Upload: disks into the library, and files to and from the Amiga, through one staging list.*
+
+![Help, open at Boards: topics in four groups on the left, the Boards topic on pairing, online and offline, and firmware updates](docs/screenshots/help.png)
 
 *Help explains the parts that are not obvious.*
 
-<img src="docs/screenshots/library-phone.png" width="300" alt="The library on a phone: one column of controls, two columns of covers, and the tab bar at the bottom">
+![Settings: Preferences, Sign-in and password with the address masked, Firmware updates, About this server and Delete account](docs/screenshots/settings.png)
 
-*The library at phone width.*
+*Settings, About this server included.*
+
+<img src="docs/screenshots/library-phone.png" width="260" alt="The library on a phone: the board's chip at the top, two columns of cards, and a bottom tab bar with Library, Devices, Upload and More"> <img src="docs/screenshots/phone-more.png" width="260" alt="The same phone with More open: Help, Settings, About this server and Sign out">
+
+*On a phone or a tablet (below 1024 px wide), the pages move to a tab bar at the bottom; More holds the rest.*
+
+![The admin Overview: tiles for users, organizations, titles, blobs, boards online and invites, boards by firmware, and Needs attention, with the address masked](docs/screenshots/admin.png)
+
+*The server admin's Overview, for whoever runs the copy.*
 
 ## Features
 
 ### Library
 
-- Upload `.adf`, `.adz`, `.dms` and `.hfe`; drop `.lha`, `.lzh` and `.zip` archives onto a disk
-  to pick files out of them.
+- Upload `.adf`, `.adz`, `.dms`, `.dmz` and `.hfe`, or paste a URL to one (or to a `.zip` or `.lha`
+  of them, up to 20 MB). Drop `.lha`, `.lzh` and `.zip` archives onto a disk to pick files out of them.
 - HD (1.76 MB) ADFs are recognised and tagged HD, and are disks like any other: browsed
-  and edited in the browser, with full history. Blank HD disks can be made from the
-  New disk panel.
+  and edited in the browser, with full history.
 - Each unique disk is stored once, however many times it is uploaded.
 - Disks are identified against TOSEC, OpenRetro and Demozoo, and grouped into titles
   with cover art, screenshots, publisher, year and type.
-- Collections, search as you type, and a layout that works on a phone.
+- A grid of cards or a condensed table, a page at a time; collections (folders in the table),
+  disk sets for multi-disk games, and search from the header.
 - Create a blank formatted disk: 880 KB or 1.76 MB, OFS or FFS.
 - Download any disk as an ADF.
+- Works on a phone: below 1024 px the pages move to a tab bar at the bottom.
 
 ### Inside a disk
 
@@ -146,31 +173,43 @@ highlighted because its disk is in a drive.*
 
 - Set up from a phone: the board opens a WiFi setup page, you enter your network and
   a pairing code from the web app, and it joins your library.
-- Mount and eject from the web app, from the drive chips in the header, or by
-  tapping an NFC tag.
+- Mount and eject from the web app, from the drive menu in the header, or by
+  tapping an NFC tag. Next disk steps a multi-disk game on, and the board loads that disk
+  ahead of time.
 - Reads and writes on a real Amiga. Saves reach the library as new disk versions,
   including saves made while the board was offline.
-- Works as DF0 or alongside a second drive as DF1.
+- Works as DF0, beside a real DF1. Or the board is DF1 as well: holding the next disk of the
+  set, or any disk you mount there.
 - Plays HD disks: the board tells the Amiga it is an HD drive while an HD disk is in.
   Needs Kickstart 3.0 or later. Playing needs firmware 1.4.1 or later (the web app
   refuses to mount an HD disk on older firmware and says so); saving to an HD disk
   needs 1.5.0 (1.4.x keeps HD write-protected on the board whatever the web app
   says).
 - Write protection can be switched from the web app while the disk is in the drive.
-- OLED status display: WiFi strength, what it is doing, the disk's name and the
-  current track. An activity LED blinks on reads.
+- OLED status display (128x32 or 128x64, SSD1306 or SH1106): WiFi strength, what it is
+  doing, the disk's name and the current track. A display editor in the web app picks what
+  it shows and where. An activity LED blinks on reads.
 - Updates its own firmware from the web app. Releases are signed, a failed update
   falls back to the previous firmware, and the board never updates while a disk is
   in the drive.
 
+### Amiga networking
+
+- The board can put the Amiga on your network as DF1, with Rob Smith's PaulaNET driver
+  (used with his permission) and a TCP/IP stack such as AmiTCP_NG or Roadshow. The driver disk
+  comes from the board itself.
+- Send files from your computer, or from a disk in your library, to a folder on the Amiga;
+  send files from the Amiga back to the web app. Both go through the Upload page's staging list.
+
 ### NFC tags
 
 - Tap a tag on the drive to mount its disk. Tapping another tag swaps disks; tapping
-  the one already in the drive does nothing.
-- Write any disk to a tag from its library card or game page: click the NFC icon,
-  tap a tag on the drive, and the result appears in the browser.
+  the one already in the drive does nothing. A Next-disk card steps to the next disk.
+- Write any disk to a tag from the ⋯ menu on its library card, or the NFC button on a
+  disk, then tap a tag on the drive; the result appears in the browser.
 - A tag only ever mounts disks from your own library.
-- Reader: HW-147C (Si512), on the board's I2C bus next to the OLED.
+- Reader: HW-147C (Si512), on the board's I2C bus next to the OLED. PN532 modules work
+  from firmware 1.18.0 and are still being tested.
 
 ## How it works
 
@@ -210,16 +249,17 @@ deltas.
 | File editing inside a disk, blank disks, drag and drop | live |
 | Disk history: browse and restore any version | live, restore verified on hardware |
 | Device: setup portal, WiFi, TLS, pairing | verified on hardware |
-| Mount and eject from the browser and the drive chips | verified on hardware |
+| Mount and eject from the browser and the header's drive menu | verified on hardware |
 | Reading on a real Amiga (Workbench 3.1, games) | verified on hardware |
 | Writing on a real Amiga, saves reach the library | verified on hardware |
 | Second drive (DF1) alongside the board | verified on hardware |
 | HFE, including long-track (Turrican) | verified on hardware; weak-bit titles not yet tested |
 | HD disks, read-only (Kickstart 3.0+) | verified on hardware (firmware 1.4.1, Kickstart 3.1) |
 | HD disks: Amiga saves, history, browser editing, blank HD disks | shipped in firmware 1.5.1; bench steps 4-7 owed (HANDOFF 3ao) |
-| Firmware updates from the web app | verified on hardware (current release: 1.13.0) |
+| Firmware updates from the web app | verified on hardware (current release: 1.21.1) |
 | Self-hosting with Docker (compose stack, GHCR image, amd64 + arm64) | live (web-1.1.0); verified with a board and an A500 on an openmediavault NAS |
 | NFC: tap to mount, write tags from the web | verified on hardware |
+| Amiga networking (PaulaNET as DF1), files to and from the Amiga | verified on hardware (A500) |
 | Rev B board | built and running (Shanshe's design, `wifi-floppy/hardware/`) |
 
 ## Repository
@@ -260,7 +300,7 @@ Vercel Blob. On Vercel the token is required: the app refuses to fall back to lo
 To run your own copy, use the Docker stack in [docs/self-hosting.md](docs/self-hosting.md)
 (Quickstart, [Path B](#path-b-your-own-server-self-hosted-docker)); the commands above are for development.
 
-A self-hosted copy needs no extra setting: Settings → About this server reads
+A self-hosted copy needs no extra setting: Settings → About this server (`/about` leads there) reads
 **Self-hosted** unless `SELFHOSTED=false`, which only our own deployment sets. A Docker build
 without `.git` can pass `GIT_SHA` so About this server shows the commit.
 
