@@ -6,11 +6,13 @@
 // removes is THIS org's claim on those bytes -- the entitlement -- which is
 // what makes the blob reclaimable later. src/lib/blob-gc.ts decides when.
 
-import { and, eq, inArray, ne, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, ne, notInArray, or, sql } from 'drizzle-orm';
+import { atomic } from '@/db/atomic';
 import { getDb } from '@/db';
 import { games, disks, entitlements } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
-import { diskVersions } from '@/db/schema/disk-history';
+import { diskVersions, diskWriteSessions } from '@/db/schema/disk-history';
+import { planBulkDelete, type KeptTitle, type PlanGame } from '@/lib/bulk-delete-plan';
 import { clearDesired } from '@/lib/mount';
 import { ejectDf1Holders } from '@/lib/df1-store';
 import { planReorder } from '@/lib/disk-set';
@@ -196,4 +198,103 @@ export async function deleteGame(orgId: string, gameId: string): Promise<DeleteR
 
   const releasedSha256 = await releaseEntitlements(orgId, shas);
   return { diskIds, gameDeleted: true, ejected, releasedSha256 };
+}
+
+/** A bulk delete's preview (`dryRun`, spec §3.3 step 3): what OK would do now, changing nothing. */
+export interface BulkDeletePreview {
+  deletable: { titles: number; disks: number };
+  /** The deletable titles, in request order. */
+  titles: PlanGame[];
+  kept: KeptTitle[];
+  missing: string[];
+}
+
+/** What a bulk delete did (spec §3.3 step 6). */
+export interface BulkDeleteResult {
+  deleted: string[];
+  diskIds: string[];
+  kept: KeptTitle[];
+  missing: string[];
+  ejected: string[];
+  releasedSha256: string[];
+}
+
+/**
+ * Library multi-select's Delete (spec 2026-10-26 §3.3, Rulings 12, 13, 15, 18, 19).
+ *
+ * Every id is org-checked in ONE read; an id not returned is `missing`, absent or another tenant's alike, and never
+ * written to. A title a board holds (planBulkDelete) is KEPT and reported, never ejected -- unlike deleteGame. The
+ * rest goes all or nothing in one transaction, with deleteGame's own drift guard on disks.org_id (D-5-5) set-wise.
+ * Entitlements are released once over the union of the deleted shas, by the existing releaseEntitlements. A blob is
+ * never deleted.
+ *
+ * The late-holder safety net is ejectHolders, which normally does nothing (the held titles were taken out). It is
+ * passed the deletable disk ids, and by sha only the shas no other disk of this org uses: ejectHolders also matches
+ * desiredSha256, and a sha shared with a kept or an unselected title would eject the board holding THAT one
+ * (Plan ruling, Review Focus 1).
+ */
+export async function deleteGames(orgId: string, ids: string[], opts: { dryRun: true; now: number }): Promise<BulkDeletePreview>;
+export async function deleteGames(orgId: string, ids: string[], opts: { dryRun?: false; now: number }): Promise<BulkDeleteResult>;
+export async function deleteGames(
+  orgId: string, ids: string[], opts: { dryRun?: boolean; now: number },
+): Promise<BulkDeletePreview | BulkDeleteResult> {
+  const db = getDb();
+  const ownedRows = await db.select({ id: games.id, title: games.title, year: games.year }).from(games)
+    .where(and(eq(games.orgId, orgId), inArray(games.id, ids)));
+  const byId = new Map(ownedRows.map((g) => [g.id, g] as const));
+  const owned = ids.filter((id) => byId.has(id)).map((id) => byId.get(id)!);
+  const missing = ids.filter((id) => !byId.has(id));
+  const ownedIds = owned.map((g) => g.id);
+
+  const diskRows = ownedIds.length === 0 ? [] : await db
+    .select({ id: disks.id, gameId: disks.gameId, diskNo: disks.diskNo, sha256: disks.sha256 }).from(disks)
+    .where(and(eq(disks.orgId, orgId), inArray(disks.gameId, ownedIds)));
+  const boards = await db.select({
+    id: devices.id, name: devices.name, desiredSha256: devices.desiredSha256, mountedSha256: devices.mountedSha256,
+    lastSeenAt: devices.lastSeenAt, desiredDiskId: devices.desiredDiskId, mountedDiskId: devices.mountedDiskId,
+    df1DiskId: devices.df1DiskId, df1Sha256: devices.df1Sha256,
+  }).from(devices).where(eq(devices.orgId, orgId));
+  const sessions = diskRows.length === 0 ? [] : await db
+    .select({ deviceId: diskWriteSessions.deviceId, deviceName: devices.name, diskId: diskWriteSessions.diskId })
+    .from(diskWriteSessions)
+    .innerJoin(devices, and(eq(devices.id, diskWriteSessions.deviceId), eq(devices.orgId, orgId)))
+    .where(inArray(diskWriteSessions.diskId, diskRows.map((d) => d.id)));
+
+  const plan = planBulkDelete(owned, diskRows, boards, sessions, opts.now);
+
+  if (opts.dryRun) {
+    return {
+      deletable: { titles: plan.deletable.length, disks: plan.deletableDiskIds.length },
+      titles: plan.deletable,
+      kept: plan.kept,
+      missing,
+    };
+  }
+  if (plan.deletable.length === 0) {
+    return { deleted: [], diskIds: [], kept: plan.kept, missing, ejected: [], releasedSha256: [] };
+  }
+
+  const deletableIds = plan.deletable.map((g) => g.id);
+  const sharedRows = plan.deletableShas.length === 0 ? [] : await db.selectDistinct({ sha256: disks.sha256 }).from(disks)
+    .where(and(eq(disks.orgId, orgId), inArray(disks.sha256, plan.deletableShas), notInArray(disks.gameId, deletableIds)));
+  const shared = new Set(sharedRows.map((r) => r.sha256));
+  const ejected = await ejectHolders(orgId, plan.deletableDiskIds, plan.deletableShas.filter((s) => !shared.has(s)));
+
+  const [goneDisks, goneGames] = await atomic((tx) => [
+    tx.delete(disks).where(and(eq(disks.orgId, orgId), inArray(disks.gameId, deletableIds)))
+      .returning({ id: disks.id, sha256: disks.sha256 }),
+    tx.delete(games).where(and(eq(games.orgId, orgId), inArray(games.id, deletableIds),
+      sql`not exists (select 1 from ${disks} "d" where "d"."game_id" = ${games.id})`)).returning({ id: games.id }),
+  ]) as [{ id: string; sha256: string }[], { id: string }[]];
+
+  const releasedSha256 = await releaseEntitlements(orgId, [...new Set(goneDisks.map((d) => d.sha256))]);
+  const gone = new Set(goneGames.map((g) => g.id));
+  return {
+    deleted: deletableIds.filter((id) => gone.has(id)),
+    diskIds: goneDisks.map((d) => d.id),
+    kept: plan.kept,
+    missing,
+    ejected,
+    releasedSha256,
+  };
 }
