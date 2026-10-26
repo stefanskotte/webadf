@@ -226,7 +226,8 @@ test('C7-03 search at 390: the button opens the field focused, the panel sits un
   expect(p.x + p.width).toBeLessThanOrEqual(390);
   // The phone scrim is there and colourless (C5 deferred: iOS tap-away); a tap on it closes the panel.
   await expect(page.getByTestId('search-scrim')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-  await page.touchscreen.tap(195, 700);
+  const sb = (await page.getByTestId('search-scrim').boundingBox())!;
+  await page.touchscreen.tap(sb.x + sb.width / 2, sb.y + (sb.height - 90) * 0.75);   // clear of the tab bar, which sits above the scrim
   await expect(panel).toBeHidden();
   // Cancel clears, closes the row, and hands focus back to the button.
   await input.tap();
@@ -256,4 +257,77 @@ test('C7-03b search at 390: a tapped result navigates once, the row closes, focu
   await expect(page.getByTestId('search-input')).toBeHidden();
   await expect(page.getByTestId('search-open')).toBeVisible();
   expect(await page.evaluate(() => document.activeElement !== document.body)).toBe(true);
+});
+
+// ---- Search, fix round 1 -----------------------------------------------------------------------------------
+
+test('C7-03c the phone scrim sits under the tab bar: with the panel open, one tap on Devices navigates', async ({ page }) => {
+  const u = await signUpFresh(page);
+  const run = runTag();
+  await seedDisk(u.orgId, { title: `Phone Bar ${run}`, diskNo: 1, sha256: randomBytes(32).toString('hex') });
+  await page.goto('/library');
+  await hydrated(page, 'search-open');
+  await page.getByTestId('search-open').tap();
+  await page.getByTestId('search-input').fill(`Phone Bar ${run}`);
+  await expect(page.getByTestId('search-panel')).toBeVisible();
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Devices' }).tap();
+  await expect(page).toHaveURL(/\/devices/);
+  await expect(page.getByTestId('search-panel')).toBeHidden();
+});
+
+test('C7-03d a tap on the scrim closes the panel and does not reach the link underneath', async ({ page }) => {
+  const u = await signUpFresh(page);
+  const run = runTag();
+  for (let i = 0; i < 4; i++) {
+    await seedDisk(u.orgId, { title: `Phone Under ${run} ${i}`, diskNo: 1, sha256: randomBytes(32).toString('hex') });
+  }
+  await page.goto('/library');
+  await hydrated(page, 'search-open');
+  await page.getByTestId('search-open').tap();
+  await page.getByTestId('search-input').fill(`zzz-none-${run}`);
+  const panel = page.getByTestId('search-panel');
+  await expect(panel).toBeVisible();
+  const pb = (await panel.boundingBox())!;
+  // A page link whose centre lies below the panel, under the scrim.
+  const target = await page.evaluate((minY) => {
+    for (const a of Array.from(document.querySelectorAll('a[href^="/games/"]:not([data-testid="search-result"])'))) {
+      const r = a.getBoundingClientRect();
+      const cy = r.y + r.height / 2;
+      if (cy > minY + 8 && cy < window.innerHeight - 80 && r.width > 0) return { x: r.x + r.width / 2, y: cy, href: a.getAttribute('href') };
+    }
+    return null;
+  }, pb.y + pb.height);
+  expect(target).not.toBeNull();
+  const url = page.url();
+  await page.touchscreen.tap(target!.x, target!.y);
+  await expect(panel).toBeHidden();
+  await page.waitForTimeout(500);
+  expect(page.url()).toBe(url);
+});
+
+test('C7-03e the open row closes when the route changes', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/library');
+  await hydrated(page, 'search-open');
+  await page.getByTestId('search-open').tap();
+  await expect(page.getByTestId('search-input')).toBeFocused();
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Devices' }).tap();
+  await expect(page).toHaveURL(/\/devices/);
+  await expect(page.getByTestId('search-input')).toBeHidden();
+  await expect(page.getByTestId('search-open')).toBeVisible();
+});
+
+test('C7-03f widening to sm closes the row; narrowing with the field focused moves focus to the button', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/library');
+  await hydrated(page, 'search-open');
+  await page.getByTestId('search-open').tap();
+  await page.setViewportSize({ width: 800, height: 844 });
+  await expect(page.getByTestId('search-input')).toBeVisible();
+  await expect(page.getByTestId('search-open')).toBeHidden();
+  await page.getByTestId('search-input').focus();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByTestId('search-input')).toBeHidden();
+  await expect(page.getByTestId('search-open')).toBeVisible();
+  await expect(page.getByTestId('search-open')).toBeFocused();
 });

@@ -13,7 +13,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { SearchIcon } from 'lucide-react';
 import { Link } from '@/components/shell/link';
 import { DiskIcon } from '@/components/ui/disk-icon';
@@ -90,6 +90,13 @@ export function SearchBox() {
   // Below sm the field lives behind the search-open button and opens as a row over the header (C7 spec §2.4, Ruling 6);
   // from sm it always shows, as before. The max-sm: classes below read this state, so it is inert from sm.
   const [phoneOpen, setPhoneOpen] = useState(false);
+  // A route change closes the row (adjusting state during render, not in an effect).
+  const pathname = usePathname();
+  const [seenPath, setSeenPath] = useState(pathname);
+  if (seenPath !== pathname) {
+    setSeenPath(pathname);
+    if (phoneOpen) setPhoneOpen(false);
+  }
 
   const [q, setQ] = useState('');
   const [results, setResults] = useState<SearchResults>(EMPTY_RESULTS);
@@ -208,6 +215,21 @@ export function SearchBox() {
 
   // Unmounting mid-flight must not leave a fetch running against a dead component.
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  // Crossing the sm line: widening closes the phone row (the field is always shown from sm); narrowing while the
+  // desktop field has focus hands focus to the opener, because the field is about to be hidden.
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 639.98px)');
+    function onChange(e: MediaQueryListEvent) {
+      if (e.matches) {
+        if (document.activeElement === inputRef.current) openerRef.current?.focus();
+      } else {
+        setPhoneOpen(false);
+      }
+    }
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
 
   // Global shortcuts: Cmd/Ctrl+K always focuses; `/` focuses UNLESS focus is
   // already inside another input, textarea or contenteditable -- otherwise
@@ -381,7 +403,16 @@ export function SearchBox() {
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKeyDown}
             onFocus={() => { setFocused(true); if (q.trim() !== '') setOpen(true); }}
-            onBlur={() => { setFocused(false); setOpen(false); }}
+            onBlur={() => {
+              setFocused(false);
+              setOpen(false);
+              // The viewport shrank below sm under a focused desktop field: it is now display:none, and focus would
+              // fall to <body>. (The matchMedia listener below covers the engines that fire it first.)
+              const el = inputRef.current;
+              if (el && !phoneOpen && el.getClientRects().length === 0 && window.matchMedia('(max-width: 639.98px)').matches) {
+                openerRef.current?.focus();
+              }
+            }}
             // w-48 (not w-56) from sm: at w-56 the admin shell's centred pill and this input overlapped by 15px at
             // 1280. 44 px tall below sm (a finger). The focus ring is a box-shadow in the full --ring (>= 3:1, WCAG
             // 1.4.11).
@@ -408,8 +439,15 @@ export function SearchBox() {
       {panelOpen && (
         // From sm a light scrim (C5 spec §5.3); below sm the same scrim, colourless, so a tap outside the panel
         // closes it (C7 Ruling 7: iOS's tap-away did not blur). Not a focus trap: this is a combobox popup.
-        <div data-testid="search-scrim" aria-hidden onPointerDown={() => setOpen(false)}
-             className="fixed inset-x-0 bottom-0 top-[60px] z-40 bg-transparent sm:bg-(--search-scrim) lg:top-[72px]" />
+        // Below sm it closes on click, not pointerdown: the scrim must still be the click target when the touch's
+        // synthesized click arrives, or the click falls through to the link underneath. mousedown is cancelled there so
+        // the input does not blur (and unmount the scrim) first. z-30: under the tab bar (z-40), so a tab still takes
+        // its first tap. From sm, pointerdown closes as in C5.
+        <div data-testid="search-scrim" aria-hidden
+             onPointerDown={() => { if (!isPhone()) setOpen(false); }}
+             onMouseDown={(e) => { if (isPhone()) e.preventDefault(); }}
+             onClick={() => setOpen(false)}
+             className="fixed inset-x-0 bottom-0 top-[60px] z-30 bg-transparent sm:z-40 sm:bg-(--search-scrim) lg:top-[72px]" />
       )}
 
       {panelOpen && (
