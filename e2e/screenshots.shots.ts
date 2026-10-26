@@ -4,11 +4,14 @@ import { existsSync, mkdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { disks, games } from '@/db/schema/catalog';
+import { blobs, disks, games } from '@/db/schema/catalog';
 import { invites } from '@/db/schema/devices';
+import { demozooImport } from '@/db/schema/demozoo';
 import { deleteUserCascade } from '@/lib/admin-delete';
+import { listReleases } from '@/lib/firmware-releases';
+import { sweep } from '@/lib/tosec-sweep';
 import { mintInviteCode, signedUpOrgIds, libRows, stagingReady } from './helpers';
-import { pairDevice, cleanupSeeded } from './device-helpers';
+import { pairDevice, cleanupSeeded, hydrated } from './device-helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
 
 /**
@@ -18,10 +21,14 @@ import { signInAsSuperAdmin } from './admin-helpers';
  *
  * Not part of `pnpm e2e` (see playwright.screenshots.config.ts). Never point it
  * at a real tenant: it signs up its own @example.test account, uploads freely
- * redistributable disks from adf-archive/ through the real ingest page, lets
- * the app's own identification sweep title them (TOSEC, Demozoo), accepts the
- * Demozoo suggestions through the review page, and deletes the account and
- * everything it owned afterwards.
+ * redistributable disks from adf-archive/ through the real ingest page, runs
+ * the app's own identification sweep until they are titled (TOSEC, Demozoo; see
+ * identifyDemo), accepts the Demozoo suggestions through the review page, and
+ * deletes the account and everything it owned afterwards.
+ *
+ * Public pictures from the live database: every shot masks any email address
+ * (the demo's own included), the board is the spec's own BOARD_NAME, and the
+ * admin Overview also masks its Needs-attention rows.
  *
  * The disks: Amiga Test Kit (Keir Fraser, public domain), WhichAmiga and
  * SysInfo (freeware), and four scene demos (9 Fingers, State of the Art,
@@ -45,8 +52,18 @@ const UPLOADS = [
   'Globaltr.adf',
   'RayOfHopeII.adf',
 ];
-/** A real firmware version, so the card does not offer an update or read as ahead. */
-const FIRMWARE = '1.11.0+g2671ef7';
+/** The demo board's name. Every picture that can show a board shows this one, never a real board's. */
+const BOARD_NAME = 'A500';
+/**
+ * How long identification may take. The sweep works through a queue shared by
+ * every library on the live database, and an e2e DAT import (admin-scan, tosec-scan)
+ * puts every blob back in it: ~300 blobs drain in about 8 minutes. A run that hits
+ * this limit has still moved the queue on (every verdict is stamped), so the next
+ * run starts further along.
+ */
+const IDENTIFY_DEADLINE_MS = 240_000;
+/** Each in-process sweep pass. Short, so the deadline is checked often. */
+const SWEEP_PASS_MS = 30_000;
 
 let demoUserId: string | null = null;
 let inviteCode: string | null = null;
@@ -98,6 +115,9 @@ function squeeze(file: string) {
  * app's background is fixed to the viewport, so a fullPage shot ends in a band
  * of bare white.
  */
+/** Any text that reads as an email address. */
+const EMAIL_TEXT = /[^\s@]+@[^\s@]+/;
+
 async function shoot(page: Page, name: string, opts: { tall?: boolean; mask?: Locator[] } = {}) {
   // Let covers decode and toasts fade before the picture is taken.
   await page.waitForLoadState('networkidle').catch(() => {});
@@ -111,7 +131,10 @@ async function shoot(page: Page, name: string, opts: { tall?: boolean; mask?: Lo
   }
   await page.waitForTimeout(800);
   const file = path.join(OUT, `${name}.png`);
-  await page.screenshot({ path: file, mask: opts.mask, maskColor: '#F6F2E9' });
+  // The pictures are public and the database is the live one: no address is ever drawn, not even the demo's own.
+  // Every shot masks any text that reads as an email address, on top of what the caller masks.
+  const mask = [page.getByText(EMAIL_TEXT), ...(opts.mask ?? [])];
+  await page.screenshot({ path: file, mask, maskColor: '#F6F2E9' });
   if (opts.tall && before) await page.setViewportSize(before);
   squeeze(file);
 }
@@ -121,6 +144,56 @@ async function gameIdByTitle(orgId: string, like: string): Promise<string> {
     .where(and(eq(games.orgId, orgId), sql`${games.title} ilike ${like}`));
   if (!r[0]) throw new Error(`no title like ${like}`);
   return r[0].id;
+}
+
+/**
+ * The demo org's disks still waiting for TOSEC matching or for Demozoo. A Demozoo
+ * verdict counts only when it is newer than both the last Demozoo import and the
+ * blob's latest TOSEC verdict -- the same rule demozooMatchPhase selects by.
+ */
+async function undecided(orgId: string): Promise<{ match: number; demozoo: number }> {
+  const db = getDb();
+  const [imp] = await db.select({ appliedAt: demozooImport.appliedAt }).from(demozooImport).limit(1);
+  const appliedAt = imp?.appliedAt ?? null;
+  const r = await db.select({
+    match: sql<number>`count(*) filter (where ${blobs.matchCheckedAt} is null)::int`,
+    demozoo: appliedAt
+      ? sql<number>`count(*) filter (where ${blobs.matchCheckedAt} is null or ${blobs.demozooCheckedAt} is null
+          or ${blobs.demozooCheckedAt} < ${appliedAt} or ${blobs.demozooCheckedAt} < ${blobs.matchCheckedAt})::int`
+      : sql<number>`0`,
+  }).from(blobs)
+    .where(sql`${blobs.sha256} in (select ${disks.sha256} from ${disks} where ${disks.orgId} = ${orgId})`);
+  return r[0];
+}
+
+/**
+ * Identify the demo's disks the way the app does: the same sweep() the upload's after() hook,
+ * the 03:00 cron and Admin > Scan > Run now run, called here in-process until this org's own
+ * disks are decided.
+ *
+ * Waiting for the upload's own after() sweep is not enough, and was the reason the flow used
+ * to stop here: that sweep is one 45 s pass over a queue shared by every library on the live
+ * database, in no particular order. Whenever an e2e run has imported a DAT (which re-queues
+ * every blob, by design), that pass is spent on other blobs and the demo's eight wait for
+ * the nightly cron. Every sweep write is idempotent and stamped, so the extra passes only do
+ * the cron's work early.
+ */
+async function identifyDemo(orgId: string) {
+  const started = Date.now();
+  let left = await undecided(orgId);
+  while (left.match + left.demozoo > 0) {
+    const elapsed = Date.now() - started;
+    if (elapsed > IDENTIFY_DEADLINE_MS) {
+      throw new Error(`screenshots: after ${Math.round(elapsed / 1000)} s, ${left.match} demo disk(s) still wait for TOSEC `
+        + `and ${left.demozoo} for Demozoo -- the shared queue is long (an e2e DAT import re-queues every blob). `
+        + 'Each run moves it on; run again.');
+    }
+    const r = await sweep(SWEEP_PASS_MS);
+    console.log(`screenshots: sweep pass matched ${r.matched}, none ${r.none}, demozoo applied ${r.demozooApplied}`
+      + ` suggested ${r.demozooSuggested}, done ${r.done}`);
+    left = await undecided(orgId);
+  }
+  console.log(`screenshots: demo identified in ${Math.round((Date.now() - started) / 1000)} s`);
 }
 
 test('capture the README screenshots', async ({ page, request, browser }) => {
@@ -163,13 +236,10 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   if (beforeUpload) await page.setViewportSize(beforeUpload);
 
   // --- the app's own identification -----------------------------------------
-  // Upload ends with an after() sweep (src/lib/ingest-complete.ts) that
-  // matches TOSEC and Demozoo. Wait for it to retitle the disks.
-  await expect.poll(async () => {
-    const r = await getDb().select({ n: sql<number>`count(*)::int` }).from(games)
-      .where(and(eq(games.orgId, orgId), sql`${games.metadataSource} <> 'filename'`));
-    return r[0].n;
-  }, { timeout: 150_000, intervals: [3_000] }).toBeGreaterThanOrEqual(2);
+  await identifyDemo(orgId);
+  const titled = await getDb().select({ n: sql<number>`count(*)::int` }).from(games)
+    .where(and(eq(games.orgId, orgId), sql`${games.metadataSource} <> 'filename'`));
+  console.log(`screenshots: ${titled[0].n} title(s) identified by TOSEC or Demozoo`);
 
   // Demozoo suggestions are accepted on the review page, as a person would.
   await page.goto('/library');
@@ -200,7 +270,7 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   // --- a board, mounted and reporting ---------------------------------------
   const { deviceId, token } = await pairDevice(page, request);
   // Registration names a board after its MAC; a person renames it.
-  const rename = await page.request.patch(`/api/devices/${deviceId}`, { data: { alias: 'A500' } });
+  const rename = await page.request.patch(`/api/devices/${deviceId}`, { data: { alias: BOARD_NAME } });
   expect(rename.ok()).toBe(true);
   const fingers = await gameIdByTitle(orgId, '9 fingers%');
   const fingerDisks = await getDb().select({ id: disks.id, sha256: disks.sha256, diskNo: disks.diskNo })
@@ -209,6 +279,9 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   const mount = await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId: mounted.id } });
   expect(mount.status()).toBe(200);
   const { version } = await mount.json();
+  // The newest release this org may install, so the card neither offers an update nor reads as ahead.
+  const firmware = (await listReleases(orgId))[0]?.version;
+  if (!firmware) throw new Error('screenshots: no firmware release is published -- the Devices card would read as unknown');
   // What a running board reports with each poll. Sent again before the
   // Devices pictures, so the card reads Online (seen in the last minute).
   const report = async () => {
@@ -216,7 +289,7 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
       headers: { Authorization: `Bearer ${token}` },
       data: {
         mountedSha256: mounted.sha256, mountedDiskId: mounted.id, version,
-        firmwareVersion: FIRMWARE, rssi: -58, psramFree: 6_200_000,
+        firmwareVersion: firmware, rssi: -58, psramFree: 6_200_000,
         playsHd: true, nfcReader: 'present', displayLayouts: true, displayVersion: 0,
         secondDrive: 'off', driveVersion: 0,
       },
@@ -228,7 +301,7 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   // --- the pictures ---------------------------------------------------------
   await page.goto('/library');
   await expect(page.getByTestId('game-card').first()).toBeVisible();
-  await shoot(page, 'library');
+  await shoot(page, 'library', { tall: true });
 
   const phone = await browser.newContext({
     storageState: await page.context().storageState(),
@@ -238,7 +311,21 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   await phonePage.goto('/library');
   await expect(phonePage.getByTestId('game-card').first()).toBeVisible();
   await shoot(phonePage, 'library-phone');
+  // Below 1024 px the header's links move to a bottom tab bar; More holds Help, Settings, About and Sign out.
+  await hydrated(phonePage, 'nav-more');
+  await phonePage.getByTestId('nav-more').tap();
+  await expect(phonePage.getByTestId('nav-more-menu')).toBeVisible();
+  await shoot(phonePage, 'phone-more');
   await phone.close();
+
+  // The header's drive menu: the board's chip, opened (C8).
+  await expect(page.getByTestId(`drive-chip-name-${deviceId}`)).toHaveText(BOARD_NAME);
+  await hydrated(page, `drive-chip-${deviceId}`);
+  await page.getByTestId(`drive-chip-${deviceId}`).click();
+  await expect(page.getByTestId(`drive-chip-menu-${deviceId}`)).toBeVisible();
+  await shoot(page, 'drive-menu');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId(`drive-chip-menu-${deviceId}`)).toBeHidden();
 
   await page.goto(`/games/${fingers}`);
   await shoot(page, 'game');
@@ -278,7 +365,6 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
     mask: [
       page.getByTestId('admin-email'),
       page.getByTestId('attention-row'),
-      page.getByText(/[^\s@]+@[^\s@]+/),
     ],
   });
   await page.setViewportSize({ width: 1440, height: 900 });

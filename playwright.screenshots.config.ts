@@ -20,9 +20,10 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
-  // Uploading, then waiting for the app's own identification sweep, then
-  // eight pages. Well over the suite's 30 s.
-  timeout: 360_000,
+  // Uploading, then up to 4 minutes of identification sweeps (the
+  // IDENTIFY_DEADLINE_MS in the spec), then a dozen pages. Well over the
+  // suite's 30 s, and inside the 9-minute ceiling a single run is held to.
+  timeout: 480_000,
   use: {
     baseURL: BASE_URL,
     viewport: { width: 1440, height: 900 },
