@@ -231,13 +231,15 @@ describe('the compact control below xl (C8 spec §8, Rulings 5, 6)', () => {
   });
   it('the face between lg and xl: the name shrinks (min-w-0), the disk and tag are hidden; the xl chip is untouched', () => {
     const html = chips([base]);
-    expect(openTag(html, 'drives-compact-name')).toContain('lg:min-w-0');
-    expect(openTag(html, 'drives-compact-name')).toContain('lg:shrink');
+    // Below xl at every width (final review M1: a 320 px phone spilled), and no shrink-0 to beat it.
+    expect(openTag(html, 'drives-compact-name')).toMatch(/\smin-w-0\s/);
+    expect(openTag(html, 'drives-compact-name')).toMatch(/\sshrink\s/);
+    expect(openTag(html, 'drives-compact-name')).not.toMatch(/\sshrink-0\s/);
     expect(openTag(html, 'drives-compact-disk')).toContain('lg:hidden');
     expect(openTag(html, 'drives-compact-wp')).toContain('lg:hidden');
     expect(openTag(html, 'drives-compact')).toContain('lg:max-w-[120px]');
     for (const id of ['name', 'disk', 'wp']) expect(openTag(html, `drive-chip-${id}-dev-a`), id).not.toContain('lg:hidden');
-    expect(openTag(html, 'drive-chip-name-dev-a')).not.toContain('lg:min-w-0');
+    expect(openTag(html, 'drive-chip-name-dev-a')).not.toContain('min-w-0');
   });
   it('two or more boards: "Drives n", a count of boards', () => {
     const html = chips(two);

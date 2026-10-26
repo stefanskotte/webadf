@@ -109,12 +109,13 @@ function ChipFace({ chip, ids }: { chip: DriveChip; ids: 'chip' | 'compact' }) {
   const tag = protectTag(chip);
   const tid = (part: 'name' | 'disk' | 'wp') => (ids === 'chip' ? `drive-chip-${part}-${chip.id}` : `drives-compact-${part}`);
   // The compact control only (the xl chip is untouched): from lg to xl it is 120 px wide and the face is the dot, a name
-  // that shrinks to fit, and the chevron; the disk and the tag are in the title and the panel. The phone row keeps all.
+  // that shrinks to fit, and the chevron; the disk and the tag are in the title and the panel. The phone row keeps all,
+  // and its name shrinks too (final review M1: a 320 px phone with a long name and the tag spilled past the border).
   const c = ids === 'compact';
   return (
     <>
       <StatusDot online={chip.online} />
-      <span className={`max-w-[6rem] shrink-0 truncate font-semibold${c ? ' lg:min-w-0 lg:shrink xl:min-w-[auto] xl:shrink-0' : ''}`}
+      <span className={c ? 'max-w-[6rem] min-w-0 shrink truncate font-semibold xl:min-w-[auto] xl:shrink-0' : 'max-w-[6rem] shrink-0 truncate font-semibold'}
             data-testid={tid('name')}>{chip.shortName}</span>
       <span className={`min-w-0 flex-1 truncate text-left font-mono text-[13px] text-(--muted)${c ? ' lg:hidden xl:block' : ''}`}
             data-testid={tid('disk')}>
@@ -142,7 +143,7 @@ type CloseWhy = string | null;
 type Panel = {
   open: boolean;
   onOpenChange: (open: boolean, details: Popover.Root.ChangeEventDetails) => void;
-  /** Close for a link press: the destination's own focus rule applies, so focus is not sent back to the trigger. */
+  /** Close for a link press; focus returns to the trigger, which survives the navigation (final review I1). */
   close: () => void;
   finalFocus: () => boolean;
 };
@@ -150,11 +151,13 @@ type Panel = {
 /**
  * Ruling 20 (Base UI's finalFocus function gets the interaction type, not the reason -- C8 plan ruling): after an
  * outside press the pressed element keeps the focus if it took it (the search field), otherwise the trigger gets it;
- * after Tab out ('focus-out') or a link, focus is already where it should be; otherwise the trigger.
+ * after Tab out ('focus-out') focus is already where it should be; otherwise -- a link press included -- the trigger,
+ * which lives in the layout and survives the navigation (final review I1: Next 16 moves no focus on navigation, so
+ * "the destination's own rule" left it on <body>).
  */
 function finalFocusFor(why: RefObject<CloseWhy>, trigger: RefObject<HTMLButtonElement | null>): boolean {
   const reason = why.current;
-  if (reason === 'navigate' || reason === 'focus-out') return false;
+  if (reason === 'focus-out') return false;
   if (reason !== 'outside-press') return true;
   requestAnimationFrame(() => {
     const a = document.activeElement;
@@ -475,7 +478,7 @@ export function DriveCard({ chip, close }: { chip: DriveChip; close: () => void 
             <span className="min-w-0 truncate">
               {line.kind === 'title' && chip.canGoTo && disk?.gameId ? (
                 <Link href={`/games/${disk.gameId}`} data-testid={`drive-goto-${chip.id}`} onClick={closeOnPlainClick(close)}
-                      className="underline-offset-2 hover:underline">{line.title}</Link>
+                      className="underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:decoration-2">{line.title}</Link>
               ) : (
                 // No link (Plan ruling): the words carry Go to disk's id, marked off, so it still reads as unavailable.
                 <span data-testid={`drive-goto-${chip.id}`} data-disabled="">{line.kind === 'title' ? line.title : line.text}</span>

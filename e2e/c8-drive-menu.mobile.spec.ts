@@ -123,3 +123,22 @@ test('C8-18 a long title at 390: the title truncates, "disk n of N" stays whole 
   expect(m.countRight).toBeLessThanOrEqual(m.lineRight + 0.5);
   expect(m.countWidth).toBeGreaterThanOrEqual(m.countScroll - 0.5);
 });
+
+test('C8-21 one board at 320 with a long name and the WP tag: the compact face stays inside its own box (final review M1)', async ({ page, request }) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  const { orgId } = await signUpFresh(page);
+  await loadedBoard(page, request, orgId, 'A rather long board name', 1);   // protected: the WP tag exists
+  await page.goto('/library');
+  const trigger = page.getByTestId('drives-compact');
+  await expect(page.getByTestId('drives-compact-wp')).toBeVisible();
+  const right = (await trigger.boundingBox())!;
+  const spill = await trigger.evaluate((el) => {
+    const r = el.getBoundingClientRect().right;
+    return [...el.querySelectorAll<HTMLElement>('*')]
+      .filter((c) => c.getClientRects().length > 0)
+      .map((c) => c.getBoundingClientRect().right - r)
+      .filter((d) => d > 0.5);
+  });
+  expect(spill, `children past the border at ${right.x + right.width}`).toEqual([]);
+  await noSideways(page);
+});

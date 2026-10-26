@@ -325,6 +325,18 @@ test('C8-09 live: the board goes offline under an open panel -> "Offline" and th
   await expect(panel(page, b.deviceId)).toBeFocused();
 });
 
+test('C8-20 pressing Manage devices closes the panel and leaves focus on the chip, never on <body> (final review I1)', async ({ page, request }) => {
+  await signUpFresh(page);
+  const b = await onlineBoard(page, request, 'Ac C8 manage');
+  await page.goto('/library');
+  await openPanel(page, b.deviceId);
+  await panel(page, b.deviceId).getByTestId('drive-panel-manage').press('Enter');
+  await expect(page).toHaveURL(/\/devices/);
+  await expect(panel(page, b.deviceId)).toBeHidden();
+  await expect.poll(() => page.evaluate(() => document.activeElement === document.body), LIVE).toBe(false);
+  await expect(chip(page, b.deviceId)).toBeFocused();
+});
+
 test('C8-10 two boards at 1280: the chip\'s panel is its board\'s card only; "+1" holds the other under one head row', async ({ page, request }) => {
   await signUpFresh(page);
   const a = await onlineBoard(page, request, 'Aa C8 first');
@@ -372,7 +384,7 @@ test('C8-16 the board is deleted while its panel is open: focus lands on the wor
   await expect(page.getByTestId('wordmark-home')).toBeFocused();
 });
 
-test('C8-17 a live update that removes Next leaves focus on the popup, not on Eject (spec 6/7: live updates never move focus)', async ({ page, request }) => {
+test('C8-19 a live update that removes Next leaves focus on the popup, not on Eject (spec 6/7: live updates never move focus)', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
   const b = await loadedBoard(page, request, orgId, 'Bench', 2);
   await page.goto('/library');
