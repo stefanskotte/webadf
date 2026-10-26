@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { signUpFresh, mintInviteCode } from './helpers';
 import { signInAsSuperAdmin, SUPERADMIN_EMAIL, gotoAdminUserRow, seedUsers, cleanupSeededUsers, ADMIN_PER_PAGE } from './admin-helpers';
-import { cleanupSeeded, cleanupTestReleases, hydrated, publishTestRelease, publishTestReleaseWithBlob } from './device-helpers';
+import { cleanupSeeded, cleanupTestReleases, hydrated, seedDevices, publishTestRelease, publishTestReleaseWithBlob } from './device-helpers';
 import { ALPHABET } from '@/lib/invites';
 
 // Phase C6 (spec 2026-10-25-phase-c6-admin-design.md §10.4): the admin layout. The DB is the live one: every
@@ -55,23 +55,26 @@ test('every admin page opens with the Admin sections tabs, the current one marke
  * frame on screen (a delayed RSC response shows nothing until it lands), so the frame is rendered in isolation: the
  * real AdminLoading markup is put in place of the landed page's body, under the real header with the real CSS.
  */
-async function loadingVsLanded(page: Page) {
-  // Users: its one-line subtitle is the same height at 390 px as at 1280 (Overview's wraps).
-  await page.goto('/admin/users');
+const OVERVIEW_LOADING = './src/app/(admin)/admin/(overview)/loading';
+
+async function loadingVsLanded(page: Page, path = '/admin/users', module = './src/app/(admin)/loading') {
+  // Users: its one-line subtitle is the same height at 390 px as at 1280. Overview's wraps at 390, so it has its own
+  // loading frame (the route group admin/(overview)).
+  await page.goto(path);
   await page.getByTestId('admin-sections').waitFor();
   const landed = (await page.getByTestId('admin-sections').boundingBox())!.y;
   // Playwright's own JSX transform cannot compile the component, so a child process renders it (tsx handles the
   // alias through tsconfig paths).
   const html = execFileSync('npx', ['tsx', '-e',
     "import { createElement } from 'react'; import { renderToStaticMarkup } from 'react-dom/server'; " +
-    "import L from './src/app/(admin)/loading'; process.stdout.write(renderToStaticMarkup(createElement(L)));",
+    "import L from '" + module + "'; process.stdout.write(renderToStaticMarkup(createElement(L)));",
   ], { encoding: 'utf8' });
   await page.evaluate((markup) => {
     const header = document.querySelector('[data-testid=admin-header]')!;
     while (header.nextSibling) header.nextSibling.remove();
     header.insertAdjacentHTML('afterend', markup);
   }, html);
-  const loading = (await page.getByTestId('page-skeleton').locator('.h-\\[42px\\]').boundingBox())!.y;
+  const loading = (await page.getByTestId('page-skeleton').locator('.w-\\[420px\\]').boundingBox())!.y;
   return { loading, landed };
 }
 
@@ -80,6 +83,13 @@ for (const [w, h] of [[1280, 800], [390, 844]] as const) {
     await page.setViewportSize({ width: w, height: h });
     await signInAsSuperAdmin(page);
     const { loading, landed } = await loadingVsLanded(page);
+    expect(Math.abs(loading - landed), `loading ${loading} vs landed ${landed}`).toBeLessThanOrEqual(2);
+  });
+  // Carried from the Task 1 review: Overview's subtitle wraps to 2-3 lines at 390, so it has its own frame.
+  test(`the Overview loading frame puts the tabs where the landed Overview does, at ${w}px`, async ({ page }) => {
+    await page.setViewportSize({ width: w, height: h });
+    await signInAsSuperAdmin(page);
+    const { loading, landed } = await loadingVsLanded(page, '/admin', OVERVIEW_LOADING);
     expect(Math.abs(loading - landed), `loading ${loading} vs landed ${landed}`).toBeLessThanOrEqual(2);
   });
 }
@@ -571,4 +581,84 @@ test('Promote on the default filter: the row turns into a Release at once, and C
   await page.getByTestId('fw-promote-done-close').click();
   await expect(dialog).toHaveCount(0);
   await expect(page.locator('h1')).toBeFocused();
+});
+
+// ---- Phone (spec §9: only what the boards and today's specs pin; the full pass is C7) -------------------------
+
+test('at 390 px: the bottom bar holds the Main nav, tabs scroll inside themselves, nothing scrolls the page sideways', async ({ page }) => {
+  test.setTimeout(120_000);
+  await signInAsSuperAdmin(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const noSideways = async () =>
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  for (const [path] of PAGES) {
+    await page.goto(path);
+    await expect(page.getByTestId('admin-sections')).toBeVisible();
+    const main = page.getByTestId('admin-header').getByRole('navigation', { name: 'Main' });
+    expect((await main.boundingBox())!.y).toBeGreaterThan(844 - 120);   // the fixed bottom bar
+    const clamp = (await page.getByTestId('admin-sections').locator('xpath=..').boundingBox())!;
+    expect(clamp.x + clamp.width).toBeLessThanOrEqual(390 - 16 + 1);
+    await noSideways();
+  }
+
+  await page.goto('/admin');
+  const box = (id: string) => page.locator(`a:has(> [data-testid="${id}"])`).boundingBox();
+  const [a, b, c] = [(await box('count-users'))!, (await box('count-orgs'))!, (await box('count-games'))!];
+  expect(Math.abs(a.y - b.y)).toBeLessThan(1);                     // two tiles per row
+  expect(c.y).toBeGreaterThan(a.y + a.height - 1);
+  const fw = (await page.getByRole('heading', { name: 'Boards by firmware' }).boundingBox())!;
+  const att = (await page.getByRole('heading', { name: 'Needs attention' }).boundingBox())!;
+  expect(att.y).toBeGreaterThan(fw.y);                              // the cards stack
+
+  // Users stacks its rows below sm (its own test below); Invites still scrolls inside its card.
+  await page.goto('/admin/invites');
+  expect(await page.locator('section[aria-label="Invite codes"] > div').first().evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(true);
+
+  await page.goto('/admin/firmware');
+  const first = page.getByTestId('firmware-release-row').first();
+  await expect(first.locator('[data-fw-part="right"]')).toBeVisible();
+  const left = (await first.locator('[data-fw-part="left"]').boundingBox())!;
+  const right = (await first.locator('[data-fw-part="right"]').boundingBox())!;
+  expect(right.y).toBeGreaterThan(left.y + left.height - 1);       // a column below md
+  await noSideways();
+});
+
+// ---- Phone, carried from the Task 1-3 reviews ---------------------------------------------------------------
+
+test('at 390 px: an Overview firmware row keeps a usable bar (the label and count stack above it)', async ({ page }) => {
+  test.setTimeout(90_000);
+  const u = await signUpFresh(page);
+  await seedDevices(u.orgId, 1, '0.0.0+e2e-c6-bar');
+  await page.context().clearCookies();
+  await signInAsSuperAdmin(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/admin');
+  const row = page.locator('[data-testid="fw-dist-row"][data-version="0.0.0+e2e-c6-bar"]');
+  await expect(row).toBeVisible();
+  const bar = (await row.locator('[data-fw-bar]').boundingBox())!;
+  const label = (await row.locator('> span').first().boundingBox())!;
+  expect(bar.width, 'the bar is at least 120 px').toBeGreaterThanOrEqual(120);
+  expect(bar.y, 'the bar sits below the label').toBeGreaterThan(label.y + label.height - 1);
+  const o = await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+  expect(o).toBe(true);
+});
+
+test('at 390 px: Users rows stack, so Delete… is inside the viewport without scrolling the card sideways', async ({ page }) => {
+  test.setTimeout(90_000);
+  const u = await signUpFresh(page);
+  await page.context().clearCookies();
+  await signInAsSuperAdmin(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoAdminUserRow(page, u.email);
+  const row = page.locator(`[data-testid="admin-user-row"][data-email="${u.email}"]`);
+  await expect(row.locator('[data-testid^="delete-user-"]')).toBeVisible();
+  const del = (await row.locator('[data-testid^="delete-user-"]').boundingBox())!;
+  expect(del.x).toBeGreaterThanOrEqual(0);
+  expect(del.x + del.width, 'Delete… ends inside the 390 px viewport').toBeLessThanOrEqual(390);
+  expect(await page.locator('section[aria-label="Users"] > div').first().evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(false);
+  // It is still a table to a screen reader, and the desktop columns come back at 1280.
+  await expect(page.locator('section[aria-label="Users"]').getByRole('row').first()).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(page.locator('section[aria-label="Users"] th')).toHaveCount(7);
+  await expect(page.locator('section[aria-label="Users"] th').first()).toBeVisible();
 });

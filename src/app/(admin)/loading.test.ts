@@ -22,3 +22,12 @@ describe('AdminLoading (C6 spec §1.7, Ruling 37)', () => {
     expect(html).not.toContain('sm:h-[34px]');
   });
 });
+
+describe('Overview loading frame (C6 Task 7)', () => {
+  it('reserves the two wrapped subtitle lines below lg and one line from lg', async () => {
+    const { default: OverviewLoading } = await import('./admin/(overview)/loading');
+    const html = renderToStaticMarkup(createElement(OverviewLoading));
+    expect(html).toContain('mt-1 h-[42px] lg:h-[21px] w-72');
+    expect(html).toContain('h-[42px] w-[420px] max-w-full');   // the tabs bone is unchanged
+  });
+});

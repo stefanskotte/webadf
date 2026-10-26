@@ -8,7 +8,9 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Admin · Users' };
 
 const PER_PAGE = 50;
-const NUM = 'px-3.5 py-3 text-right font-mono tabular-nums';
+// Below sm each row stacks (see the table's comment); a number then reads "Titles 3" from its data-label.
+const LABEL = 'max-sm:before:mr-1.5 max-sm:before:font-sans max-sm:before:text-[12px] max-sm:before:text-(--muted-2) max-sm:before:content-[attr(data-label)]';
+const NUM = `px-3.5 py-3 text-right font-mono tabular-nums max-sm:p-0 ${LABEL}`;
 
 /**
  * Pagination is required, not decorative: the database holds thousands of users (nearly all of them e2e accounts),
@@ -36,33 +38,36 @@ export default async function AdminUsersPage({
       <AdminPageHead title="Users" subtitle={`${total} users · newest first · page ${page} of ${lastPage}`} />
       <div className={ADMIN_BODY}>
         {/* Still a real table (Ruling 8): header association, and getByRole('row') semantics. It scrolls sideways
-            inside the card on a narrow screen; the page does not. 760px is the seven columns at honest widths, and
-            only a floor: a long e2e address is one unbreakable token unless it wraps, which it does. */}
+            inside the card from sm up; the page does not. 760px is the seven columns at honest widths, and only a
+            floor: a long e2e address is one unbreakable token unless it wraps, which it does. Below sm (390 px) the
+            rows stack instead -- email, organization, then the figures with Delete… at the end of the line -- so the
+            action never sits past a sideways scroll. The roles are explicit because display:block drops a table's
+            semantics in some browsers; the header row stays for them and is visually hidden there. */}
         <section aria-label="Users" className="overflow-hidden rounded-[16px]"
                  style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-[14px]" style={{ color: 'var(--ink)' }}>
-              <thead>
-                <tr className="h-11 border-b text-[12px]" style={{ borderColor: 'var(--line)', color: 'var(--muted-2)' }}>
-                  <th scope="col" className="px-5 text-left font-medium">Email</th>
-                  <th scope="col" className="px-3.5 text-left font-medium">Organization</th>
-                  <th scope="col" className="w-[120px] px-3.5 text-left font-medium">Joined</th>
-                  <th scope="col" className="w-[70px] px-3.5 text-right font-medium">Titles</th>
-                  <th scope="col" className="w-[70px] px-3.5 text-right font-medium">Disks</th>
-                  <th scope="col" className="w-20 px-3.5 text-right font-medium">Boards</th>
-                  <th scope="col" className="w-[150px] px-3.5 text-right font-medium">Action</th>
+            <table role="table" className="w-full text-[14px] max-sm:block sm:min-w-[760px]" style={{ color: 'var(--ink)' }}>
+              <thead role="rowgroup" className="max-sm:sr-only">
+                <tr role="row" className="h-11 border-b text-[12px] max-sm:block" style={{ borderColor: 'var(--line)', color: 'var(--muted-2)' }}>
+                  <th role="columnheader" scope="col" className="px-5 text-left font-medium">Email</th>
+                  <th role="columnheader" scope="col" className="px-3.5 text-left font-medium">Organization</th>
+                  <th role="columnheader" scope="col" className="w-[120px] px-3.5 text-left font-medium">Joined</th>
+                  <th role="columnheader" scope="col" className="w-[70px] px-3.5 text-right font-medium">Titles</th>
+                  <th role="columnheader" scope="col" className="w-[70px] px-3.5 text-right font-medium">Disks</th>
+                  <th role="columnheader" scope="col" className="w-20 px-3.5 text-right font-medium">Boards</th>
+                  <th role="columnheader" scope="col" className="w-[150px] px-3.5 text-right font-medium">Action</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup" className="max-sm:block">
                 {rows.map((r) => {
                   // Server-side, on a page only admins see (Ruling 10): the allowlist never reaches a non-admin.
                   const isAdmin = isSuperAdminEmail(r.email);
                   return (
                     // The row keeps the countable testid plus a data-email hook; the email cell carries the per-email
                     // testid (one element cannot have both).
-                    <tr key={r.userId} data-testid="admin-user-row" data-email={r.email}
-                        className="border-b hover:bg-(--surface-2)" style={{ borderColor: 'var(--hairline)' }}>
-                      <td className="px-5 py-3" data-testid={`user-row-${r.email}`}>
+                    <tr key={r.userId} role="row" data-testid="admin-user-row" data-email={r.email}
+                        className="border-b hover:bg-(--surface-2) max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-4 max-sm:gap-y-1 max-sm:px-5 max-sm:py-3" style={{ borderColor: 'var(--hairline)' }}>
+                      <td role="cell" className="px-5 py-3 max-sm:basis-full max-sm:p-0" data-testid={`user-row-${r.email}`}>
                         <span className="flex flex-wrap items-center gap-2">
                           <span className="[overflow-wrap:anywhere]">{r.email}</span>
                           {isAdmin && (
@@ -73,18 +78,18 @@ export default async function AdminUsersPage({
                           )}
                         </span>
                       </td>
-                      <td className="px-3.5 py-3 [overflow-wrap:anywhere]" style={{ color: 'var(--muted)' }}>
+                      <td role="cell" className="px-3.5 py-3 [overflow-wrap:anywhere] max-sm:basis-full max-sm:p-0" style={{ color: 'var(--muted)' }}>
                         {/* Null when the organization bootstrap failed. Say so rather than rendering an empty cell --
                             this list is exactly where such an account should be visible. */}
                         {r.orgName ?? <span style={{ color: 'var(--amber-text)' }}>no organization</span>}
                       </td>
-                      <td className="px-3.5 py-3 font-mono text-[13px]" style={{ color: 'var(--muted)' }}>
+                      <td role="cell" className="px-3.5 py-3 font-mono text-[13px] max-sm:p-0" style={{ color: 'var(--muted)' }}>
                         {r.createdAt.toISOString().slice(0, 10)}
                       </td>
-                      <td className={NUM}>{r.games}</td>
-                      <td className={NUM}>{r.disks}</td>
-                      <td className={NUM}>{r.devices}</td>
-                      <td className="px-3.5 py-3 text-right">
+                      <td role="cell" data-label="Titles" className={NUM}>{r.games}</td>
+                      <td role="cell" data-label="Disks" className={NUM}>{r.disks}</td>
+                      <td role="cell" data-label="Boards" className={NUM}>{r.devices}</td>
+                      <td role="cell" className="px-3.5 py-3 text-right max-sm:ml-auto max-sm:p-0">
                         <DeleteUserDialog userId={r.userId} email={r.email} games={r.games} disks={r.disks}
                                           devices={r.devices} orgName={r.orgName} isAdmin={isAdmin} />
                       </td>

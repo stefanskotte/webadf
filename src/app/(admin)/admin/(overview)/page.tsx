@@ -85,7 +85,7 @@ export default async function AdminOverviewPage() {
               ) : distribution.map((row) => (
                 <div
                   key={row.version ?? '\u0000null'}
-                  className="grid grid-cols-[minmax(0,200px)_minmax(0,1fr)_60px] items-center gap-3.5 text-[13px]"
+                  className="grid grid-cols-[minmax(0,1fr)_60px] items-center gap-x-3.5 gap-y-1.5 text-[13px] sm:grid-cols-[minmax(0,200px)_minmax(0,1fr)_60px]"
                   data-testid="fw-dist-row"
                   data-version={row.version ?? ''}
                   data-count={row.count}
@@ -106,7 +106,8 @@ export default async function AdminOverviewPage() {
                       <span className="shrink-0 text-[12px]" style={{ color: 'var(--muted-2)' }}>{' · unrecognised'}</span>
                     )}
                   </span>
-                  <span aria-hidden className="h-2 overflow-hidden rounded-full" style={{ background: 'var(--track)' }}>
+                  {/* Below sm the bar drops under the label and count (order, col-span): beside a 200 px label it was 30 px wide. */}
+                  <span aria-hidden data-fw-bar className="order-last col-span-2 h-2 overflow-hidden rounded-full sm:order-none sm:col-span-1" style={{ background: 'var(--track)' }}>
                     <span className="block h-2"
                           style={{ width: `${Math.max(2, row.share * 100)}%`, background: row.current ? 'var(--bar-ok)' : 'var(--dash)' }} />
                   </span>
