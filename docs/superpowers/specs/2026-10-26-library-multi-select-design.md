@@ -48,7 +48,7 @@ therefore cleared **explicitly** when it must go (Ruling 4), never left to an un
 
 - **The icon.** It is a `.seg`-style icon button **`library-select-toggle`** in the page header's actions, directly
   before `ViewToggle`. It uses lucide `ListChecks`, 16 px, with `aria-label="Select titles"`, `aria-pressed` true or
-  false, and the tooltip `title="Select titles"`. Its size matches `ViewToggle`: 44×40 below sm, 36×32 from sm. It
+  false, and the tooltip `title="Select titles"`. Its size matches `ViewToggle`: 44×44 below sm (the C7 `.seg-item` 44 px floor), 36×32 from sm. It
   appears only when the grid or table shows at least one title, so not on the empty states and not on the
   `CategoryOverview` fall-through.
 - **Pressed on**, it does three things. The **selection bar** (§1.3) appears at the top of the grid or table column. A
@@ -323,7 +323,7 @@ inside `maxDuration` at 1,000 ids.
 
 ## 6. Phone (390) and tablet (Ruling 20)
 
-- **Below sm (390).** The toggle is 44×40 in the header's wrapping actions. The bar is sticky at top, two lines (§1.3),
+- **Below sm (390).** The toggle is 44×44 in the header's wrapping actions. The bar is sticky at top, two lines (§1.3),
   with 44 px buttons. Grid cards keep two columns, and the checkbox sits in the cover corner with the whole card as the
   hit area. Table rows are `[28px 40px 1fr 44px]`, and the fact line stays. The `Modal` is full screen below sm (as
   shipped). The toast sits above the tab bar (C7).
