@@ -1480,11 +1480,19 @@ separately.
 
 **Current order (re-checked 2026-10-24):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d; C5 Settings/Help/Search/Sign in SHIPPED 2026-10-25, merge f6d1941; C6 Admin SHIPPED 2026-10-26, merge 8d943f7; C7 Phone + About into Settings SHIPPED 2026-10-26, merge 4efffae; C8 header drive menu SHIPPED 2026-10-26, merge 79d7c07; C9 GitHub page SHIPPED 2026-10-26** -- Phase C DONE; **library multi-select SHIPPED 2026-10-26, merge 4a435e9**; next: backlog -- admin resets any user's password, then the device/phone visual items) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
+**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d; C5 Settings/Help/Search/Sign in SHIPPED 2026-10-25, merge f6d1941; C6 Admin SHIPPED 2026-10-26, merge 8d943f7; C7 Phone + About into Settings SHIPPED 2026-10-26, merge 4efffae; C8 header drive menu SHIPPED 2026-10-26, merge 79d7c07; C9 GitHub page SHIPPED 2026-10-26** -- Phase C DONE; **library multi-select SHIPPED 2026-10-26, merge 4a435e9**; **admin password reset SHIPPED 2026-10-26, merge 8022d34**; next: backlog -- the device/phone visual items) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **Admin password reset -- SHIPPED 2026-10-26, merge 8022d34** (operator request; bounded, no spec). Admin › Users gets
+  "Password…" beside "Delete…". The ADMIN types their own current password (the throttled `stepUpGate`, same tally as
+  the firmware update), then the server generates a password (4x4 from an alphabet without I/O/l/0/1, ~93 bits),
+  sets it through better-auth's own hasher/adapter, deletes all the user's sessions, and answers it once (`no-store`)
+  with Copy. Rulings: no self-reset there (aria-disabled row, route 409 `self`; Settings › Account already asks for the
+  current password); an account with no credential row is refused, not given one; not emailed (self-host parity: mail
+  may be unconfigured); the user is not forced to change it. `POST /api/admin/users/[id]/password`, unit 12/12, e2e
+  `admin-password-reset.spec.ts` 2/2 + admin regression 50/50.
 - **Library multi-select -- SHIPPED 2026-10-26, merge 4a435e9** (spec `2026-10-26-library-multi-select-design.md`, 20
   rulings; 8 "Delete 12 titles" and 12 "bulk delete keeps titles a board holds" operator-confirmed). A "Select titles"
   toggle by the grid/table switch; boxes on cards and title rows; a sticky bar (All on this page, count incl. other
