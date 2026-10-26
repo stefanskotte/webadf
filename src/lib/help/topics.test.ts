@@ -72,6 +72,10 @@ describe('help topics say what the app really does', () => {
     for (const w of ['folder', '↑ Library', 'All titles', 'Library opens in', '⋯', 'version history', 'mount', 'NFC',
       'remove from the collection', 'delete', 'grid only']) expect(b).toContain(w);
   });
+  it('library describes selecting: the toggle, nothing until you confirm, titles in a drive kept (multi-select 2026-10-26)', () => {
+    const b = bodyText('library').replace(/\s+/g, ' ');
+    for (const w of ['Select titles', 'move or delete', 'nothing changes until you confirm', 'in a drive are kept']) expect(b).toContain(w);
+  });
   it('preferences names the default library view', () => {
     const b = bodyText('preferences');
     expect(b).toContain('Library opens in');

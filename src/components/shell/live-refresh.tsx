@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { isIdle, livePollDelay } from '@/lib/live-poll';
+import { isIdle, isTypingTarget, livePollDelay } from '@/lib/live-poll';
 
 /** What counts as "someone is using this tab". Passive, so scrolling stays smooth. */
 const INPUT_EVENTS = ['pointerdown', 'keydown', 'wheel', 'scroll', 'touchstart', 'pointermove'] as const;
@@ -15,15 +15,8 @@ const INPUT_EVENTS = ['pointerdown', 'keydown', 'wheel', 'scroll', 'touchstart',
 const POINTERMOVE_THROTTLE_MS = 30_000;
 
 function typing(): boolean {
-  const el = document.activeElement as HTMLElement | null;
-  if (!el) return false;
-  // The header search box (SearchBox) marks its input `data-live-ok`: it
-  // lives in the layout, focus can linger there for reasons that have
-  // nothing to do with mid-edit text (a result panel left open, a stray
-  // click), and that must not hold back live updates for the rest of the
-  // page the way a genuine rename field should.
-  if (el.hasAttribute('data-live-ok')) return false;
-  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
+  // See isTypingTarget: the search box's data-live-ok opt-out, and checkboxes/radios are not mid-edit.
+  return isTypingTarget(document.activeElement as HTMLInputElement | null);
 }
 
 /**

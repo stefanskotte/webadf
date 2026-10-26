@@ -278,3 +278,54 @@ export async function reorderCollectionGames(
   ));
   return plan;
 }
+
+/** What a bulk move did (spec 2026-10-26 library multi-select §3.2). */
+export interface MoveResult { added: number; alreadyThere: number; removedFrom: number; missing: string[] }
+
+/**
+ * Library multi-select's Move to collection (spec §3.2, Rulings 11, 15, 18): every owned title in `ids` goes into
+ * `to`, and inside a collection (`from`) leaves that one. The single move's own meaning, made plural: from All titles
+ * or Uncategorized it only adds, and a title is never taken out of its other collections.
+ *
+ * Null when `to` or `from` is not this org's collection (the route's 404), with nothing written. An id this org does
+ * not own -- absent or another tenant's, indistinguishable on purpose -- is reported in `missing` and never written.
+ *
+ * All or nothing in ONE transaction. getDb().transaction directly (what atomic() wraps): the new sort keys come from a
+ * max(sort_key) read inside the same transaction, after the target's existing members (Plan ruling). A title already
+ * in `to` is a quiet no-op (the composite PK, ON CONFLICT DO NOTHING), so running it twice gives the same end state.
+ */
+export async function moveGamesToCollection(
+  orgId: string, ids: string[], to: string, from?: string,
+): Promise<MoveResult | null> {
+  const db = getDb();
+  const wanted = from === undefined ? [to] : [to, from];
+  const owned = await db.select({ id: collections.id }).from(collections)
+    .where(orgFilter(collections, orgId, inArray(collections.id, wanted)));
+  const have = new Set(owned.map((c) => c.id));
+  if (!have.has(to) || (from !== undefined && !have.has(from))) return null;
+
+  const mine = new Set((await db.select({ id: games.id }).from(games)
+    .where(orgFilter(games, orgId, inArray(games.id, ids)))).map((g) => g.id));
+  const ownedIds = ids.filter((id) => mine.has(id));
+  const missing = ids.filter((id) => !mine.has(id));
+  if (ownedIds.length === 0) return { added: 0, alreadyThere: 0, removedFrom: 0, missing };
+
+  return db.transaction(async (tx) => {
+    const [{ maxSort }] = await tx
+      .select({ maxSort: sql<number>`coalesce(max(${collectionGames.sortKey}), -1)::int` })
+      .from(collectionGames)
+      .where(eq(collectionGames.collectionId, to));
+    const added = await tx.insert(collectionGames)
+      .values(ownedIds.map((gameId, i) => ({ collectionId: to, gameId, sortKey: maxSort + 1 + i })))
+      .onConflictDoNothing()
+      .returning({ gameId: collectionGames.gameId });
+    let removedFrom = 0;
+    if (from !== undefined) {
+      const gone = await tx.delete(collectionGames)
+        .where(and(eq(collectionGames.collectionId, from), inArray(collectionGames.gameId, ownedIds)))
+        .returning({ gameId: collectionGames.gameId });
+      removedFrom = gone.length;
+    }
+    return { added: added.length, alreadyThere: ownedIds.length - added.length, removedFrom, missing };
+  });
+}

@@ -24,7 +24,8 @@ export const HELP_TOPICS = {
   // and a row share: its items, their order, Mount in DF0 vs Mount…), view-toggle.tsx (keeps the collection), collection-provider.tsx onDragEnd (a row files on a
   // rail drop only; reorder and card-on-card sets are the grid's), preferences-form.tsx (Library opens in, Titles per
   // page), library-pager.tsx + library-paging.ts (?page=, Per page saves the preference, a new size or sort goes to
-  // page 1), library-table.ts (folders on page 1 only).
+  // page 1), library-table.ts (folders on page 1 only). Selecting: select-toggle.tsx, library-selection-bar.tsx, bulk-*-dialog.tsx,
+  // bulk-delete-plan.ts (held titles kept).
   library: {
     title: 'Library',
     short:
@@ -57,6 +58,10 @@ export const HELP_TOPICS = {
           <strong>Filing.</strong> Drag a card or a row onto a collection in the list, or use{' '}
           <em>Move to collection</em>. Reordering a
           collection, and making a disk set by dropping one title on another, are grid only.
+        </p>
+        <p>
+          <strong>Selecting.</strong> <em>Select titles</em> ticks titles to move or delete; nothing changes until you
+          confirm. Titles in a drive are kept.
         </p>
       </>
     ),

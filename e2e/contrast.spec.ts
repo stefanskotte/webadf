@@ -842,3 +842,49 @@ test('C8-15 the drive panel pairs are legible: Manage devices, the disk line, th
     ['Offline pill', `[data-testid="drive-entry-status-${off.deviceId}"]`],
   ]);
 });
+
+// Library multi-select (spec §5): the bar's text on ink, the box ring (3:1 non-text) on its surface disc, and the
+// ticked card's outline (3:1) against the page ground. The ring is --muted-2, not --line-strong (Plan ruling, Task 3).
+test('MS-C1 the selection pairs: the bar on ink, the box ring on its disc, the selected outline on the ground', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const tag = runTag();
+  const s1 = createHash('sha256').update(`ms-contrast-1-${tag}`).digest('hex');
+  const s2 = createHash('sha256').update(`ms-contrast-2-${tag}`).digest('hex');
+  const { gameId } = await seedDisk(orgId, { title: `Contrast sel ${tag.slice(-5)}`, diskNo: 1, sha256: s1 });
+  await seedDisk(orgId, { title: `Contrast two ${tag.slice(-5)}`, diskNo: 1, sha256: s2 });
+  // A collection to move to, so Move… is enabled (a disabled control is exempt and drawn at half opacity).
+  expect((await page.request.post('/api/collections', { data: { name: `Contrast ${tag.slice(-5)}` } })).status()).toBe(200);
+  await page.goto('/library');
+  await hydrated(page, 'library-select-toggle');
+  await page.getByTestId('library-select-toggle').click();
+  await hydrated(page, 'select-title', 'onChange');
+  await page.locator(`[data-testid="game-card"][data-game-id="${gameId}"] [data-testid="select-title"]`).click();
+  await page.mouse.move(0, 0);
+  await legible(page, 'select', [
+    ['count on ink', '[data-testid="library-selection-count"]'],
+    ['All on this page on ink', '[data-testid="library-selection-bar"] label'],
+    ['Move… on its fill', '[data-testid="library-bulk-move"]'],
+    ['Delete… on danger', '[data-testid="library-bulk-delete"]'],
+    ['Cancel on its fill', '[data-testid="library-selection-cancel"]'],
+  ]);
+  const c = await page.evaluate((id) => {
+    const rgb = (s: string) => (s.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+    const hex = (s: string) => { const h = s.trim().replace('#', ''); return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)); };
+    const boxes = [...document.querySelectorAll<HTMLInputElement>('[data-testid="game-card"] [data-testid="select-title"]')];
+    const unticked = boxes.find((b) => !b.checked)!;
+    const disc = unticked.parentElement!.parentElement!;
+    const card = document.querySelector<HTMLElement>(`[data-testid="game-card"][data-game-id="${id}"]`)!;
+    return {
+      ring: rgb(getComputedStyle(unticked).borderTopColor),
+      disc: rgb(getComputedStyle(disc).backgroundColor),
+      outline: rgb(getComputedStyle(card).outlineColor),
+      ground: hex(getComputedStyle(document.documentElement).getPropertyValue('--ground')),
+    };
+  }, gameId);
+  const ring = ratio(c.ring, c.disc);
+  const outline = ratio(c.outline, c.ground);
+  console.log(`select    box ring on its disc                  ${ring.toFixed(2)}:1`);
+  console.log(`select    selected outline on the ground        ${outline.toFixed(2)}:1`);
+  expect(ring).toBeGreaterThanOrEqual(3);
+  expect(outline).toBeGreaterThanOrEqual(3);
+});

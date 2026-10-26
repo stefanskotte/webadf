@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  isIdle, livePollDelay, LIVE_POLL_MS, LIVE_IDLE_POLL_MS, LIVE_IDLE_AFTER_MS,
+  isIdle, isTypingTarget, livePollDelay, LIVE_POLL_MS, LIVE_IDLE_POLL_MS, LIVE_IDLE_AFTER_MS,
 } from './live-poll';
 
 const NOW = 1_800_000_000_000;
@@ -28,5 +28,25 @@ describe('livePollDelay', () => {
     expect(LIVE_IDLE_AFTER_MS).toBe(600_000);
     expect(LIVE_IDLE_POLL_MS).toBe(30_000);
     expect(LIVE_POLL_MS).toBe(3_000);
+  });
+});
+
+describe('isTypingTarget', () => {
+  const el = (tagName: string, extra: Record<string, unknown> = {}) => ({
+    tagName, type: undefined, isContentEditable: false, hasAttribute: () => false, ...extra,
+  });
+  it('treats text inputs, textareas and contenteditable as typing', () => {
+    expect(isTypingTarget(el('INPUT', { type: 'text' }))).toBe(true);
+    expect(isTypingTarget(el('INPUT'))).toBe(true);
+    expect(isTypingTarget(el('TEXTAREA'))).toBe(true);
+    expect(isTypingTarget(el('DIV', { isContentEditable: true }))).toBe(true);
+  });
+  it('does not treat a focused checkbox or radio as typing (the library selection boxes)', () => {
+    expect(isTypingTarget(el('INPUT', { type: 'checkbox' }))).toBe(false);
+    expect(isTypingTarget(el('INPUT', { type: 'radio' }))).toBe(false);
+  });
+  it('keeps the data-live-ok opt-out and a null element', () => {
+    expect(isTypingTarget(el('INPUT', { type: 'text', hasAttribute: (a: string) => a === 'data-live-ok' }))).toBe(false);
+    expect(isTypingTarget(null)).toBe(false);
   });
 });
