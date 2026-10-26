@@ -1480,11 +1480,33 @@ separately.
 
 **Current order (re-checked 2026-10-24):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d; C5 Settings/Help/Search/Sign in SHIPPED 2026-10-25, merge f6d1941; C6 Admin SHIPPED 2026-10-26, merge 8d943f7**; next C7 Phone 390 + About into Settings, then C8 header drive menu (simple), C9 GitHub page, then library multi-select) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
+**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d; C5 Settings/Help/Search/Sign in SHIPPED 2026-10-25, merge f6d1941; C6 Admin SHIPPED 2026-10-26, merge 8d943f7; C7 Phone + About into Settings SHIPPED 2026-10-26, merge 4efffae**; next C8 header drive menu (simple), C9 GitHub page, then library multi-select) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **Phase C7 Phone layouts + About into Settings -- SHIPPED 2026-10-26** (merge 4efffae; spec
+  `docs/superpowers/specs/2026-10-26-phase-c7-phone-about-design.md` (30 rulings, measured at 390/640/768/1000), plan
+  `docs/superpowers/plans/2026-10-26-phase-c7-phone-about.md`). Below lg (not sm -- Ruling 1: the nav clipped from 640 to
+  1023 px) both shells are one 60 px row plus a four-tab bottom bar (Library, Devices, Upload, More; More holds Help,
+  Settings, About this server, Admin for admins, Sign out -- Ruling 4, so Help is two taps on a phone); gear and Sign out from
+  lg; toasts above the bar; Sign out gained try/catch/finally ("Could not sign out"). About is the `#about` section of
+  Settings (between Firmware updates and Delete account); the header (i) is gone at every width; `/about` is a 307 in
+  next.config.ts to `/settings#about` (self-host parity). Phone search: a 44 px `search-open` opens a row with the field and
+  Cancel; the scrim sits under the bar up to lg and closes on click (no tap fall-through); the row closes on navigation and
+  when the viewport crosses sm. 44 px targets: `.seg` items wrap below sm, the named buttons, "?" 40x40 hit area. Library:
+  collections are a chip row below md (no reorder on a phone -- Ruling 16; from 768 still), table rows three columns with a
+  facts line; focus after a collection delete goes to Uncategorized. Devices: head buttons full width, `Change second drive`
+  reveals the DF1 radios in place. Upload: two 96 px tiles side by side (drop sections `display: contents` below sm), Staging
+  in the first screen. Admin: section tabs wrap, Invites rows stack like Users. `devIndicators: false` (the dev badge
+  covered the first tab in e2e). Collection Delete keeps `window.confirm` (pinned; backlog an in-app dialog). Controller
+  rulings: the Help `#topic` re-jump (spec Ruling 26) was NOT built -- no test could make it fail, even with scroll anchoring
+  off; check /help#topic on a real iPhone. Owed on a real iPhone: VoiceOver on the Upload tiles (`display: contents` region
+  role), the Help hash landing. Deferred minors: no viewport-fit=cover (safe-area inset 0 on iOS); Sign out shows no busy
+  state; Send tile says "Pair a board first" when the board is paired but its firmware is too old; upload input aria-labels
+  differ from the phone tile words; df1-change label swaps to Done; Change second drive shows on a board without second-drive
+  capability; rotating past sm with df1-change or the desktop search field focused can drop focus; chip row is links in a nav;
+  C7-06 checks only the Staging heading top. Flake seen once: library-paging "switching to the table keeps the page".
 - **Phase C6 Admin -- SHIPPED 2026-10-26** (merge 8d943f7; spec `docs/superpowers/specs/2026-10-25-phase-c6-admin-design.md`
   (39 rulings, Ruling 20 operator-confirmed, Ruling 8 amended in the build), plan `docs/superpowers/plans/2026-10-25-phase-c6-admin.md`).
   Overview (tiles, boards-by-firmware bars, Needs attention; own loading frame via route group `admin/(overview)/`), Users
