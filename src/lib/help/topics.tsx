@@ -494,8 +494,7 @@ export const HELP_TOPICS = {
       <>
         <p>
           Your board must be in <em>Network (PaulaNET)</em> mode, on firmware 1.15.0 or newer. On the Amiga, run{' '}
-          <em>Install</em> from the driver disk once: it copies <em>Transfer</em> to SYS:Tools and C:, replacing{' '}
-          <em>Receive</em>. Start it yourself (in a Shell: <em>Transfer RECEIVE</em>), choose a folder and press
+          <em>Install</em> from the driver disk once: it copies <em>Transfer</em> to SYS:Tools and C:. Start it yourself (in a Shell: <em>Transfer RECEIVE</em>), choose a folder and press
           Save. The default folder is RAM:.
         </p>
         <p>
@@ -531,7 +530,7 @@ export const HELP_TOPICS = {
       <>
         <p>
           Your board needs firmware 1.19.0 or newer, in <em>Network (PaulaNET)</em> mode. Run <em>Install</em> from the
-          driver disk again to get <em>Transfer</em> (it replaces <em>Receive</em>), and start it. Then drop files or
+          driver disk to get <em>Transfer</em>, and start it. Then drop files or
           drawers on its window, press <em>Send…</em>, or type <em>Transfer SEND DH0:file</em> in a Shell.
         </p>
         <p>

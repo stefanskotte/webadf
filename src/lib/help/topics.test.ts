@@ -252,7 +252,7 @@ describe('send names the limits, Transfer, the expiry and the accepted risk', ()
     const s = HELP_TOPICS.send.short + bodyText('send');
     expect(s).toMatch(/Transfer/);
     expect(s).toContain('Transfer RECEIVE');                  // the Shell form (Transfer 2.1)
-    expect(s).toMatch(/replacing\s+Receive/);                 // Install deletes the old C:Receive
+    expect(s).not.toMatch(/\bReceive\b/);                     // beta testers never had Receive: no migration note
     expect(s).toMatch(/4 MB/);
     expect(s).toMatch(/24 hours/);
     expect(s).toMatch(/1\.15\.0/);
