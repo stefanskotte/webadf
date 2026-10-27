@@ -1485,6 +1485,17 @@ arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **PaulaNET compression experiments -- PARKED by the operator 2026-10-28 ("an experiment for later").**
+  (1) Raw RLE toward the Amiga stalls with real file data (BestWB1.adf) even at a 1973.5 ns cell; single gaps up to
+  ~180 cells read fine; MFM+LZ4 sends the ADF in 115 s. Root cause unknown (needs a stuck-batch dump). Rob PR #5 stands.
+  (2) LZSA2 spike: branches `spike/lzsa2-board` (C codec, host tests vs reference lzsa, `wf pnet zbench`) and
+  `spike/lzsa2-68k` (m68k/lzsa2 decoder, vamos tests + cycle table). Fast board encoder: ~5-8% smaller than LZ4 for
+  +16-39% encode time; 68000 decode 1.5-2.1x slower than LZ4. (3) THE REAL LIMIT: the board encodes on core0's read
+  path with PNET_PACK_LZ4_BUDGET_US 500 us, but a full ~15 KB batch takes ~9 ms (PSRAM), so most frames of a full
+  batch go MFM unencoded (ADF send: budget spent in 175 batches; 384 LZ4 / 300 MFM). SRAM can't fund the buffers (24 KB
+  heap free under TLS; PBUF pool is the stall-tuned one). The fix if resumed: pre-encode batch N+1 off the read path
+  while the Amiga reads N -- write a design first. Bench board left on TEST seq 123 (1.21.1+gc324fbd); seqs 120-123
+  are TEST, never promote; leaving TEST needs a release above 123.
 - **Polish -- SHIPPED 2026-10-27, merge 75f8be2.** (1) Devices: the card's four figures are a wrapping row, not four
   equal columns; the MAC never breaks and the firmware breaks at spaces first (`overflow-wrap: break-word`), so neither
   splits mid-token at 1024-1440 (`e2e/devices-card-layout.spec.ts`, 1440/1280/1024/390, RED->GREEN). (2) Library: a
