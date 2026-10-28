@@ -61,8 +61,9 @@ export async function adminCounts(): Promise<AdminCounts> {
     select
       (select count(*)::int from auth."user")                       as users,
       (select count(*)::int from auth.organization)                 as orgs,
-      (select count(*)::int from games)                             as games,
-      (select count(*)::int from disks)                             as disks,
+      -- Hidden remote stand-ins (library sharing, spec §4.1) are not library titles or disks.
+      (select count(*)::int from games where remote_library_id is null) as games,
+      (select count(*)::int from disks where remote_library_id is null) as disks,
       (select count(*)::int from blobs)                             as blobs,
       (select count(*)::int from invites
         where consumed_at is null and revoked_at is null
@@ -124,8 +125,9 @@ export async function adminListUsers(opts: { limit: number; offset: number }): P
       createdAt: user.createdAt,
       orgId: organization.id,
       orgName: organization.name,
-      games: sql<number>`(select count(*)::int from games where org_id = ${member.organizationId})`,
-      disks: sql<number>`(select count(*)::int from disks where org_id = ${member.organizationId})`,
+      // Local titles and disks only: a hidden remote stand-in (library sharing, spec §4.1) is not one.
+      games: sql<number>`(select count(*)::int from games where org_id = ${member.organizationId} and remote_library_id is null)`,
+      disks: sql<number>`(select count(*)::int from disks where org_id = ${member.organizationId} and remote_library_id is null)`,
       devices: sql<number>`(select count(*)::int from devices where org_id = ${member.organizationId})`,
     })
     .from(user)

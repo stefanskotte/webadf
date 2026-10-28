@@ -13,8 +13,11 @@ vi.mock('drizzle-orm', async (orig) => ({
   and: (...c: unknown[]) => ({ and: c }),
   eq: (col: unknown, v: unknown) => ({ eq: [col, v] }),
 }));
-type Cond = { and: Cond[] } | { eq: [unknown, unknown] } | undefined;
-const flat = (c: Cond): [unknown, unknown][] => (!c ? [] : 'and' in c ? c.and.flatMap(flat) : [c.eq]);
+// Any other condition (the route's isNull(remote_library_id), library sharing spec §4.1) holds for every row here:
+// the table models local disks only.
+type Cond = { and: Cond[] } | { eq: [unknown, unknown] } | object | undefined;
+const flat = (c: Cond): [unknown, unknown][] =>
+  (!c ? [] : 'and' in c ? c.and.flatMap(flat) : 'eq' in c ? [c.eq] : []);
 const diskTable: { id: string; gameId: string; orgId: string; sha256: string }[] = [];
 const { disks: disksT } = await import('@/db/schema/catalog');
 vi.mock('@/db', () => ({ getDb: () => ({

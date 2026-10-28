@@ -7,6 +7,7 @@ import {
   decideTap, NFC_WRITE_TTL_MS, nextCardWriters, shouldStoreWriteResult, tapRefusalOutcome, type TapOutcome,
 } from '@/lib/nfc/rules';
 import { readNextForDevices } from '@/lib/next-disk';
+import { isLocal } from '@/lib/remote-hidden';
 
 /**
  * One tap, end to end (spec §5.2). The org is the caller's -- the device's
@@ -128,8 +129,9 @@ export async function requestNfcWrite(
   orgId: string, deviceId: string, diskId: string, now: Date,
 ): Promise<number | null> {
   const db = getDb();
+  // Never a fob for a hidden remote disk (spec §4.1): a tap would mount it without asking its owner again.
   const [disk] = await db.select({ id: disks.id }).from(disks)
-    .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId))).limit(1);
+    .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId), isLocal(disks))).limit(1);
   if (!disk) return null;
   const [r] = await db.update(devices).set({
     nfcWriteSeq: sql`${devices.nfcWriteSeq} + 1`, nfcWriteDiskId: diskId, nfcWriteKind: 'disk',
@@ -191,7 +193,7 @@ export async function listNfcDevices(orgId: string) {
 export async function readDiskForNfc(orgId: string, diskId: string): Promise<{ title: string; diskNo: number } | null> {
   const [r] = await getDb().select({ title: games.title, diskNo: disks.diskNo }).from(disks)
     .innerJoin(games, eq(games.id, disks.gameId))
-    .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId))).limit(1);
+    .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId), isLocal(disks))).limit(1);
   return r ?? null;
 }
 
@@ -201,7 +203,7 @@ export async function readDiskForNfc(orgId: string, diskId: string): Promise<{ t
 export async function listDisksForNfc(orgId: string, gameIds: string[]) {
   if (gameIds.length === 0) return [];
   return getDb().select({ id: disks.id, gameId: disks.gameId, diskNo: disks.diskNo, sha256: disks.sha256, imageFormat: disks.imageFormat, sizeBytes: disks.sizeBytes }).from(disks)
-    .where(and(eq(disks.orgId, orgId), inArray(disks.gameId, gameIds)))
+    .where(and(eq(disks.orgId, orgId), inArray(disks.gameId, gameIds), isLocal(disks)))
     .orderBy(asc(disks.gameId), asc(disks.diskNo), asc(disks.id));
 }
 

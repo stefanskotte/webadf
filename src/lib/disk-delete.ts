@@ -16,6 +16,7 @@ import { planBulkDelete, type KeptTitle, type PlanGame } from '@/lib/bulk-delete
 import { clearDesired } from '@/lib/mount';
 import { ejectDf1Holders } from '@/lib/df1-store';
 import { planReorder } from '@/lib/disk-set';
+import { isLocal } from '@/lib/remote-hidden';
 import { applyPlan, orgDevices, run, type Builder } from '@/lib/disk-set-store';
 
 export interface DeleteResult {
@@ -240,8 +241,10 @@ export async function deleteGames(
   orgId: string, ids: string[], opts: { dryRun?: boolean; now: number },
 ): Promise<BulkDeletePreview | BulkDeleteResult> {
   const db = getDb();
+  // A hidden remote stand-in (library sharing, spec §4.1) is never picked in the library, so an id naming one is
+  // reported missing like an unknown one; its removal goes through the remote library's own path (Task 7 purge).
   const ownedRows = await db.select({ id: games.id, title: games.title, year: games.year }).from(games)
-    .where(and(eq(games.orgId, orgId), inArray(games.id, ids)));
+    .where(and(eq(games.orgId, orgId), inArray(games.id, ids), isLocal(games)));
   const byId = new Map(ownedRows.map((g) => [g.id, g] as const));
   const owned = ids.filter((id) => byId.has(id)).map((id) => byId.get(id)!);
   const missing = ids.filter((id) => !byId.has(id));

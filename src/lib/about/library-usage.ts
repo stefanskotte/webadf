@@ -12,17 +12,18 @@ export interface LibraryUsage { titles: number; disks: number; versions: number;
  * stores one per save, and the weekly blob GC keeps it as `histImage`), so
  * that column is counted as well as blob_sha256. A delta's own blob has no
  * `blobs` row, so it drops out of the join -- a few KB each. Casts: count(*) and sum() come back as strings from neon-http
- * without them (see admin-queries.ts adminCounts).
+ * without them (see admin-queries.ts adminCounts). Hidden remote stand-ins (library sharing, spec §4.1) are not part
+ * of the library and are left out of every figure; one written to by the Amiga has become local and counts.
  */
 export async function libraryUsage(orgId: string): Promise<LibraryUsage> {
   const { rows } = await getDb().execute<{ titles: number; disks: number; versions: number; bytes: string }>(sql`
     select
-      (select count(*)::int from games where org_id = ${orgId})          as titles,
-      (select count(*)::int from disks where org_id = ${orgId})          as disks,
+      (select count(*)::int from games where org_id = ${orgId} and remote_library_id is null) as titles,
+      (select count(*)::int from disks where org_id = ${orgId} and remote_library_id is null) as disks,
       (select count(*)::int from disk_versions where org_id = ${orgId})  as versions,
       (select coalesce(sum(b.size_bytes), 0)::bigint from blobs b
         where b.sha256 in (
-          select sha256 from disks where org_id = ${orgId}
+          select sha256 from disks where org_id = ${orgId} and remote_library_id is null
           union
           select blob_sha256 from disk_versions where org_id = ${orgId}
           union

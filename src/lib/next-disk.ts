@@ -1,6 +1,7 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks } from '@/db/schema/catalog';
+import { isLocal } from '@/lib/remote-hidden';
 import { devices } from '@/db/schema/devices';
 import { isHdAdf, isServable } from '@/lib/disk-format';
 import { LEGACY_BOARD_TRACK_MAX_BYTES } from '@/lib/adfmfm/constants';
@@ -70,15 +71,17 @@ export async function readNextForDevices(orgId: string, devs: NextDeviceInput[])
     return out;
   }
   const db = getDb();
+  // A hidden remote disk (library sharing, spec §4.1) has no next disk: its siblings are hidden too, and mounting
+  // one straight from here would skip asking the owner again. Reads as nothing mounted, as for an unknown disk.
   const cur = await db.select({ id: disks.id, gameId: disks.gameId }).from(disks)
-    .where(and(eq(disks.orgId, orgId), inArray(disks.id, currentIds)));
+    .where(and(eq(disks.orgId, orgId), inArray(disks.id, currentIds), isLocal(disks)));
   const gameOf = new Map(cur.map((r) => [r.id, r.gameId]));
   const gameIds = [...new Set(cur.map((r) => r.gameId))];
   const rows = gameIds.length === 0 ? [] : await db.select({
     id: disks.id, gameId: disks.gameId, diskNo: disks.diskNo,
     sha256: disks.sha256, imageFormat: disks.imageFormat, sizeBytes: disks.sizeBytes,
     maxTrackBits: disks.maxTrackBits,
-  }).from(disks).where(and(eq(disks.orgId, orgId), inArray(disks.gameId, gameIds)));
+  }).from(disks).where(and(eq(disks.orgId, orgId), inArray(disks.gameId, gameIds), isLocal(disks)));
   for (const d of devs) {
     const c = currentDiskId(d);
     const g = c ? gameOf.get(c) : undefined;

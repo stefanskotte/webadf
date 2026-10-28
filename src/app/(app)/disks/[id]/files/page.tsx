@@ -6,6 +6,7 @@ import { disks, entitlements, games, blobs } from '@/db/schema/catalog';
 import { tosecEntries } from '@/db/schema/tosec';
 import { devices } from '@/db/schema/devices';
 import { orgFilter } from '@/db/scope';
+import { isLocal } from '@/lib/remote-hidden';
 import { findHolder } from '@/lib/disk-holder';
 import { ejectMessage, mountedReason } from '@/lib/mount-wording';
 import { requireOrg } from '@/lib/session';
@@ -151,7 +152,8 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
     // disks.orgId matches its game's org (listGames documents the same
     // drift), and a missing title must degrade the label, never the page.
     .leftJoin(games, and(eq(games.id, disks.gameId), eq(games.orgId, orgId)))
-    .where(and(eq(disks.id, id), eq(disks.orgId, orgId)))
+    // A hidden remote stand-in (library sharing, spec §4.1) is not a disk of this library: 404 like a foreign id.
+    .where(and(eq(disks.id, id), eq(disks.orgId, orgId), isLocal(disks)))
     .limit(1);
 
   // notFound(), never a 403: the page must not confirm that another

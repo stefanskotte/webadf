@@ -11,6 +11,7 @@
 import { and, asc, eq, ilike, inArray, isNotNull, isNull, like, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks, blobs, entitlements } from '@/db/schema/catalog';
+import { isLocal } from '@/lib/remote-hidden';
 import { demozooProductions, demozooImages, demozooSuggestions, demozooDismissals } from '@/db/schema/demozoo';
 import type { CoverCandidate } from '@/lib/cover-pick';
 import type { SuggestionSource } from './match';
@@ -185,6 +186,7 @@ async function reviewQueueRows(orgId: string): Promise<QueueSuggestionRow[]> {
     .leftJoin(entitlements, and(eq(entitlements.sha256, disks.sha256), eq(entitlements.orgId, orgId)))
     .where(and(
       eq(games.orgId, orgId),
+      isLocal(games),   // never a hidden remote stand-in (library sharing, spec §4.1)
       isNull(games.demozooLinkSource),
       sql`not exists (
         select 1 from disks d2

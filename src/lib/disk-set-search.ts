@@ -14,6 +14,7 @@ import { orgFilter } from '@/db/scope';
 import { likePattern } from '@/lib/search-query';
 import { volumeNameOf } from '@/lib/disk-label';
 import { diskStore } from '@/lib/storage';
+import { isLocal } from '@/lib/remote-hidden';
 import { suggestSet, type SuggestInput, type Suggestion } from '@/lib/disk-set-suggest';
 
 /**
@@ -61,6 +62,7 @@ export async function suggestFromUpload(
     .where(and(
       eq(disks.orgId, orgId),
       inArray(disks.sha256, sha256s),
+      isLocal(disks), isLocal(games),   // never a hidden remote stand-in (library sharing, spec §4.1)
       gte(games.createdAt, floor),
       isNull(games.diskOrderSource),
       sql`(select count(*) from disks d2 where d2.game_id = ${games.id} and d2.org_id = ${orgId}) = 1`,
@@ -148,7 +150,7 @@ export async function searchCandidates(
 
   const titleRows = await db.select({ id: games.id, title: games.title })
     .from(games)
-    .where(orgFilter(games, orgId, and(exclude ? ne(games.id, exclude) : undefined, matches)))
+    .where(orgFilter(games, orgId, and(isLocal(games), exclude ? ne(games.id, exclude) : undefined, matches)))
     .orderBy(desc(games.createdAt), asc(games.id))
     // One extra row answers "is there more?" without a count(*).
     .limit(max + 1);
