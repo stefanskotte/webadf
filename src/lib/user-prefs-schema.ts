@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { FilesSort } from './files/sort';
 
 /**
  * Per-USER web app preferences (HANDOFF §4 "Per-user web app settings",
@@ -87,6 +88,8 @@ export type UserPrefs = {
    * Turning it OFF is free. A failed read is the default, false: fail safe.
    */
   firmware: { skipPassword: boolean };
+  /** The Files manager's sort, remembered per device (library, stash, net). */
+  files: { sort: { library: FilesSort; stash: FilesSort; net: FilesSort } };
 };
 
 /** Fresh objects every call: a caller may mutate what it gets back. */
@@ -96,12 +99,21 @@ function defaults(): UserPrefs {
     library: { sort: { key: 'added', dir: 'desc' }, view: 'grid', pageSize: 48 },
     browse: { sort: { key: 'name', dir: 'asc' }, hideInfo: false },
     firmware: { skipPassword: false },
+    files: {
+      sort: {
+        library: { key: 'name', dir: 'asc' },
+        stash: { key: 'date', dir: 'desc' },
+        net: { key: 'date', dir: 'desc' },
+      },
+    },
   };
 }
 
 export const DEFAULT_PREFS: Readonly<UserPrefs> = Object.freeze(defaults());
 
 const librarySortSchema = z.object({ key: z.enum(LIBRARY_SORT_KEYS), dir: z.enum(SORT_DIRS) });
+const FILES_SORT_KEYS = ['name', 'size', 'protection', 'date'] as const;
+const filesSortSchema = z.object({ key: z.enum(FILES_SORT_KEYS), dir: z.enum(SORT_DIRS) });
 const browseSortSchema = z.object({ key: z.enum(BROWSE_SORT_KEYS), dir: z.enum(SORT_DIRS) });
 
 /**
@@ -124,6 +136,13 @@ const prefsSchema = z.object({
   firmware: z.object({
     skipPassword: z.boolean().catch(false),
   }).catch(() => defaults().firmware),
+  files: z.object({
+    sort: z.object({
+      library: filesSortSchema.catch(() => defaults().files.sort.library),
+      stash: filesSortSchema.catch(() => defaults().files.sort.stash),
+      net: filesSortSchema.catch(() => defaults().files.sort.net),
+    }).catch(() => defaults().files.sort),
+  }).catch(() => defaults().files),
 });
 
 export function parsePrefs(raw: unknown): UserPrefs {
@@ -147,6 +166,13 @@ const prefsPatchSchema = z.strictObject({
   // Valid here either way; PATCH /api/me/prefs refuses `true` itself (see
   // UserPrefs.firmware), so the password-checked endpoint can share setUserPrefs.
   firmware: z.strictObject({ skipPassword: z.boolean().optional() }).optional(),
+  files: z.strictObject({
+    sort: z.strictObject({
+      library: filesSortSchema.strict().optional(),
+      stash: filesSortSchema.strict().optional(),
+      net: filesSortSchema.strict().optional(),
+    }).optional(),
+  }).optional(),
 });
 
 export type PrefsPatch = z.infer<typeof prefsPatchSchema>;
@@ -170,6 +196,13 @@ export function applyPrefsPatch(cur: UserPrefs, patch: PrefsPatch): UserPrefs {
       hideInfo: patch.browse?.hideInfo ?? cur.browse.hideInfo,
     },
     firmware: { skipPassword: patch.firmware?.skipPassword ?? cur.firmware.skipPassword },
+    files: {
+      sort: {
+        library: { ...(patch.files?.sort?.library ?? cur.files.sort.library) },
+        stash: { ...(patch.files?.sort?.stash ?? cur.files.sort.stash) },
+        net: { ...(patch.files?.sort?.net ?? cur.files.sort.net) },
+      },
+    },
   };
 }
 
@@ -189,6 +222,11 @@ export function prefsDiff(from: UserPrefs, to: UserPrefs): PrefsPatch {
   if (from.library.pageSize !== to.library.pageSize) patch.library = { ...patch.library, pageSize: to.library.pageSize };
   if (!sameSort(from.browse.sort, to.browse.sort)) patch.browse = { sort: { ...to.browse.sort } };
   if (from.browse.hideInfo !== to.browse.hideInfo) patch.browse = { ...patch.browse, hideInfo: to.browse.hideInfo };
+  for (const d of ['library', 'stash', 'net'] as const) {
+    if (!sameSort(from.files.sort[d], to.files.sort[d])) {
+      patch.files = { sort: { ...patch.files?.sort, [d]: { ...to.files.sort[d] } } };
+    }
+  }
   // `firmware` deliberately never: it has its own controls on Settings
   // (firmware-password-setting.tsx), and turning it on needs the password.
   return patch;
