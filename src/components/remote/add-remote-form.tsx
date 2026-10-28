@@ -4,15 +4,17 @@ import { useEffect, useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Link } from '@/components/shell/link';
 import { remoteErrorText } from '@/lib/remote/copy';
+import { addConfirmText, shareLinkHost } from '@/lib/remote/view';
 import { CARD_STYLE, FIELD, FIELD_STYLE, INK_BTN, INK_STYLE, SETTINGS_CARD } from '@/lib/settings-look';
 
 type Failure = { text: string; existing: boolean };
 
 /**
  * Add a shared library (spec §4.2 Add): paste the link the owner sent, or arrive from their landing page at
- * `/remote/add#link=<link>`. That arrival is the person saying "add this" on the owner's page, so it is sent at once;
- * the link stays in the field, so a failure can be read and tried again. The server parses (whitespace, a trailing
- * slash and the wrapped `/remote/add#link=` address all work), claims, and answers the new library's id.
+ * `/remote/add#link=<link>`. An arrived link only fills the field and asks "Add the library shared from <host>?":
+ * nothing is claimed until the person presses Add (controller ruling, Task 9 fix 1), so another site cannot add a
+ * library to this team, or make this server contact a host of its choosing, just by linking here. The server parses
+ * (whitespace, a trailing slash and the wrapped `/remote/add#link=` address all work), claims, and answers the id.
  */
 export function AddRemoteForm() {
   const router = useRouter();
@@ -21,8 +23,7 @@ export function AddRemoteForm() {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
 
-  async function add(raw: string, fill = false) {
-    if (fill) setLink(raw);
+  async function add(raw: string) {
     if (busy || raw.trim() === '') return;
     setBusy(true);
     setFailure(null);
@@ -48,23 +49,24 @@ export function AddRemoteForm() {
   }
 
   // On arrival (and when the address's fragment changes): the owner's landing page sends people here with the link
-  // in the fragment, which the browser never sends to a server. The link is read, taken out of the address bar (so a
-  // reload does not try a used link again; that also makes a second run of this effect a no-op) and added.
+  // in the fragment, which the browser never sends to a server. The link is put in the field and taken out of the
+  // address bar (a second run of this effect is then a no-op); the person decides whether to add it.
   useEffect(() => {
     const arrive = () => {
       const hash = window.location.hash;
       if (!hash.startsWith('#link=')) return;
       let inner = hash.slice('#link='.length);
-      try { inner = decodeURIComponent(inner); } catch { /* sent as it is: the server says it is not a link */ }
+      try { inner = decodeURIComponent(inner); } catch { /* shown as it is: the server says it is not a link */ }
       window.history.replaceState(null, '', window.location.pathname);
-      // After this effect, not inside it: the field and the request start together, as if Add was pressed.
-      void Promise.resolve().then(() => add(inner, true));
+      // After this effect, not inside it (a state change in an effect body re-renders at once).
+      void Promise.resolve().then(() => { setFailure(null); setLink(inner); });
     };
     arrive();
     window.addEventListener('hashchange', arrive);
     return () => window.removeEventListener('hashchange', arrive);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const host = shareLinkHost(link);
 
   return (
     <form data-testid="remote-add-form" className={`${SETTINGS_CARD} flex max-w-[640px] flex-col gap-4`} style={CARD_STYLE}
@@ -79,6 +81,11 @@ export function AddRemoteForm() {
       <input id={id} data-testid="remote-add-link" value={link} onChange={(e) => setLink(e.target.value)}
              placeholder="https://their-webfloppy.example/s/…" autoComplete="off" spellCheck={false}
              className={`${FIELD} font-mono text-[13px]`} style={FIELD_STYLE} />
+      {host && (
+        <p data-testid="remote-add-confirm" className="text-[14px] font-semibold [overflow-wrap:anywhere]" style={{ color: 'var(--ink)' }}>
+          {addConfirmText(host)}
+        </p>
+      )}
       {failure && (
         <p role="alert" data-testid="remote-add-error" className="text-[13px]" style={{ color: 'var(--danger-fg)' }}>
           {failure.text}

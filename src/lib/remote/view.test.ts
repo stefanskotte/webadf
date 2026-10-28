@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { ShareTitle } from '@/lib/share/types';
-import { remoteHref, remoteListItem, remoteTitleHref, remoteDiskHref, remoteView } from './view';
+import { addConfirmText, shareLinkHost, remoteHref, remoteListItem, remoteTitleHref, remoteDiskHref, remoteView } from './view';
 
 const t: ShareTitle = {
   id: 't1', title: 'Lemmings', year: 1991, publisher: 'Psygnosis', kind: 'Game', diskCount: 2,
@@ -48,4 +48,19 @@ describe('remoteHref', () => {
     expect(remoteTitleHref('lib1', 't1')).toBe('/remote/lib1/titles/t1');
     expect(remoteDiskHref('lib1', 'd1', 't1')).toBe('/remote/lib1/disks/d1?title=t1');
   });
+});
+
+describe('shareLinkHost', () => {
+  const CODE = `wfsc_${'A'.repeat(43)}`;
+  it('the owner host of a link, plain, padded, http or wrapped in /remote/add#link=', () => {
+    expect(shareLinkHost(`https://floppy.example/s/${CODE}`)).toBe('floppy.example');
+    expect(shareLinkHost(`  https://floppy.example:8443/s/${CODE}/ `)).toBe('floppy.example:8443');
+    expect(shareLinkHost(`http://192.168.1.20/s/${CODE}`)).toBe('192.168.1.20');
+    expect(shareLinkHost(`https://mine.example/remote/add#link=${encodeURIComponent(`https://floppy.example/s/${CODE}`)}`)).toBe('floppy.example');
+  });
+  it('null for what is not a share link', () => {
+    expect(shareLinkHost('https://floppy.example/s/nope')).toBeNull();
+    expect(shareLinkHost('hello')).toBeNull();
+  });
+  it('the question', () => expect(addConfirmText('floppy.example')).toBe('Add the library shared from floppy.example?'));
 });

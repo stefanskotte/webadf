@@ -1,6 +1,7 @@
 // The remote pages' addresses and shapes (library sharing spec §4.5). Pure and CLIENT-SAFE: no @/db.
 import type { GameListItem } from '@/lib/queries';
 import type { ShareTitle } from '@/lib/share/types';
+import { parseShareLink } from '@/lib/share/link';
 
 const enc = encodeURIComponent;
 
@@ -59,3 +60,17 @@ export function remoteListItem(t: ShareTitle, libraryId: string): GameListItem {
     hasHd: false, hasHfe: false,
   };
 }
+
+/**
+ * The host a pasted or arrived link points at, for the Add page's question ("Add the library shared from <host>?"), or
+ * null when it is not a share link. Display only: http: is allowed here (a LAN self-host's link); the server's own
+ * parse, with its real settings, decides what is contacted.
+ */
+export function shareLinkHost(raw: string): string | null {
+  const p = parseShareLink(raw, { WEBADF_SHARE_TEST_INSECURE: '1' });
+  if (!p) return null;
+  try { return new URL(p.origin).host; } catch { return null; }
+}
+
+/** The Add page's question for a link that arrived in the address (it is never claimed without the person's click). */
+export const addConfirmText = (host: string) => `Add the library shared from ${host}?`;
