@@ -26,7 +26,7 @@ export default async function RemotePage() {
   );
   return (
     <>
-      <PageHeader size="lg" eyebrow="Shared with you" title="Remote"
+      <PageHeader size="lg" eyebrow="Shared with you" title="Remote" help="remote"
                   subtitle={libs.length > 0 ? `${libs.length} ${libs.length === 1 ? 'library' : 'libraries'}` : undefined}
                   actions={libs.length > 0 ? add : undefined} />
       <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7" data-testid="remote-list">

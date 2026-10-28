@@ -584,6 +584,58 @@ export const HELP_TOPICS = {
       </>
     ),
   },
+  // Sources: spec 2026-10-28-library-sharing-design.md; src/components/prefs/sharing-settings.tsx (Share, Revoke),
+  // src/lib/share/* (claim link, token, protocol), src/selfhost/caddyfile.ts (the internal root Caddy serves).
+  sharing: {
+    title: 'Sharing your library',
+    short: 'Give another WebFloppy owner access to your library, or to some of its collections, with a link.',
+    body: (
+      <>
+        <p>
+          <strong>Sharing.</strong> In Settings, Sharing, choose what to share and press Share. You get a link to send to
+          the other person; it works once and expires after seven days. Revoke ends their access at any time.
+        </p>
+        <p>
+          <strong>Reachable.</strong> Their WebFloppy must be able to open yours. On a home server forward port 443 from
+          your router, put a reverse proxy in front, or use Tailscale Funnel or a Cloudflare Tunnel. On the same network
+          nothing needs forwarding.
+        </p>
+        <p>
+          <strong>Certificates.</strong> A public address with a trusted certificate just works. A server using its own
+          internal certificate works on a local network too: the link carries what the other WebFloppy needs to trust it.
+        </p>
+        <p>
+          <strong>What they can do.</strong> They browse, mount, send to their boards and download your disks. Saving on the
+          Amiga makes a copy that is theirs; your disks never change. Disks you did not share stay private.
+        </p>
+      </>
+    ),
+  },
+  // Sources: src/app/(app)/remote/*, src/components/remote/*, src/lib/share/recipient-*.ts (Add, hidden disks, Access ended).
+  remote: {
+    title: 'Remote libraries',
+    short: 'Libraries other people shared with you. Browse them, and mount or download their disks.',
+    body: (
+      <>
+        <p>
+          <strong>Add.</strong> Open Remote and press Add, then paste the link someone sent you. It asks before it
+          connects, and the link only works once.
+        </p>
+        <p>
+          <strong>Using a disk.</strong> Mount puts it in a drive on one of your boards. Send puts the files on an Amiga
+          board. Download gives you the disk file. Remote disks stay out of your own library and search.
+        </p>
+        <p>
+          <strong>Saving.</strong> When the Amiga saves to a mounted remote disk, the result is a copy that becomes yours,
+          in your library. The original stays as its owner shared it.
+        </p>
+        <p>
+          <strong>Access ended.</strong> If the owner revokes your access, the library shows Access ended. Remove it to
+          tidy up; copies you already made stay yours.
+        </p>
+      </>
+    ),
+  },
   // Sources: spec 2026-10-15-board-server-override-design.md; commands in
   // wifi-floppy/firmware/src/serial_cmd.c, behaviour in main.c;
   'own-server': {
@@ -704,7 +756,7 @@ export const HELP_GROUPS: readonly HelpGroup[] = [
   { id: 'drives', name: 'Drives', topics: ['boards', 'display', 'second-drive', 'next-disk', 'nfc', 'write-protect'] },
   { id: 'disks', name: 'Library and disks', topics: ['library', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image'] },
   { id: 'network', name: 'Amiga networking', topics: ['network', 'send', 'from-amiga'] },
-  { id: 'server', name: 'This server', topics: ['preferences', 'own-server', 'about'] },
+  { id: 'server', name: 'This server', topics: ['preferences', 'sharing', 'remote', 'own-server', 'about'] },
 ];
 
 export const HELP_ORDER: readonly HelpTopicId[] = HELP_GROUPS.flatMap((g) => g.topics);

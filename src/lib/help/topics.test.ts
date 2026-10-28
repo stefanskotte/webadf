@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HELP_TOPICS, HELP_ORDER, HELP_GROUPS, helpGroupOf, type HelpTopicId } from './topics';
 
-const IDS: HelpTopicId[] = ['library', 'boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'from-amiga', 'cover-image', 'about', 'preferences'];
+const IDS: HelpTopicId[] = ['library', 'boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'from-amiga', 'cover-image', 'about', 'preferences', 'sharing', 'remote'];
 // Internal words a reader of the help should never meet (spec §5).
 const BANNED = /\b(PSRAM|TBYB|poll|sha256|cursor|WPROT)\b/i;
 
@@ -325,14 +325,25 @@ describe('help groups (C5 spec §3.1, Ruling 14)', () => {
     expect(HELP_GROUPS[0].topics).toEqual(['boards', 'display', 'second-drive', 'next-disk', 'nfc', 'write-protect']);
     expect(HELP_GROUPS[1].topics).toEqual(['library', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image']);
     expect(HELP_GROUPS[2].topics).toEqual(['network', 'send', 'from-amiga']);
-    expect(HELP_GROUPS[3].topics).toEqual(['preferences', 'own-server', 'about']);
+    expect(HELP_GROUPS[3].topics).toEqual(['preferences', 'sharing', 'remote', 'own-server', 'about']);
   });
   it('put every topic in exactly one group, and HELP_ORDER is the groups flattened', () => {
     const all = HELP_GROUPS.flatMap((g) => g.topics);
     expect([...all].sort()).toEqual([...IDS].sort());
-    expect(new Set(all).size).toBe(17);
+    expect(new Set(all).size).toBe(19);
     expect(HELP_ORDER).toEqual(all);
     expect(helpGroupOf('library').name).toBe('Library and disks');
     expect(helpGroupOf('write-protect').id).toBe('drives');
+  });
+});
+
+describe('sharing and remote help', () => {
+  it('sharing names the reachability options, the certificates, what recipients can do, and Revoke', () => {
+    const b = HELP_TOPICS.sharing.short + ' ' + bodyText('sharing').replace(/\s+/g, ' ');
+    for (const w of ['443', 'reverse proxy', 'Tailscale Funnel', 'Cloudflare Tunnel', 'internal certificate', 'link', 'copy', 'Revoke']) expect(b).toContain(w);
+  });
+  it('remote names Add, Mount, Send, Download, the copy that becomes yours, and Access ended', () => {
+    const b = HELP_TOPICS.remote.short + ' ' + bodyText('remote').replace(/\s+/g, ' ');
+    for (const w of ['Add', 'Mount', 'Send', 'Download', 'yours', 'Access ended']) expect(b).toContain(w);
   });
 });

@@ -40,4 +40,25 @@ describe('renderCaddyfile', () => {
     expect(f).not.toContain('https://:443'); // other names are refused: no public certificate for arbitrary names
     expect(f).toContain('reverse_proxy app:3000');
   });
+
+  it('internal TLS: Caddy itself serves exactly its root certificate at /.well-known/webadf-root.pem, before the proxy', () => {
+    const f = renderCaddyfile(resolveConfig({ ...admin, WEBADF_URL: 'https://192.168.1.10' }));
+    expect(f).toContain('\thandle /.well-known/webadf-root.pem {');
+    expect(f).toContain('\t\troot * /data/caddy/pki/authorities/local\n');
+    expect(f).toContain('\t\trewrite * /root.crt\n');
+    expect(f).toContain('\t\theader Content-Type application/x-pem-file\n');
+    expect(f).toContain('\t\theader Cache-Control no-store\n');
+    expect(f).toContain('\t\tfile_server\n');
+    // Only root.crt is reachable: never a directory listing, never a key file.
+    expect(f).not.toContain('browse');
+    expect(f).not.toMatch(/\.key/);
+    expect(f.indexOf('webadf-root.pem')).toBeLessThan(f.indexOf('reverse_proxy app:3000'));
+    // Everything else is still proxied, in its own handle so the two never overlap.
+    expect(f).toMatch(/\thandle \{\n\t\treverse_proxy app:3000\n\t\}/);
+  });
+  it('domain mode serves no root: the path goes to the app, which 404s it (the client reads that as "no pin")', () => {
+    const f = renderCaddyfile(resolveConfig({ ...admin, WEBADF_DOMAIN: 'amiga.example.org' }));
+    expect(f).not.toContain('webadf-root.pem');
+    expect(f).not.toContain('file_server');
+  });
 });
