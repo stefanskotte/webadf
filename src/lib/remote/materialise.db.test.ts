@@ -193,7 +193,7 @@ describe('materialiseRemoteDisk', () => {
     expect(again.getJson).not.toHaveBeenCalled();
   });
 
-  it('maps unreachable, too large and a bad listing', async () => {
+  it('maps unreachable, too large and a bad listing (a garbled answer is bad_response, final review 6)', async () => {
     const b = adf(12);
     expect(await materialiseRemoteDisk(ORG, lib, 'T1', 'D1', { client: fakeClient({ ok: false, failure: 'unreachable' }, okBytes(b)) }))
       .toEqual({ ok: false, reason: 'unreachable' });
@@ -202,9 +202,9 @@ describe('materialiseRemoteDisk', () => {
     expect(await materialiseRemoteDisk(ORG, lib, 'T1', 'D1', { client: fakeClient({ ok: true, value: detail(b, { sizeBytes: 3_000_000 }) }, okBytes(b)) }))
       .toEqual({ ok: false, reason: 'too_large' });
     expect(await materialiseRemoteDisk(ORG, lib, 'T1', 'D1', { client: fakeClient({ ok: true, value: detail(b, { sha256: 'nope' }) }, okBytes(b)) }))
-      .toEqual({ ok: false, reason: 'protocol' });
+      .toEqual({ ok: false, reason: 'bad_response' });
     expect(await materialiseRemoteDisk(ORG, lib, 'T1', 'D1', { client: fakeClient({ ok: true, value: { nope: 1 } }, okBytes(b)) }))
-      .toEqual({ ok: false, reason: 'protocol' });
+      .toEqual({ ok: false, reason: 'bad_response' });
     expect(await materialiseRemoteDisk('org-other', lib, 'T1', 'D1', { client: fakeClient(okListing(b), okBytes(b)) }))
       .toEqual({ ok: false, reason: 'not_shared' });
   });

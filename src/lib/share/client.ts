@@ -6,8 +6,8 @@
 //   - The host is resolved HERE and EVERY address must be allowed: public always; private (RFC 1918, CGNAT, IPv6
 //     ULA) only with WEBADF_SHARE_PRIVATE_ADDRESSES=1 (self-host default, two instances on one LAN); loopback only
 //     under WEBADF_SHARE_TEST_INSECURE=1; link-local (cloud metadata), multicast, reserved never.
-//   - The socket connects to that vetted address (lookup pinned); TLS still uses the real host name (SNI and,
-//     unpinned, ordinary certificate verification).
+//   - The socket connects only to those vetted addresses (lookup pinned; all of them offered, so IPv6 can fall back
+//     to IPv4); TLS still uses the real host name (SNI and, unpinned, ordinary certificate verification).
 //   - Redirects are never followed: a 3xx is a bad response. Bodies are capped as they stream; one deadline per call.
 //   - With a pin (the owner runs Caddy's internal CA, which does not send its root), the owner's Caddy serves that
 //     root at /.well-known/webadf-root.pem. It is fetched (same address guard, unverified TLS for that one GET, no
@@ -26,13 +26,21 @@ import { webadfUserAgent } from '@/lib/user-agent';
 import { shareInsecureAllowed, SHARE_CODE_RE, type ShareEnv } from './link';
 import { SHARE_PROTOCOL, SHARE_PROTOCOL_HEADER } from './types';
 
+/**
+ * Why a call came to nothing. 'token_unreadable' is never produced by this client: the recipient's store answers it
+ * without calling, when the sealed token cannot be opened on this server (src/lib/remote/store.ts prepareRemote).
+ */
 export type ShareFailure =
-  | 'unreachable' | 'ended' | 'protocol' | 'not_found' | 'rate_limited' | 'invalid_or_used' | 'too_large' | 'bad_response';
+  | 'unreachable' | 'ended' | 'protocol' | 'not_found' | 'rate_limited' | 'invalid_or_used' | 'too_large' | 'bad_response'
+  | 'token_unreadable';
 export type ShareResult<T> = { ok: true; value: T; etag?: string } | { ok: false; failure: ShareFailure; detail?: string };
 export type ShareTarget = { origin: string; pin: string | null; token?: string };
 export type ShareTransport = (req: {
   url: URL; method: 'GET' | 'POST'; headers: Record<string, string>; body?: string;
   address: string;
+  /** Every vetted address for the host (`address` first). The socket may use only these; Node falls back between
+   *  them (IPv6 to IPv4) as it does for an ordinary name. Absent: `address` alone. */
+  addresses?: { address: string; family: 4 | 6 }[];
   /** PEM of the only root to trust (a pinned owner); null = the system's roots. */
   ca: string | null;
   /** Skip certificate verification. ONLY for fetching the root PEM that is then checked against the pin. */
@@ -42,10 +50,14 @@ export type ShareTransport = (req: {
   signal?: AbortSignal;
 }) => Promise<{ status: number; headers: Record<string, string>; body: Uint8Array }>;
 
-/** Spec §5 / global constraints: listings 2 MB in 10 s; bytes the largest disk the app accepts in 60 s. */
+/**
+ * Spec §5 / global constraints: listings 2 MB in 10 s; bytes the largest disk the app accepts in 45 s. Mount, Send
+ * and Download make a listing call and a bytes call inside one function run (maxDuration 60): 10 + 45 leaves room
+ * to answer a slow owner as a clean 502 unreachable before the platform kills the function (final review 5).
+ */
 export const SHARE_LIMITS = {
   listing: { maxBytes: 2 * 1024 * 1024, timeoutMs: 10_000 },
-  bytes: { maxBytes: MAX_DISK_BYTES, timeoutMs: 60_000 },
+  bytes: { maxBytes: MAX_DISK_BYTES, timeoutMs: 45_000 },
 } as const;
 
 const API_PREFIX = '/api/share/v1/';
@@ -157,13 +169,16 @@ export const nodeShareTransport: ShareTransport = (req) => new Promise((resolve,
   const isHttps = req.url.protocol === 'https:';
   const host = bareHost(req.url);
   const port = Number(req.url.port || (isHttps ? 443 : 80));
-  const family = isIP(req.address) === 6 ? 6 : 4;
+  const family: 4 | 6 = isIP(req.address) === 6 ? 6 : 4;
   const servername = isIP(host) ? undefined : host;
+  // Every address on offer was vetted (vetHost); the socket is only ever given these, so Node's autoSelectFamily
+  // can fall back from an unreachable IPv6 address to IPv4 (as src/lib/url-fetch.ts nodeTransport does).
+  const offered = req.addresses && req.addresses.length > 0 ? req.addresses : [{ address: req.address, family }];
   const pinned: LookupFunction = (_hostname, options, cb) => {
     if (options && (options as { all?: boolean }).all) {
-      (cb as unknown as (e: null, a: { address: string; family: number }[]) => void)(null, [{ address: req.address, family }]);
+      (cb as unknown as (e: null, a: { address: string; family: number }[]) => void)(null, offered.map((a) => ({ ...a })));
     } else {
-      cb(null, req.address, family);
+      cb(null, offered[0].address, offered[0].family);
     }
   };
 
@@ -299,9 +314,13 @@ function makeDeadline(ms: number) {
 /** Where to connect for `url`, or why not. DNS is raced against the call's deadline. */
 async function vetHost(
   resolve: typeof defaultResolver, url: URL, p: Policy, deadline: Promise<never>,
-): Promise<{ ok: true; address: string } | Fail> {
+): Promise<{ ok: true; address: string; addresses: { address: string; family: 4 | 6 }[] } | Fail> {
   const host = bareHost(url);
-  if (isIP(host)) return addressAllowed(host, p) ? { ok: true, address: host } : failure('unreachable', 'address_not_allowed');
+  if (isIP(host)) {
+    return addressAllowed(host, p)
+      ? { ok: true, address: host, addresses: [{ address: host, family: isIP(host) === 6 ? 6 : 4 }] }
+      : failure('unreachable', 'address_not_allowed');
+  }
   const lower = host.toLowerCase().replace(/\.$/, '');
   if ((lower === 'localhost' || lower.endsWith('.localhost')) && !p.loopbackOk) return failure('unreachable', 'address_not_allowed');
   let addrs;
@@ -313,7 +332,7 @@ async function vetHost(
   if (!addrs || addrs.length === 0) return failure('unreachable', 'dns');
   // ALL of them: a name with one allowed and one refused record is somebody arranging to reach the refused one.
   if (!addrs.every((a) => addressAllowed(a.address, p))) return failure('unreachable', 'address_not_allowed');
-  return { ok: true, address: addrs[0].address };
+  return { ok: true, address: addrs[0].address, addresses: addrs.map((a) => ({ address: a.address, family: a.family === 6 ? 6 : 4 })) };
 }
 
 const ROOT_PEM_HEADERS = () => ({ 'user-agent': webadfUserAgent(), accept: 'application/x-pem-file, */*', 'accept-encoding': 'identity' });
@@ -325,7 +344,8 @@ export function shareClient(deps: { resolve?: typeof defaultResolver; transport?
 
   /** The pinned root's PEM for this origin, fetched and checked against the pin, or the failure. Never sends a token. */
   async function pinnedRoot(
-    origin: URL, pin: string, address: string, deadline: Promise<never>, signal: AbortSignal, timeoutMs: number,
+    origin: URL, pin: string, where: { address: string; addresses: { address: string; family: 4 | 6 }[] },
+    deadline: Promise<never>, signal: AbortSignal, timeoutMs: number,
   ): Promise<{ ok: true; pem: string } | Fail> {
     const key = `${origin.origin} ${pin}`;
     const hit = rootCache.get(key);
@@ -336,7 +356,7 @@ export function shareClient(deps: { resolve?: typeof defaultResolver; transport?
         transport({
           url: new URL(ROOT_PEM_PATH, origin), method: 'GET',
           headers: ROOT_PEM_HEADERS(),
-          address, ca: null, insecureTls: true, timeoutMs, maxBytes: ROOT_PEM_MAX_BYTES, signal,
+          address: where.address, addresses: where.addresses, ca: null, insecureTls: true, timeoutMs, maxBytes: ROOT_PEM_MAX_BYTES, signal,
         }),
         deadline,
       ]);
@@ -375,7 +395,7 @@ export function shareClient(deps: { resolve?: typeof defaultResolver; transport?
       let ca: string | null = null;
       // A pin on an http origin has no TLS to pin; vetOrigin only lets http through under WEBADF_SHARE_TEST_INSECURE=1.
       if (t.pin && url.protocol === 'https:') {
-        const root = await pinnedRoot(origin.url, t.pin, where.address, deadline, signal, o.limits.timeoutMs);
+        const root = await pinnedRoot(origin.url, t.pin, where, deadline, signal, o.limits.timeoutMs);
         if (!root.ok) return root;
         ca = root.pem;
       }
@@ -393,7 +413,10 @@ export function shareClient(deps: { resolve?: typeof defaultResolver; transport?
       let res: Awaited<ReturnType<ShareTransport>>;
       try {
         res = await Promise.race([
-          transport({ url, method, headers, body: o.body, address: where.address, ca, timeoutMs: o.limits.timeoutMs, maxBytes: o.limits.maxBytes, signal }),
+          transport({
+            url, method, headers, body: o.body, address: where.address, addresses: where.addresses, ca,
+            timeoutMs: o.limits.timeoutMs, maxBytes: o.limits.maxBytes, signal,
+          }),
           deadline,
         ]);
       } catch (e) {
@@ -504,7 +527,7 @@ export async function fetchLocalRootPin(
     res = await Promise.race([
       transport({
         url: new URL(ROOT_PEM_PATH, o.url), method: 'GET', headers: ROOT_PEM_HEADERS(),
-        address: where.address, ca: null, insecureTls: true, timeoutMs, maxBytes: ROOT_PEM_MAX_BYTES, signal,
+        address: where.address, addresses: where.addresses, ca: null, insecureTls: true, timeoutMs, maxBytes: ROOT_PEM_MAX_BYTES, signal,
       }),
       deadline,
     ]);

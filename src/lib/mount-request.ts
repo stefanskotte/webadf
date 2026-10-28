@@ -53,8 +53,10 @@ export function mountRequest(
  * falls back to the status.
  */
 export function mountFailureText(body: unknown, status: number, req: Pick<MountRequest, 'viaRemote'>, host?: string): string {
-  const b = body && typeof body === 'object' ? body as { reason?: unknown; error?: unknown; host?: unknown } : null;
+  const b = body && typeof body === 'object' ? body as { reason?: unknown; error?: unknown; host?: unknown; detail?: unknown } : null;
   if (typeof b?.reason === 'string') return b.reason;
-  if (req.viaRemote && typeof b?.error === 'string') return remoteErrorText(b.error, typeof b.host === 'string' ? b.host : host ?? null);
+  if (req.viaRemote && typeof b?.error === 'string') {
+    return remoteErrorText(b.error, typeof b.host === 'string' ? b.host : host ?? null, typeof b.detail === 'string' ? b.detail : undefined);
+  }
   return `The server answered ${status}.`;
 }

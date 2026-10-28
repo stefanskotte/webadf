@@ -4,7 +4,9 @@
 // thing for the same failure:
 //   ended                         410 {error:'ended'}
 //   unreachable                   502 {error:'unreachable', host}
-//   protocol (and bad_response)   409 {error:'protocol', detail?}
+//   protocol                      409 {error:'protocol', host, detail?}  (detail: which side is older)
+//   bad_response                  502 {error:'bad_response', host}       (not a WebFloppy, or a garbled answer)
+//   token_unreadable              409 {error:'token_unreadable'}         (this server cannot open its sealed token)
 //   not_found / not_shared        404 {error:'not_shared'} for a disk action, else {error:'not_found'}
 //   rate_limited                  429 {error:'rate_limited'}
 //   too_large / mismatch          502 {error: reason}
@@ -46,13 +48,16 @@ export function remoteFailure(
     case 'too_large':
     case 'mismatch':
       return Response.json({ error: failure }, { status: 502 });
+    case 'bad_response':
+      return Response.json({ error: 'bad_response', host }, { status: 502 });
+    case 'token_unreadable':
+      return Response.json({ error: 'token_unreadable' }, { status: 409 });
     case 'not_found':
     case 'not_shared':
     case 'invalid_or_used':
       return Response.json({ error: opts.disk ? 'not_shared' : 'not_found' }, { status: 404 });
     default:
-      // 'protocol', and an answer that is not a share API at all ('bad_response').
-      return Response.json(opts.detail ? { error: 'protocol', detail: opts.detail } : { error: 'protocol' }, { status: 409 });
+      return Response.json(opts.detail ? { error: 'protocol', host, detail: opts.detail } : { error: 'protocol', host }, { status: 409 });
   }
 }
 

@@ -9,12 +9,12 @@ import { checkLibrary } from './wire';
 
 export type Loaded<T> = { ok: true; value: T } | { ok: false; failure: ShareFailure | 'protocol'; detail?: string };
 
-/** GET one listing and check it. An answer that is not what the share API sends counts as 'protocol' (http.ts does too). */
+/** GET one listing and check it. An answer that is not what the share API sends is 'bad_response' (http.ts too). */
 export async function loadRemote<T>(orgId: string, id: string, path: string, check: (raw: unknown) => T | null): Promise<Loaded<T>> {
   const r = await remoteCall<unknown>(orgId, id, path);
-  if (!r.ok) return r.failure === 'bad_response' ? { ok: false, failure: 'protocol', detail: r.detail } : { ok: false, failure: r.failure, detail: r.detail };
+  if (!r.ok) return { ok: false, failure: r.failure, detail: r.detail };
   const v = check(r.value);
-  return v ? { ok: true, value: v } : { ok: false, failure: 'protocol', detail: 'bad_response' };
+  return v ? { ok: true, value: v } : { ok: false, failure: 'bad_response' };
 }
 
 /** This org's remote library and its host, or null (another org's id and an unknown id alike). */

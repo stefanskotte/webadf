@@ -7,7 +7,7 @@ import { remoteErrorText } from '@/lib/remote/copy';
 import { addConfirmText, shareLinkHost } from '@/lib/remote/view';
 import { CARD_STYLE, FIELD, FIELD_STYLE, INK_BTN, INK_STYLE, SETTINGS_CARD } from '@/lib/settings-look';
 
-type Failure = { text: string; existing: boolean };
+type Failure = { text: string };
 
 /**
  * Add a shared library (spec §4.2 Add): paste the link the owner sent, or arrive from their landing page at
@@ -32,7 +32,7 @@ export function AddRemoteForm() {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ link: raw }),
       });
       if (res.redirected || !res.headers.get('content-type')?.includes('application/json')) {
-        setFailure({ text: 'Your session expired. Sign in again and retry.', existing: false });
+        setFailure({ text: 'Your session expired. Sign in again and retry.' });
         return;
       }
       const body = await res.json() as { id?: string; error?: string; host?: string | null; detail?: string };
@@ -40,9 +40,9 @@ export function AddRemoteForm() {
         router.push(`/remote/${encodeURIComponent(body.id)}`);
         return;
       }
-      setFailure({ text: remoteErrorText(body.error, body.host ?? null, body.detail), existing: body.error === 'already_added' });
+      setFailure({ text: remoteErrorText(body.error, body.host ?? null, body.detail) });
     } catch {
-      setFailure({ text: 'Could not reach the server. Nothing was added.', existing: false });
+      setFailure({ text: 'Could not reach the server. Nothing was added.' });
     } finally {
       setBusy(false);
     }
@@ -89,7 +89,6 @@ export function AddRemoteForm() {
       {failure && (
         <p role="alert" data-testid="remote-add-error" className="text-[13px]" style={{ color: 'var(--danger-fg)' }}>
           {failure.text}
-          {failure.existing && <> <Link href="/remote" className="font-semibold underline-offset-4 hover:underline">Open Remote</Link></>}
         </p>
       )}
       <div className="flex items-center gap-3">

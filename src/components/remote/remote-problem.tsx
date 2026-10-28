@@ -10,6 +10,8 @@ export function RemoteProblem({ libraryId, name, host, failure, detail, retryHre
   libraryId: string; name: string; host: string; failure: string; detail?: string; retryHref: string;
 }) {
   const ended = failure === 'ended';
+  // A token this server cannot open: only Remove and a new link help, like an ended library (final review 3).
+  const removeOnly = ended || failure === 'token_unreadable';
   const text = remoteErrorText(failure, host, detail);
   const why = ended
     ? `${name} is no longer shared with you. Copies of its disks were taken out of your drives; disks you saved to stay in your library.`
@@ -19,7 +21,11 @@ export function RemoteProblem({ libraryId, name, host, failure, detail, retryHre
         ? `${host} did not answer. It may be switched off or offline; try again later.`
         : failure === 'protocol'
           ? 'The two WebFloppy servers speak different versions of sharing. Updating the older one fixes it.'
-          : 'Nothing was changed.';
+          : failure === 'bad_response'
+            ? `${host} answered, but not the way a WebFloppy does. It may be down for maintenance; try again later.`
+            : failure === 'token_unreadable'
+              ? 'The key this server keeps for it no longer opens (its secret was changed). Nothing was deleted.'
+              : 'Nothing was changed.';
   return (
     <div data-testid={ended ? 'remote-ended' : 'remote-problem'} data-failure={failure} role="alert"
          className="mx-4 flex max-w-[560px] flex-col gap-3 p-6 sm:mx-7"
@@ -29,7 +35,7 @@ export function RemoteProblem({ libraryId, name, host, failure, detail, retryHre
       </h2>
       <p className="text-[14px] leading-relaxed" style={{ color: 'var(--muted)' }}>{why}</p>
       <div className="mt-1 flex flex-wrap items-center gap-3">
-        {ended ? (
+        {removeOnly ? (
           <RemoveRemote id={libraryId} name={name} testId="remote-ended-remove" />
         ) : (
           <>

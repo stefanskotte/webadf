@@ -89,6 +89,14 @@ describe('address guard', () => {
       expect(h.calls[0].address).toBe(ip);
     });
 
+  it('offers the socket EVERY vetted address, v6 and v4, so Node can fall back between them (final review 2)', async () => {
+    const both = [v6('2606:4700::1111'), v4(PUBLIC_IP)];
+    const h = harness({ addrs: both });
+    expect(await h.client.ping(OWNER)).toMatchObject({ ok: true });
+    expect(h.calls[0].address).toBe('2606:4700::1111');
+    expect(h.calls[0].addresses).toEqual(both);
+  });
+
   it('refuses a name with one public and one private address unless private is allowed', async () => {
     const both = [v4(PUBLIC_IP), v4('10.0.0.5')];
     expect(await harness({ addrs: both }).client.ping(OWNER)).toMatchObject({ ok: false, detail: 'address_not_allowed' });
@@ -192,7 +200,10 @@ describe('requests', () => {
 
   it('listing limits are 2 MB / 10 s, bytes MAX_DISK_BYTES / 60 s', () => {
     expect(SHARE_LIMITS.listing).toEqual({ maxBytes: 2 * 1024 * 1024, timeoutMs: 10_000 });
-    expect(SHARE_LIMITS.bytes).toEqual({ maxBytes: MAX_DISK_BYTES, timeoutMs: 60_000 });
+    expect(SHARE_LIMITS.bytes).toEqual({ maxBytes: MAX_DISK_BYTES, timeoutMs: 45_000 });
+    // final review 5: mount/send/download make a listing call AND a bytes call inside maxDuration = 60, so a slow
+    // owner must end as a clean 502, never as the platform killing the function.
+    expect(SHARE_LIMITS.listing.timeoutMs + SHARE_LIMITS.bytes.timeoutMs).toBeLessThan(60_000);
   });
 
   it('pinned: fetches the root PEM first (unverified, no token), then trusts only that root', async () => {
@@ -291,7 +302,7 @@ describe('requests', () => {
     const r = await h.client.getBytes(OWNER, 'disks/d1/bytes');
     expect(r).toEqual({ ok: true, value: bytes, etag: sha });
     expect(h.calls[0].maxBytes).toBe(MAX_DISK_BYTES);
-    expect(h.calls[0].timeoutMs).toBe(60_000);
+    expect(h.calls[0].timeoutMs).toBe(45_000);
     expect(h.calls[0].headers.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
@@ -641,6 +652,13 @@ describe('nodeShareTransport', () => {
       const hit = hits.at(-1)!;
       expect(hit).toMatchObject({ method: 'POST', url: '/api/share/v1/claim', body: '{"a":1}' });
       expect(hit.headers.host).toBe(`share.invalid:${port}`);
+    });
+
+    it('falls back to the next vetted address when the first refuses, and never leaves the list (final review 2)', async () => {
+      const r = await nodeShareTransport(base(`http://share.invalid:${port}/api/share/v1/ping`, {
+        address: '::1', addresses: [{ address: '::1', family: 6 }, { address: '127.0.0.1', family: 4 }],
+      }));
+      expect(r.status).toBe(200);
     });
 
     it('returns a 302 as-is, never following it', async () => {

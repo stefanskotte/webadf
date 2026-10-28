@@ -24,7 +24,7 @@ import { clientFor, isFkViolation, noteRemoteResult, prepareRemote, purgeHidden,
 
 export type MaterialiseResult =
   | { ok: true; diskId: string }
-  | { ok: false; reason: 'not_shared' | 'ended' | 'unreachable' | 'too_large' | 'mismatch' | 'protocol' };
+  | { ok: false; reason: 'not_shared' | 'ended' | 'unreachable' | 'too_large' | 'mismatch' | 'protocol' | 'bad_response' | 'token_unreadable' };
 
 type Reason = Extract<MaterialiseResult, { ok: false }>['reason'];
 
@@ -44,7 +44,9 @@ function reasonOf(f: ShareFailure): Reason {
     case 'unreachable':
     case 'rate_limited': return 'unreachable';
     case 'too_large': return 'too_large';
-    default: return 'protocol';
+    case 'token_unreadable': return 'token_unreadable';
+    case 'protocol': return 'protocol';
+    default: return 'bad_response';
   }
 }
 
@@ -79,11 +81,11 @@ export async function materialiseRemoteDisk(
   await noteRemoteResult(orgId, remoteLibraryId, listing);
   if (!listing.ok) return fail(reasonOf(listing.failure));
   const detail = listing.value;
-  if (!detail || typeof detail !== 'object' || !detail.title || !Array.isArray(detail.disks)) return fail('protocol');
+  if (!detail || typeof detail !== 'object' || !detail.title || !Array.isArray(detail.disks)) return fail('bad_response');
   const entry = detail.disks.find((d) => d && (d as ShareDisk).id === remoteDiskId);
   if (!entry) return fail('not_shared');
   const d = validDisk(entry);
-  if (!d) return fail('protocol');
+  if (!d) return fail('bad_response');
   if (d.sizeBytes > MAX_DISK_BYTES) return fail('too_large');
 
   const db = getDb();

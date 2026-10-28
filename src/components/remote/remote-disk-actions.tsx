@@ -13,16 +13,18 @@ const OUTLINE = 'btn-like inline-flex h-[38px] shrink-0 items-center rounded-[10
 const OUTLINE_STYLE = { background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' };
 
 /** The remote routes' own codes, worded by remoteErrorText; everything else is a send refusal (send-ui.ts). */
-const REMOTE_CODES = new Set(['ended', 'unreachable', 'protocol', 'not_shared', 'not_found', 'rate_limited', 'too_large', 'mismatch']);
+const REMOTE_CODES = new Set([
+  'ended', 'unreachable', 'protocol', 'bad_response', 'token_unreadable', 'not_shared', 'not_found', 'rate_limited', 'too_large', 'mismatch',
+]);
 
 type Where = { libraryId: string; titleId: string; diskId: string; host: string };
 const base = (w: Where) => `/api/remote/${encodeURIComponent(w.libraryId)}/disks/${encodeURIComponent(w.diskId)}`;
 
 async function errorOf(res: Response, host: string): Promise<string> {
-  const body = await res.json().catch(() => null) as { error?: unknown; host?: unknown } | null;
+  const body = await res.json().catch(() => null) as { error?: unknown; host?: unknown; detail?: unknown } | null;
   const code = typeof body?.error === 'string' ? body.error : undefined;
   return code && REMOTE_CODES.has(code)
-    ? remoteErrorText(code, typeof body?.host === 'string' ? body.host : host)
+    ? remoteErrorText(code, typeof body?.host === 'string' ? body.host : host, typeof body?.detail === 'string' ? body.detail : undefined)
     : sendErrorText(code, res.status);
 }
 

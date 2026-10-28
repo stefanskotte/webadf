@@ -179,6 +179,15 @@ describe('/api/remote', () => {
       const down = await listRoute.POST(req('/api/remote', 'POST', { link: `https://owner-y.example/s/${CODE}` }));
       expect(down.status).toBe(502);
       expect(await down.json()).toEqual({ error: 'unreachable', host: 'owner-y.example' });
+      // final review 6: protocol names the host and keeps the detail; a garbled answer is its own code.
+      owner.claim = { ok: false, failure: 'protocol', detail: 'local_older' };
+      const old = await listRoute.POST(req('/api/remote', 'POST', { link: `https://owner-z.example/s/${CODE}` }));
+      expect(old.status).toBe(409);
+      expect(await old.json()).toEqual({ error: 'protocol', host: 'owner-z.example', detail: 'local_older' });
+      owner.claim = { ok: false, failure: 'bad_response', detail: 'json' };
+      const odd = await listRoute.POST(req('/api/remote', 'POST', { link: `https://owner-w.example/s/${CODE}` }));
+      expect(odd.status).toBe(502);
+      expect(await odd.json()).toEqual({ error: 'bad_response', host: 'owner-w.example' });
     });
 
     it('removing ejects a hidden disk from the drive before deleting it', async () => {
@@ -224,7 +233,8 @@ describe('/api/remote', () => {
         [{ ok: false, failure: 'not_found' }, 404, { error: 'not_found' }],
         [{ ok: false, failure: 'rate_limited' }, 429, { error: 'rate_limited' }],
         [{ ok: false, failure: 'unreachable', detail: 'dns' }, 502, { error: 'unreachable', host: `owner${n}.example` }],
-        [{ ok: false, failure: 'protocol', detail: 'local_older' }, 409, { error: 'protocol', detail: 'local_older' }],
+        [{ ok: false, failure: 'protocol', detail: 'local_older' }, 409, { error: 'protocol', host: `owner${n}.example`, detail: 'local_older' }],
+        [{ ok: false, failure: 'bad_response', detail: 'json' }, 502, { error: 'bad_response', host: `owner${n}.example` }],
       ];
       for (const [answer, status, body] of cases) {
         owner.json.set('library', answer);
@@ -252,7 +262,9 @@ describe('/api/remote', () => {
       expect(res.headers.get('cache-control')).toBe('private, max-age=3600');
       expect(new Uint8Array(await res.arrayBuffer())).toEqual(PNG);
       owner.bytes.set(`covers/${T1}`, { ok: true, value: new TextEncoder().encode('<html>'), etag: 'c1' });
-      expect((await coversRoute.GET(req('/x'), params({ id, titleId: T1 }))).status).toBe(409);
+      const odd = await coversRoute.GET(req('/x'), params({ id, titleId: T1 }));
+      expect(odd.status).toBe(502);
+      expect(await odd.json()).toEqual({ error: 'bad_response', host: expect.any(String) });
     });
   });
 

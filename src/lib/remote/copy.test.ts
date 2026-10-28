@@ -14,7 +14,9 @@ describe('remoteErrorText (global constraints: UI copy)', () => {
     ['rate_limited', 'floppy.example', undefined, 'floppy.example is busy. Try again in a minute.'],
     ['too_large', 'floppy.example', undefined, 'That disk is too large to fetch.'],
     ['mismatch', 'floppy.example', undefined, 'The disk changed while it was being fetched. Try again.'],
-    ['already_added', 'floppy.example', undefined, 'This library is already in your Remote list.'],
+    ['bad_response', 'floppy.example', undefined, "floppy.example didn't answer like a WebFloppy"],
+    ['bad_response', null, undefined, "The other WebFloppy didn't answer like a WebFloppy"],
+    ['token_unreadable', 'floppy.example', undefined, "This shared library can't be opened on this server. Remove it and ask for a new link."],
     ['bad_link', null, undefined, "That doesn't look like a share link. Paste the whole link you were sent."],
     ['no_device', 'floppy.example', undefined, 'That board cannot receive files.'],
   ] as const)('%s (%s, %s) -> %s', (failure, host, detail, text) => {
@@ -49,6 +51,10 @@ describe('remoteStatusLook', () => {
     expect(remoteStatusLook('protocol', 'floppy.example', 'protocol: remote_older').label).toBe('floppy.example needs a WebFloppy update');
     expect(remoteStatusLook('protocol', 'floppy.example', null).label).toBe('floppy.example needs a WebFloppy update');
     expect(remoteStatusLook('protocol', 'floppy.example', null).kind).toBe('amber');
+  });
+  it('a token this server cannot open says so in red, whatever the stored status (final review 3)', () => {
+    expect(remoteStatusLook('ok', 'floppy.example', 'token_unreadable')).toEqual({ kind: 'red', label: "Can't be opened on this server" });
+    expect(remoteStatusLook('unreachable', 'floppy.example', 'token_unreadable').kind).toBe('red');
   });
   it('an unknown status reads as unreachable rather than as fine', () => {
     expect(remoteStatusLook('weird' as never, 'h', null).kind).toBe('amber');

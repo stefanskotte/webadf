@@ -62,6 +62,10 @@ describe('mountFailureText', () => {
   it('remote codes are worded, with the host', () => {
     expect(mountFailureText({ error: 'unreachable', host: 'h.example' }, 502, viaRemote, 'floppy.example')).toBe("Can't reach h.example");
     expect(mountFailureText({ error: 'ended' }, 410, viaRemote)).toBe('Access ended');
+    // final review 6: the detail reaches the words, and a garbled answer is not "needs an update".
+    expect(mountFailureText({ error: 'protocol', detail: 'local_older', host: 'h.example' }, 409, viaRemote)).toBe('Your WebFloppy needs an update');
+    expect(mountFailureText({ error: 'protocol', detail: 'remote_older', host: 'h.example' }, 409, viaRemote)).toBe('h.example needs a WebFloppy update');
+    expect(mountFailureText({ error: 'bad_response', host: 'h.example' }, 502, viaRemote)).toBe("h.example didn't answer like a WebFloppy");
   });
   it('a reason sentence wins; a local code is never worded as remote', () => {
     expect(mountFailureText({ reason: 'DF1 is off.' }, 409, viaRemote)).toBe('DF1 is off.');

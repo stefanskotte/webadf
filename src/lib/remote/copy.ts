@@ -16,6 +16,9 @@ function protocolText(host: string | null | undefined, detail: string | null | u
   return `${subject(host)} needs a WebFloppy update`;
 }
 
+/** A sealed token this server cannot open (BETTER_AUTH_SECRET changed): only a new link helps (final review 3). */
+const TOKEN_UNREADABLE = "This shared library can't be opened on this server. Remove it and ask for a new link.";
+
 /**
  * The sentence for an /api/remote/* error code (src/lib/remote/http.ts, src/app/api/remote/route.ts), with the owner's
  * host where the person needs it. A disk action's 404 is "No longer shared" (Review Focus 1); so is a title's: both
@@ -29,12 +32,13 @@ export function remoteErrorText(
     case 'unreachable': return `Can't reach ${named(host) ?? other}`;
     case 'invalid_or_used': return 'This link was already used, has expired or was revoked';
     case 'protocol': return protocolText(host, detail);
+    case 'bad_response': return `${subject(host)} didn't answer like a WebFloppy`;
+    case 'token_unreadable': return TOKEN_UNREADABLE;
     case 'not_shared':
     case 'not_found': return 'No longer shared';
     case 'rate_limited': return `${subject(host)} is busy. Try again in a minute.`;
     case 'too_large': return 'That disk is too large to fetch.';
     case 'mismatch': return 'The disk changed while it was being fetched. Try again.';
-    case 'already_added': return 'This library is already in your Remote list.';
     case 'bad_link': return "That doesn't look like a share link. Paste the whole link you were sent.";
     case 'no_device': return 'That board cannot receive files.';
     default: return 'Something went wrong. Try again.';
@@ -48,6 +52,8 @@ export function remoteErrorText(
 export function remoteStatusLook(
   status: RemoteLibraryStatus, host: string | null | undefined, lastError: string | null | undefined,
 ): { kind: ChipKind; label: string } {
+  // Not a status (the owner may be fine): this server cannot open the token it holds, so every call is refused.
+  if (lastError === 'token_unreadable') return { kind: 'red', label: "Can't be opened on this server" };
   switch (status) {
     case 'ok': return { kind: 'green', label: 'Connected' };
     case 'ended': return { kind: 'red', label: 'Access ended' };

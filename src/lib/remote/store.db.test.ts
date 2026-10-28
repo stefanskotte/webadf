@@ -117,7 +117,8 @@ describe('remote library store', () => {
     ['unreachable', 'unreachable'],
     ['rate_limited', 'unreachable'],
     ['protocol', 'protocol'],
-    ['bad_response', 'protocol'],
+    ['bad_response', 'bad_response'],
+    ['too_large', 'bad_response'],
   ])('a claim failing %s is %s, and nothing is stored', async (failure, reason) => {
     const client = fakeClient({ claim: vi.fn(async () => ({ ok: false, failure })) });
     const r = await store.addRemoteLibrary(ORG, 'u1', link('fail.example'), { client });
@@ -153,11 +154,43 @@ describe('remote library store', () => {
     expect(await store.listRemoteLibraries(OTHER)).toEqual([]);
   });
 
-  it('the same owner twice is already_added, without claiming', async () => {
-    await addLib('twice.example');
+  it('two links from one origin are two libraries: every hosted owner shares one origin (final review 1)', async () => {
+    const first = await addLib('twice.example');
     const client = fakeClient();
-    expect(await store.addRemoteLibrary(ORG, 'u1', link('twice.example', false), { client })).toEqual({ ok: false, reason: 'already_added' });
-    expect(client.claim).not.toHaveBeenCalled();
+    const r = await store.addRemoteLibrary(ORG, 'u1', link('twice.example', false), { client });
+    expect(client.claim).toHaveBeenCalledTimes(1);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.id).not.toBe(first);
+    const rows = await getDb().select().from(remoteLibraries).where(eq(remoteLibraries.baseUrl, 'https://twice.example'));
+    expect(rows).toHaveLength(2);
+  });
+
+  it('a token this server cannot open refuses the call but never ends the library or purges (final review 3)', async () => {
+    const id = await addLib('unreadable.example');
+    await seedHidden(id, 9, { device: true });
+    const saved = process.env.BETTER_AUTH_SECRET;
+    process.env.BETTER_AUTH_SECRET = 'a-different-secret';
+    try {
+      const client = fakeClient();
+      const r = await store.remoteCall(ORG, id, 'library', { client });
+      expect(r).toEqual({ ok: false, failure: 'token_unreadable' });
+      expect(client.getJson).not.toHaveBeenCalled();
+      const row = await statusOf(id);
+      expect(row.status).toBe('ok');
+      expect(row.lastError).toBe('token_unreadable');
+      const db = getDb();
+      expect(await db.select().from(disks).where(eq(disks.remoteLibraryId, id))).toHaveLength(1);
+      expect(await db.select().from(games).where(eq(games.remoteLibraryId, id))).toHaveLength(1);
+      const [dev] = await db.select().from(devices).where(eq(devices.id, 'dev9'));
+      expect(dev.desiredDiskId).toBe('hd9');
+      expect(dev.df1DiskId).toBe('hd9');
+    } finally {
+      process.env.BETTER_AUTH_SECRET = saved;
+    }
+    // The secret back: the library works again, nothing was lost.
+    const ok = fakeClient({ getJson: vi.fn(async () => ({ ok: true, value: { name: 'x' } })) });
+    expect((await store.remoteCall(ORG, id, 'library', { client: ok })).ok).toBe(true);
+    expect((await statusOf(id)).lastError).toBeNull();
   });
 
   it('remoteCall caches a listing for 60 s, then asks again', async () => {
@@ -320,14 +353,15 @@ describe('remote library store', () => {
     expect(await store.removeRemoteLibrary(ORG, id)).toBe(false);
   });
 
-  it('a token that can no longer be opened ends the library without calling the owner', async () => {
+  it('a sealed token that does not open is refused without calling the owner, and the library is not ended (final review 3)', async () => {
     const id = await addLib('rotated.example');
     await getDb().update(remoteLibraries).set({ tokenEnc: 'v1.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }).where(eq(remoteLibraries.id, id));
     const client = fakeClient();
     const r = await store.remoteCall(ORG, id, 'library', { client });
-    expect(r.ok).toBe(false);
+    expect(r).toEqual({ ok: false, failure: 'token_unreadable' });
     expect(client.getJson).not.toHaveBeenCalled();
-    expect((await statusOf(id)).status).toBe('ended');
+    expect((await statusOf(id)).status).toBe('ok');
+    expect((await statusOf(id)).lastError).toBe('token_unreadable');
   });
 
   it('an unknown or foreign library answers not_found', async () => {

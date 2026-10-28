@@ -8,6 +8,9 @@
 //   409 ('protocol') -> status 'protocol'
 //   429              -> status left alone (the owner is there, just busy)
 // An 'ended' library is never called again: its token is dead. It stays listed until removed.
+// A sealed token this server cannot open (BETTER_AUTH_SECRET changed, or a restore from another server) is NOT the
+// owner revoking: the call is refused with 'token_unreadable' and last_error says so, but the status and the hidden
+// rows are left alone -- putting the old secret back makes the library work again (final review 3).
 //
 // Hidden rows (src/lib/remote-hidden.ts) are the games/disks pairs materialise.ts makes so a remote disk can be
 // mounted. purgeHidden ejects them from every drive BEFORE deleting them (Review Focus 3): a disk row that simply
@@ -44,7 +47,7 @@ export type RemoteDeps = { client?: ShareClient };
 
 export type AddRemoteResult =
   | { ok: true; id: string }
-  | { ok: false; reason: 'bad_link' | 'invalid_or_used' | 'unreachable' | 'protocol' | 'already_added'; detail?: string };
+  | { ok: false; reason: 'bad_link' | 'invalid_or_used' | 'unreachable' | 'protocol' | 'bad_response'; detail?: string };
 
 /** Listings are cached 60 s per (remote library, request) (global constraints). */
 export const LISTING_CACHE_MS = 60_000;
@@ -92,7 +95,11 @@ async function orgName(orgId: string): Promise<string> {
   return row?.name?.trim() || 'WebFloppy';
 }
 
-/** Add a library from a pasted share link: parse, claim, store the sealed token (spec §4.2 Add). */
+/**
+ * Add a library from a pasted share link: parse, claim, store the sealed token (spec §4.2 Add). There is no
+ * "already added" check: on a hosted deployment every owner shares one origin, so the origin does not name a library,
+ * and a second link from the same owner is simply a second entry (final review 1).
+ */
 export async function addRemoteLibrary(
   orgId: string, userId: string, rawLink: string, deps?: RemoteDeps,
 ): Promise<AddRemoteResult> {
@@ -100,11 +107,6 @@ export async function addRemoteLibrary(
   if (!link) return { ok: false, reason: 'bad_link' };
 
   const db = getDb();
-  const [dup] = await db.select({ id: remoteLibraries.id }).from(remoteLibraries)
-    .where(and(eq(remoteLibraries.orgId, orgId), eq(remoteLibraries.baseUrl, link.origin), eq(remoteLibraries.status, 'ok')))
-    .limit(1);
-  if (dup) return { ok: false, reason: 'already_added' };
-
   const target: ShareTarget = { origin: link.origin, pin: link.pin };
   const r = await clientFor(deps).claim(target, link.code, { instanceUrl: publicOrigin(), instanceName: await orgName(orgId) });
   if (!r.ok) {
@@ -116,9 +118,11 @@ export async function addRemoteLibrary(
       case 'unreachable':
       case 'rate_limited':
         return { ok: false, reason: 'unreachable', detail: r.failure === 'rate_limited' ? 'rate_limited' : r.detail };
+      case 'protocol':
+        return r.detail ? { ok: false, reason: 'protocol', detail: r.detail } : { ok: false, reason: 'protocol' };
       default:
-        // 'protocol', and an answer that is not a share API at all ('bad_response', 'too_large').
-        return { ok: false, reason: 'protocol', detail: r.failure === 'protocol' ? r.detail : r.failure };
+        // An answer that is not a share API at all ('bad_response', 'too_large'): not a WebFloppy, or a garbled one.
+        return { ok: false, reason: 'bad_response' };
     }
   }
 
@@ -140,7 +144,7 @@ export async function listRemoteLibraries(orgId: string): Promise<RemoteLibraryR
 
 /**
  * The library and what to call it with. Null when it is not this org's. `target.token` is absent when the sealed
- * token cannot be opened (BETTER_AUTH_SECRET changed): remoteCall then ends the library.
+ * token cannot be opened (BETTER_AUTH_SECRET changed): prepareRemote then refuses the call with 'token_unreadable'.
  */
 export async function getRemoteTarget(orgId: string, id: string): Promise<{ row: RemoteLibraryRow; target: ShareTarget } | null> {
   const [r] = await getDb().select({ ...rowColumns, tokenEnc: remoteLibraries.tokenEnc, tlsPin: remoteLibraries.tlsPin })
@@ -192,14 +196,20 @@ export async function noteRemoteResult(orgId: string, id: string, r: ShareResult
 
 type Prepared = { ok: true; target: ShareTarget } | { ok: false; result: ShareResult<never> };
 
-/** The target for a call, or the answer without calling: unknown library 404, an ended one 'ended'. */
+/**
+ * The target for a call, or the answer without calling: unknown library 404, an ended one 'ended', a token this
+ * server cannot open 'token_unreadable' (noted in last_error; status and hidden rows untouched, final review 3).
+ */
 export async function prepareRemote(orgId: string, id: string): Promise<Prepared> {
   const t = await getRemoteTarget(orgId, id);
   if (!t) return { ok: false, result: { ok: false, failure: 'not_found' } };
   if (t.row.status === 'ended') return { ok: false, result: { ok: false, failure: 'ended' } };
   if (!t.target.token) {
-    await endRemoteLibrary(orgId, id, 'token_unreadable');
-    return { ok: false, result: { ok: false, failure: 'ended', detail: 'token_unreadable' } };
+    if (t.row.lastError !== 'token_unreadable') {
+      await getDb().update(remoteLibraries).set({ lastError: 'token_unreadable' })
+        .where(and(eq(remoteLibraries.id, id), eq(remoteLibraries.orgId, orgId), ne(remoteLibraries.status, 'ended')));
+    }
+    return { ok: false, result: { ok: false, failure: 'token_unreadable' } };
   }
   return { ok: true, target: t.target };
 }
@@ -219,7 +229,7 @@ export async function remoteCall<T>(orgId: string, id: string, path: string, dep
   return r;
 }
 
-/** The owner revoked (any 401), or the token is unusable: status 'ended', every hidden row ejected and deleted. */
+/** The owner revoked (any 401): status 'ended', every hidden row ejected and deleted. */
 export async function endRemoteLibrary(orgId: string, id: string, reason = 'ended'): Promise<void> {
   await getDb().update(remoteLibraries).set({ status: 'ended', lastError: reason })
     .where(and(eq(remoteLibraries.id, id), eq(remoteLibraries.orgId, orgId)));

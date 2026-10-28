@@ -18,8 +18,8 @@ export async function GET() {
 const addBody = z.object({ link: z.string().min(1).max(4096) });
 
 /**
- * 201 {id}; 400 bad_link; 404 invalid_or_used ("already used, expired or revoked"); 409 already_added / protocol
- * {detail?}; 502 unreachable {host}.
+ * 201 {id}; 400 bad_link; 404 invalid_or_used ("already used, expired or revoked"); 409 protocol {host, detail?};
+ * 502 unreachable / bad_response {host}. The same owner twice is two entries, not a refusal (final review 1).
  */
 export async function POST(request: Request) {
   const { orgId, userId } = await requireOrg();
@@ -29,19 +29,18 @@ export async function POST(request: Request) {
   if (!p.success) return Response.json({ error: 'invalid_body' }, { status: 400 });
 
   const r = await addRemoteLibrary(orgId, userId, p.data.link);
+  const host = () => { const origin = parseShareLink(p.data.link)?.origin; return origin ? hostOf(origin) : null; };
   if (r.ok) return Response.json({ id: r.id }, { status: 201 });
   switch (r.reason) {
     case 'bad_link':
       return Response.json({ error: 'bad_link' }, { status: 400 });
     case 'invalid_or_used':
       return Response.json({ error: 'invalid_or_used' }, { status: 404 });
-    case 'already_added':
-      return Response.json({ error: 'already_added' }, { status: 409 });
-    case 'unreachable': {
-      const origin = parseShareLink(p.data.link)?.origin;
-      return Response.json({ error: 'unreachable', host: origin ? hostOf(origin) : null }, { status: 502 });
-    }
+    case 'unreachable':
+      return Response.json({ error: 'unreachable', host: host() }, { status: 502 });
+    case 'bad_response':
+      return Response.json({ error: 'bad_response', host: host() }, { status: 502 });
     default:
-      return Response.json(r.detail ? { error: 'protocol', detail: r.detail } : { error: 'protocol' }, { status: 409 });
+      return Response.json(r.detail ? { error: 'protocol', host: host(), detail: r.detail } : { error: 'protocol', host: host() }, { status: 409 });
   }
 }
