@@ -83,6 +83,17 @@ describe('LIBRARY: listing', () => {
     expect(l.disk!.holder).toBe('A500 bench');
     await getDb().delete(devices);
   });
+  it('hides a disk with no entitlement from the title listing and 404s it', async () => {
+    const adf = formatVolume({ filesystem: 'OFS', volumeName: 'NoEnt' });
+    const sha = createHash('sha256').update(adf).digest('hex');
+    await diskStore.put(sha, adf);
+    const db = getDb();
+    await db.insert(blobs).values({ sha256: sha, sizeBytes: adf.length, storageKey: `adf/${sha}` }).onConflictDoNothing();
+    await db.insert(disks).values({ id: 'd9', gameId: 'g1', orgId: 'o1', diskNo: 2, sha256: sha, sizeBytes: adf.length });
+    const l = (await listLibrary(ctx, P('LIBRARY:/g1')))!;
+    expect(l.entries.map((e) => e.path)).toEqual(['LIBRARY:/g1/d1']);
+    expect(await listLibrary(ctx, P('LIBRARY:/g1/d9'))).toBeNull();
+  });
   it('is not found for another org, an unknown id, or a file path', async () => {
     expect(await listLibrary({ orgId: 'o2', userId: null }, P('LIBRARY:/g1'))).toBeNull();
     expect(await listLibrary(ctx, P('LIBRARY:/nope'))).toBeNull();

@@ -25,7 +25,7 @@ export async function loadDisk(ctx: FsCtx, gameId: string, diskId: string): Prom
       imageFormat: disks.imageFormat, title: games.title })
     .from(disks)
     .innerJoin(entitlements, and(eq(entitlements.orgId, disks.orgId), eq(entitlements.sha256, disks.sha256)))
-    .innerJoin(games, eq(games.id, disks.gameId))
+    .innerJoin(games, and(eq(games.id, disks.gameId), eq(games.orgId, ctx.orgId), isLocal(games)))
     .where(and(eq(disks.id, diskId), eq(disks.gameId, gameId), eq(disks.orgId, ctx.orgId), isLocal(disks)))
     .limit(1);
   if (!row) return null;
@@ -75,7 +75,9 @@ export async function listLibrary(ctx: FsCtx, p: FsPath): Promise<Listing | null
   const titleCrumb = { label: game.title, path: lib(gameId) };
   if (!diskId) {
     const rows = await db.select({ id: disks.id, diskNo: disks.diskNo, label: disks.label, sizeBytes: disks.sizeBytes, sha256: disks.sha256 })
-      .from(disks).where(and(eq(disks.gameId, gameId), eq(disks.orgId, ctx.orgId), isLocal(disks))).orderBy(asc(disks.diskNo));
+      .from(disks)
+      .innerJoin(entitlements, and(eq(entitlements.orgId, disks.orgId), eq(entitlements.sha256, disks.sha256)))
+      .where(and(eq(disks.gameId, gameId), eq(disks.orgId, ctx.orgId), isLocal(disks))).orderBy(asc(disks.diskNo));
     const entries: FsEntry[] = [];
     for (const d of rows) {
       const holder = await findHolder(db, ctx.orgId, d.sha256);
