@@ -1485,6 +1485,24 @@ arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **Library sharing (Remote libraries) -- SHIPPED 2026-10-28, merge e2526cc** (spec
+  docs/superpowers/specs/2026-10-28-library-sharing-design.md, plan docs/superpowers/plans/2026-10-28-library-sharing.md;
+  built unattended overnight, subagent-driven, 11 tasks + final review). Owner: Settings > Sharing makes a claim-once link
+  per person scoped to collections or Everything; revoke/edit/delete. Recipient: Remote menu (phone: More menu), paste
+  link, browse read-only, Mount DF0/DF1, Send to Amiga, Download. First Amiga write moves the disk into a local
+  "own copy" title (games.copied_from, "Your copy of <name>'s library"); untouched hidden copies are purged on
+  revoke/remove (ejected first). Server to server only; tokens hashed (owner) / AES-GCM sealed (recipient).
+  Self-host: Caddy serves its internal root at /.well-known/webadf-root.pem; links from `tls internal` instances carry
+  #pin=; WEBADF_SHARE_PRIVATE_ADDRESSES defaults 1 on self-host. **Migration 0050 applied to production by the controller
+  before merge.** Verified: unit 3811, db 357, e2e sharing + sharing-owner (isolated DB), pnpm build; OMV parity
+  (OMV owner with internal cert + pinned link -> Mac client: wrong/missing pin refused, claim once, listing, 880 KB ADF
+  sha match, files); Caddy traversal probes return the app 404, never key material. **OMV runs the branch image tagged
+  share-test** (WEBADF_IMAGE_TAG=share-test in its .env, .env.bak-share is the previous one) -- kept for triage; switch
+  back to latest after the next web-* release. **Owed:** A500 bench of the first-write rule (mount a remote disk, save,
+  see the own copy); Send to Amiga from a remote disk untested end to end. **Pre-existing bug found (not this
+  branch):** admin delete of a user loops over EVERY org the user belongs to (src/lib/admin-delete.ts, no
+  otherMemberCount guard), wiping a shared org's data -- needs a fix. Deferred minors are listed in the final message
+  of the session that built it (ledger deleted).
 - **PaulaNET compression experiments -- PARKED by the operator 2026-10-28 ("an experiment for later").**
   (1) Raw RLE toward the Amiga stalls with real file data (BestWB1.adf) even at a 1973.5 ns cell; single gaps up to
   ~180 cells read fine; MFM+LZ4 sends the ADF in 115 s. Root cause unknown (needs a stuck-batch dump). Rob PR #5 stands.
