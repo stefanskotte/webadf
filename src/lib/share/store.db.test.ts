@@ -174,4 +174,41 @@ describe('share store', () => {
     expect(await store.updateShareScope('o1', r.share.id, { everything: true, collectionIds: [] })).toBe(true);
     expect((await row()).everything).toBe(true);
   });
+
+  it('rejects bad claimant details without consuming the code; stores origin only', async () => {
+    const r = await make();
+    const bad = [
+      { url: 'javascript:alert(1)', name: 'A' }, { url: 'data:text/html,x', name: 'A' },
+      { url: 'https://x.example/' + 'a'.repeat(3000), name: 'A' }, { url: 'https://x.example', name: '' },
+      { url: 'https://x.example', name: ' \u0001 ' }, { url: 'https://x.example', name: 'n'.repeat(200) },
+      { url: 'not a url', name: 'A' },
+    ];
+    for (const b of bad) expect(await store.claimShare(r.code, b)).toEqual({ ok: false });
+    const ok = await store.claimShare(r.code, { url: 'https://Rob.example:8443/path?q=1#h', name: ' Ro\u0007b ' });
+    expect(ok.ok).toBe(true);
+    const row = (await store.listShares('o1')).find((s) => s.id === r.share.id)!;
+    expect(row.claimedByUrl).toBe('https://rob.example:8443');
+    expect(row.claimedByName).toBe('Rob');
+  });
+
+  it('deleteShare accepts a share at exactly its expiry instant', async () => {
+    const r = await make();
+    expect(await store.deleteShare('o1', r.share.id, r.share.claimExpiresAt)).toBe(true);
+  });
+
+  it('updateShareScope refuses a revoked share', async () => {
+    const r = await make();
+    await store.revokeShare('o1', r.share.id);
+    expect(await store.updateShareScope('o1', r.share.id, { everything: true, collectionIds: [] })).toBe(false);
+  });
+
+  it('a claimed share past its claim expiry still authenticates', async () => {
+    const r = await make();
+    const c = await store.claimShare(r.code, claimant);
+    if (!c.ok) throw new Error('claim');
+    const { libraryShares } = await import('@/db/schema/sharing');
+    const { eq } = await import('drizzle-orm');
+    await getDb().update(libraryShares).set({ claimExpiresAt: new Date(Date.now() - DAY) }).where(eq(libraryShares.id, r.share.id));
+    expect(await store.authenticateShare(`Bearer ${c.token}`)).not.toBeNull();
+  });
 });

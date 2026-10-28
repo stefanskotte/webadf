@@ -1,4 +1,4 @@
-import { and, eq, exists, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, exists, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { collections, collectionGames } from '@/db/schema/collections';
 import { games, disks } from '@/db/schema/catalog';
@@ -9,12 +9,14 @@ import type { ShareAuth } from './store';
 export async function scopedCollectionIds(auth: ShareAuth): Promise<string[]> {
   const db = getDb();
   if (auth.everything) {
-    const rows = await db.select({ id: collections.id }).from(collections).where(eq(collections.orgId, auth.orgId));
+    const rows = await db.select({ id: collections.id }).from(collections).where(eq(collections.orgId, auth.orgId))
+      .orderBy(asc(collections.sortKey), asc(collections.name));
     return rows.map((r) => r.id);
   }
   const rows = await db.select({ id: collections.id }).from(libraryShareCollections)
     .innerJoin(collections, eq(collections.id, libraryShareCollections.collectionId))
-    .where(and(eq(libraryShareCollections.shareId, auth.shareId), eq(collections.orgId, auth.orgId)));
+    .where(and(eq(libraryShareCollections.shareId, auth.shareId), eq(collections.orgId, auth.orgId)))
+    .orderBy(asc(collections.sortKey), asc(collections.name));
   return rows.map((r) => r.id);
 }
 

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, or } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, lte, or } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { atomic } from '@/db/atomic';
 import { collections } from '@/db/schema/collections';
@@ -92,7 +92,7 @@ export async function updateShareScope(
 ): Promise<boolean> {
   const ids = input.everything ? [] : [...new Set(input.collectionIds)];
   const [own] = await getDb().select({ id: libraryShares.id }).from(libraryShares)
-    .where(and(eq(libraryShares.id, shareId), eq(libraryShares.orgId, orgId)));
+    .where(and(eq(libraryShares.id, shareId), eq(libraryShares.orgId, orgId), isNull(libraryShares.revokedAt)));
   if (!own) return false;
   if (!(await allOwnedCollections(orgId, ids))) return false;
   await atomic((tx) => [
@@ -120,20 +120,34 @@ export async function deleteShare(orgId: string, shareId: string, now: Date = ne
     eq(libraryShares.id, shareId), eq(libraryShares.orgId, orgId),
     or(
       isNotNull(libraryShares.revokedAt),
-      and(isNull(libraryShares.claimedAt), lt(libraryShares.claimExpiresAt, now)),
+      and(isNull(libraryShares.claimedAt), lte(libraryShares.claimExpiresAt, now)),
     ),
   )).returning({ id: libraryShares.id });
   return rows.length > 0;
+}
+
+/** Claimant details are rendered later: http(s) origin only, bounded plain-text name. Null = reject. */
+function cleanClaimant(c: { url: string; name: string }): { url: string; name: string } | null {
+  if (typeof c.url !== 'string' || typeof c.name !== 'string' || c.url.length > 2048) return null;
+  let u: URL;
+  try { u = new URL(c.url); } catch { return null; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  // eslint-disable-next-line no-control-regex
+  const name = c.name.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim();
+  if (name.length < 1 || name.length > 100) return null;
+  return { url: u.origin, name };
 }
 
 /** One atomic UPDATE (as claimInvite): of two racing claims with one code, exactly one matches. */
 export async function claimShare(
   code: string, claimant: { url: string; name: string }, now: Date = new Date(),
 ): Promise<{ ok: true; token: string; orgId: string; shareId: string } | { ok: false }> {
+  const who = cleanClaimant(claimant);
+  if (!who) return { ok: false };
   const token = mintShareToken();
   const rows = await getDb().update(libraryShares).set({
     claimCodeHash: null, tokenHash: token.hash, claimedAt: now,
-    claimedByUrl: claimant.url, claimedByName: claimant.name,
+    claimedByUrl: who.url, claimedByName: who.name,
   }).where(and(
     eq(libraryShares.claimCodeHash, hashSecret(code)),
     isNull(libraryShares.revokedAt),
