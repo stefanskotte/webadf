@@ -700,6 +700,8 @@ export interface GameDetail {
   kind: string | null;
   /** Made here (Create ADF), not ingested from a file: it has no kind, and still gets a coloured disk. */
   authored: boolean;
+  /** Library sharing D2: the remote library's name when this title is the person's own copy of one; else null. */
+  copiedFrom: string | null;
   disks: GameDetailDisk[];
 }
 
@@ -720,7 +722,7 @@ export async function getGameDetail(orgId: string, gameId: string): Promise<Game
       factsSource: games.factsSource, proseSource: games.proseSource,
       metadataSource: games.metadataSource, authored: games.authored,
       demozooProductionId: games.demozooProductionId, demozooLinkSource: games.demozooLinkSource,
-      coverOverrideSha256: games.coverOverrideSha256,
+      coverOverrideSha256: games.coverOverrideSha256, copiedFrom: games.copiedFrom,
     })
     .from(games)
     // A hidden remote stand-in is not a title of this library: its page 404s like a foreign id (spec §4.1).

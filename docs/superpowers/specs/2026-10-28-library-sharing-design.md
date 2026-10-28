@@ -135,8 +135,14 @@ held with an entitlement for the recipient org, so mount, PaulaNET send, write-b
   stores the blob, creates or updates the hidden row (only while it is still untouched, see D2), then runs the
   existing mount or send. Every mount re-asks the owner, so a disk taken out of scope stops mounting.
 - **First write (D2):** when write-back records the first change to a hidden remote disk, the row drops its remote
-  columns and becomes a normal disk in the recipient's library, Uncategorized, named as it was. A notice on the disk
-  says "Your copy of <owner>'s <disk>". From then on it is never refreshed from the owner.
+  columns and MOVES (same disk id) into the recipient's **own copy of the title**: a local game, one per (team,
+  remote library, remote title), created in the same transaction from the hidden title's name, year and publisher,
+  with a machine metadata source ('filename', so scans may re-identify it) and `games.copied_from` = the remote
+  library's name. It shows in the recipient's library, Uncategorized, named as it was. The hidden stand-in title stays
+  hidden, so another disk of the same title still mounted from the owner never appears under the own copy; a later
+  first write to that disk joins the same own copy. Boards holding the disk follow it (their desired/mounted game id
+  becomes the own copy's). The own copy's title page and its disks' files pages say "Your copy of <library name>'s
+  library". From then on it is never refreshed from the owner.
 - **Download:** streams through the recipient's server (same fetch and check), not cached as a disk row.
 
 ### 4.3 Status changes

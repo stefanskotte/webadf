@@ -5,6 +5,7 @@ import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, games } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
+import { remoteLibraries } from '@/db/schema/sharing';
 import { diskStore } from '@/lib/storage';
 import { formatVolume } from '@/lib/adffs/format';
 import { addFile, makeDirectory } from '@/lib/adffs/write';
@@ -183,10 +184,25 @@ test('two orgs: share, claim, browse, download, mount, write (D2), unshare, revo
   const [local] = await getDb().select().from(disks).where(eq(disks.id, held.diskId));
   expect(local.remoteLibraryId).toBeNull();
   expect(local.sha256).toBe(sha(expected));
-  await rob.goto('/library');
+  // Under Uncategorized (D2), and in none of Rob's collections.
+  const robMine = await collection(rob, 'Mine');
+  await rob.goto('/library?collection=uncategorized');
   const localCard = rob.getByTestId('game-card').filter({ hasText: `Shared Game ${tag}` });
   await expect(localCard).toHaveCount(1);
   await expect(localCard).toHaveAttribute('data-game-id', local.gameId);
+  await rob.goto(`/library?collection=${robMine}`);
+  await expect(rob.getByTestId('game-card').filter({ hasText: `Shared Game ${tag}` })).toHaveCount(0);
+  // The notice (spec §4.2): on the title page and on its disk's files page.
+  await rob.goto(`/games/${local.gameId}`);
+  await expect(rob.getByTestId('title-copied-from')).toHaveText(/^Your copy of .+'s library$/);
+  const ownerLibName = (await getDb().select().from(remoteLibraries).where(eq(remoteLibraries.id, libId)))[0].name;
+  await expect(rob.getByTestId('title-copied-from')).toHaveText(`Your copy of ${ownerLibName}'s library`);
+  await rob.goto(`/disks/${held.diskId}/files`);
+  await expect(rob.getByTestId('disk-copied-from')).toHaveText(`Your copy of ${ownerLibName}'s library`);
+  // The board follows the disk into Rob's own title.
+  const [afterWrite] = await getDb().select().from(devices).where(eq(devices.id, deviceId));
+  expect(afterWrite.desiredGameId).toBe(local.gameId);
+  expect(afterWrite.mountedGameId).toBe(local.gameId);
   // The owner's disk is untouched.
   const [ownerDisk] = await getDb().select().from(disks).where(eq(disks.id, a.diskId));
   expect(ownerDisk.sha256).toBe(a.sha256);
@@ -240,7 +256,7 @@ test('two orgs: share, claim, browse, download, mount, write (D2), unshare, revo
   expect(ejected.desiredVersion).toBeGreaterThan(held2.version);
   const [kept] = await getDb().select().from(disks).where(eq(disks.id, held.diskId));
   expect(kept?.sha256).toBe(sha(expected));
-  await rob.goto('/library');
+  await rob.goto('/library?collection=uncategorized');
   await expect(rob.getByTestId('game-card').filter({ hasText: `Shared Game ${tag}` })).toHaveCount(1);
   // And /remote lists it as ended.
   await rob.goto('/remote');

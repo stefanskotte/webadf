@@ -25,6 +25,7 @@ import { loadEntries } from '@/lib/disk-history/store';
 import { materialise } from '@/lib/disk-history/chain';
 import { loadHistory, type HistoryVersion } from '@/lib/disk-history/history';
 import { addedIn } from '@/lib/disk-history/added-in';
+import { copiedFromText } from '@/lib/remote/copy';
 import { Breadcrumb } from '@/components/shell/breadcrumb';
 import { DiskCard, noFilesystemCopy } from '@/components/disks/disk-card';
 import { VersionBanner } from '@/components/disks/version-banner';
@@ -136,6 +137,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
       sizeBytes: disks.sizeBytes,
       writeProtected: disks.writeProtected,
       authored: games.authored,
+      copiedFrom: games.copiedFrom,
     })
     .from(disks)
     .innerJoin(entitlements, and(
@@ -347,6 +349,9 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
         { label: disk.gameTitle ?? 'Untitled', href: `/games/${disk.gameId}${fromQuery(from, view)}` },
         { label: `Disk ${disk.diskNo}` },
       ]} />
+      {copiedFromText(disk.copiedFrom) && (
+        <p data-testid="disk-copied-from" className="-mt-2 text-[13px]" style={{ color: 'var(--muted)' }}>{copiedFromText(disk.copiedFrom)}</p>
+      )}
       {/* Mount always acts on the disk's CURRENT bytes, also while an older version is on screen. */}
       <DiskCard diskId={id} filename={filename} title={title}
                 color={titleDiskColor({ id, hasHd: hd, kind, formats: [disk.imageFormat], authored: disk.authored ?? false })}

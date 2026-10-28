@@ -5,6 +5,7 @@ import { getGameDetail, listDevices } from '@/lib/queries';
 import { listCollections } from '@/lib/collections';
 import { resolveFrom, libraryTrail, parseTrailView } from '@/lib/trail';
 import { mountChoices } from '@/lib/mount-choice';
+import { copiedFromText } from '@/lib/remote/copy';
 import { Breadcrumb } from '@/components/shell/breadcrumb';
 import { DiskRow } from '@/components/games/disk-row';
 import { DiskSetSection } from '@/components/games/disk-set-section';
@@ -76,6 +77,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
         diskCount={game.disks.length} cover={cover} formats={game.disks.map((d) => d.imageFormat)}
         hasHd={game.disks.some(isHdAdf)} authored={game.authored} mounted={mountedText}
         setLabel={fromName ?? game.kind ?? 'Unidentified'}
+        copiedFrom={copiedFromText(game.copiedFrom)}
         // Above GameFacts, and outside it: GameFacts renders nothing at all for a title nothing has enriched, which
         // is exactly the title a person most wants to fill in by hand.
         editSlot={<EditDetails game={game} />}

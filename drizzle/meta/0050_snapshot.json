@@ -1,5 +1,5 @@
 {
-  "id": "c5bb3e19-627d-4c62-a136-9567ca35b30a",
+  "id": "cb5cb788-5070-4d81-a9aa-56c2ae695076",
   "prevId": "82b2f9a1-d809-4758-bb47-cd9aed336ce4",
   "version": "7",
   "dialect": "postgresql",
@@ -1529,6 +1529,12 @@
         },
         "remote_title_id": {
           "name": "remote_title_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "copied_from": {
+          "name": "copied_from",
           "type": "text",
           "primaryKey": false,
           "notNull": false

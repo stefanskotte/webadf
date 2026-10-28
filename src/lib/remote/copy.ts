@@ -76,3 +76,12 @@ export function lastAnsweredText(at: Date | string | null | undefined): string {
   if (Number.isNaN(d.getTime())) return 'Never answered';
   return `Last answered ${WHEN.format(d)} UTC`;
 }
+
+/**
+ * The notice on the person's own copy of a remote title (spec §4.2 First write): "Your copy of <library>'s library",
+ * from games.copied_from (the remote library's name when the first write made the copy). Null when it is not a copy.
+ */
+export function copiedFromText(copiedFrom: string | null | undefined): string | null {
+  const name = copiedFrom?.trim();
+  return name ? `Your copy of ${name}'s library` : null;
+}

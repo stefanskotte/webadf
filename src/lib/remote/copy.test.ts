@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { lastAnsweredText, remoteErrorText, remoteMarkerText, remoteStatusLook } from './copy';
+import { copiedFromText, lastAnsweredText, remoteErrorText, remoteMarkerText, remoteStatusLook } from './copy';
 
 describe('remoteErrorText (global constraints: UI copy)', () => {
   it.each([
@@ -65,4 +65,16 @@ describe('lastAnsweredText', () => {
     expect(lastAnsweredText('2026-10-28T09:05:00.000Z')).toBe('Last answered 28 Oct 2026, 09:05 UTC');
   });
   it('never', () => expect(lastAnsweredText(null)).toBe('Never answered'));
+});
+
+describe('copiedFromText (spec §4.2 First write notice)', () => {
+  it('names the library the copy came from', () => {
+    expect(copiedFromText('Rob')).toBe("Your copy of Rob's library");
+    expect(copiedFromText('  Amiga Club  ')).toBe("Your copy of Amiga Club's library");
+  });
+  it('is null for a title that is not a copy', () => {
+    expect(copiedFromText(null)).toBeNull();
+    expect(copiedFromText(undefined)).toBeNull();
+    expect(copiedFromText('   ')).toBeNull();
+  });
 });

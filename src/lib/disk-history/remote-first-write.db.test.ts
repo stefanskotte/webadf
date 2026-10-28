@@ -30,6 +30,10 @@ const { recordVersion } = await import('./store');
 const { listGames, getGameDetail } = await import('@/lib/queries');
 const { ownCopyGameId } = await import('@/lib/remote-hidden');
 const { ADF_BYTES } = await import('@/lib/adfmfm');
+const { devices } = await import('@/db/schema/devices');
+const { readDesired } = await import('@/lib/mount');
+const { purgeHidden } = await import('@/lib/remote/store');
+const { MACHINE_SOURCES } = await import('@/lib/tosec-apply');
 
 const ORG = 'org-d2';
 const head = new Uint8Array(ADF_BYTES);
@@ -71,7 +75,14 @@ describe('first write to a hidden remote disk (D2)', () => {
     const [d] = await db.select().from(disks).where(eq(disks.id, 'hd'));
     expect(d).toMatchObject({ id: 'hd', gameId: own, remoteLibraryId: null, remoteDiskId: null, sha256: r!.sha256 });
     const [g] = await db.select().from(games).where(eq(games.id, own));
-    expect(g).toMatchObject({ id: own, title: 'Shared game', sortTitle: 'shared game', remoteLibraryId: null, remoteTitleId: null });
+    expect(g).toMatchObject({
+      id: own, title: 'Shared game', sortTitle: 'shared game', remoteLibraryId: null, remoteTitleId: null,
+      // The notice's name (spec §4.2): the remote library's name at copy time.
+      copiedFrom: 'Rob',
+    });
+    // A machine source: scans may re-identify it, and it never wins a dedupe as a human edit.
+    expect(g.metadataSource).toBe('filename');
+    expect(MACHINE_SOURCES).toContain(g.metadataSource);
     // The hidden stand-in keeps its remote columns: other disks of the title may still be mounted through it.
     const [h] = await db.select().from(games).where(eq(games.id, 'hg'));
     expect(h.remoteLibraryId).toBe('rl');
@@ -112,5 +123,46 @@ describe('first write to a hidden remote disk (D2)', () => {
     expect(d.remoteLibraryId).toBe('rl');
     const [g] = await db.select().from(games).where(eq(games.id, 'hg2'));
     expect(g.remoteLibraryId).toBe('rl');
+  });
+
+  it('a board holding the disk follows it into the own copy; a purge of the stand-in leaves its title intact', async () => {
+    const db = getDb();
+    await db.insert(games).values({ id: 'hg4', orgId: ORG, title: 'Held game', sortTitle: 'held game', remoteLibraryId: 'rl', remoteTitleId: 'T4', metadataSource: 'remote' });
+    await db.insert(disks).values({ id: 'hd4', gameId: 'hg4', orgId: ORG, diskNo: 1, sha256: headSha, sizeBytes: head.length, writeProtected: false, remoteLibraryId: 'rl', remoteDiskId: 'D4' });
+    await db.insert(devices).values({
+      id: 'dev4', orgId: ORG, name: 'Board', tokenHash: 'h'.repeat(64),
+      desiredSha256: headSha, desiredGameId: 'hg4', desiredDiskId: 'hd4', desiredDiskNo: 1, desiredVersion: 3,
+      mountedSha256: headSha, mountedGameId: 'hg4', mountedDiskId: 'hd4',
+    });
+    // Another board holding a different disk is left alone.
+    await db.insert(devices).values({ id: 'dev5', orgId: ORG, name: 'Other', tokenHash: 'i'.repeat(64), desiredGameId: 'lg', desiredDiskId: 'ld', mountedGameId: 'lg', mountedDiskId: 'ld' });
+    await recordVersion({ orgId: ORG, diskId: 'hd4', headSha, head, next, source: 'amiga', sourceFilename: 'Held.adf' });
+    const own = ownCopyGameId(ORG, 'rl', 'T4');
+    const [dev] = await db.select().from(devices).where(eq(devices.id, 'dev4'));
+    expect(dev).toMatchObject({ desiredGameId: own, mountedGameId: own, desiredDiskId: 'hd4', mountedDiskId: 'hd4' });
+    const [other] = await db.select().from(devices).where(eq(devices.id, 'dev5'));
+    expect(other).toMatchObject({ desiredGameId: 'lg', mountedGameId: 'lg' });
+    // The revoke's purge deletes the now-empty stand-in; the board's title still comes through.
+    await purgeHidden(ORG, 'rl');
+    expect(await db.select().from(games).where(eq(games.id, 'hg4'))).toEqual([]);
+    const d = await readDesired('dev4');
+    expect(d?.desired).toMatchObject({ game: 'Held game', gameId: own, diskId: 'hd4' });
+  });
+
+  it('two first writes at once to two disks of one title make exactly one own copy holding both', async () => {
+    const db = getDb();
+    await db.insert(games).values({ id: 'hg6', orgId: ORG, title: 'Pair game', sortTitle: 'pair game', remoteLibraryId: 'rl', remoteTitleId: 'T6', metadataSource: 'remote' });
+    await db.insert(disks).values([
+      { id: 'hd6a', gameId: 'hg6', orgId: ORG, diskNo: 1, sha256: headSha, sizeBytes: head.length, writeProtected: false, remoteLibraryId: 'rl', remoteDiskId: 'D6a' },
+      { id: 'hd6b', gameId: 'hg6', orgId: ORG, diskNo: 2, sha256: headSha, sizeBytes: head.length, writeProtected: false, remoteLibraryId: 'rl', remoteDiskId: 'D6b' },
+    ]);
+    await Promise.all(['hd6a', 'hd6b'].map((diskId) =>
+      recordVersion({ orgId: ORG, diskId, headSha, head, next, source: 'amiga', sourceFilename: `${diskId}.adf` })));
+    const own = ownCopyGameId(ORG, 'rl', 'T6');
+    const copies = (await db.select().from(games).where(eq(games.orgId, ORG))).filter((g) => g.title === 'Pair game' && g.remoteLibraryId === null);
+    expect(copies.map((g) => g.id)).toEqual([own]);
+    const moved = await db.select().from(disks).where(eq(disks.gameId, own));
+    expect(moved.map((x) => x.id).sort()).toEqual(['hd6a', 'hd6b']);
+    expect(moved.every((x) => x.remoteLibraryId === null)).toBe(true);
   });
 });

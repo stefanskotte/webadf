@@ -39,6 +39,7 @@ ALTER TABLE "disks" ADD COLUMN "remote_library_id" text;--> statement-breakpoint
 ALTER TABLE "disks" ADD COLUMN "remote_disk_id" text;--> statement-breakpoint
 ALTER TABLE "games" ADD COLUMN "remote_library_id" text;--> statement-breakpoint
 ALTER TABLE "games" ADD COLUMN "remote_title_id" text;--> statement-breakpoint
+ALTER TABLE "games" ADD COLUMN "copied_from" text;--> statement-breakpoint
 ALTER TABLE "library_share_collections" ADD CONSTRAINT "library_share_collections_share_id_library_shares_id_fk" FOREIGN KEY ("share_id") REFERENCES "public"."library_shares"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "library_share_collections" ADD CONSTRAINT "library_share_collections_collection_id_collections_id_fk" FOREIGN KEY ("collection_id") REFERENCES "public"."collections"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "library_share_collections_coll_idx" ON "library_share_collections" USING btree ("collection_id");--> statement-breakpoint

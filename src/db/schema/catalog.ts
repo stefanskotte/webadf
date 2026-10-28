@@ -121,6 +121,9 @@ export const games = pgTable('games', {
   // Library sharing (spec §4.1): set on the hidden stand-in of a title in a remote library. No cascade: removal is explicit.
   remoteLibraryId: text('remote_library_id').references(() => remoteLibraries.id),
   remoteTitleId: text('remote_title_id'),
+  // Library sharing D2 (spec §4.2 First write): set on the person's own copy of a remote title -- the remote
+  // library's name when the first write made the copy -- for the notice "Your copy of <name>'s library". Null otherwise.
+  copiedFrom: text('copied_from'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   index('games_org_sort_idx').on(t.orgId, t.sortTitle),
