@@ -11,6 +11,10 @@ const SEGMENT_MAX = 255;
 const DEPTH_MAX = 40;
 const DEVICES: readonly Device[] = ['STASH', 'NET', 'LIBRARY'];
 const CONTROL = /[\u0000-\u001f\u007f]/;
+// C1 controls: in Latin-1 they are code points 0x80-0x9F, which AmigaDOS would store as invisible junk.
+const C1 = /[\u0080-\u009f]/;
+// AmigaDOS names are single-byte Latin-1: anything above U+00FF would be mangled on disk.
+const NOT_LATIN1 = /[^\u0000-ÿ]/;
 
 export function parsePath(raw: string): FsPath | null {
   const m = /^([A-Z]+):(\/.*)?$/.exec(raw);
@@ -47,6 +51,10 @@ export function isWithin(inner: FsPath, outer: FsPath, sameName: (a: string, b: 
 export function amigaNameProblem(name: string): 'empty' | 'too-long' | 'bad-char' | null {
   if (!name.trim()) return 'empty';
   if ([...name].length > AMIGA_NAME_MAX) return 'too-long';
-  if (name.includes(':') || name.includes('/') || CONTROL.test(name)) return 'bad-char';
+  // "." and ".." are refused as path segments by parsePath, so a folder with either name would be unreachable.
+  if (name === '.' || name === '..') return 'bad-char';
+  if (name.includes(':') || name.includes('/') || CONTROL.test(name) || C1.test(name) || NOT_LATIN1.test(name)) {
+    return 'bad-char';
+  }
   return null;
 }

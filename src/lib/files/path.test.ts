@@ -9,6 +9,10 @@ describe('parsePath / formatPath', () => {
     expect(parsePath('LIBRARY:/g1/d1/C/Assign')).toEqual({ device: 'LIBRARY', segments: ['g1', 'd1', 'C', 'Assign'] });
     expect(parsePath('STASH:/Mods/enigma.mod')).toEqual({ device: 'STASH', segments: ['Mods', 'enigma.mod'] });
   });
+  it('treats LIBRARY:/ as the device root and refuses a double slash', () => {
+    expect(parsePath('LIBRARY:/')).toEqual({ device: 'LIBRARY', segments: [] });
+    expect(parsePath('LIBRARY://')).toBeNull();
+  });
   it('accepts a trailing slash and round-trips without it', () => {
     expect(formatPath(parsePath('LIBRARY:/g1/')!)).toBe('LIBRARY:/g1');
     expect(formatPath({ device: 'NET', segments: [] })).toBe('NET:');
@@ -52,5 +56,25 @@ describe('amigaNameProblem', () => {
     expect(amigaNameProblem('a:b')).toBe('bad-char');
     expect(amigaNameProblem('a/b')).toBe('bad-char');
     expect(amigaNameProblem('a\u0007')).toBe('bad-char');
+  });
+  it('refuses "." and ".." (unreachable as path segments) but allows names that merely contain dots', () => {
+    expect(amigaNameProblem('.')).toBe('bad-char');
+    expect(amigaNameProblem('..')).toBe('bad-char');
+    expect(amigaNameProblem('...')).toBeNull();
+    expect(amigaNameProblem('.hidden')).toBeNull();
+  });
+  it('refuses characters outside Latin-1, which AmigaDOS would mangle on disk', () => {
+    expect(amigaNameProblem('\u{1F600}.txt')).toBe('bad-char'); // emoji
+    expect(amigaNameProblem('日本.txt')).toBe('bad-char'); // CJK
+    expect(amigaNameProblem('Smile\u{1F600}')).toBe('bad-char');
+    expect(amigaNameProblem('Grüße.txt')).toBeNull();
+    expect(amigaNameProblem('ÿ')).toBeNull(); // ÿ, last Latin-1 code point
+    expect(amigaNameProblem('Ā')).toBe('bad-char'); // Ā, first code point above Latin-1
+  });
+  it('refuses the C1 control range U+0080-U+009F', () => {
+    expect(amigaNameProblem('a\u0085b')).toBe('bad-char'); // NEL
+    expect(amigaNameProblem('a\u0080b')).toBe('bad-char');
+    expect(amigaNameProblem('a\u009fb')).toBe('bad-char');
+    expect(amigaNameProblem('a b')).toBeNull(); // NBSP is printable Latin-1
   });
 });
