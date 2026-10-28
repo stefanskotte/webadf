@@ -28,6 +28,17 @@ const nextConfig: NextConfig = {
   async redirects() {
     return [{ source: '/about', destination: '/settings#about', permanent: false }];
   },
+  // A share link's landing page (library sharing spec §3.4) has the claim code in its path: no Referer may carry it
+  // to another site, and no cache may keep it.
+  async headers() {
+    return [{
+      source: '/s/:path*',
+      headers: [
+        { key: 'Referrer-Policy', value: 'no-referrer' },
+        { key: 'Cache-Control', value: 'no-store' },
+      ],
+    }];
+  },
   // Self-hosting P2: the Docker build sets WEBADF_STANDALONE=1; Vercel's build never does.
   ...(process.env.WEBADF_STANDALONE === '1' ? { output: 'standalone' as const } : {}),
   // PATCH /api/devices/[id]/display validates a layout with the board's own C
