@@ -1,6 +1,7 @@
 import {
   pgTable, text, integer, bigint, timestamp, boolean, primaryKey, index,
 } from 'drizzle-orm/pg-core';
+import { remoteLibraries } from './sharing';
 
 /** GLOBAL, not per-tenant. One row per unique disk image in the whole system. */
 export const blobs = pgTable('blobs', {
@@ -117,10 +118,17 @@ export const games = pgTable('games', {
   // org's choice cannot change another org's view of the same disk. The blob
   // GC reads this column as a reference (blob-gc-run.ts).
   coverOverrideSha256: text('cover_override_sha256'),
+  // Library sharing (spec §4.1): set on the hidden stand-in of a title in a remote library. No cascade: removal is explicit.
+  remoteLibraryId: text('remote_library_id').references(() => remoteLibraries.id),
+  remoteTitleId: text('remote_title_id'),
+  // Library sharing D2 (spec §4.2 First write): set on the person's own copy of a remote title -- the remote
+  // library's name when the first write made the copy -- for the notice "Your copy of <name>'s library". Null otherwise.
+  copiedFrom: text('copied_from'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   index('games_org_sort_idx').on(t.orgId, t.sortTitle),
   index('games_org_created_idx').on(t.orgId, t.createdAt),
+  index('games_remote_idx').on(t.remoteLibraryId),
   // Declared so `drizzle-kit push` doesn't treat these (created directly by
   // 0012_search_trgm.sql, outside the schema until now) as drift and drop
   // them -- push diffs against the schema files, not the migration history.
@@ -160,7 +168,11 @@ export const disks = pgTable('disks', {
   // whose tracks are all the nominal 101,344. The mount gate refuses a board
   // whose reported trackMaxBytes cannot hold it.
   maxTrackBits: integer('max_track_bits'),
+  // Library sharing (spec §4.1): set on the hidden row of a disk mounted from a remote library. No cascade: removal is explicit.
+  remoteLibraryId: text('remote_library_id').references(() => remoteLibraries.id),
+  remoteDiskId: text('remote_disk_id'),
 }, (t) => [
+  index('disks_remote_idx').on(t.remoteLibraryId, t.remoteDiskId),
   index('disks_game_idx').on(t.gameId),
   index('disks_org_idx').on(t.orgId),
 ]);

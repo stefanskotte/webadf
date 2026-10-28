@@ -14,4 +14,7 @@ export function applyAppEnv(env: Record<string, string | undefined>, cfg: Selfho
   delete env.BLOB_READ_WRITE_TOKEN;
   // The weekly blob GC deletes, as on our deployment (parity); BLOB_GC_DELETE=0 in .env makes it report only.
   if (!env.BLOB_GC_DELETE?.trim()) env.BLOB_GC_DELETE = '1'; // unset or empty = the default
+  // Library sharing: a self-hoster's peers are usually on the same LAN, so private addresses are allowed (the hosted
+  // default refuses them); WEBADF_SHARE_PRIVATE_ADDRESSES=0 in .env turns that off.
+  if (!env.WEBADF_SHARE_PRIVATE_ADDRESSES?.trim()) env.WEBADF_SHARE_PRIVATE_ADDRESSES = '1';
 }

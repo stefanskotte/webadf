@@ -21,5 +21,5 @@ export function proxy(request: NextRequest) {
 // what actually enforces admin access, and it redirects a signed-in non-admin
 // to /library rather than 404ing so the response never confirms /admin exists.
 export const config = {
-  matcher: ['/library/:path*', '/ingest/:path*', '/devices/:path*', '/admin/:path*', '/settings/:path*'],
+  matcher: ['/library/:path*', '/remote/:path*', '/ingest/:path*', '/devices/:path*', '/admin/:path*', '/settings/:path*'],
 };

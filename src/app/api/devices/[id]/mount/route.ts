@@ -1,11 +1,7 @@
 import { z } from 'zod';
 import { requireOrg } from '@/lib/session';
-import { drivesBefore } from '@/lib/mount-undo';
-import { setDesired } from '@/lib/mount';
-import { mountToDf1 } from '@/lib/df1-store';
-import { DF1_REFUSAL_TEXT } from '@/lib/df1-pick';
-import { TRACK_TOO_LONG } from '@/lib/hfe/messages';
-import { HD_UNSUPPORTED } from '@/lib/hd-messages';
+import { mountDiskResponse, orgOwnsDevice } from '@/lib/mount-http';
+import { recheckHidden } from '@/lib/remote/remount';
 
 export const maxDuration = 60;
 
@@ -32,31 +28,13 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     return Response.json({ error: 'invalid_body', detail: z.flattenError(parsed.error) }, { status: 400 });
   }
 
-  // What Undo in the mount toast puts back (A3): the disk this drive held before the request -- DF0's confirmed disk,
-  // DF1's pick -- or null for "it was empty", which Undo answers with an eject. Read before the write; a change
-  // landing between the two is the same race the card's own Cancel has.
-  const before = await drivesBefore(orgId, deviceId);
+  // The board first: an unknown or another team's board is the same 404 as before, and no owner is asked (or
+  // bytes fetched) on its behalf (final review 8).
+  if (!(await orgOwnsDevice(orgId, deviceId))) return Response.json({ error: 'not_found' }, { status: 404 });
 
-  if (parsed.data.drive === 'df1') {
-    const r = await mountToDf1(orgId, deviceId, parsed.data.diskId);
-    if (r.ok) return Response.json({ version: r.version, undo: { diskId: before?.df1 ?? null } });
-    if (r.reason === 'not_found') return Response.json({ error: 'not_found' }, { status: 404 });
-    // Said, not hidden: the reason is the same sentence the disabled button shows (df1-pick.ts).
-    return Response.json({ error: r.reason, reason: DF1_REFUSAL_TEXT[r.reason] }, { status: 409 });
-  }
+  // R-6a: Re-insert and Undo mount by id. A hidden remote disk asks its owner again first, as the remote Mount does.
+  const remote = await recheckHidden(orgId, parsed.data.diskId);
+  if (remote.hidden && remote.refusal) return remote.refusal;
 
-  const result = await setDesired(orgId, deviceId, parsed.data.diskId);
-  // not_found covers unknown device, unknown disk, and either belonging to
-  // another organization — deliberately indistinguishable.
-  if (!result.ok && result.reason === 'not_found') return Response.json({ error: 'not_found' }, { status: 404 });
-  // HD spec §4.3: the disk is HD and this board's firmware cannot answer the
-  // Amiga's drive-ID read as HD. Said, not hidden; the fix is an update.
-  if (!result.ok && result.reason === 'hd_unsupported') {
-    return Response.json({ error: 'hd_unsupported', reason: HD_UNSUPPORTED }, { status: 409 });
-  }
-  // Both this org's: the board's firmware cannot hold the disk's longest
-  // track. Said, not hidden -- the fix (update the board) is the person's.
-  if (!result.ok) return Response.json({ error: 'track_too_long', reason: TRACK_TOO_LONG }, { status: 409 });
-
-  return Response.json({ version: result.version, undo: { diskId: before?.df0 ?? null } });
+  return mountDiskResponse(orgId, deviceId, parsed.data.diskId, parsed.data.drive, { hidden: remote.hidden });
 }

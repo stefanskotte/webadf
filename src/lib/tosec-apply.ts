@@ -20,6 +20,7 @@ import { devices } from '@/db/schema/devices';
 import { tosecEntries } from '@/db/schema/tosec';
 import { collectionGames } from '@/db/schema/collections';
 import { demozooDismissals } from '@/db/schema/demozoo';
+import { isLocal } from '@/lib/remote-hidden';
 
 // Sources this system writes for itself. Anything else means a human decided
 // it, and a human's row is never deleted by a sweep -- the Authority rule
@@ -61,7 +62,9 @@ export async function applyMatch(sha256: string, entryId: string): Promise<Apply
     })
     .from(disks)
     .innerJoin(games, eq(disks.gameId, games.id))
-    .where(eq(disks.sha256, sha256));
+    // Never a hidden remote stand-in (library sharing, spec §4.1): it keeps the owner's name until its first
+    // Amiga write makes it local, and is never retitled, renumbered or merged by a sweep.
+    .where(and(eq(disks.sha256, sha256), isLocal(disks), isLocal(games)));
   if (affected.length === 0) return { gamesUpdated: 0, disksUpdated: 0, gamesMerged: 0 };
 
   let disksUpdated = 0;
@@ -164,6 +167,9 @@ async function mergeDuplicates(orgId: string, sortTitle: string, year: number | 
     .from(games)
     .where(and(
       eq(games.orgId, orgId),
+      // A hidden remote stand-in is neither survivor nor absorbed (spec §4.1). Its metadataSource 'remote' is not
+      // a machine source, so without this it would even be chosen as the protected survivor and swallow a local title.
+      isLocal(games),
       eq(games.sortTitle, sortTitle),
       year === null ? isNull(games.year) : eq(games.year, year),
     ))

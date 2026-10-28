@@ -1,6 +1,7 @@
 import { requireOrg } from '@/lib/session';
 import { moveDiskOut, NotFound } from '@/lib/disk-set-store';
 import { PlanError } from '@/lib/disk-set';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 export const maxDuration = 60;
 
@@ -11,6 +12,8 @@ export const maxDuration = 60;
 export async function POST(_request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { diskId: id });
+  if (hidden) return hidden;
   if (id.length === 0 || id.length > 64) return Response.json({ error: 'invalid_id' }, { status: 400 });
 
   try {

@@ -16,6 +16,7 @@ import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
 import { openretroEntries } from '@/db/schema/openretro';
 import { MACHINE_SOURCES } from '@/lib/tosec-apply';
+import { isLocal } from '@/lib/remote-hidden';
 
 /**
  * "This group is still the machines' to write."
@@ -43,7 +44,9 @@ export async function applyEnrichment(sha256: string, entryUuid: string) {
   const affected = await db
     .select({ gameId: disks.gameId })
     .from(disks)
-    .where(eq(disks.sha256, sha256));
+    // Never a hidden remote stand-in (library sharing, spec §4.1): enrichment does not touch it.
+    .innerJoin(games, eq(games.id, disks.gameId))
+    .where(and(eq(disks.sha256, sha256), isLocal(disks), isLocal(games)));
   const gameIds = [...new Set(affected.map((a) => a.gameId))];
   if (gameIds.length === 0) return { gamesUpdated: 0 };
 

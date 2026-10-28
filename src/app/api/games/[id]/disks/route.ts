@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { requireOrg } from '@/lib/session';
 import { addDisksToSet, NotFound } from '@/lib/disk-set-store';
 import { PlanError } from '@/lib/disk-set';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 const rename = z.string().trim().min(1).max(80).optional();
 /**
@@ -20,6 +21,8 @@ const body = z.union([
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { gameId: id });
+  if (hidden) return hidden;
 
   let raw: unknown;
   try { raw = await request.json(); } catch {

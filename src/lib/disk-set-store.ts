@@ -41,6 +41,7 @@ import { makeSortTitle } from '@/lib/tosec';
 import { diskStore } from '@/lib/storage';
 import { mapLimit } from '@/lib/pool';
 import { stripImageExt, volumeNameOf } from '@/lib/disk-label';
+import { isLocal } from '@/lib/remote-hidden';
 
 /**
  * What Undo needs to recreate an emptied title. No sortTitle: the server
@@ -70,10 +71,11 @@ export async function orgDevices(db: Db, orgId: string): Promise<DeviceRef[]> {
     .from(devices).where(eq(devices.orgId, orgId));
 }
 
-/** The title, org-scoped, else NotFound. Answers its current name. */
+/** The title, org-scoped, else NotFound. Answers its current name. A hidden remote stand-in (library sharing,
+ *  spec §4.1) is not a title of this library and is never arranged into or out of a set: NotFound too. */
 async function requireGame(db: Db, orgId: string, gameId: string): Promise<{ title: string }> {
   const rows = await db.select({ id: games.id, title: games.title }).from(games)
-    .where(and(eq(games.id, gameId), eq(games.orgId, orgId))).limit(1);
+    .where(and(eq(games.id, gameId), eq(games.orgId, orgId), isLocal(games))).limit(1);
   if (rows.length === 0) throw new NotFound();
   return { title: rows[0].title };
 }
@@ -196,8 +198,8 @@ async function diskIdsOfTitles(db: Db, orgId: string, gameId: string, sourceGame
   if (ids.length === 0) throw new PlanError('nothing_to_add');
   if (ids.includes(gameId)) throw new PlanError('same_title');
   const found = await db.select({ id: games.id }).from(games)
-    .where(and(inArray(games.id, ids), eq(games.orgId, orgId)));
-  // A title of another org is indistinguishable from an unknown one.
+    .where(and(inArray(games.id, ids), eq(games.orgId, orgId), isLocal(games)));
+  // A title of another org (or a hidden remote stand-in) is indistinguishable from an unknown one.
   if (found.length !== ids.length) throw new NotFound();
   const all = await db.select(setDisk).from(disks)
     .where(and(inArray(disks.gameId, ids), eq(disks.orgId, orgId)));
@@ -226,7 +228,7 @@ export async function addDisksToSet(
   // order instead of the one the person arranged in the panel.
   const rank = new Map(ids.map((id, i) => [id, i]));
   const picked = (await db.select(setDisk).from(disks)
-    .where(and(inArray(disks.id, ids), eq(disks.orgId, orgId))))
+    .where(and(inArray(disks.id, ids), eq(disks.orgId, orgId), isLocal(disks))))
     .sort((a, b) => rank.get(a.id)! - rank.get(b.id)!);
   if (picked.length !== ids.length) throw new NotFound();
   if (picked.some((d) => d.gameId === gameId)) throw new PlanError('same_title');
@@ -236,7 +238,7 @@ export async function addDisksToSet(
     id: games.id, title: games.title, year: games.year, publisher: games.publisher,
     metadataSource: games.metadataSource, diskOrderSource: games.diskOrderSource, coverAssetId: games.coverAssetId, demozooProductionId: games.demozooProductionId,
     coverOverrideSha256: games.coverOverrideSha256,
-  }).from(games).where(and(inArray(games.id, sourceIds), eq(games.orgId, orgId)));
+  }).from(games).where(and(inArray(games.id, sourceIds), eq(games.orgId, orgId), isLocal(games)));
   // A disk whose title is not this org's (org_id drift) is refused, never moved:
   // this operation must not delete or strip another org's title.
   if (sources.length !== sourceIds.length) throw new NotFound();
@@ -313,7 +315,7 @@ async function nameFor(db: Db, orgId: string, disk: { sha256: string; tosecName:
 export async function moveDiskOut(orgId: string, diskId: string): Promise<{ gameId: string }> {
   const db = getDb();
   const rows = await db.select({ ...setDisk, sha256: disks.sha256, tosecName: disks.tosecName }).from(disks)
-    .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId))).limit(1);
+    .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId), isLocal(disks))).limit(1);
   const disk = rows[0];
   if (!disk) throw new NotFound();
   const remaining = await db.select(setDisk).from(disks)
@@ -342,8 +344,9 @@ export async function undoMove(orgId: string, snap: UndoSnapshot): Promise<{ gam
   const db = getDb();
   const ids = [...new Set(snap.diskIds)];
   if (ids.length === 0 || ids.length !== snap.diskIds.length) throw new NotFound();
+  // A hidden remote disk in a crafted snapshot is as unknown as a foreign one (R-6b).
   const moving = await db.select(setDisk).from(disks)
-    .where(and(inArray(disks.id, ids), eq(disks.orgId, orgId)));
+    .where(and(inArray(disks.id, ids), eq(disks.orgId, orgId), isLocal(disks)));
   if (moving.length !== ids.length) throw new NotFound();
 
   // A stale snapshot is refused, never half-applied (controller ruling): the

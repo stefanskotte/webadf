@@ -1,7 +1,10 @@
 // The phone and tablet tab bar's rules (C7 spec §2.3, Rulings 4, 8): pure and client-safe.
 
-/** The routes the bar's More tab stands for. More is current on any of them. */
-export const MORE_ROUTES = ['/help', '/settings', '/admin'] as const;
+/**
+ * The routes the bar's More tab stands for. More is current on any of them. Remote (library sharing spec §4.5) lives
+ * here below lg: the bar is four cells, and the top nav carries it from lg.
+ */
+export const MORE_ROUTES = ['/remote', '/help', '/settings', '/admin'] as const;
 
 const under = (pathname: string, route: string) => pathname === route || pathname.startsWith(`${route}/`);
 
@@ -18,11 +21,17 @@ export function isMoreItemCurrent(pathname: string, href: string): boolean {
   return !href.includes('#') && under(pathname, href);
 }
 
-export type MoreItem = { id: 'more-help' | 'more-settings' | 'more-about' | 'more-admin'; href: string; label: string };
+export type MoreItem = {
+  id: 'more-remote' | 'more-help' | 'more-settings' | 'more-about' | 'more-admin'; href: string; label: string;
+};
 
-/** The More menu's links, in the spec's order. Admin is included only when the server decided so (`showAdmin`). */
+/**
+ * The More menu's links, in the spec's order. Remote first: "on the phone, Remote sits with Library" (library sharing
+ * spec §4.5), and the bar has no fifth cell for it. Admin is included only when the server decided so (`showAdmin`).
+ */
 export function moreItems(showAdmin: boolean): MoreItem[] {
   return [
+    { id: 'more-remote', href: '/remote', label: 'Remote' },
     { id: 'more-help', href: '/help', label: 'Help' },
     { id: 'more-settings', href: '/settings', label: 'Settings' },
     { id: 'more-about', href: '/settings#about', label: 'About this server' },

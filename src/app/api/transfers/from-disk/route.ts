@@ -10,8 +10,8 @@ import { cleanAmigaPath, queueLoad, queueTransferFromBlob } from '@/lib/transfer
 import { findSendTarget, loadSendDisk } from '@/lib/send-targets';
 import { pickFiles } from '@/lib/send-from-disk';
 import { SEND_FILE_MAX, SEND_QUEUE_MAX_BYTES, SEND_QUEUE_MAX_FILES } from '@/lib/send-limits';
-import { adfSendName } from '@/lib/send-ui';
-import { queueResponse, refusalCode, storeSendBytes } from '@/lib/send-http';
+import { refusalCode, storeSendBytes } from '@/lib/send-http';
+import { queueWholeDiskSend } from '@/lib/send-whole-disk';
 
 export const maxDuration = 60;
 
@@ -29,14 +29,10 @@ export async function POST(request: Request) {
   if (!p.success) return Response.json({ error: 'invalid_body' }, { status: 400 });
   const { deviceId, diskId, whole, blocks } = p.data;
   const db = getDb();
+  if (whole) return queueWholeDiskSend(db, orgId, userId, deviceId, diskId);
   if (!(await findSendTarget(db, orgId, deviceId))) return Response.json({ error: 'no_device' }, { status: 404 });
   const disk = await loadSendDisk(db, orgId, diskId);
   if (!disk) return Response.json({ error: 'not_found' }, { status: 404 });
-
-  if (whole) {
-    if (disk.imageFormat === 'hfe') return Response.json({ error: 'not_adf' }, { status: 400 });
-    return queueResponse(await queueTransferFromBlob(db, { orgId, deviceId, userId, path: adfSendName(disk), sha256: disk.sha256 }));
-  }
 
   let adf: Uint8Array;
   try { adf = await diskStore.read(disk.sha256); } catch { return Response.json({ error: 'blob_unavailable' }, { status: 503 }); }

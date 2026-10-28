@@ -8,6 +8,7 @@ import { deviceState, isOnline, relative } from '@/lib/device-state';
 import { driverBucket } from '@/lib/network-checklist';
 import { receiverRunning, type Rx } from '@/lib/send-ui';
 import { readNextForDevices, nextInfo, type NextInfo } from '@/lib/next-disk';
+import { deviceTitle, linkableGameId } from '@/lib/remote-hidden';
 
 /**
  * What every open browser watches to know when to re-render (spec
@@ -207,8 +208,10 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       updateProtocol: devices.updateProtocol,
       firmwareUpdateError: devices.firmwareUpdateError,
       lastError: devices.lastError, lastErrorAt: devices.lastErrorAt,
-      mountedGameId: mountedDisk.gameId,
-      mountedGameTitle: mountedGame.title,
+      // A hidden remote disk (library sharing, spec §4.1) still shows here -- the drive holds it -- named
+      // "<title> (remote)", with no game id: its game page 404s, so the chip offers no "Go to disk".
+      mountedGameId: linkableGameId(mountedDisk.gameId, mountedGame),
+      mountedGameTitle: deviceTitle(mountedGame),
       mountedDiskNo: mountedDisk.diskNo,
       // Null (not 0) when the join found no disk, so "nothing to count" never
       // reads as "a game with no disks". Org-scoped like every join here.
@@ -219,7 +222,7 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       )`,
       mountedImageFormat: mountedDisk.imageFormat,
       mountedSizeBytes: mountedDisk.sizeBytes,
-      desiredGameTitle: desiredGame.title,
+      desiredGameTitle: deviceTitle(desiredGame),
       macAddress: devices.macAddress,
       serverCustom: devices.serverCustom, serverTls: devices.serverTls,
       trackMaxBytes: devices.trackMaxBytes, playsHd: devices.playsHd,
@@ -243,7 +246,7 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       df1Seen: devices.df1Seen,
       df1DiskId: devices.df1DiskId,
       df1PickSha256: df1Disk.sha256,
-      df1PickTitle: df1Game.title,
+      df1PickTitle: deviceTitle(df1Game),
       df1PickDiskNo: df1Disk.diskNo,
       sendVersion: devices.sendVersion, sendRx: devices.sendRx, sendRxAt: devices.sendRxAt,
     })

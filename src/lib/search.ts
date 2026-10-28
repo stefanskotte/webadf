@@ -30,6 +30,7 @@ import { orgFilter } from '@/db/scope';
 import { likePattern } from '@/lib/search-query';
 import { isHdAdfSql } from '@/lib/disk-format-sql';
 import { kindsForGames } from '@/lib/queries';
+import { isLocal } from '@/lib/remote-hidden';
 
 /** Enough to choose from; the panel scrolls past 620 px (C5 Ruling 26). */
 export const TITLE_LIMIT = 8;
@@ -93,7 +94,8 @@ export async function search(orgId: string, raw: string): Promise<SearchResults>
       // counted into this org's result. listGames and withDerived scope this
       // join the same way and for the same reason.
       .leftJoin(disks, and(eq(disks.gameId, games.id), eq(disks.orgId, orgId)))
-      .where(orgFilter(games, orgId, or(
+      // Never a hidden remote stand-in (library sharing, spec §4.1).
+      .where(orgFilter(games, orgId, and(isLocal(games), or(
         ilike(games.title, pattern),
         ilike(games.publisher, pattern),
         ilike(games.genre, pattern),
@@ -101,7 +103,7 @@ export async function search(orgId: string, raw: string): Promise<SearchResults>
         // blobs OpenRetro recognises -- 2 of 9 rows today. It costs nothing
         // here and improves on its own as enrichment lands.
         ilike(games.description, pattern),
-      )))
+      ))))
       .groupBy(games.id)
       // Ranking lives in SQL, not in TypeScript, so the LIMIT can never
       // truncate away the very name-match that should have ranked first --
@@ -118,7 +120,8 @@ export async function search(orgId: string, raw: string): Promise<SearchResults>
         name: collections.name,
         gameCount: sql<number>`(
           select count(*)::int from collection_games
-          where collection_games.collection_id = ${collections.id}
+          join games on games.id = collection_games.game_id and games.remote_library_id is null
+          where collection_games.collection_id = collections.id
         )`,
       })
       .from(collections)

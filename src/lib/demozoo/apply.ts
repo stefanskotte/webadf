@@ -7,6 +7,7 @@ import { MACHINE_SOURCES } from '@/lib/tosec-apply';
 import { makeSortTitle } from '@/lib/tosec';
 import { productionToDismissAfterClear, agreesOnAutomaticLink } from './effective';
 import { rederiveMachineTitle } from './rederive';
+import { isLocal } from '@/lib/remote-hidden';
 
 /**
  * Write a production's title, year and publisher onto games -- ONLY where a
@@ -18,13 +19,14 @@ export async function applyDemozooToGames(productionId: number, gameIds: string[
   const db = getDb();
   const p = (await db.select().from(demozooProductions).where(eq(demozooProductions.id, productionId)).limit(1))[0];
   if (!p) return 0;
+  // Never a hidden remote stand-in (library sharing, spec §4.1): identification does not touch it.
   const res = await db.update(games).set({
     title: p.title,
     sortTitle: makeSortTitle(p.title),
     year: p.releaseYear ?? sql`${games.year}`,
     publisher: p.groups[0] ?? sql`${games.publisher}`,
     metadataSource: 'demozoo',
-  }).where(and(inArray(games.id, gameIds), inArray(games.metadataSource, MACHINE_SOURCES)))
+  }).where(and(inArray(games.id, gameIds), inArray(games.metadataSource, MACHINE_SOURCES), isLocal(games)))
     .returning({ id: games.id });
   return res.length;
 }
@@ -58,7 +60,7 @@ export async function applyAutomaticLink(sha256: string, productionId: number): 
     .innerJoin(games, eq(games.id, disks.gameId))
     .leftJoin(demozooDismissals, and(eq(demozooDismissals.gameId, games.id), eq(demozooDismissals.productionId, productionId)))
     .where(and(
-      eq(disks.sha256, sha256), isNull(games.demozooLinkSource), isNull(demozooDismissals.gameId),
+      eq(disks.sha256, sha256), isNull(games.demozooLinkSource), isNull(demozooDismissals.gameId), isLocal(games),
       sql`not exists (
         select 1 from disks d2
         inner join blobs b2 on b2.sha256 = d2.sha256
@@ -97,7 +99,7 @@ async function orgGame(orgId: string, gameId: string) {
   const rows = await getDb().select({
     id: games.id, title: games.title, metadataSource: games.metadataSource,
     demozooProductionId: games.demozooProductionId, demozooLinkSource: games.demozooLinkSource,
-  }).from(games).where(and(eq(games.id, gameId), eq(games.orgId, orgId))).limit(1);
+  }).from(games).where(and(eq(games.id, gameId), eq(games.orgId, orgId), isLocal(games))).limit(1);
   return rows[0] ?? null;
 }
 

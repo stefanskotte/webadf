@@ -20,6 +20,7 @@ import { orgFilter } from '@/db/scope';
 import { planReorder, type ReorderResult } from '@/lib/collection-order';
 import { coverUrlsForGames } from '@/lib/queries';
 import { chooseMosaic, mosaicCandidates, MOSAIC_TILES } from '@/lib/collection-mosaic';
+import { isLocal } from '@/lib/remote-hidden';
 
 export interface CollectionListItem { id: string; name: string; sortKey: number; gameCount: number; diskCount: number }
 
@@ -61,6 +62,7 @@ export async function collectionMosaics(
     .innerJoin(games, and(
       eq(games.id, collectionGames.gameId),
       eq(games.orgId, orgId),
+      isLocal(games),
     ))
     .where(inArray(collectionGames.collectionId, collectionIds))
     // The grid's own order (collection-order.ts), so the mosaic previews the
@@ -97,9 +99,12 @@ export async function listCollections(orgId: string): Promise<CollectionListItem
       id: collections.id,
       name: collections.name,
       sortKey: collections.sortKey,
+      // Hidden remote stand-ins (library sharing, spec §4.1) never count. They are never filed in a collection
+      // (addGameToCollection refuses them), so the join to games is belt and braces.
       gameCount: sql<number>`(
         select count(*)::int from collection_games
-        where collection_games.collection_id = ${collections.id}
+        join games on games.id = collection_games.game_id and games.remote_library_id is null
+        where collection_games.collection_id = collections.id
       )`,
       // The table's folder rows show it. The disks are org-scoped as well as
       // the collection: collection_games has no org_id (D-4-5), and a member
@@ -110,6 +115,7 @@ export async function listCollections(orgId: string): Promise<CollectionListItem
       diskCount: sql<number>`(
         select count(*)::int from collection_games
         join disks on disks.game_id = collection_games.game_id and disks.org_id = collections.org_id
+          and disks.remote_library_id is null
         where collection_games.collection_id = collections.id
       )`,
     })
@@ -137,6 +143,7 @@ export async function listCollectionGameIds(orgId: string, id: string): Promise<
     .select({ gameId: collectionGames.gameId })
     .from(collectionGames)
     .innerJoin(collections, eq(collections.id, collectionGames.collectionId))
+    .innerJoin(games, and(eq(games.id, collectionGames.gameId), isLocal(games)))
     .where(and(eq(collectionGames.collectionId, id), eq(collections.orgId, orgId)))
     .orderBy(collectionGames.sortKey, collectionGames.gameId);
   return rows.map((r) => r.gameId);
@@ -147,7 +154,7 @@ export async function countUncategorized(orgId: string): Promise<number> {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(games)
-    .where(and(orgFilter(games, orgId), sql`not exists (
+    .where(and(orgFilter(games, orgId), isLocal(games), sql`not exists (
       select 1 from collection_games cg
       join collections co on co.id = cg.collection_id
       where cg.game_id = ${games.id} and co.org_id = ${orgId}
@@ -206,8 +213,9 @@ export async function addGameToCollection(orgId: string, id: string, gameId: str
     .where(orgFilter(collections, orgId, eq(collections.id, id))).limit(1);
   if (owned.length === 0) return false;
 
+  // A hidden remote stand-in (spec §4.1) is not a title of this library: never filed, same answer as unknown.
   const gameOwned = await db.select({ id: games.id }).from(games)
-    .where(orgFilter(games, orgId, eq(games.id, gameId))).limit(1);
+    .where(orgFilter(games, orgId, and(eq(games.id, gameId), isLocal(games)))).limit(1);
   if (gameOwned.length === 0) return false;
 
   const [{ maxSort }] = await db
@@ -305,7 +313,7 @@ export async function moveGamesToCollection(
   if (!have.has(to) || (from !== undefined && !have.has(from))) return null;
 
   const mine = new Set((await db.select({ id: games.id }).from(games)
-    .where(orgFilter(games, orgId, inArray(games.id, ids)))).map((g) => g.id));
+    .where(orgFilter(games, orgId, and(inArray(games.id, ids), isLocal(games))))).map((g) => g.id));
   const ownedIds = ids.filter((id) => mine.has(id));
   const missing = ids.filter((id) => !mine.has(id));
   if (ownedIds.length === 0) return { added: 0, alreadyThere: 0, removedFrom: 0, missing };

@@ -73,6 +73,8 @@ function fakeDb() {
   const db = {
     select: (cols: Record<string, unknown>) => ({
       from: () => ({
+        // recordVersion's D2 lookup (is this a hidden remote disk?): a local disk here, so nothing.
+        innerJoin: () => ({ where: () => ({ limit: () => Promise.resolve([]) }) }),
         where: () => ({
           orderBy: () => Promise.resolve(
             diskVersionRows

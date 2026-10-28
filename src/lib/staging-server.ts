@@ -7,6 +7,7 @@ import { amigaUploads, amigaUploadChunks } from '@/db/schema/amiga-uploads';
 import { toView } from '@/lib/send-http';
 import { failureText } from '@/lib/send-ui';
 import { listUploads } from '@/lib/amiga-uploads';
+import { isLocal } from '@/lib/remote-hidden';
 import { libraryEligible, uploadFailureText } from '@/lib/from-amiga-ui';
 import type { ServerRow } from '@/lib/upload-staging';
 
@@ -30,7 +31,8 @@ export async function listStaging(db: Db, orgId: string, now = new Date()): Prom
   const found = diskIds.length || shas.length
     ? await db.select({ id: disks.id, sha256: disks.sha256, gameId: disks.gameId, title: games.title }).from(disks)
       .innerJoin(games, eq(games.id, disks.gameId))
-      .where(and(eq(disks.orgId, orgId), or(
+      // "In library" names a local disk only, never a hidden remote stand-in with the same bytes (spec §4.1).
+      .where(and(eq(disks.orgId, orgId), isLocal(disks), or(
         diskIds.length ? inArray(disks.id, diskIds) : undefined,
         shas.length ? inArray(disks.sha256, shas) : undefined)))
       .orderBy(asc(disks.id))

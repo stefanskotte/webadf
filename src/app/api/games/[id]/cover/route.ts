@@ -5,6 +5,7 @@ import { checkCoverImage, coverOverrideUrl, MAX_COVER_BYTES } from '@/lib/cover-
 import { stripImageMetadata } from '@/lib/cover-strip';
 import { readCapped } from '@/lib/read-capped';
 import { getCoverOverride, setCoverOverride } from '@/lib/cover-override';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 /**
  * Set title [id]'s own cover. The body is the raw image file (what
@@ -21,6 +22,8 @@ import { getCoverOverride, setCoverOverride } from '@/lib/cover-override';
 export async function PUT(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { gameId: id });
+  if (hidden) return hidden;
 
   const declared = Number(request.headers.get('content-length') ?? '');
   if (Number.isFinite(declared) && declared > MAX_COVER_BYTES) {
@@ -66,6 +69,8 @@ export async function PUT(request: Request, ctx: { params: Promise<{ id: string 
 export async function DELETE(_request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { gameId: id });
+  if (hidden) return hidden;
   if (!(await setCoverOverride(orgId, id, null))) {
     return Response.json({ error: 'not_found' }, { status: 404 });
   }

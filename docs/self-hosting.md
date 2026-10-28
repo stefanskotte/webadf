@@ -261,3 +261,25 @@ carries what cannot be fetched:
 
 These requests name your install in their User-Agent (`webadf/1.0 (Amiga disk library; +<WEBADF_URL>)`). Everything
 else (library, uploads, history, devices, mounting) works as on our own deployment.
+
+## 10. Sharing your library
+
+Settings, Sharing lets you give another WebFloppy owner access to your library (or some collections) with a link. Their
+WebFloppy talks to yours, so yours has to be reachable from theirs.
+
+**Reachability.** On the same network nothing is needed. Over the internet use one of: forward port 443 (or your
+`WEBADF_HTTPS_PORT`) from your router to this host; put a reverse proxy in front; Tailscale Funnel; or a Cloudflare
+Tunnel. Set `WEBADF_URL` (or `WEBADF_DOMAIN`) to the address the other side will use, since the link is built from it.
+
+**The setting.** `WEBADF_SHARE_PRIVATE_ADDRESSES` controls whether sharing may reach servers on private (LAN) addresses.
+A self-hosted install defaults it to `1` (allowed), because peers are often on the same network. Put
+`WEBADF_SHARE_PRIVATE_ADDRESSES=0` in `.env` to refuse them.
+
+**Certificates.** With `WEBADF_DOMAIN` the certificate is public and trusted, so nothing more is needed. With the
+internal certificate (section 3) the other WebFloppy cannot verify you against the public roots. Caddy therefore serves
+its own root certificate, and only that file, at `/.well-known/webadf-root.pem`; the other WebFloppy fetches it once from
+the link's address and trusts exactly that root for your server, nobody else's. The `.key` files in Caddy's data are never
+served. This is an app-to-app trust only; browsers still need the root imported as in section 3.
+
+**What the other side can do.** Browse, mount, send to their boards and download the shared disks. When the Amiga saves,
+the result is a copy in their library; your disks are never changed. Revoke in Settings, Sharing ends access at once.

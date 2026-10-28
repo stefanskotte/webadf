@@ -10,6 +10,7 @@ import { setVolumeName, MAX_VOLUME_NAME } from '@/lib/adffs/format';
 import { readVolume } from '@/lib/adffs';
 import { makeSortTitle } from '@/lib/tosec';
 import { recordVersion, StaleHeadError } from '@/lib/disk-history/store';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 export const maxDuration = 60;
 
@@ -41,6 +42,8 @@ const body = z.object({ volumeName: z.string().trim().min(1).max(MAX_VOLUME_NAME
 export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId, userId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { diskId: id });
+  if (hidden) return hidden;
 
   let raw: unknown;
   try { raw = await request.json(); } catch {

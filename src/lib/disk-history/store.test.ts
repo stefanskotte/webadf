@@ -23,6 +23,9 @@ function fakeDb() {
     from: () => chain,
     where: () => chain,
     orderBy: () => Promise.resolve(historyRows),
+    // recordVersion's D2 lookup (is this a hidden remote disk?): a local disk here, so nothing.
+    innerJoin: () => chain,
+    limit: () => Promise.resolve([]),
   };
   const insert = () => ({
     values: () => ({ onConflictDoNothing: () => ({}) }),

@@ -25,4 +25,12 @@ describe('applyAppEnv', () => {
     applyAppEnv(keep, resolveConfig(keep), secrets);
     expect(keep.BLOB_GC_DELETE).toBe('0');
   });
+  it('defaults WEBADF_SHARE_PRIVATE_ADDRESSES to 1 (a self-hoster shares on a LAN) and keeps an explicit 0', () => {
+    const env: Record<string, string | undefined> = { WEBADF_URL: 'https://192.168.1.10', WEBADF_ADMIN_EMAIL: 'a@b.c', WEBADF_SHARE_PRIVATE_ADDRESSES: ' ' };
+    applyAppEnv(env, resolveConfig(env), secrets);
+    expect(env.WEBADF_SHARE_PRIVATE_ADDRESSES).toBe('1');
+    const off: Record<string, string | undefined> = { WEBADF_URL: 'https://192.168.1.10', WEBADF_ADMIN_EMAIL: 'a@b.c', WEBADF_SHARE_PRIVATE_ADDRESSES: '0' };
+    applyAppEnv(off, resolveConfig(off), secrets);
+    expect(off.WEBADF_SHARE_PRIVATE_ADDRESSES).toBe('0');
+  });
 });

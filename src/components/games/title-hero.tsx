@@ -32,13 +32,15 @@ export interface TitleHeroProps {
   mounted: string | null;
   /** The disk icon's set line: the collection carried by ?from=, else the kind, else `Unidentified`. */
   setLabel: string;
+  /** Library sharing D2: "Your copy of <library>'s library" (copiedFromText), or null. */
+  copiedFrom?: string | null;
   editSlot: ReactNode;
   coverSlot: ReactNode;
   identifySlot: ReactNode;
 }
 
 export function TitleHero({
-  title, id, year, publisher, kind, diskCount, cover, formats, hasHd, authored, mounted, setLabel,
+  title, id, year, publisher, kind, diskCount, cover, formats, hasHd, authored, mounted, setLabel, copiedFrom,
   editSlot, coverSlot, identifySlot,
 }: TitleHeroProps) {
   const color = titleDiskColor({ id, hasHd, kind, formats, authored });
@@ -69,6 +71,9 @@ export function TitleHero({
             style={{ color: 'var(--ink)' }}>
           {title}
         </h1>
+        {copiedFrom && (
+          <p data-testid="title-copied-from" className="text-[13px]" style={{ color: 'var(--muted)' }}>{copiedFrom}</p>
+        )}
         <div data-testid="title-pills" role="group" aria-label="Title details" className="flex flex-wrap items-center gap-2">
           {kind && (
             <span data-testid="title-pill-kind" className={PILL} style={{ background: tag.bg, color: tag.fg }}>{kind}</span>

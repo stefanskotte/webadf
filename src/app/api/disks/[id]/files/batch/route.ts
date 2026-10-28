@@ -10,6 +10,7 @@ import {
 } from '@/lib/adffs';
 import { applyDiskEdit } from '@/lib/disk-write';
 import { pathTooDeep, unaddressableName } from '@/lib/staging';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 export const maxDuration = 60;
 
@@ -71,6 +72,8 @@ function isPathSafe(path: string): boolean {
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId, userId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { diskId: id });
+  if (hidden) return hidden;
 
   let form: FormData;
   try {

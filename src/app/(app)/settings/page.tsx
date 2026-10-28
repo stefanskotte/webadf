@@ -9,6 +9,10 @@ import { FirmwarePasswordSetting } from '@/components/prefs/firmware-password-se
 import { AccountSecurity } from '@/components/prefs/account-security';
 import { DeleteAccount } from '@/components/prefs/delete-account';
 import { AboutServer } from '@/components/prefs/about-server';
+import { SharingSettings } from '@/components/prefs/sharing-settings';
+import { listShares } from '@/lib/share/store';
+import { toShareView } from '@/lib/share/view';
+import { listCollections } from '@/lib/collections';
 
 export const metadata = { title: 'Settings' };
 
@@ -19,6 +23,7 @@ const SECTIONS: SideNavGroup[] = [{
     { href: '#prefs', label: 'Preferences', focusId: 'prefs-heading' },
     { href: '#account', label: 'Sign-in & password', focusId: 'account-heading' },
     { href: '#firmware', label: 'Firmware updates', focusId: 'firmware-heading' },
+    { href: '#sharing', label: 'Sharing', focusId: 'sharing-heading' },
     { href: '#about', label: 'About this server', focusId: 'about-heading' },
     { href: '#danger', label: 'Delete account', focusId: 'danger-heading', tone: 'danger' },
   ],
@@ -26,14 +31,16 @@ const SECTIONS: SideNavGroup[] = [{
 
 /**
  * The person's own settings (A2; layout C5, board InfSettings): Preferences, Sign-in & password, Firmware updates,
- * About this server, Delete account (C7 spec §10.2). All of it belongs to the signed-in user -- not the org, not a board -- and follows them to any
+ * Sharing (library sharing spec §3.4), About this server, Delete account (C7 spec §10.2). All of it but Sharing (the library's, so the org's) belongs to the signed-in user -- not the org, not a board -- and follows them to any
  * browser. From lg a sticky section list sits beside the cards; below lg the cards stand alone.
  */
 export default async function SettingsPage() {
   const { userId, email, orgId } = await requireOrg();
-  const [prefs, sessions] = await Promise.all([
+  const [prefs, sessions, shares, collections] = await Promise.all([
     getUserPrefs(userId),
     auth.api.listSessions({ headers: await headers() }),
+    listShares(orgId),
+    listCollections(orgId),
   ]);
   return (
     <div className="px-4 pb-10 pt-6 sm:px-7 lg:grid lg:grid-cols-[240px_minmax(0,860px)] lg:items-start lg:gap-8">
@@ -45,6 +52,8 @@ export default async function SettingsPage() {
         <PreferencesForm prefs={prefs} />
         <AccountSecurity email={email} sessionCount={sessions.length} />
         <FirmwarePasswordSetting skipPassword={prefs.firmware.skipPassword} />
+        <SharingSettings initialShares={shares.map(toShareView)}
+                         collections={collections.map((c) => ({ id: c.id, name: c.name }))} />
         <AboutServer orgId={orgId} />
         <DeleteAccount />
       </div>

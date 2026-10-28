@@ -11,11 +11,14 @@ import { diskStore } from '@/lib/storage';
 import { prepareImages } from '@/lib/url-ingest';
 import { contentHashes } from '@/lib/content-hashes';
 import { registerUploads } from '@/lib/ingest-complete';
+import { isLocal } from '@/lib/remote-hidden';
 
 export const maxDuration = 60;
 
 async function diskWhere(orgId: string, where: ReturnType<typeof eq>) {
-  const [d] = await getDb().select({ id: disks.id, gameId: disks.gameId }).from(disks).where(and(eq(disks.orgId, orgId), where)).limit(1);
+  // A local disk only: a hidden remote stand-in with the same bytes (spec §4.1) is not "in the library".
+  const [d] = await getDb().select({ id: disks.id, gameId: disks.gameId }).from(disks)
+    .where(and(eq(disks.orgId, orgId), isLocal(disks), where)).limit(1);
   return d ?? null;
 }
 

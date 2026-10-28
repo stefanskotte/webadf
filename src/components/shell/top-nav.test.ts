@@ -25,28 +25,34 @@ describe('TopNav (C7 spec §2.3, Rulings 4, 5, 8)', () => {
     expect(html.match(/<nav /g)?.length).toBe(1);
     expect(html).toContain('<nav aria-label="Main" class="seg nav-tabs lg:w-max">');
   });
-  it('keeps Library, Devices, Upload, Help (+ Admin); Help and Admin are in More below lg', () => {
+  it('is Library, Remote, Devices, Upload, Help (+ Admin); Remote, Help and Admin are in More below lg', () => {
     const member = links(render('/library'));
-    expect(member.map((l) => l.text)).toEqual(['Library', 'Devices', 'Upload', 'Help']);
-    expect(member[3].attrs).toContain('max-lg:hidden');
-    for (const l of member.slice(0, 3)) expect(l.attrs).not.toContain('max-lg:hidden');
+    expect(member.map((l) => l.text)).toEqual(['Library', 'Remote', 'Devices', 'Upload', 'Help']);
+    for (const i of [1, 4]) expect(member[i].attrs).toContain('max-lg:hidden');
+    for (const i of [0, 2, 3]) expect(member[i].attrs).not.toContain('max-lg:hidden');
+    expect(member[1].attrs).toContain('href="/remote"');
     const admin = links(render('/library', true));
-    expect(admin.map((l) => l.text)).toEqual(['Library', 'Devices', 'Upload', 'Help', 'Admin']);
-    expect(admin[4].attrs).toContain('max-lg:hidden');
+    expect(admin.map((l) => l.text)).toEqual(['Library', 'Remote', 'Devices', 'Upload', 'Help', 'Admin']);
+    expect(admin[5].attrs).toContain('max-lg:hidden');
   });
-  it('More is a menu button shown below lg only, current on Settings, Help and Admin', () => {
+  it('Remote is current on /remote and the pages under it; More is current there too below lg', () => {
+    const html = render('/remote/lib1/titles/t1');
+    expect(links(html).find((l) => l.text === 'Remote')!.attrs).toContain('aria-current="page"');
+    expect(more(html)).toContain('aria-current="page"');
+  });
+  it('More is a menu button shown below lg only, current on Settings, Help, Admin and Remote', () => {
     expect(more(render('/library'))).toContain('lg:hidden');
     expect(more(render('/library'))).toContain('aria-haspopup="menu"');
     expect(more(render('/library'))).not.toContain('aria-current');
-    for (const p of ['/settings', '/help', '/admin/users']) expect(more(render(p, true)), p).toContain('aria-current="page"');
+    for (const p of ['/settings', '/help', '/admin/users', '/remote']) expect(more(render(p, true)), p).toContain('aria-current="page"');
     expect(render('/library')).toMatch(/data-testid="nav-more"[^>]*>(?:<span[^>]*><\/span>)?More<\/button>/);
   });
   it('every tab carries its bar: amber on the current one, transparent on the others', () => {
     const html = render('/devices');
-    expect(html.match(/data-tab-bar=""/g)?.length).toBe(5);   // four links + More
+    expect(html.match(/data-tab-bar=""/g)?.length).toBe(6);   // five links + More
     expect(html).toMatch(/aria-current="page"[^>]*><span aria-hidden="true" data-tab-bar="" class="[^"]*" style="background:var\(--accent-amber\)"><\/span>Devices/);
     expect(html.match(/background:var\(--accent-amber\)/g)?.length).toBe(1);
-    expect(html.match(/background:transparent/g)?.length).toBe(4);
+    expect(html.match(/background:transparent/g)?.length).toBe(5);
   });
   it('the menu items are not in the page while the menu is closed', () => {
     expect(render('/library', true)).not.toContain('more-help');

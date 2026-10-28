@@ -10,6 +10,8 @@
 // ({error:'conflict'}), which is what Task 5's UI codes against.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// The hidden-id guard (R-6b) is covered against a real database in src/app/api/remote/remote-api.db.test.ts.
+vi.mock('@/lib/remote-hidden', async (orig) => ({ ...(await orig<typeof import('@/lib/remote-hidden')>()), refuseHidden: async () => null }));
 import type { RestoreOutcome } from '@/lib/disk-history/restore';
 
 const restoreVersion = vi.fn<(orgId: string, diskId: string, seq: number, userId: string | null, opts?: { ifHeadSeq?: number }) => Promise<RestoreOutcome>>();

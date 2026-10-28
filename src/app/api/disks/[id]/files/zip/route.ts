@@ -6,6 +6,7 @@ import { diskStore } from '@/lib/storage';
 import { readVolume } from '@/lib/adffs';
 import { downloadFilename, contentDisposition } from '@/lib/download-name';
 import { zipEntries } from '@/lib/disk-zip';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 export const maxDuration = 60;
 
@@ -19,6 +20,8 @@ export const maxDuration = 60;
 export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { diskId: id });
+  if (hidden) return hidden;
 
   const raw = new URL(request.url).searchParams.get('blocks') ?? '';
   const parts = raw.split(',').filter((p) => p !== '');

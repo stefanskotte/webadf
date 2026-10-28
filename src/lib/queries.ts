@@ -21,6 +21,7 @@ import {
   NFC_ELEMENT_FIRMWARE, ROTATION_FIRMWARE, STATUS_ICON_FIRMWARE, stripHeadRecords,
 } from '@/lib/display-layout';
 import { DEFAULT_PREFS, type LibrarySort } from '@/lib/user-prefs-schema';
+import { isLocal, deviceTitle, linkableGameId } from '@/lib/remote-hidden';
 
 export interface GameListItem {
   id: string; title: string; year: number | null; publisher: string | null;
@@ -117,7 +118,7 @@ export async function listGames(
       })
       .from(games)
       .leftJoin(disks, and(eq(disks.gameId, games.id), eq(disks.orgId, orgId)))
-      .where(and(orgFilter(games, orgId), sql`not exists (
+      .where(and(orgFilter(games, orgId), isLocal(games), sql`not exists (
         select 1 from collection_games cg
         join collections co on co.id = cg.collection_id
         where cg.game_id = ${games.id} and co.org_id = ${orgId}
@@ -148,7 +149,7 @@ export async function listGames(
         eq(collectionGames.gameId, games.id),
         eq(collectionGames.collectionId, collectionId),
       ))
-      .where(orgFilter(games, orgId))
+      .where(orgFilter(games, orgId, isLocal(games)))
       // collectionGames.sortKey has to join the GROUP BY alongside games.id:
       // it isn't functionally dependent on games' own primary key, only on
       // the (collectionId, gameId) pair the inner join above already fixed
@@ -179,7 +180,7 @@ export async function listGames(
     // means a future write path that got that wrong can never leak another
     // tenant's disk into this count or its sha256Prefix.
     .leftJoin(disks, and(eq(disks.gameId, games.id), eq(disks.orgId, orgId)))
-    .where(orgFilter(games, orgId))
+    .where(orgFilter(games, orgId, isLocal(games)))
     .groupBy(games.id)
     .orderBy(...order)     // default: recently added first (spec §10, D9)
     .$dynamic());
@@ -237,7 +238,7 @@ export async function countGames(
     })
     .from(games)
     .leftJoin(disks, and(eq(disks.gameId, games.id), eq(disks.orgId, orgId)))
-    .where(and(orgFilter(games, orgId), inView));
+    .where(and(orgFilter(games, orgId), isLocal(games), inView));
   return { titles: r?.titles ?? 0, disks: r?.disks ?? 0 };
 }
 
@@ -251,9 +252,9 @@ export async function countGames(
 export async function countAllGames(orgId: string): Promise<{ titles: number; disks: number }> {
   const db = getDb();
   const [t] = await db.select({ n: sql<number>`count(*)::int` })
-    .from(games).where(orgFilter(games, orgId));
+    .from(games).where(orgFilter(games, orgId, isLocal(games)));
   const [d] = await db.select({ n: sql<number>`count(*)::int` })
-    .from(disks).where(orgFilter(disks, orgId));
+    .from(disks).where(orgFilter(disks, orgId, isLocal(disks)));
   return { titles: t?.n ?? 0, disks: d?.n ?? 0 };
 }
 
@@ -308,7 +309,7 @@ export async function coverUrlsForGames(orgId: string, gameIds: string[]): Promi
       // blobs and openretro_images are GLOBAL tables, so the org scope has to
       // come from the disks side.
       .innerJoin(openretroImages, eq(openretroImages.entryUuid, blobs.openretroEntryId))
-      .where(and(inArray(disks.gameId, gameIds), eq(disks.orgId, orgId))),
+      .where(and(inArray(disks.gameId, gameIds), eq(disks.orgId, orgId), isLocal(disks))),
 
     demozooCovers(orgId, gameIds),
 
@@ -316,7 +317,7 @@ export async function coverUrlsForGames(orgId: string, gameIds: string[]): Promi
     // from this org's games rows only: the choice is per-org by construction.
     db.select({ id: games.id, sha256: games.coverOverrideSha256 })
       .from(games)
-      .where(orgFilter(games, orgId, inArray(games.id, gameIds))),
+      .where(orgFilter(games, orgId, and(inArray(games.id, gameIds), isLocal(games)))),
   ]);
   const overrideOf = new Map(overrides.map((o) => [o.id, o.sha256]));
 
@@ -347,7 +348,7 @@ export async function kindsForGames(orgId: string, ids: string[]): Promise<Map<s
     .from(disks)
     .innerJoin(blobs, eq(blobs.sha256, disks.sha256))
     .innerJoin(tosecEntries, eq(tosecEntries.id, blobs.tosecEntryId))
-    .where(and(inArray(disks.gameId, ids), eq(disks.orgId, orgId)));
+    .where(and(inArray(disks.gameId, ids), eq(disks.orgId, orgId), isLocal(disks)));
   const byGame = new Map<string, Array<string | null>>();
   for (const s of sets) {
     const list = byGame.get(s.gameId) ?? [];
@@ -555,15 +556,17 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       lastError: devices.lastError, lastErrorAt: devices.lastErrorAt,
       desiredSha256: devices.desiredSha256, mountedSha256: devices.mountedSha256,
       desiredDiskId: devices.desiredDiskId, mountedDiskId: devices.mountedDiskId,
-      desiredGame: desiredGame.title,
-      desiredGameId: desiredGame.id,
+      // Device state still shows a hidden remote disk, named "<title> (remote)" and with no link to its game,
+      // whose page 404s (spec §4.1); the same for the mounted, DF1 and last-disk titles below.
+      desiredGame: deviceTitle(desiredGame),
+      desiredGameId: linkableGameId(desiredGame.id, desiredGame),
       desiredDiskNo: devices.desiredDiskNo,
       desiredDiskCount: sql<number | null>`(
         select count(*)::int from disks dc
         where dc.game_id = ${devices.desiredGameId} and dc.org_id = ${devices.orgId}
       )`,
-      mountedGame: mountedGame.title,
-      mountedGameId: mountedGame.id,
+      mountedGame: deviceTitle(mountedGame),
+      mountedGameId: linkableGameId(mountedGame.id, mountedGame),
       mountedDiskNo: devices.mountedDiskNo,
       mountedLabel: mountedDisk.label,
       mountedSourceFilename: mountedEnt.sourceFilename,
@@ -592,7 +595,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       df1Sha256: devices.df1Sha256,
       df1DiskId: devices.df1DiskId,
       df1PickSha256: df1Disk.sha256,
-      df1PickTitle: df1Game.title,
+      df1PickTitle: deviceTitle(df1Game),
       df1PickDiskNo: df1Disk.diskNo,
       netDriverSeenAt: devices.netDriverSeenAt,
       netAmigaIp: devices.netAmigaIp,
@@ -601,7 +604,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       displayLayout: devices.displayLayout,
       bootDisk: devices.bootDisk,
       lastDiskId: lastDisk.id,
-      lastDiskTitle: lastGame.title,
+      lastDiskTitle: deviceTitle(lastGame),
       lastDiskNo: lastDisk.diskNo,
     })
     .from(devices)
@@ -697,6 +700,8 @@ export interface GameDetail {
   kind: string | null;
   /** Made here (Create ADF), not ingested from a file: it has no kind, and still gets a coloured disk. */
   authored: boolean;
+  /** Library sharing D2: the remote library's name when this title is the person's own copy of one; else null. */
+  copiedFrom: string | null;
   disks: GameDetailDisk[];
 }
 
@@ -717,10 +722,11 @@ export async function getGameDetail(orgId: string, gameId: string): Promise<Game
       factsSource: games.factsSource, proseSource: games.proseSource,
       metadataSource: games.metadataSource, authored: games.authored,
       demozooProductionId: games.demozooProductionId, demozooLinkSource: games.demozooLinkSource,
-      coverOverrideSha256: games.coverOverrideSha256,
+      coverOverrideSha256: games.coverOverrideSha256, copiedFrom: games.copiedFrom,
     })
     .from(games)
-    .where(orgFilter(games, orgId, eq(games.id, gameId)))
+    // A hidden remote stand-in is not a title of this library: its page 404s like a foreign id (spec §4.1).
+    .where(orgFilter(games, orgId, and(eq(games.id, gameId), isLocal(games))))
     .limit(1);
 
   const row = gameRows[0];

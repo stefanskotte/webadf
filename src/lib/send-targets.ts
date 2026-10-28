@@ -7,6 +7,7 @@ import { isOnline } from '@/lib/device-state';
 import { isDefaultDeviceName } from '@/lib/device-name';
 import { XFER_FW } from '@/lib/send-limits';
 import { orderTargets, type Rx, type SendTarget } from '@/lib/send-ui';
+import { isLocal } from '@/lib/remote-hidden';
 
 const asRx = (v: string | null): Rx | null => (v === 'c' || v === 'r' || v === 'u' || v === '-' ? v : null);
 
@@ -31,12 +32,17 @@ export async function findSendTarget(db: Db, orgId: string, deviceId: string, no
 
 export type SendDisk = { sha256: string; imageFormat: string; tosecName: string | null; sourceFilename: string | null; diskNo: number };
 
-/** A library disk through this org's entitlement, the boundary /api/disks/[id]/adf uses. */
-export async function loadSendDisk(db: Db, orgId: string, diskId: string): Promise<SendDisk | null> {
+/**
+ * A library disk through this org's entitlement, the boundary /api/disks/[id]/adf uses. A hidden remote disk only
+ * with `includeHidden` (the remote Send, after it materialised the disk); otherwise it is unknown (R-6b).
+ */
+export async function loadSendDisk(
+  db: Db, orgId: string, diskId: string, opts: { includeHidden?: boolean } = {},
+): Promise<SendDisk | null> {
   const [d] = await db.select({ sha256: disks.sha256, imageFormat: disks.imageFormat, tosecName: disks.tosecName,
     sourceFilename: entitlements.sourceFilename, diskNo: disks.diskNo })
     .from(disks)
     .innerJoin(entitlements, and(eq(entitlements.sha256, disks.sha256), eq(entitlements.orgId, orgId)))
-    .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId))).limit(1);
+    .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId), opts.includeHidden ? undefined : isLocal(disks))).limit(1);
   return d ?? null;
 }

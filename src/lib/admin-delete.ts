@@ -21,6 +21,7 @@ import { devices, pairingCodes, invites } from '@/db/schema/devices';
 import { user, member, organization } from '@/db/schema/auth';
 import { collections } from '@/db/schema/collections';
 import { amigaUploads } from '@/db/schema/amiga-uploads';
+import { libraryShares, remoteLibraries } from '@/db/schema/sharing';
 
 export interface DeleteUserResult {
   orgId: string | null;
@@ -129,6 +130,11 @@ export async function deleteUserCascade(userId: string): Promise<DeleteUserResul
     // The org's From the Amiga area (spec 2026-10-18): its device_id is set null when a board goes, so the org's
     // own delete is what removes it (chunks follow by cascade). Blobs are left to the weekly GC, as everywhere here.
     stmts.push(tx.delete(amigaUploads).where(eq(amigaUploads.orgId, orgId)));
+
+    // Library sharing: the org's shares as an owner (their collection links follow by cascade), and the libraries it
+    // added as a recipient. remote_libraries AFTER games and disks: hidden rows name it with no cascade.
+    stmts.push(tx.delete(libraryShares).where(eq(libraryShares.orgId, orgId)));
+    stmts.push(tx.delete(remoteLibraries).where(eq(remoteLibraries.orgId, orgId)));
 
     devicesIdx.push(stmts.push(
       tx.delete(devices).where(eq(devices.orgId, orgId)).returning({ id: devices.id }),

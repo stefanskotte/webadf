@@ -78,17 +78,26 @@ a link to the help topic when it fails. The test proves the address resolves and
 stands, not from the internet; the help topic says so.
 
 A self-hosted instance using Caddy's internal CA (`tls internal`, the default for a LAN address) has a certificate no
-other server trusts. The link then carries the **internal root's SHA-256 fingerprint** (`#pin=<base64url>`), read
-from Caddy's data volume by the app container (the implementation adds that read-only mount). The recipient pins
-that root for that remote library: the TLS chain must end in exactly that root. Instances with a publicly trusted
-certificate (`WEBADF_DOMAIN`, a reverse proxy, a tunnel) produce links without a pin and are verified normally.
-The internal root is long-lived (Caddy: 10 years), so pins do not break on leaf renewal.
+other server trusts. The link then carries the **internal root's SHA-256 fingerprint** (`#pin=<base64url>`, base64url
+SHA-256 of the root's DER). Ruling C1 (the app container cannot read Caddy's pki files): **Caddy serves its internal
+root at `/.well-known/webadf-root.pem`**. The owner learns its own pin by fetching that URL at its own public address
+(through the same guarded client; a 404 means a publicly trusted certificate, so links carry no pin). The recipient,
+holding a pin, first fetches the PEM (address guard, unverified TLS for that one GET, no token, 16 KB, no redirects),
+checks that it is exactly one self-signed CA certificate whose fingerprint equals the pin, and then makes the real
+request verified with that root as the **only** CA (normal host-name check). A wrong pin means the request, and the
+bearer token in it, is never sent. Instances with a publicly trusted certificate (`WEBADF_DOMAIN`, a reverse proxy,
+a tunnel) produce links without a pin and are verified normally. The internal root is long-lived (Caddy: 10 years),
+so pins do not break on leaf renewal.
 
 ### 3.4 Screens (owner)
 
 **Settings › Sharing**
 
-- A reachability line: "Your WebFloppy is reachable at https://... ✓" or, in red, why not, with the help link.
+- A reachability line: "Your WebFloppy is reachable at https://... ✓" or, in red, why not, with the help link. The
+  check makes the server call itself, so it runs on load only when the org has at least one share; otherwise when New
+  share opens or the person presses **Check**.
+- New share needs the server's own address (`BETTER_AUTH_URL`); without it the request is refused (503
+  `no_public_address`) and no share row is made.
 - Table of shares: Person · Collections ("Everything" or names) · Status (Waiting to be claimed, until <date> /
   Expired / Claimed by <name> (<url>) / Revoked) · Last used · actions.
 - **New share…**: label, collection checkboxes or Everything. Result: the link with Copy, and "It works once. Unclaimed
@@ -116,6 +125,7 @@ the page sends `Referrer-Policy: no-referrer` and is not cached.
 | tls_pin | the root fingerprint from the link, or null |
 | name | the library name from claim / `GET library` |
 | status | `ok`, `unreachable`, `ended` (401 revoked / unknown token), `protocol` |
+| | A `token_enc` this server cannot open (`BETTER_AUTH_SECRET` changed) is not a status: `last_error` = `token_unreadable`, the status and hidden rows stay, and every call is refused with "This shared library can't be opened on this server. Remove it and ask for a new link." Restoring the old secret makes it work again. |
 | last_ok_at, last_error, added_at, added_by | |
 
 **Remote disks in drives become ordinary `disks` rows** with two new nullable columns, `remote_library_id` (FK,
@@ -127,7 +137,10 @@ held with an entitlement for the recipient org, so mount, PaulaNET send, write-b
 
 - **Add:** Remote › Add takes the link (pasted, or from `#link=` on `/remote/add`). The server parses origin, code
   and pin, calls `POST claim` (pinned TLS when a pin is given), stores the library, then opens it. Errors in plain
-  words: "This link was already used, has expired or was revoked", "Can't reach <host>", "<host> needs an update".
+  words: "This link was already used, has expired or was revoked", "Can't reach <host>", "<host> needs a WebFloppy
+  update" / "Your WebFloppy needs an update", "<host> didn't answer like a WebFloppy" (not a share API, or a garbled
+  answer). There is no "already added" refusal: on a hosted deployment every owner shares one origin, so a second
+  link from the same origin is simply a second library.
 - **Browse:** the recipient's pages call their own server, which calls the share API with the token. Listings are
   cached per remote library for 60 s (in memory / the existing cache layer); covers longer, by ETag.
 - **Mount / Send to Amiga:** the server looks up a hidden disk row for (`remote_library_id`, `remote_disk_id`). If
@@ -135,14 +148,22 @@ held with an entitlement for the recipient org, so mount, PaulaNET send, write-b
   stores the blob, creates or updates the hidden row (only while it is still untouched, see D2), then runs the
   existing mount or send. Every mount re-asks the owner, so a disk taken out of scope stops mounting.
 - **First write (D2):** when write-back records the first change to a hidden remote disk, the row drops its remote
-  columns and becomes a normal disk in the recipient's library, Uncategorized, named as it was. A notice on the disk
-  says "Your copy of <owner>'s <disk>". From then on it is never refreshed from the owner.
+  columns and MOVES (same disk id) into the recipient's **own copy of the title**: a local game, one per (team,
+  remote library, remote title), created in the same transaction from the hidden title's name, year and publisher,
+  with a machine metadata source ('filename', so scans may re-identify it) and `games.copied_from` = the remote
+  library's name. It shows in the recipient's library, Uncategorized, named as it was. The hidden stand-in title stays
+  hidden, so another disk of the same title still mounted from the owner never appears under the own copy; a later
+  first write to that disk joins the same own copy. Boards holding the disk follow it (their desired/mounted game id
+  becomes the own copy's). The own copy's title page and its disks' files pages say "Your copy of <library name>'s
+  library". From then on it is never refreshed from the owner.
 - **Download:** streams through the recipient's server (same fetch and check), not cached as a disk row.
 
 ### 4.3 Status changes
 
 Any 401 from the owner sets `ended`; repeated network failures set `unreachable` (retried on the next visit); 409
-sets `protocol`. An `ended` library shows "Access ended" with only Remove.
+sets `protocol`. An `ended` library shows "Access ended" with only Remove. A token this server cannot open
+(`token_unreadable`, 4.1) leaves the status alone, shows "Can't be opened on this server" and offers only Remove;
+it never ends the library or purges its hidden rows.
 
 ### 4.4 Remove and revoke
 
@@ -152,7 +173,7 @@ ejected from any drive first, then deleted, with its entitlement unless another 
 
 ### 4.5 Screens (recipient)
 
-- **Top menu:** Library · **Remote** · Devices · Upload · Help. On the phone, Remote sits with Library.
+- **Top menu:** Library · **Remote** · Devices · Upload · Help. On the phone, Remote is in the More menu.
 - **`/remote`:** one card per remote library (name, owner address, collections, status, last answered), Add a shared
   library, Remove…. Empty state explains what remote libraries are and has the Add button.
 - **`/remote/[id]`:** the local library's parts, read-only: collections in scope, titles as cards or table with search,
@@ -167,7 +188,7 @@ ejected from any drive first, then deleted, with its entitlement unless another 
   instances on one LAN) and `WEBADF_SHARE_PRIVATE_ADDRESSES=0` turns that off. Same rule both sides of parity: the
   setting exists everywhere, only the default differs.
 - Responses are size-limited (listings 2 MB, bytes the largest disk kind the app accepts) and time-limited (10 s
-  listings, 60 s bytes).
+  listings, 45 s bytes: Mount, Send and Download make a listing call and a bytes call inside one 60 s function run).
 - The owner's API never reveals anything outside scope (404), never accepts writes, and logs each claim and revoke.
 - Tokens: hashed at the owner, encrypted at the recipient, never sent to a browser.
 

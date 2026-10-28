@@ -5,15 +5,15 @@ import { useRouter } from 'next/navigation';
 import { Link } from '@/components/shell/link';
 import { toast } from 'sonner';
 import type { MountChoice } from '@/lib/mount-choice';
+import { mountFailureText, mountRequest, type Drive, type RemoteMount } from '@/lib/mount-request';
+
+export type { RemoteMount };
 
 /**
  * Kept as an alias rather than deleted: disk-row.tsx and the game page both
  * named this type, and a MountChoice is a superset of what a target ever was.
  */
 export type MountTarget = MountChoice;
-
-type Drive = 'df0' | 'df1';
-const JSON_HEADERS = { 'content-type': 'application/json' };
 
 const BTN = 'inline-flex h-[38px] items-center gap-2 rounded-[10px] border px-4 text-[13px] font-semibold disabled:opacity-50 max-sm:min-h-11';
 const cls = BTN;
@@ -34,7 +34,7 @@ function DriveIcon({ up }: { up: boolean }) {
   );
 }
 
-export function MountAction({ diskId, choices }: { diskId: string; choices: MountChoice[] }) {
+export function MountAction({ diskId, choices, remote }: { diskId: string; choices: MountChoice[]; remote?: RemoteMount }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -48,38 +48,16 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
     if (expanded) wrapperRef.current?.focus();
   }, [expanded]);
 
-  /**
-   * Both verbs, one request path. Mount names a disk; eject names none, and
-   * means "hold nothing" -- so calling it off a pending fetch also drops
-   * whatever the drive still has. mount-choice.ts is what decides which verb a
-   * given device is offered, and words it accordingly ("Cancel", not "Eject",
-   * when nothing has landed yet).
-   *
-   * DF1 (spec 2026-10-14 §3.3): the disk already in DF1 is taken out of DF1 ({"drive":"df1"} to /eject); any
-   * other disk goes into DF1 ({diskId, drive:"df1"} to /mount). DF0 is exactly as before.
-   */
+  /** The request (mount-request.ts mountRequest), then a toast either way; the live poller turns it into fact. */
   async function act(choice: MountChoice, drive: Drive = 'df0') {
     setBusy(true);
     setExpanded(false);
-    const df1Eject = drive === 'df1' && choice.df1?.isThisDisk === true;
-    const ejecting = drive === 'df1' ? df1Eject : choice.action === 'eject';
-    // A Cancel on a board that still holds a confirmed disk asks for that disk
-    // again (mount-choice.ts revertDiskId); only a real eject empties the drive.
-    const mountId = drive === 'df1' ? (df1Eject ? null : diskId) : ejecting ? choice.revertDiskId : diskId;
-    const init: RequestInit = mountId
-      ? { method: 'POST', headers: JSON_HEADERS,
-          body: JSON.stringify(drive === 'df1' ? { diskId: mountId, drive } : { diskId: mountId }) }
-      : drive === 'df1'
-        ? { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ drive }) }
-        : { method: 'POST' };
+    const req = mountRequest(choice, diskId, drive, remote);
+    const { ejecting, df1Eject } = req;
     try {
-      const res = await fetch(`/api/devices/${choice.id}/${mountId ? 'mount' : 'eject'}`, init);
+      const res = await fetch(req.url, req.init);
       if (!res.ok) {
-        // A refusal the person can act on carries its own sentence (e.g. a
-        // long-track HFE on a board whose firmware is too old, or DF1's rules);
-        // anything else falls back to the status.
-        const body = await res.json().catch(() => null) as { reason?: unknown } | null;
-        const reason = typeof body?.reason === 'string' ? body.reason : `The server answered ${res.status}.`;
+        const reason = mountFailureText(await res.json().catch(() => null), res.status, req, remote?.host);
         toast.error(ejecting ? 'Could not eject' : 'Could not mount', { description: reason });
         return;
       }

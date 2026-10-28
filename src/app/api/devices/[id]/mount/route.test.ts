@@ -7,6 +7,13 @@ const mountToDf1 = vi.fn();
 vi.mock('@/lib/df1-store', () => ({ mountToDf1: (...a: unknown[]) => mountToDf1(...a) }));
 const drivesBefore = vi.fn();
 vi.mock('@/lib/mount-undo', () => ({ drivesBefore: (...a: unknown[]) => drivesBefore(...a) }));
+// Local disks here; the hidden-disk re-check (R-6a) runs against a real database in src/app/api/remote/remote-api.db.test.ts.
+const recheckHidden = vi.fn<(...a: unknown[]) => Promise<{ hidden: boolean }>>(async () => ({ hidden: false }));
+vi.mock('@/lib/remote/remount', () => ({ recheckHidden: (...a: unknown[]) => recheckHidden(...a) }));
+const ownsDevice = vi.fn<(...a: unknown[]) => Promise<boolean>>(async () => true);
+vi.mock('@/lib/mount-http', async (orig) => ({
+  ...(await orig<typeof import('@/lib/mount-http')>()), orgOwnsDevice: (...a: unknown[]) => ownsDevice(...a),
+}));
 
 const post = async (body: unknown) => {
   const { POST } = await import('./route');
@@ -18,6 +25,24 @@ const post = async (body: unknown) => {
 beforeEach(() => {
   vi.clearAllMocks();
   drivesBefore.mockResolvedValue({ df0: 'disk-held', df1: null });
+  ownsDevice.mockResolvedValue(true);
+});
+
+describe('POST /api/devices/[id]/mount -- the board first (final review 8)', () => {
+  it("a board that is not this team's is 404 before any owner is asked", async () => {
+    ownsDevice.mockResolvedValue(false);
+    const res = await post({ diskId: 'disk-x' });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'not_found' });
+    expect(ownsDevice).toHaveBeenCalledWith('org-1', 'dev-1');
+    expect(recheckHidden).not.toHaveBeenCalled();
+    expect(setDesired).not.toHaveBeenCalled();
+  });
+  it("this team's board: the hidden re-check runs", async () => {
+    setDesired.mockResolvedValue({ ok: true, version: 3 });
+    await post({ diskId: 'disk-x' });
+    expect(recheckHidden).toHaveBeenCalledWith('org-1', 'disk-x');
+  });
 });
 
 describe('POST /api/devices/[id]/mount -- drive', () => {

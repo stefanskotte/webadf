@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+// The hidden-id guard (R-6b) is covered against a real database in src/app/api/remote/remote-api.db.test.ts.
+const refuseHidden = vi.fn<(...a: unknown[]) => Promise<Response | null>>(async () => null);
+vi.mock('@/lib/remote-hidden', async (orig) => ({ ...(await orig<typeof import('@/lib/remote-hidden')>()), refuseHidden: (...a: unknown[]) => refuseHidden(...a) }));
 
 vi.mock('@/lib/session', () => ({
   requireOrg: () => Promise.resolve({ orgId: 'org-1', userId: 'user-1', email: 'a@b.test' }),
@@ -21,6 +24,12 @@ const req = (body: unknown) => new Request('http://x/api/games/G/disks', {
 beforeEach(() => { addDisksToSet.mockReset(); });
 
 describe('POST /api/games/[id]/disks', () => {
+  it('guards the TITLE id against a hidden remote title (final review 7)', async () => {
+    addDisksToSet.mockResolvedValue({ undo: [] });
+    await POST(req({ diskIds: ['s1'] }), ctx);
+    expect(refuseHidden).toHaveBeenCalledWith('org-1', { gameId: 'G' });
+  });
+
   it('calls the store with the session org and the parsed body, and returns the undo', async () => {
     const undo = [{ diskIds: ['s1'], title: 'T', sortTitle: 't', year: null, publisher: null, metadataSource: null, hadExtras: false }];
     addDisksToSet.mockResolvedValue({ undo });

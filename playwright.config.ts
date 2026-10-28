@@ -79,7 +79,11 @@ export default defineConfig({
     // .env.local pins that to :3000. Next does not let a .env file overwrite a
     // variable already in the environment, so passing it here wins for the
     // server this config spawns, and nothing outside the test run is affected.
-    env: { PORT: String(PORT), BETTER_AUTH_URL: BASE_URL },
+    env: {
+      PORT: String(PORT), BETTER_AUTH_URL: BASE_URL,
+      // Library sharing e2e: two instances on loopback over http (test-only switches, never set elsewhere).
+      WEBADF_SHARE_TEST_INSECURE: '1', WEBADF_SHARE_PRIVATE_ADDRESSES: '1',
+    },
     reuseExistingServer: true,
     // Raised from the brief's 120_000: Turbopack's first cold compile of the
     // auth/library routes plus the Neon connection warmup can exceed two
