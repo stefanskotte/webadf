@@ -7,7 +7,7 @@ import {
   decideTap, NFC_WRITE_TTL_MS, nextCardWriters, shouldStoreWriteResult, tapRefusalOutcome, type TapOutcome,
 } from '@/lib/nfc/rules';
 import { readNextForDevices } from '@/lib/next-disk';
-import { isLocal } from '@/lib/remote-hidden';
+import { isHiddenDisk, isLocal } from '@/lib/remote-hidden';
 
 /**
  * One tap, end to end (spec §5.2). The org is the caller's -- the device's
@@ -29,8 +29,14 @@ export async function tapDevice(
 
   let outcome: TapOutcome = 'already';
   if (decision === 'mount') {
-    const r = await setDesired(orgId, deviceId, diskId);
-    outcome = r.ok ? 'mounting' : tapRefusalOutcome(r.reason);
+    // R-6a: a hidden remote disk is never mounted by a tap. No fob is ever written for one (requestNfcWrite), and a
+    // tap has no way to ask the owner again in the board's time; it reads as the unknown disk it is to this library.
+    if (await isHiddenDisk(orgId, diskId)) {
+      outcome = 'not_found';
+    } else {
+      const r = await setDesired(orgId, deviceId, diskId);
+      outcome = r.ok ? 'mounting' : tapRefusalOutcome(r.reason);
+    }
   }
   await db.update(devices).set({ lastTapAt: now, lastTapOutcome: outcome })
     .where(and(eq(devices.id, deviceId), eq(devices.orgId, orgId)));

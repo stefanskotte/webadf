@@ -1,6 +1,8 @@
 // POST /api/disks/[id]/files/bulk (A5): several entries deleted or moved in ONE
 // commit, so the disk gets one new version and one Undo puts it all back.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// The hidden-id guard (R-6b) is covered against a real database in src/app/api/remote/remote-api.db.test.ts.
+vi.mock('@/lib/remote-hidden', async (orig) => ({ ...(await orig<typeof import('@/lib/remote-hidden')>()), refuseHidden: async () => null }));
 import { createHash } from 'node:crypto';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume, type AdfEntry } from '@/lib/adffs';

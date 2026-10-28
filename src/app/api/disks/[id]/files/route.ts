@@ -1,6 +1,7 @@
 import { requireOrg } from '@/lib/session';
 import { readVolume, addFile, makeDirectory, type AdfEntry, type WriteResult } from '@/lib/adffs';
 import { applyDiskEdit } from '@/lib/disk-write';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 export const maxDuration = 60;
 
@@ -31,6 +32,8 @@ function isDirectory(entries: AdfEntry[], block: number): boolean {
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId, userId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { diskId: id });
+  if (hidden) return hidden;
 
   let form: FormData;
   try {

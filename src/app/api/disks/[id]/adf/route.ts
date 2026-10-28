@@ -4,6 +4,7 @@ import { disks, entitlements } from '@/db/schema/catalog';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
 import { downloadFilename, contentDisposition } from '@/lib/download-name';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 // Reads ~880 KB out of Blob storage and streams it back.
 export const maxDuration = 60;
@@ -32,6 +33,8 @@ export const maxDuration = 60;
 export async function GET(_request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { diskId: id });
+  if (hidden) return hidden;
 
   const rows = await getDb()
     .select({

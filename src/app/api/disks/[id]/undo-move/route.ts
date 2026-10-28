@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { requireOrg } from '@/lib/session';
 import { undoMove, NotFound } from '@/lib/disk-set-store';
 import { PlanError } from '@/lib/disk-set';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 const snapshot = z.object({
   diskIds: z.array(z.string().min(1).max(64)).min(1).max(64)
@@ -27,6 +28,8 @@ const body = z.object({ snapshot });
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { diskId: id });
+  if (hidden) return hidden;
 
   let raw: unknown;
   try { raw = await request.json(); } catch {

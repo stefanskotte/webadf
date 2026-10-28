@@ -3,6 +3,7 @@ import { requireOrg } from '@/lib/session';
 import { readVolume, deleteEntry, moveEntry, type WriteResult } from '@/lib/adffs';
 import { applyDiskEdit } from '@/lib/disk-write';
 import { findEntry, findEntryWithParent, underSelected } from '@/lib/disk-entries';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 export const maxDuration = 60;
 
@@ -26,6 +27,8 @@ const body = z.discriminatedUnion('op', [
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId, userId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { diskId: id });
+  if (hidden) return hidden;
 
   let raw: unknown;
   try { raw = await request.json(); } catch {

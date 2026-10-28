@@ -2,6 +2,7 @@ import { requireOrg } from '@/lib/session';
 import { coverStore } from '@/lib/storage';
 import { isCoverDigest } from '@/lib/cover-image';
 import { getCoverOverride } from '@/lib/cover-override';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 /**
  * Serve title [id]'s own cover.
@@ -21,6 +22,8 @@ export async function GET(
 ) {
   const { orgId } = await requireOrg();
   const { id, sha256 } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { gameId: id });
+  if (hidden) return hidden;
   if (!isCoverDigest(sha256)) return Response.json({ error: 'bad_digest' }, { status: 400 });
 
   const current = await getCoverOverride(orgId, id);

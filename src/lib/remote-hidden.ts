@@ -4,7 +4,9 @@
 // sets, admin counts, the game and disk pages) and identification sweeps never touch it (they would retitle it or
 // merge it into a same-named local title). Device and drive state still show it, named "<title> (remote)".
 // The first Amiga write clears the columns (Task 7, D2), and from then on the row is an ordinary local disk.
-import { isNull, sql, type Column, type SQL } from 'drizzle-orm';
+import { and, eq, isNull, sql, type Column, type SQL } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { disks, games } from '@/db/schema/catalog';
 
 /** What device/drive state appends to a hidden title's name. */
 export const REMOTE_SUFFIX = ' (remote)';
@@ -30,4 +32,29 @@ export function deviceTitle(g: { title: Column; remoteLibraryId: Column }): SQL<
  */
 export function linkableGameId(id: Column, g: { remoteLibraryId: Column }): SQL<string | null> {
   return sql<string | null>`case when ${g.remoteLibraryId} is null then ${id} end`;
+}
+
+// ---- The one guard for local routes (Task 8, ruling R-6b).
+// A local route that takes a disk or game id (edit, delete, download, files, cover, history, ...) answers a hidden id
+// exactly as it answers an unknown one: 404 {error:'not_found'}. Device-facing routes (/api/device/*) never use this:
+// the board must keep mounting, fetching and writing back a hidden disk it holds.
+
+/** True when `diskId` names a hidden remote disk of this org. An unknown id is not hidden (the route 404s it itself). */
+export async function isHiddenDisk(orgId: string, diskId: string): Promise<boolean> {
+  const [r] = await getDb().select({ lib: disks.remoteLibraryId }).from(disks)
+    .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId))).limit(1);
+  return r?.lib != null;
+}
+
+/** True when `gameId` names a hidden remote title of this org. */
+export async function isHiddenGame(orgId: string, gameId: string): Promise<boolean> {
+  const [r] = await getDb().select({ lib: games.remoteLibraryId }).from(games)
+    .where(and(eq(games.id, gameId), eq(games.orgId, orgId))).limit(1);
+  return r?.lib != null;
+}
+
+/** The 404 a local route gives a hidden id, or null to carry on. Same body as an unknown id (global constraints). */
+export async function refuseHidden(orgId: string, ref: { diskId: string } | { gameId: string }): Promise<Response | null> {
+  const hidden = 'diskId' in ref ? await isHiddenDisk(orgId, ref.diskId) : await isHiddenGame(orgId, ref.gameId);
+  return hidden ? Response.json({ error: 'not_found' }, { status: 404 }) : null;
 }

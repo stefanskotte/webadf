@@ -344,8 +344,9 @@ export async function undoMove(orgId: string, snap: UndoSnapshot): Promise<{ gam
   const db = getDb();
   const ids = [...new Set(snap.diskIds)];
   if (ids.length === 0 || ids.length !== snap.diskIds.length) throw new NotFound();
+  // A hidden remote disk in a crafted snapshot is as unknown as a foreign one (R-6b).
   const moving = await db.select(setDisk).from(disks)
-    .where(and(inArray(disks.id, ids), eq(disks.orgId, orgId)));
+    .where(and(inArray(disks.id, ids), eq(disks.orgId, orgId), isLocal(disks)));
   if (moving.length !== ids.length) throw new NotFound();
 
   // A stale snapshot is refused, never half-applied (controller ruling): the

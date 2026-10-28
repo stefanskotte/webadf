@@ -5,6 +5,7 @@ import { games } from '@/db/schema/catalog';
 import { requireOrg } from '@/lib/session';
 import { GROUP_COLUMN, planEdit, EditError, type GameEditCurrent } from '@/lib/game-edit';
 import { deleteGame } from '@/lib/disk-delete';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 export const maxDuration = 60;
 
@@ -28,6 +29,8 @@ const patchBody = z.object({
 export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { gameId: id });
+  if (hidden) return hidden;
 
   let body: unknown;
   try { body = await request.json(); } catch {
@@ -88,6 +91,8 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 export async function DELETE(_request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { gameId: id });
+  if (hidden) return hidden;
 
   const result = await deleteGame(orgId, id);
   // 404, never 403: the response must not confirm another tenant's id exists.

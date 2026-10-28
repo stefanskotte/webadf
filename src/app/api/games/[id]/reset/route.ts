@@ -6,6 +6,7 @@ import { tosecEntries } from '@/db/schema/tosec';
 import { openretroEntries } from '@/db/schema/openretro';
 import { requireOrg } from '@/lib/session';
 import { GROUPS, type Group } from '@/lib/game-edit';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 export const maxDuration = 60;
 
@@ -28,6 +29,8 @@ const body = z.object({ group: z.enum(GROUPS) });
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { gameId: id });
+  if (hidden) return hidden;
 
   let raw: unknown;
   try { raw = await request.json(); } catch {

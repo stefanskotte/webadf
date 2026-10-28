@@ -17,6 +17,8 @@
 // not an arbitrary Uint8Array a lenient reader might accept by accident.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// The hidden-id guard (R-6b) is covered against a real database in src/app/api/remote/remote-api.db.test.ts.
+vi.mock('@/lib/remote-hidden', async (orig) => ({ ...(await orig<typeof import('@/lib/remote-hidden')>()), refuseHidden: async () => null }));
 import { createHash } from 'node:crypto';
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';

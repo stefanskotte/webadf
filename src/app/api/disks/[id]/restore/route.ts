@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { requireOrg } from '@/lib/session';
 import { restoreVersion } from '@/lib/disk-history/restore';
 import { isMountedReason } from '@/lib/mount-wording';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +35,8 @@ const body = z.object({ seq: z.number().int().min(0), ifHead: z.number().int().m
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId, userId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { diskId: id });
+  if (hidden) return hidden;
 
   let raw: unknown;
   try { raw = await request.json(); } catch {

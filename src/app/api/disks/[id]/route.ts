@@ -5,6 +5,7 @@ import { disks } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { requireOrg } from '@/lib/session';
 import { deleteDisk } from '@/lib/disk-delete';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 export const maxDuration = 60;
 
@@ -13,6 +14,8 @@ const patchBody = z.object({ writeProtected: z.boolean() });
 export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { diskId: id });
+  if (hidden) return hidden;
 
   let body: unknown;
   try { body = await request.json(); } catch {
@@ -62,6 +65,8 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 export async function DELETE(_request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { diskId: id });
+  if (hidden) return hidden;
 
   const result = await deleteDisk(orgId, id);
   if (!result) return Response.json({ error: 'not_found' }, { status: 404 });

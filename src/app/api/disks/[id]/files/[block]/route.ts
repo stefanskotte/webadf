@@ -11,6 +11,7 @@ import {
 import { downloadFilename, contentDisposition } from '@/lib/download-name';
 import { applyDiskEdit } from '@/lib/disk-write';
 import { findEntry, findEntryWithParent } from '@/lib/disk-entries';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 export const maxDuration = 60;
 
@@ -32,6 +33,8 @@ export async function GET(
 ) {
   const { orgId } = await requireOrg();
   const { id, block } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { diskId: id });
+  if (hidden) return hidden;
 
   const blockNo = Number(block);
   if (!Number.isInteger(blockNo) || blockNo < 0) {
@@ -112,6 +115,8 @@ export async function PATCH(
 ) {
   const { orgId, userId } = await requireOrg();
   const { id, block } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { diskId: id });
+  if (hidden) return hidden;
 
   const blockNo = Number(block);
   if (!Number.isInteger(blockNo) || blockNo < 0) {
@@ -228,6 +233,8 @@ export async function DELETE(
 ) {
   const { orgId, userId } = await requireOrg();
   const { id, block } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { diskId: id });
+  if (hidden) return hidden;
 
   const blockNo = Number(block);
   if (!Number.isInteger(blockNo) || blockNo < 0) {

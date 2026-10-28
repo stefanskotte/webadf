@@ -7,6 +7,8 @@ const mountToDf1 = vi.fn();
 vi.mock('@/lib/df1-store', () => ({ mountToDf1: (...a: unknown[]) => mountToDf1(...a) }));
 const drivesBefore = vi.fn();
 vi.mock('@/lib/mount-undo', () => ({ drivesBefore: (...a: unknown[]) => drivesBefore(...a) }));
+// Local disks here; the hidden-disk re-check (R-6a) runs against a real database in src/app/api/remote/remote-api.db.test.ts.
+vi.mock('@/lib/remote/remount', () => ({ recheckHidden: async () => ({ hidden: false }) }));
 
 const post = async (body: unknown) => {
   const { POST } = await import('./route');

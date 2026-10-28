@@ -9,6 +9,7 @@ import { stableId } from '@/lib/ingest';
 import { sweep } from '@/lib/tosec-sweep';
 import { parseHfe } from '@/lib/hfe/parse';
 import { extractAdf } from '@/lib/hfe/extract';
+import { refuseHidden } from '@/lib/remote-hidden';
 
 // Reads ~2 MB, decodes 1,760 sectors (~100 ms), writes 880 KB.
 export const maxDuration = 60;
@@ -25,6 +26,8 @@ export const maxDuration = 60;
 export async function POST(_request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();
   const { id } = await ctx.params;
+  const hidden = await refuseHidden(orgId, { diskId: id });
+  if (hidden) return hidden;
   const db = getDb();
 
   const rows = await db
