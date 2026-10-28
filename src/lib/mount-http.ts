@@ -13,6 +13,13 @@ import { HD_UNSUPPORTED } from '@/lib/hd-messages';
 
 export type Drive = 'df0' | 'df1';
 
+/** True when `deviceId` is this org's board. Checked before anything is fetched or asked on the board's behalf. */
+export async function orgOwnsDevice(orgId: string, deviceId: string): Promise<boolean> {
+  const [dev] = await getDb().select({ id: devices.id }).from(devices)
+    .where(and(eq(devices.id, deviceId), eq(devices.orgId, orgId))).limit(1);
+  return !!dev;
+}
+
 /**
  * Mount `diskId` into a drive: 200 {version, undo:{diskId}}, 404 not_found, 409 with the refusal. `hidden`: the disk
  * is a hidden remote row that was just (re)materialised. A concurrent revoke or Remove can delete it between that and

@@ -21,8 +21,12 @@ test('Settings › Sharing: new share, edit, revoke, delete; the landing page', 
   await expect(page.getByTestId('settings-nav').getByRole('link', { name: 'Sharing' })).toHaveAttribute('href', '#sharing');
   const card = page.getByTestId('sharing-settings');
   await expect(card.getByTestId('sharing-empty')).toBeVisible();
-  // The reachability line settles on an answer (this dev server is http: on loopback, so it is red here).
-  await expect(card.getByTestId('sharing-reach')).not.toHaveAttribute('data-state', 'checking', { timeout: 20_000 });
+  // Nothing shared yet: the server does not ping itself on load (final review 10); Check asks, and the line settles
+  // on an answer (this dev server is http: on loopback, so it is red here).
+  await expect(card.getByTestId('sharing-reach')).toHaveAttribute('data-state', 'idle');
+  await hydrated(page, 'sharing-reach-check');
+  await card.getByTestId('sharing-reach-check').click();
+  await expect(card.getByTestId('sharing-reach')).toHaveAttribute('data-state', /^(ok|failed)$/, { timeout: 20_000 });
 
   // New share for Rob, Games only.
   await hydrated(page, 'sharing-new');

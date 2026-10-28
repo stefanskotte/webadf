@@ -64,3 +64,12 @@ export function revokeConfirmText(label: string): string {
 export function canDeleteShare(status: ShareViewStatus): boolean {
   return status === 'revoked' || status === 'expired';
 }
+
+/**
+ * Whether Settings > Sharing checks reachability as soon as it opens (final review 10): only when the org shares
+ * something. The check makes this server call itself, so it is not run for every visit to Settings; without shares
+ * it runs when New share opens, or when the person presses Check.
+ */
+export function reachCheckOnLoad(shareCount: number): boolean {
+  return shareCount > 0;
+}

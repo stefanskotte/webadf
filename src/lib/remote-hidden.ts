@@ -27,11 +27,6 @@ export function isLocal(t: { remoteLibraryId: Column }): SQL {
   return isNull(t.remoteLibraryId);
 }
 
-/** Raw-SQL form of `isLocal`, for hand-written subqueries over games or disks (`alias` is the table's name there). */
-export function localSql(alias: string): SQL {
-  return sql.raw(`${alias}.remote_library_id is null`);
-}
-
 /** The title as device state shows it: a hidden game's name gets " (remote)". Null stays null (no joined game). */
 export function deviceTitle(g: { title: Column; remoteLibraryId: Column }): SQL<string | null> {
   return sql<string | null>`case when ${g.remoteLibraryId} is null then ${g.title} else ${g.title} || ${REMOTE_SUFFIX} end`;

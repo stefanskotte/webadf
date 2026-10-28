@@ -21,7 +21,7 @@ const body = z.union([
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();
   const { id } = await ctx.params;
-  const hidden = await refuseHidden(orgId, { diskId: id });
+  const hidden = await refuseHidden(orgId, { gameId: id });
   if (hidden) return hidden;
 
   let raw: unknown;

@@ -598,7 +598,8 @@ export const HELP_TOPICS = {
         <p>
           <strong>Reachable.</strong> Their WebFloppy must be able to open yours. On a home server forward port 443 from
           your router, put a reverse proxy in front, or use Tailscale Funnel or a Cloudflare Tunnel. On the same network
-          nothing needs forwarding.
+          nothing needs forwarding. Settings, Sharing checks the address once you share something or open New share;
+          before that, press Check.
         </p>
         <p>
           <strong>Certificates.</strong> A public address with a trusted certificate just works. A server using its own
@@ -632,6 +633,11 @@ export const HELP_TOPICS = {
         <p>
           <strong>Access ended.</strong> If the owner revokes your access, the library shows Access ended. Remove it to
           tidy up; copies you already made stay yours.
+        </p>
+        <p>
+          <strong>Can&apos;t be opened on this server.</strong> The key your server keeps for a remote library is locked
+          with its secret. If that secret changes, the library can no longer be opened: nothing is deleted, but you
+          need to remove it and ask the owner for a new link.
         </p>
       </>
     ),

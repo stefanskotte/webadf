@@ -33,6 +33,9 @@ const { amigaUploads, amigaUploadChunks } = await import('@/db/schema/amiga-uplo
 const { diskStore } = await import('@/lib/storage');
 const { releaseRefused } = await import('@/lib/ingest-complete');
 const { deleteUserCascade } = await import('@/lib/admin-delete');
+const { libraryShares, libraryShareCollections, remoteLibraries } = await import('@/db/schema/sharing');
+const { collections } = await import('@/db/schema/collections');
+const { blobs, games, disks } = await import('@/db/schema/catalog');
 
 const db = () => getDb();
 const put = async (text: string) => {
@@ -93,5 +96,37 @@ describe('housekeeping', () => {
     expect(await db().select().from(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, 'd-mine'))).toHaveLength(0);
     expect(await db().select().from(amigaUploads).where(eq(amigaUploads.id, 'd-other'))).toHaveLength(1);
     expect(await db().select().from(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, 'd-other'))).toHaveLength(1);
+  });
+  it('deleting a user (and their sole org) deletes its shares, their links and its remote libraries, after the hidden rows (final review 4)', async () => {
+    const now = new Date();
+    await db().insert(user).values({ id: 'usr-s', name: 'S', email: 's@example.test' });
+    await db().insert(organization).values({ id: 'org-s', name: 'S', slug: 'org-s', createdAt: now });
+    await db().insert(member).values({ id: 'mem-s', organizationId: 'org-s', userId: 'usr-s', createdAt: now });
+    const share = (id: string, orgId: string) =>
+      ({ id, orgId, label: id, claimExpiresAt: later(), createdBy: 'x' });
+    await db().insert(libraryShares).values([share('sh-mine', 'org-s'), share('sh-other', 'org-r')]);
+    await db().insert(collections).values([{ id: 'c-mine', orgId: 'org-s', name: 'C' }, { id: 'c-other', orgId: 'org-r', name: 'C' }]);
+    await db().insert(libraryShareCollections).values([
+      { shareId: 'sh-mine', collectionId: 'c-mine' }, { shareId: 'sh-other', collectionId: 'c-other' },
+    ]);
+    const lib = (id: string, orgId: string) =>
+      ({ id, orgId, baseUrl: 'https://owner.example', tokenEnc: 'v1.x', name: 'Rob', addedBy: 'x' });
+    await db().insert(remoteLibraries).values([lib('rl-mine', 'org-s'), lib('rl-other', 'org-r')]);
+    // A hidden pair: its FK to remote_libraries (no cascade) means the library can only go after it.
+    const sha = 'e'.repeat(64);
+    await db().insert(blobs).values({ sha256: sha, sizeBytes: 10, storageKey: sha }).onConflictDoNothing();
+    await db().insert(games).values({ id: 'hg-s', orgId: 'org-s', title: 'H', sortTitle: 'h', remoteLibraryId: 'rl-mine', remoteTitleId: 't' });
+    await db().insert(disks).values({ id: 'hd-s', gameId: 'hg-s', orgId: 'org-s', diskNo: 1, sha256: sha, sizeBytes: 10, remoteLibraryId: 'rl-mine', remoteDiskId: 'd' });
+
+    await deleteUserCascade('usr-s');
+
+    expect(await db().select().from(libraryShares).where(eq(libraryShares.orgId, 'org-s'))).toHaveLength(0);
+    expect(await db().select().from(libraryShareCollections).where(eq(libraryShareCollections.shareId, 'sh-mine'))).toHaveLength(0);
+    expect(await db().select().from(remoteLibraries).where(eq(remoteLibraries.orgId, 'org-s'))).toHaveLength(0);
+    expect(await db().select().from(disks).where(eq(disks.id, 'hd-s'))).toHaveLength(0);
+    // Someone else's stay.
+    expect(await db().select().from(libraryShares).where(eq(libraryShares.id, 'sh-other'))).toHaveLength(1);
+    expect(await db().select().from(libraryShareCollections).where(eq(libraryShareCollections.shareId, 'sh-other'))).toHaveLength(1);
+    expect(await db().select().from(remoteLibraries).where(eq(remoteLibraries.id, 'rl-other'))).toHaveLength(1);
   });
 });

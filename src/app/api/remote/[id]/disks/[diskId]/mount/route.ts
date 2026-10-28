@@ -1,11 +1,8 @@
 // Mount a remote disk (spec §4.2): re-ask the owner (materialise: uncached, Review Focus 1), hold the bytes as a hidden
 // row, then the ordinary mount -- the same JSON as POST /api/devices/[id]/mount. Body {titleId, deviceId, drive}.
 import { z } from 'zod';
-import { and, eq } from 'drizzle-orm';
-import { getDb } from '@/db';
-import { devices } from '@/db/schema/devices';
 import { requireOrg } from '@/lib/session';
-import { mountDiskResponse } from '@/lib/mount-http';
+import { mountDiskResponse, orgOwnsDevice } from '@/lib/mount-http';
 import { materialiseRemoteDisk } from '@/lib/remote/materialise';
 import { ID_RE, notFound, ownLibrary, remoteFailure } from '@/lib/remote/http';
 
@@ -28,9 +25,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   const lib = await ownLibrary(orgId, id);
   if (!lib) return notFound();
   // Before any fetch: a board that is not this team's gets nothing downloaded on its behalf.
-  const [dev] = await getDb().select({ id: devices.id }).from(devices)
-    .where(and(eq(devices.id, deviceId), eq(devices.orgId, orgId))).limit(1);
-  if (!dev) return notFound();
+  if (!(await orgOwnsDevice(orgId, deviceId))) return notFound();
 
   const m = await materialiseRemoteDisk(orgId, id, titleId, diskId);
   if (!m.ok) return remoteFailure(m.reason, lib.host, { disk: true });

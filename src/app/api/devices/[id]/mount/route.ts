@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { requireOrg } from '@/lib/session';
-import { mountDiskResponse } from '@/lib/mount-http';
+import { mountDiskResponse, orgOwnsDevice } from '@/lib/mount-http';
 import { recheckHidden } from '@/lib/remote/remount';
 
 export const maxDuration = 60;
@@ -27,6 +27,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   if (!parsed.success) {
     return Response.json({ error: 'invalid_body', detail: z.flattenError(parsed.error) }, { status: 400 });
   }
+
+  // The board first: an unknown or another team's board is the same 404 as before, and no owner is asked (or
+  // bytes fetched) on its behalf (final review 8).
+  if (!(await orgOwnsDevice(orgId, deviceId))) return Response.json({ error: 'not_found' }, { status: 404 });
 
   // R-6a: Re-insert and Undo mount by id. A hidden remote disk asks its owner again first, as the remote Mount does.
   const remote = await recheckHidden(orgId, parsed.data.diskId);

@@ -5,12 +5,14 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { Modal } from '@/components/ui/modal';
 import {
-  canDeleteShare, revokeConfirmText, shareDate, shareScopeText, shareStatusText, type ShareView,
+  canDeleteShare, reachCheckOnLoad, revokeConfirmText, shareDate, shareScopeText, shareStatusText, type ShareView,
 } from '@/lib/share/view';
 import { CARD_STYLE, FIELD, FIELD_STYLE, INK_BTN, INK_STYLE, OUTLINE_BTN, OUTLINE_STYLE, SETTINGS_CARD, SETTINGS_H2 } from '@/lib/settings-look';
 
 type Collection = { id: string; name: string };
 type Reach = { ok: boolean; origin: string; detail?: string };
+/** 'idle': not checked (no shares yet, final review 10); 'checking': asked; else the answer. */
+type ReachState = 'idle' | 'checking' | Reach;
 type Dialog =
   | { kind: 'new' }
   | { kind: 'created'; share: ShareView; link: string; pinProblem?: string }
@@ -24,6 +26,7 @@ const ERRORS: Record<string, string> = {
   bad_collection: 'One of those collections no longer exists. Reload and try again.',
   not_found: 'That share no longer exists. Reload the page.',
   not_deletable: 'Only revoked or expired shares can be deleted.',
+  no_public_address: "This server doesn't know its own address (BETTER_AUTH_URL), so it cannot make a link. Nothing was shared.",
 };
 
 /** fetch + JSON, with the session-expired redirect (fetch follows it to a 200 HTML page) turned into an error. */
@@ -50,21 +53,39 @@ const json = (method: string, body?: unknown): RequestInit =>
  */
 export function SharingSettings({ initialShares, collections }: { initialShares: ShareView[]; collections: Collection[] }) {
   const [shares, setShares] = useState(initialShares);
-  const [reach, setReach] = useState<Reach | null>(null);
+  const [reach, setReach] = useState<ReachState>(() => (reachCheckOnLoad(initialShares.length) ? 'checking' : 'idle'));
   const [dialog, setDialog] = useState<Dialog>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const names = new Map(collections.map((c) => [c.id, c.name]));
   const newBtn = useRef<HTMLButtonElement>(null);
 
+  const reachLive = useRef(true);
+  useEffect(() => { reachLive.current = true; return () => { reachLive.current = false; }; }, []);
+
+  // The check makes this server call itself: on load only when something is shared, else when New share opens or
+  // the person presses Check (final review 10).
+  function checkReach() {
+    setReach('checking');
+    void call<Reach>('/api/shares/reachability').then((r) => {
+      if (!reachLive.current) return;
+      setReach(r.ok ? r.body : { ok: false, origin: '', detail: r.error });
+    });
+  }
+  const loadCheck = useRef(reachCheckOnLoad(initialShares.length));
   useEffect(() => {
+    if (!loadCheck.current) return;
     let live = true;
     void call<Reach>('/api/shares/reachability').then((r) => {
-      if (!live) return;
-      setReach(r.ok ? r.body : { ok: false, origin: '', detail: r.error });
+      if (live) setReach(r.ok ? r.body : { ok: false, origin: '', detail: r.error });
     });
     return () => { live = false; };
   }, []);
+
+  function openNew() {
+    setDialog({ kind: 'new' });
+    if (reach === 'idle') checkReach();
+  }
 
   async function reload() {
     const r = await call<{ shares: ShareView[] }>('/api/shares');
@@ -107,13 +128,13 @@ export function SharingSettings({ initialShares, collections }: { initialShares:
               Let a friend&apos;s WebFloppy browse and mount your collections. Each link works once.
             </p>
           </div>
-          <button ref={newBtn} type="button" data-testid="sharing-new" onClick={() => setDialog({ kind: 'new' })}
+          <button ref={newBtn} type="button" data-testid="sharing-new" onClick={openNew}
                   className={INK_BTN} style={INK_STYLE}>
             New share…
           </button>
         </div>
 
-        <ReachLine reach={reach} />
+        <ReachLine reach={reach} onCheck={checkReach} />
 
         {shares.length === 0 ? (
           <p data-testid="sharing-empty" className="text-[13px]" style={{ color: 'var(--muted)' }}>
@@ -233,8 +254,18 @@ export function SharingSettings({ initialShares, collections }: { initialShares:
   );
 }
 
-function ReachLine({ reach }: { reach: Reach | null }) {
-  if (!reach) {
+function ReachLine({ reach, onCheck }: { reach: ReachState; onCheck: () => void }) {
+  if (reach === 'idle') {
+    return (
+      <p data-testid="sharing-reach" data-state="idle" className="flex flex-wrap items-center gap-2 text-[13px]" style={{ color: 'var(--muted)' }}>
+        Not checked yet whether other servers can reach this one.
+        <button type="button" data-testid="sharing-reach-check" onClick={onCheck} className={OUTLINE_BTN} style={OUTLINE_STYLE}>
+          Check
+        </button>
+      </p>
+    );
+  }
+  if (reach === 'checking') {
     return <p data-testid="sharing-reach" data-state="checking" className="text-[13px]" style={{ color: 'var(--muted)' }}>Checking whether other servers can reach this one…</p>;
   }
   if (reach.ok) {

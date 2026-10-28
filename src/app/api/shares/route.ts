@@ -1,6 +1,6 @@
 import { requireOrg } from '@/lib/session';
 import { createShare, listShares } from '@/lib/share/store';
-import { localRootPinState, shareLink } from '@/lib/share/instance';
+import { localRootPinState, publicOrigin, shareLink } from '@/lib/share/instance';
 import { toShareView } from '@/lib/share/view';
 import { createShareBody, readBody } from './body';
 
@@ -21,6 +21,12 @@ export async function POST(request: Request) {
   const { orgId, userId } = await requireOrg();
   const body = await readBody(request, createShareBody);
   if (!body.ok) return body.res;
+
+  // The link names this server's address: without one there is nothing to hand out, so no share is made (a row
+  // whose code was never shown would only wait to expire). Final review 9.
+  try { publicOrigin(); } catch {
+    return Response.json({ error: 'no_public_address' }, { status: 503 });
+  }
 
   const created = await createShare(orgId, userId, body.data);
   if (!created.ok) return Response.json({ error: created.reason }, { status: 400 });

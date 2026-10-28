@@ -57,3 +57,12 @@ describe('toShareView', () => {
     expect(v.claimedAt).toBeNull();
   });
 });
+
+describe('reachCheckOnLoad (final review 10)', () => {
+  it('Settings asks the server to ping itself on load only when something is shared', async () => {
+    const { reachCheckOnLoad } = await import('./view');
+    expect(reachCheckOnLoad(0)).toBe(false);
+    expect(reachCheckOnLoad(1)).toBe(true);
+    expect(reachCheckOnLoad(5)).toBe(true);
+  });
+});
