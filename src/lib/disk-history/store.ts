@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, sql } from 'drizzle-orm';
 import { atomic, type Tx } from '@/db/atomic';
 import { getDb } from '@/db';
 import { blobs, disks, entitlements, games } from '@/db/schema/catalog';
 import { diskVersions } from '@/db/schema/disk-history';
 import { diskStore } from '@/lib/storage';
+import { ownCopyGameId } from '@/lib/remote-hidden';
 import type { VersionEntry, VersionKind } from './chain';
 import { planNextVersion } from './version';
 
@@ -125,6 +126,19 @@ export async function recordVersion(input: RecordInput): Promise<Recorded | null
     ...(plan.deltaBlob ? [diskStore.put(blobSha256, plan.deltaBlob)] : []),
   ]);
 
+  // D2's ingredients, read before the transaction (its statements re-check that the disk is still hidden).
+  const [hiddenRow] = await getDb()
+    .select({ libraryId: disks.remoteLibraryId, gameId: games.id, titleId: games.remoteTitleId })
+    .from(disks).innerJoin(games, eq(games.id, disks.gameId))
+    .where(and(eq(disks.id, input.diskId), eq(disks.orgId, input.orgId), isNotNull(disks.remoteLibraryId)))
+    .limit(1);
+  const remote = hiddenRow?.libraryId
+    ? {
+      libraryId: hiddenRow.libraryId, hiddenGameId: hiddenRow.gameId,
+      ownGameId: ownCopyGameId(input.orgId, hiddenRow.libraryId, hiddenRow.titleId ?? hiddenRow.gameId),
+    }
+    : null;
+
   const build = (tx: Tx): PromiseLike<unknown>[] => {
   const stmts: PromiseLike<unknown>[] = [];
   stmts.push(tx.insert(blobs).values({
@@ -153,18 +167,27 @@ export async function recordVersion(input: RecordInput): Promise<Recorded | null
   stmts.push(tx.update(disks).set({ sha256 })
     .where(and(eq(disks.id, input.diskId), eq(disks.orgId, input.orgId))));
   // Library sharing D2 (spec §4.2 First write): the first change to a hidden remote disk makes it the person's
-  // own -- an ordinary disk in their library, Uncategorized (a hidden game is in no collection), never refreshed
-  // from the owner again. Its game first (found through the disk, whose game_id never changes), then the disk.
-  // Both no-ops on a local disk. In this transaction, so a purge racing the write either deletes the hidden row
-  // before it (the write then fails on the missing row) or finds it local and leaves it.
-  stmts.push(tx.update(games).set({ remoteLibraryId: null, remoteTitleId: null })
-    .where(and(
-      eq(games.orgId, input.orgId), isNotNull(games.remoteLibraryId),
-      inArray(games.id, tx.select({ id: disks.gameId }).from(disks)
-        .where(and(eq(disks.id, input.diskId), eq(disks.orgId, input.orgId), isNotNull(disks.remoteLibraryId)))),
-    )));
-  stmts.push(tx.update(disks).set({ remoteLibraryId: null, remoteDiskId: null })
-    .where(and(eq(disks.id, input.diskId), eq(disks.orgId, input.orgId), isNotNull(disks.remoteLibraryId))));
+  // own -- an ordinary disk in their library, Uncategorized, never refreshed from the owner again. It MOVES into the
+  // person's own copy of the title (ownCopyGameId: a local game, created here from the hidden stand-in's name once
+  // per remote title), and the stand-in stays hidden: flipping the stand-in itself would put any other disk of the
+  // title still mounted from the owner (hidden) under a local title, where the game page and a title delete would
+  // reach it (Review Focus 2). Every statement is conditional on the disk still being hidden in this transaction,
+  // so a purge racing the write either deletes the row first (nothing moves, no empty local title is made) or finds
+  // it local and leaves it.
+  if (remote) {
+    // Raw SQL: drizzle's insert-select wants every games column. Named columns here; the rest take their defaults.
+    stmts.push(tx.execute(sql`
+      insert into games (id, org_id, title, sort_title, year, publisher, metadata_source)
+      select ${remote.ownGameId}, g.org_id, g.title, g.sort_title, g.year, g.publisher, g.metadata_source
+        from games g
+       where g.id = ${remote.hiddenGameId} and g.org_id = ${input.orgId}
+         and exists (select 1 from disks d
+                      where d.id = ${input.diskId} and d.org_id = ${input.orgId}
+                        and d.remote_library_id = ${remote.libraryId})
+      on conflict (id) do nothing`));
+    stmts.push(tx.update(disks).set({ gameId: remote.ownGameId, remoteLibraryId: null, remoteDiskId: null })
+      .where(and(eq(disks.id, input.diskId), eq(disks.orgId, input.orgId), eq(disks.remoteLibraryId, remote.libraryId))));
+  }
 
   return stmts;
   };

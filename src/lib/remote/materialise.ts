@@ -136,7 +136,8 @@ export async function materialiseRemoteDisk(
     await atomic((tx) => [
       tx.insert(blobs).values({ sha256, sizeBytes: bytes.byteLength, storageKey: diskStore.storageKey(sha256) }).onConflictDoNothing(),
       tx.insert(entitlements).values({ orgId, sha256, sourceFilename: `${name}.${d.imageFormat}` }).onConflictDoNothing(),
-      // The title follows the owner while the game is hidden; one that became local (D2) keeps its own.
+      // The stand-in follows the owner's title. It stays hidden for good: a disk's first write (D2) moves the disk
+      // into the person's own copy of the title (ownCopyGameId) instead of making this game local.
       tx.insert(games).values({
         id: gameId, orgId, title, sortTitle: makeSortTitle(title), year, publisher,
         remoteLibraryId, remoteTitleId, metadataSource: 'remote',
