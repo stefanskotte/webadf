@@ -20,6 +20,20 @@ export function putName(a: Uint8Array, blockStart: number, name: string): void {
 }
 
 /**
+ * A header's comment (offset 328): a BCPL string, length byte then up to 79
+ * characters, encoded exactly as `putName` encodes a name (low byte of each
+ * UTF-16 unit, Latin-1) so `bcplString` reads it back. The whole 80-byte field
+ * is cleared first, always: a recycled block may carry another entry's comment,
+ * and '' / undefined must mean "no comment".
+ */
+export function putComment(a: Uint8Array, blockStart: number, comment: string | undefined): void {
+  a.fill(0, blockStart + 328, blockStart + 328 + 80);
+  const c = (comment ?? '').slice(0, 79);
+  a[blockStart + 328] = c.length;
+  for (let i = 0; i < c.length; i++) a[blockStart + 329 + i] = c.charCodeAt(i) & 0xff;
+}
+
+/**
  * Recompute and store a block's checksum.
  *
  * Exported because TESTS need it too: any test that patches a byte into a

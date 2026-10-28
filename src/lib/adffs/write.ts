@@ -10,7 +10,7 @@ import {
   OFS_DATA_CHECKSUM_WORD, T_HEADER, T_DATA, T_LIST, ST_FILE, ST_USERDIR,
 } from './constants';
 import { blockAt, be32, i32, checksumOk, bcplString, blockChecksum } from './blocks';
-import { putBe32, putName, recheck } from './write-blocks';
+import { putBe32, putName, putComment, recheck } from './write-blocks';
 import { nameHash } from './hash';
 import { allocate, free, bitmapPage } from './alloc';
 import { readBoot, type Filesystem } from './boot';
@@ -26,7 +26,13 @@ function rootOf(adf: Uint8Array): number {
 
 export type WriteError =
   | 'disk-full' | 'name-too-long' | 'name-exists' | 'not-found'
-  | 'not-a-directory' | 'bitmap-untrusted' | 'no-filesystem' | 'cycle';
+  | 'not-a-directory' | 'bitmap-untrusted' | 'no-filesystem' | 'cycle'
+  | 'comment-too-long';
+
+/** What a copy carries besides the bytes (spec 2026-10-29 section 4.1). Absent date = now; absent comment = none. */
+export type EntryMeta = { date?: Date; comment?: string };
+const COMMENT_MAX = 79;   // dir.ts reads the comment with bcplString(b, 328, 79)
+const tooLong = (m?: EntryMeta) => (m?.comment !== undefined && m.comment.length > COMMENT_MAX);
 
 export type WriteResult =
   | { ok: true; adf: Uint8Array }
@@ -41,11 +47,11 @@ export type WriteResult =
  * to blocks as it goes.
  */
 export type BatchOp =
-  | { op: 'mkdir'; parentPath: string; name: string }
+  | { op: 'mkdir'; parentPath: string; name: string; date?: Date; comment?: string }
   // `protection` carries AmigaDOS bits an archive supplied. Optional, and
   // absent is not zero -- see addFile's parameter note.
-  | { op: 'add'; parentPath: string; name: string; bytes: Uint8Array; protection?: number }
-  | { op: 'replace'; parentPath: string; name: string; bytes: Uint8Array; protection?: number };
+  | { op: 'add'; parentPath: string; name: string; bytes: Uint8Array; protection?: number; date?: Date; comment?: string }
+  | { op: 'replace'; parentPath: string; name: string; bytes: Uint8Array; protection?: number; date?: Date; comment?: string };
 
 /**
  * Case-fold one character the same way `nameHash` does, so name comparison
@@ -131,6 +137,8 @@ export function writeFileHeader(
   /** AmigaDOS protection bits, offset 320. See addFile's parameter note for
    *  why absent and zero mean the same bytes but not the same thing. */
   protection?: number,
+  /** Date (offset 420) and comment (offset 328); absent = now / none. */
+  meta?: EntryMeta,
 ): void {
   const hs = header * BLOCK_BYTES;
   putBe32(adf, hs, T_HEADER);
@@ -145,6 +153,10 @@ export function writeFileHeader(
   // whatever the last occupant happened to be.
   putBe32(adf, hs + 320, protection ?? 0);
   putBe32(adf, hs + 324, size);
+  // Date and comment are written unconditionally for the same recycled-block
+  // reason as protection: without this a new file kept the last occupant's.
+  putAmigaDate(adf, hs + 420, meta?.date ?? new Date());
+  putComment(adf, hs, meta?.comment);
   // Clear the whole pointer table before writing the new one. `allocate`
   // hands out any block whose bitmap bit is free, including one a previous
   // `deleteEntry`/`replaceFile` returned to the pool -- and `free` only
@@ -245,8 +257,10 @@ export function addFile(
    * CALLER, which must not invent bits from, say, a Unix mode.
    */
   protection?: number,
+  meta?: EntryMeta,
 ): WriteResult {
   if (name.length === 0 || name.length > 30) return { ok: false, reason: 'name-too-long' };
+  if (tooLong(meta)) return { ok: false, reason: 'comment-too-long' };
   const boot = readBoot(adf);
   if (!boot) return { ok: false, reason: 'no-filesystem' };
   if (bitmapPage(adf) === null) return { ok: false, reason: 'bitmap-untrusted' };
@@ -264,7 +278,7 @@ export function addFile(
   const exts = rest.slice(dataCount);
 
   writeDataBlocks(out, data, bytes, header, boot.filesystem, perBlock);
-  writeFileHeader(out, header, parentBlock, name, bytes.length, data.slice(0, HASH_TABLE_SIZE), exts[0] ?? 0, protection);
+  writeFileHeader(out, header, parentBlock, name, bytes.length, data.slice(0, HASH_TABLE_SIZE), exts[0] ?? 0, protection, meta);
   writeExtensionBlocks(out, exts, data, header);
   linkIntoDirectory(out, parentBlock, header, name, boot.intl);
   return { ok: true, adf: out };
@@ -287,13 +301,14 @@ export function addFile(
  * of what the block held before.
  */
 function writeDirectoryHeader(
-  adf: Uint8Array, block: number, parent: number, name: string, when: Date,
+  adf: Uint8Array, block: number, parent: number, name: string, when: Date, comment?: string,
 ): void {
   const bs = block * BLOCK_BYTES;
   adf.fill(0, bs, bs + BLOCK_BYTES);
   putBe32(adf, bs, T_HEADER);
   putBe32(adf, bs + 4, block);
   putAmigaDate(adf, bs + 420, when);
+  putComment(adf, bs, comment);
   putName(adf, bs, name);
   putBe32(adf, bs + 500, parent);
   putBe32(adf, bs + 508, ST_USERDIR);
@@ -309,8 +324,9 @@ function writeDirectoryHeader(
  * kinds of entry (`entryNamed` does not distinguish file from directory, so
  * a directory can't be named over an existing file or vice versa).
  */
-export function makeDirectory(adf: Uint8Array, parentBlock: number, name: string): WriteResult {
+export function makeDirectory(adf: Uint8Array, parentBlock: number, name: string, meta?: EntryMeta): WriteResult {
   if (name.length === 0 || name.length > 30) return { ok: false, reason: 'name-too-long' };
+  if (tooLong(meta)) return { ok: false, reason: 'comment-too-long' };
   const boot = readBoot(adf);
   if (!boot) return { ok: false, reason: 'no-filesystem' };
   if (bitmapPage(adf) === null) return { ok: false, reason: 'bitmap-untrusted' };
@@ -321,7 +337,7 @@ export function makeDirectory(adf: Uint8Array, parentBlock: number, name: string
   if (!blocks) return { ok: false, reason: 'disk-full' };
   const [dir] = blocks;
 
-  writeDirectoryHeader(out, dir, parentBlock, name, new Date());
+  writeDirectoryHeader(out, dir, parentBlock, name, meta?.date ?? new Date(), meta?.comment);
   linkIntoDirectory(out, parentBlock, dir, name, boot.intl);
   return { ok: true, adf: out };
 }
@@ -641,6 +657,24 @@ function ancestryOf(adf: Uint8Array, entry: number): number[] {
 export function setProtection(
   adf: Uint8Array, parentBlock: number, entryBlock: number, bits: number, mask = 0xffffffff,
 ): WriteResult {
+  // Only the bits in `mask` change: the browser edits the eight it shows
+  // (hsparwed) and must not clear multi-user bits above them it never drew.
+  return rewriteHeader(adf, parentBlock, entryBlock, (out, bs) => {
+    const word = ((be32(out, bs + 320) & ~mask) | (bits & mask)) >>> 0;
+    putBe32(out, bs + 320, word);
+  });
+}
+
+/**
+ * The copy-validate-checksum step shared by the in-place header edits
+ * (`setProtection`, `setComment`): refuse anything but a checksummed T_HEADER
+ * file or directory whose parent pointer names `parentBlock`, run `mutate`
+ * on a copy with the header's byte offset, then recompute the checksum.
+ */
+function rewriteHeader(
+  adf: Uint8Array, parentBlock: number, entryBlock: number,
+  mutate: (out: Uint8Array, headerStart: number) => void,
+): WriteResult {
   if (!readBoot(adf)) return { ok: false, reason: 'no-filesystem' };
   const header = blockAt(adf, entryBlock);
   if (!header) return { ok: false, reason: 'not-found' };
@@ -651,12 +685,24 @@ export function setProtection(
   if (be32(header, 500) !== parentBlock) return { ok: false, reason: 'not-found' };
 
   const out = adf.slice();                       // never mutate the input
-  // Only the bits in `mask` change: the browser edits the eight it shows
-  // (hsparwed) and must not clear multi-user bits above them it never drew.
-  const word = ((be32(header, 320) & ~mask) | (bits & mask)) >>> 0;
-  putBe32(out, entryBlock * BLOCK_BYTES + 320, word);
+  mutate(out, entryBlock * BLOCK_BYTES);
   recheck(out, entryBlock);
   return { ok: true, adf: out };
+}
+
+/** Set (or clear, with '') a file's or directory's comment (spec 2026-10-29 section 5.1 Info). */
+export function setComment(adf: Uint8Array, parentBlock: number, entryBlock: number, comment: string): WriteResult {
+  if (comment.length > COMMENT_MAX) return { ok: false, reason: 'comment-too-long' };
+  return rewriteHeader(adf, parentBlock, entryBlock, (out, bs) => putComment(out, bs, comment));
+}
+
+/** Stamp a date and/or comment onto an existing header (batch `replace`). */
+function setMetaOnBlock(adf: Uint8Array, parentBlock: number, entryBlock: number, meta: EntryMeta): WriteResult {
+  if (tooLong(meta)) return { ok: false, reason: 'comment-too-long' };
+  return rewriteHeader(adf, parentBlock, entryBlock, (out, bs) => {
+    if (meta.date) putAmigaDate(out, bs + 420, meta.date);
+    if (meta.comment !== undefined) putComment(out, bs, meta.comment);
+  });
 }
 
 export function moveEntry(
@@ -868,11 +914,20 @@ export function applyBatch(ops: readonly BatchOp[]): (adf: Uint8Array) => WriteR
       if (!resolved.ok) return resolved;
       const parent = resolved.block;
 
-      const r = op.op === 'mkdir' ? makeDirectory(cur, parent, op.name)
-        : op.op === 'add' ? addFile(cur, parent, op.name, op.bytes, op.protection)
+      const meta: EntryMeta = { date: op.date, comment: op.comment };
+      const r = op.op === 'mkdir' ? makeDirectory(cur, parent, op.name, meta)
+        : op.op === 'add' ? addFile(cur, parent, op.name, op.bytes, op.protection, meta)
         : replaceExisting(cur, parent, op.name, op.bytes);
       if (!r.ok) return r;
       cur = r.adf;
+
+      if (op.op === 'replace' && (op.date || op.comment !== undefined)) {
+        const block = findChildBlock(cur, parent, op.name);
+        if (block === null) return { ok: false, reason: 'not-found' };
+        const m = setMetaOnBlock(cur, parent, block, meta);
+        if (!m.ok) return m;
+        cur = m.adf;
+      }
 
       if (op.op === 'mkdir') {
         const made = findChildBlock(cur, parent, op.name);
