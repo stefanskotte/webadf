@@ -64,6 +64,7 @@ beforeAll(async () => {
   let adf = formatVolume({ filesystem: 'FFS', volumeName: 'SysInfo' });
   adf = must(makeDirectory(adf, ROOT_BLOCK, 'C'));
   adf = must(addFile(adf, ROOT_BLOCK, 'ReadMe', new TextEncoder().encode('hello')));
+  adf = must(addFile(adf, ROOT_BLOCK, "it's(1).txt", new TextEncoder().encode('q')));
   await seedDisk('g1', 'SysInfo', 'd1', adf);
   await seedDisk('g3', 'Gone', 'd3', formatVolume({ filesystem: 'OFS', volumeName: 'Gone' }), false);
 });
@@ -108,5 +109,22 @@ describe('/api/files', () => {
     expect((await dl('LIBRARY:/g1/d1/Nothing')).status).toBe(404);
     const gone = await dl('LIBRARY:/g3/d3/x');
     expect([gone.status, (await gone.json()).error]).toEqual([503, 'blob_unavailable']);
+  });
+  it('list: a missing blob is 503 blob_unavailable', async () => {
+    const r = await GET_LIST(req('/api/files/list?path=LIBRARY:/g3/d3'));
+    expect([r.status, (await r.json()).error]).toEqual([503, 'blob_unavailable']);
+  });
+  it('download: the filename is strict RFC 5987', async () => {
+    const r = await GET_DL(req('/api/files/download?path=' + encodeURIComponent("LIBRARY:/g1/d1/it's(1).txt")));
+    expect(r.status).toBe(200);
+    expect(r.headers.get('content-disposition')).toContain("filename*=UTF-8''it%27s%281%29.txt");
+  });
+  it('another org gets 404 from ops and download', async () => {
+    asOrg('o2');
+    try {
+      const o = await POST_OPS(json({ op: 'makedir', dest: 'LIBRARY:/g1/d1', name: 'Nope' }));
+      expect([o.status, (await o.json()).error]).toEqual([404, 'not_found']);
+      expect((await GET_DL(req('/api/files/download?path=' + encodeURIComponent('LIBRARY:/g1/d1/ReadMe')))).status).toBe(404);
+    } finally { asOrg('o1'); }
   });
 });

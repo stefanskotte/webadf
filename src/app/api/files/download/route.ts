@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   return new Response(f.bytes as BodyInit, {
     headers: {
       'content-type': 'application/octet-stream',
-      'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`,
+      'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(f.name).replace(/['()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())}`,
       'content-length': String(f.bytes.byteLength),
     },
   });
