@@ -1478,12 +1478,23 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
-**Current order (re-checked 2026-10-24):** (1) the **WebFloppy redesign** per its approved roadmap
-`docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6; C2 Devices SHIPPED 2026-10-25, merge 3d12b1f; C3 Upload SHIPPED 2026-10-25, merge 05dc423; C4 Disk files SHIPPED 2026-10-25, merge a7cbd5d; C5 Settings/Help/Search/Sign in SHIPPED 2026-10-25, merge f6d1941; C6 Admin SHIPPED 2026-10-26, merge 8d943f7; C7 Phone + About into Settings SHIPPED 2026-10-26, merge 4efffae; C8 header drive menu SHIPPED 2026-10-26, merge 79d7c07; C9 GitHub page SHIPPED 2026-10-26** -- Phase C DONE; **library multi-select SHIPPED 2026-10-26, merge 4a435e9**; **admin password reset SHIPPED 2026-10-26, merge 8022d34**; device/phone polish + disk-sets crawl fix SHIPPED 2026-10-27, merge 75f8be2) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
-arrive. The
-table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
-(1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
+**Current order (re-checked 2026-10-28).** The redesign roadmap (Phases A-C) is DONE (2026-10-23..27); library
+sharing shipped 2026-10-28. Open, in order:
+(1) **Two-pane file manager** (Directory Opus style; NET: per WiFiFloppy and STASH: pseudo devices, the two drop zones
+kept on top; replaces Browse/Upload/PaulaNET transfer pages and absorbs "Unified staging area"). Brainstorm with mock-ups
+first; memory note webadf-dual-pane-file-manager-idea.
+(2) **Sharing follow-ups:** A500 bench of the first-write rule; Send to Amiga from a remote disk end to end; the one-off
+local remote-mount 404; OMV back to `latest` after the next web-* release; the sharing deferred minors.
+(3) **Web app, smaller:** "Put on a disk" from From the Amiga; .lzh dropped onto a disk in Browse; documentation for
+file transfer (Send to Amiga / Transfer 2.1).
+(4) **Hardware:** B10 on the A4000D when it is on the bench; NFC detects rarely since rev B (measure first); rev C
+(own RP2350 + antenna port, LWB+ breadboard test when the Mouser parts arrive, keyed I2C + display FFC connectors,
+next-disk button, activity LED, DF0 passthrough).
+(5) **Firmware state:** the bench board is on TEST seq 123 (1.21.1+gc324fbd); leaving TEST needs a release above 123.
+(6) **Open, not scheduled:** the 128x64 setup-screen check on glass; HD bench leftovers (rev B WDATA retest, steps
+4-7); layered disks (never designed).
+**Parked/deferred by the operator:** PaulaNET compression (LZSA2, pre-encode N+1); proof of possession at ingest.
+Entries below marked SHIPPED/FIXED/FOLDED are kept for their history only.
 
 - **Sharing on the hosted site -- VERIFIED 2026-10-28.** Two @example.test orgs on webadf.vercel.app, over real HTTPS
   to itself: `BASE_URL=https://webadf.vercel.app E2E_SIGNUP_GAP_MS=3000 pnpm exec playwright test e2e/sharing.spec.ts
@@ -1802,7 +1813,7 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
   deleted title/disk (game-detail, disk-sets x2, adf-browser) now assert the not-found card and the absence of the
   other org's title; API routes still 404. e2e: states.spec.ts (5).
 
-- **Unified staging area** (operator, 2026-10-21): the disk upload/Browse area and send/receive (Send to Amiga, From
+- **FOLDED INTO the two-pane file manager (2026-10-28).** **Unified staging area** (operator, 2026-10-21): the disk upload/Browse area and send/receive (Send to Amiga, From
   the Amiga) should share one stage area, or at least reusable parts. Brainstorm first; announced to the testers as
   "pending the new design build", so it rides with the redesign.
 
@@ -1810,7 +1821,7 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
   more uploaded (non-disk) files and write them into a new or existing ADF, then optionally add that ADF to the
   library. The pieces exist (Browse's file operations / staged drop into a folder, `registerUploads`); not built with
   the Amiga->web feature (spec 2026-10-18, Add to library stays a per-file button for disk images only).
-- **Shared / remote libraries** (operator, 2026-10-18), "much like you can on plex.tv (self hosted)":
+- **SHIPPED 2026-10-28 (e2526cc), see "Library sharing" above.** **Shared / remote libraries** (operator, 2026-10-18), "much like you can on plex.tv (self hosted)":
   - **Sharing:** a library owner invites people with **one-time links** (no email). The owner can add and revoke
     members per library.
   - **Access:** ADFs **stream from the owner's origin server** (another webadf instance, self-hosted or ours), only
@@ -1843,12 +1854,12 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
 
   Screenshots like the Discord post's (no private file names).
 
-- **Per-user web app settings** (operator, 2026-10-18): settings that belong to the user, not the org or the board --
+- **SHIPPED (4f0ff2b, migration 0043; Settings › Account since 5e90908).** **Per-user web app settings** (operator, 2026-10-18): settings that belong to the user, not the org or the board --
   start page, sort orders (library, Browse, sets, collections), and similar view preferences. Stored server-side per
   user (so they follow the user across browsers), with today's behaviour as the default; a Settings page section to
   edit them. Self-host parity applies.
 
-- **Library table view on par with the grid, plus folder browsing** (operator, 2026-10-18): the table listing should
+- **SHIPPED (table 4a7fcd2, folders and minors 3ce).** **Library table view on par with the grid, plus folder browsing** (operator, 2026-10-18): the table listing should
   do everything the grid view does (actions, selection, drag and drop, badges/status, sorting, filters), and could
   add a folder tree so categories are browsed like folders. Start by listing what the grid does that the table does
   not; decide with the operator what a "category" folder maps to (collections, sets, identified groups) before
@@ -2024,7 +2035,7 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
     An HD-track write (Echo to HDBench) uploaded as version seq 7 with no reboot (uptime continuous).
   - **Still to observe:** an OTA after hours of uptime. If it stalls, the new `fw: dl ...` and `tls:` lines name
     the cause; then decide whether more heap work is needed.
-- **OTA stall, new evidence on 1.8.1 (2026-10-09 ~12:00-12:18):** 1.9.0 was offered and the board acked it
+- **FIXED in fw 1.9.3 (3be: the motor latch).** **OTA stall, new evidence on 1.8.1 (2026-10-09 ~12:00-12:18):** 1.9.0 was offered and the board acked it
   (instruction 55/55); the server shows "queued". The serial log is live (a display save logged at once at uptime
   5348 s), yet two captures (12:04-12:09 and 12:12-12:18) show NO fw lines at all: no downloading, no failure. The
   retry backoff (5 s doubling to 300 s) would have attempted around 12:05 and 12:15. So this stall is not the
@@ -2035,7 +2046,7 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
     every install that worked came right after a fresh board boot (nothing latched).
   - **Next step:** a periodic log of fwu phase, retry_at and the idle inputs (motor, mounted, up_has_work,
     fw_report_owed), and read MTR's pad level while the Amiga is off.
-- **OTA download fails after long board uptime** (found 2026-10-09, twice). With 1.7.8 (board up hours) and 1.8.0
+- **Probably the same stall, fixed in fw 1.9.3 (3be).** **OTA download fails after long board uptime** (found 2026-10-09, twice). With 1.7.8 (board up hours) and 1.8.0
   TEST (board up ~6800 s), the sequence was `fw: offered ... ok` -> `fw: downloading` -> `fw: queued` about 2 s
   later, retried with backoff for minutes. After a board power-cycle the same offer installed at once. 1.7.6/1.7.7
   installed first time on a board up only minutes. Suspect heap fragmentation, or state left on the reused TLS
@@ -2256,7 +2267,7 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
   had happened to examine, not from the one that was cheapest**, and a wrong cost estimate
   parked a small job for a night.
 
-- **Drive an I2C OLED from the PIM726 board.** The operator has one to hand (2026-09-11).
+- **SHIPPED (OLED layouts fw 1.7.3, 3ax; SH1106 fw 1.7.4, 3az).** **Drive an I2C OLED from the PIM726 board.** The operator has one to hand (2026-09-11).
   Same underlying need as the activity-LED item below -- see what the drive is doing without
   a terminal -- so design the two together rather than separately: an LED is instant and
   costs nothing at the moment of a track read, while an OLED can carry state the LED cannot
@@ -2560,7 +2571,7 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
   see 3r. The entry listed three mechanisms; `document.referrer` was measured and found empty
   after a client-side navigation, so `?from=` was the only one that could name the destination.
 
-- **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
+- **Write-back SHIPPED (2a, 2b, time machine piece 3); layered disks not built.** **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
   the first increment should record which tracks changed, not just a flattened result, so
   it doesn't foreclose the layered approach.
 
@@ -2755,8 +2766,8 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
   call, and the backlog entry below is what it buys.
 
 - **Superseded by 3an (the real feature, read-only).** **HD floppies -- 2026-09-26 SPIKE DONE ON THE BOARD: both unknowns answered, feasible.** Throwaway code on branch `spike/hd-floppy` (worktree `.claude/worktrees/hd-spike`, commits `c996ee6`, `3aa7fc6`; not merged, not pushed). Kept from it for the real feature: `firmware/src/adf_mfm.c` (C ADF->MFM encoder, DD and HD, byte-identical to `src/lib/adfmfm` on 5 real disks x 160 tracks and to Greaseweazle HD fixtures) and the PIO `drive_id` program in `floppy.pio`. Results on hardware (Pico Plus 2 W, Kickstart/Workbench 3.1): **(1) encode time:** one HD track (22 sectors, 202,688 bits) takes median 3.7 ms from SRAM, 4.1 ms reading the ADF from PSRAM, worst seen 4.9 ms; well inside the ~15 ms head settle, so ADF-on-device with on-demand encoding stands. **(2) drive ID:** a PIO SM on pio0 (clkdiv 1) answering one bit on RDY per motor-off SEL0 select works: the DD build answered 32 selects and booted Workbench normally. **The phase is off by one select:** putting the logical HD ID `0xAAAAAAAA` on the wire made the Amiga read an invalid ID (black screen, DF0 never accessed); putting `0x55555555` on the wire made it see an HD drive -- it read the DD Workbench disk with 22-sector geometry, started to boot, and failed with "read error on block 56" (the first block where DD and HD layouts disagree), while the log shows 32 ID selects then steps and track reads. The real feature must shift the responder by one select (the motor-latch reset select should not carry bit 31, or the Amiga samples one select later) and prove `0xAAAAAAAA` logically, with a host test for the phase. Next: design the real feature (HD blank disk + adffs with root block 1760 in the browser, 1,802,240-byte upload, HD mount, per-disk ID, on-demand HD encoding). Board restored to release 1.3.1+g0ab8ce6 afterwards.
-- **HD floppies -- 2026-09-24 RESEARCH ADDED, STILL DEFERRED until the operator has the board to test on** (operator: "HD implementation will come later when I have the board you can test on"). Findings, sources in `docs/superpowers/research/2026-09-24-hfe-and-hd-floppies.md` Part C: (1) the ADF-on-device ruling below holds, and the unknown is CPU: an HD track (22 sectors, ~25 KB MFM) encoded on demand is ESTIMATED at ~1-10 ms on the RP2350 against ~15 ms of head settle -- measure it on the board before designing around it. (2) **The board answers NO drive ID today** (`dskchg.c`: removed because a GPIO ISR could not catch the 1-4 us select pulses). Amiga IDs: `0xFFFFFFFF` DD, `0xAAAAAAAA` HD, `0x00000000` none. HD needs a dedicated PIO state machine to shift the HD ID on RDY. (3) Kickstart 3.0+ for HD is still UNCONFIRMED by source (operator ruling stands). The planned first step when the board is back: a spike that ports the ADF->MFM track encoder to C (byte-identical to `src/lib/adfmfm`), times it on the board, and proves a PIO can answer the ID.
-- **HD floppies: 1.76 MB images, on a par with the 880 KB ones today. DEFERRED by the
+- **SHIPPED: HD read/write/history/editing, fw 1.5.1 2026-09-28 (3ao); rev B WDATA retest and bench steps 4-7 owed.** **HD floppies -- 2026-09-24 RESEARCH ADDED, STILL DEFERRED until the operator has the board to test on** (operator: "HD implementation will come later when I have the board you can test on"). Findings, sources in `docs/superpowers/research/2026-09-24-hfe-and-hd-floppies.md` Part C: (1) the ADF-on-device ruling below holds, and the unknown is CPU: an HD track (22 sectors, ~25 KB MFM) encoded on demand is ESTIMATED at ~1-10 ms on the RP2350 against ~15 ms of head settle -- measure it on the board before designing around it. (2) **The board answers NO drive ID today** (`dskchg.c`: removed because a GPIO ISR could not catch the 1-4 us select pulses). Amiga IDs: `0xFFFFFFFF` DD, `0xAAAAAAAA` HD, `0x00000000` none. HD needs a dedicated PIO state machine to shift the HD ID on RDY. (3) Kickstart 3.0+ for HD is still UNCONFIRMED by source (operator ruling stands). The planned first step when the board is back: a spike that ports the ADF->MFM track encoder to C (byte-identical to `src/lib/adfmfm`), times it on the board, and proves a PIO can answer the ID.
+- **SHIPPED (see the entry above).** **HD floppies: 1.76 MB images, on a par with the 880 KB ones today. DEFERRED by the
   operator 2026-09-13**, same day it was raised -- kept here with its findings intact so
   picking it up again costs nothing. Requested as: create them, add files to them, mount them. The operator's own
   estimate that the MFM would be ~4 MB is right: an Amiga HD disk is 22 sectors per track
@@ -2910,7 +2921,7 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
      positives -- measure real games first (log seek/read patterns while a swap prompt is on screen).
   Suggested order: 1 + 2 (cheap, predictable), then 3, with 4 as an experiment.
 
-- **NFC "tap a card to mount" on the board (PN532, I2C, read AND write).** Requested by the operator
+- **SHIPPED fw 1.3.0 (3am); bench acceptance owed; see the open NFC regression entry.** **NFC "tap a card to mount" on the board (PN532, I2C, read AND write).** Requested by the operator
   2026-09-24: a PN532 module reads a disk's hash off an NFC card, the board calls the web app, and the
   web app mounts the matching ADF. The module connects over I2C. **REVISED 2026-09-25: the board
   must also WRITE tags** — the operator has no other NFC writer, so for testing (at least) the same
@@ -2997,7 +3008,7 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
   no sign of more; all 35 disks of that upload share one created_at, so 13 were never offered. The dialog now says
   "Showing N titles — there are more." with Show more. The operator's 13 disks (Storage, GlowIcons, HDSetup, ...)
   still sit in Uncategorized: add them via Add disks… > Show more. No data was changed.
-- **A new design for the web app (operator, 2026-10-13).**
+- **SHIPPED: the redesign roadmap's Phases A-C, 2026-10-23..27 (Current order above).** **A new design for the web app (operator, 2026-10-13).**
   - **The product is renamed webfloppy, hosted at https://webfloppy.io** (operator, 2026-10-18: "for the redesign,
     the product name changes to webfloppy - so all hosting will be on https://webfloppy.io").
   - **The rename touches more than the UI:**
@@ -3046,7 +3057,7 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
     default-name rule in HANDOFF 3as that keeps `.adf/.adz/.dms/.hfe/.ipf`);
   - a test with a real `.dmz` fixture, including one that is gzipped but not DMS inside, which must be refused
     cleanly.
-- **LZ4 as an alternative to RLE for PaulaNET payloads (operator, 2026-10-12).**
+- **SHIPPED: LZ4 in fw 1.16.0+; Rob PR #6 open (#5 for raw RLE).** **LZ4 as an alternative to RLE for PaulaNET payloads (operator, 2026-10-12).**
   - **2026-10-13: research done and our own 68k module BUILT (branches pushed, not merged).**
     - `research/paulanet-lz4`: measurements and a DRAFT protocol for Rob (`docs/superpowers/research/2026-10-13-paulanet-lz4.md`). Linked LZ4 takes HTML to 41 % and text to 71 %. The model gives +18-69 % download speed on compressible data even on a 68000. Uploads stay RLE below a 68030/40.
     - `feat/lz4-68k`: `m68k/lz4/`, MIT, self-contained, with register-call and C entry points.
@@ -3124,7 +3135,7 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
   these). **Operator, same day:** a small Amiga config program sets where drops land (default RAM:, e.g. a
   directory on the IDE drive), stored Amiga-side (ENVARC:) so the receiver reads it; the web drop zone could show the
   current target.
-- **Amiga networking over the floppy port (PaulaNET-style).** **Shape decided (operator, 2026-10-09):** the network
+- **SHIPPED in phases (Phase 3 fw 1.11.0; Phase 4 Receive -> Transfer 2.1; Amiga->web uploads fw 1.20.2).** **Amiga networking over the floppy port (PaulaNET-style).** **Shape decided (operator, 2026-10-09):** the network
   is a third DF1 mode (Off / Disk / Network, the existing `secondDrive` setting), while DF0 keeps serving full
   80-cylinder disks -- no track-map conflict. Scope is **Workbench only**; games that take over the hardware are out
   of scope. Paula has one disk DMA channel, so DF0 and network traffic interleave per track request (a DF0 copy
@@ -3188,7 +3199,7 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
   to the stack over Exec device I/O, not by linking against it, so such a driver is not a
   derivative work of AmiTCP_NG and its GPL does not propagate into it. That also means the
   stack stays the user's choice -- Roadshow or AmiTCP_NG -- rather than something we bake in.
-- **Self-host on the local network: Docker containers, a local URL, local hardware.** **RULING 2026-10-08 (operator):** DEFERRED for later. Requested by
+- **SHIPPED: Docker self-host P1-P3 merged 2026-10-16 (3bp-3bs); OMV install kept.** **Self-host on the local network: Docker containers, a local URL, local hardware.** **RULING 2026-10-08 (operator):** DEFERRED for later. Requested by
   the operator 2026-08-31 as a nice-to-have. Substantial but not exotic — the shape of the work is
   known, and most of it is swapping two managed services for local ones. What it actually touches:
 
@@ -3498,7 +3509,7 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
   ADC pins, for rail sensing); GP14-17 unusable (antenna keepout). Firmware support for the buzzer comes later.
   Diff the netlist against rev A2's, don't eyeball it.
 
-- **Blob garbage collection** **RULING 2026-10-08 (operator):** BUILD IT as a WEEKLY job. — reclaiming blobs whose last referencing disk is gone. Needs
+- **SHIPPED: weekly on Sundays, BLOB_GC_DELETE=1.** **Blob garbage collection** **RULING 2026-10-08 (operator):** BUILD IT as a WEEKLY job. — reclaiming blobs whose last referencing disk is gone. Needs
   cross-org reference counting and deletion from Vercel Blob as well as Postgres. Deferred at
   the operator's direction during the super-admin design; the admin cascade delete deliberately
   never touches `blobs`, because they are shared across organizations.
