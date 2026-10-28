@@ -637,6 +637,8 @@ test('the Settings pairs are legible: hint, intro, radios, save line, state word
     ['firmware state words', '[data-testid="fw-password-state"]'],
     ['nav item (current)', '[data-testid="settings-nav"] a[aria-current="true"]'],
     ['nav item', '[data-testid="settings-nav"] a:not([aria-current])'],
+    ['tab (current)', '[data-testid="settings-sections"] a[aria-current="page"]'],
+    ['tab', '[data-testid="settings-sections"] a:not([aria-current])'],
     ['Delete account h2', '#danger-heading'],
     ['Delete account… button', '[data-testid="account-delete-open"]'],
     ['email', '[data-testid="account-email"]'],

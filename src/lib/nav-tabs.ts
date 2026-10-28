@@ -17,8 +17,10 @@ export function isMoreCurrent(pathname: string): boolean {
  * Whether a More menu item is the current page. An item with a hash (About this server) is never current: a pathname
  * cannot see a hash, and Settings already names /settings (Plan ruling, C7 Task 1).
  */
-export function isMoreItemCurrent(pathname: string, href: string): boolean {
-  return !href.includes('#') && under(pathname, href);
+export function isMoreItemCurrent(pathname: string, href: string, siblings: readonly string[] = []): boolean {
+  if (href.includes('#') || !under(pathname, href)) return false;
+  // Settings (/settings) and About this server (/settings/server) both contain /settings/server: the longer one wins.
+  return !siblings.some((s) => s.length > href.length && !s.includes('#') && under(pathname, s));
 }
 
 export type MoreItem = {
@@ -34,7 +36,7 @@ export function moreItems(showAdmin: boolean): MoreItem[] {
     { id: 'more-remote', href: '/remote', label: 'Remote' },
     { id: 'more-help', href: '/help', label: 'Help' },
     { id: 'more-settings', href: '/settings', label: 'Settings' },
-    { id: 'more-about', href: '/settings#about', label: 'About this server' },
+    { id: 'more-about', href: '/settings/server', label: 'About this server' },
     ...(showAdmin ? [{ id: 'more-admin' as const, href: '/admin', label: 'Admin' }] : []),
   ];
 }

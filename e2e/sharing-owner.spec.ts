@@ -17,8 +17,8 @@ test('Settings › Sharing: new share, edit, revoke, delete; the landing page', 
     expect(r.ok()).toBe(true);
   }
 
-  await page.goto('/settings#sharing');
-  await expect(page.getByTestId('settings-nav').getByRole('link', { name: 'Sharing' })).toHaveAttribute('href', '#sharing');
+  await page.goto('/settings/library');
+  await expect(page.getByTestId('settings-sections').getByRole('link', { name: 'Library' })).toHaveAttribute('aria-current', 'page');
   const card = page.getByTestId('sharing-settings');
   await expect(card.getByTestId('sharing-empty')).toBeVisible();
   // Nothing shared yet: the server does not ping itself on load (final review 10); Check asks, and the line settles

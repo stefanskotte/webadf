@@ -107,9 +107,12 @@ test('C7-02b the More menu: items at least 44 px and on screen, each reaches its
   await expect(page).toHaveURL(/\/settings$/);
   await open();
   await page.getByTestId('more-about').tap();
-  await expect(page).toHaveURL(/\/settings#about$/);
+  await expect(page).toHaveURL(/\/settings\/server$/);
   await expect(page.locator('#about-heading')).toBeInViewport();
   await open();
+  // Only the more specific item is current on /settings/server (tabs 2026-10-28).
+  await expect(page.getByTestId('more-about')).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByTestId('more-settings')).not.toHaveAttribute('aria-current', 'page');
   await page.getByTestId('more-sign-out').tap();
   await expect(page).toHaveURL(/\/sign-in/);
 });
@@ -181,23 +184,23 @@ test('C7-10 a toast ends above the bottom bar at 390 and at 900 px', async ({ pa
 
 // ---- About into Settings (spec §10, Rulings 20-25) ---------------------------------------------------------
 
-test('C7-07 Settings at 390: About this server is the fourth card with its six groups; More and /about land on it', async ({ page }) => {
+test('C7-07 Settings at 390: the Server tab is About this server with its six groups; More and /about land on it', async ({ page }) => {
   await signUpFresh(page);
   await page.goto('/settings');
   const order = await page.evaluate(() => [...document.querySelectorAll('section[id]')].map((s) => s.id)
     .filter((id) => ['prefs', 'account', 'firmware', 'about', 'danger'].includes(id)));
-  expect(order).toEqual(['prefs', 'account', 'firmware', 'about', 'danger']);
-  for (const id of ['web-app', 'hosting', 'platform', 'firmware', 'library', 'about-webadf']) {
-    await expect(page.getByTestId(`about-${id}`)).toBeAttached();
-  }
-  await page.evaluate(() => window.scrollTo(0, 0));
+  expect(order).toEqual(['prefs', 'account', 'firmware', 'danger']);
+  await noSideways(page);
   await hydrated(page, 'nav-more');
   await page.getByTestId('nav-more').tap();
   await page.getByTestId('more-about').tap();
-  await expect(page).toHaveURL(/\/settings#about$/);
+  await expect(page).toHaveURL(/\/settings\/server$/);
   await expect(page.locator('#about-heading')).toBeInViewport();
+  for (const id of ['web-app', 'hosting', 'platform', 'firmware', 'library', 'about-webadf']) {
+    await expect(page.getByTestId(`about-${id}`)).toBeAttached();
+  }
   await page.goto('/about');
-  await expect(page).toHaveURL(/\/settings#about$/);
+  await expect(page).toHaveURL(/\/settings\/server$/);
   await expect(page.locator('#about-heading')).toBeInViewport();
   await noSideways(page);
 });
@@ -400,7 +403,7 @@ test('C7-09a touch targets and no sideways scroll: a title, its disk files, Sett
   await page.goto(files!);
   await expect(page.getByTestId('disk-card')).toBeVisible();
   await touchSweep(page, 'disk files');
-  for (const path of ['/settings', '/help']) {
+  for (const path of ['/settings', '/settings/library', '/settings/server', '/help']) {
     await page.goto(path);
     await expect(page.locator('h1').first()).toBeVisible();
     await touchSweep(page, path);
@@ -416,7 +419,7 @@ test('C7-09a touch targets and no sideways scroll: a title, its disk files, Sett
 test('C7-11 Help at 390: a /help#topic load leaves the topic at the top after the Topics list closes', async ({ page }) => {
   await signUpFresh(page);
   await page.goto('/help#second-drive');
-  await expect(page.getByTestId('help-nav-toggle')).toHaveText('Topics · 17');
+  await expect(page.getByTestId('help-nav-toggle')).toHaveText('Topics · 19');
   await expect(page.locator('details:has([data-testid="help-nav-toggle"])')).not.toHaveAttribute('open');
   await expect.poll(async () => Math.round((await page.locator('#second-drive').boundingBox())!.y)).toBeLessThan(200);
   await expect(page.locator('#second-drive')).toBeInViewport();

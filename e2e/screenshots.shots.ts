@@ -351,6 +351,12 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   await page.goto('/settings');
   await expect(page.getByTestId('settings-nav')).toBeVisible();
   await shoot(page, 'settings', { tall: true });
+  await page.goto('/settings/library');
+  await expect(page.getByTestId('sharing-settings')).toBeVisible();
+  await shoot(page, 'settings-library', { tall: true });
+  await page.goto('/settings/server');
+  await expect(page.locator('#about-heading')).toBeVisible();
+  await shoot(page, 'settings-server', { tall: true });
 
   // --- the admin Overview (C6, Ruling 38) ------------------------------------
   // The database is the live one and the README image is public. Everything that can name a person or a board is

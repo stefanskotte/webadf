@@ -76,8 +76,8 @@ function MoreTab({ showAdmin, pathname }: { showAdmin: boolean; pathname: string
       <DropdownMenuContent side="top" align="end" data-testid="nav-more-menu"
                            className="w-[min(280px,calc(100vw-32px))] rounded-2xl"
                            style={{ background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--line)", boxShadow: "var(--shadow-card)" }}>
-        {moreItems(showAdmin).map((it) => {
-          const here = isMoreItemCurrent(pathname, it.href);
+        {moreItems(showAdmin).map((it, _, all) => {
+          const here = isMoreItemCurrent(pathname, it.href, all.map((o) => o.href));
           return (
             <MenuPrimitive.LinkItem key={it.id} data-testid={it.id} closeOnClick render={<Link href={it.href} />}
                                     aria-current={here ? "page" : undefined}

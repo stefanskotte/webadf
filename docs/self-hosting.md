@@ -264,7 +264,7 @@ else (library, uploads, history, devices, mounting) works as on our own deployme
 
 ## 10. Sharing your library
 
-Settings, Sharing lets you give another WebFloppy owner access to your library (or some collections) with a link. Their
+Settings, Library lets you give another WebFloppy owner access to your library (or some collections) with a link. Their
 WebFloppy talks to yours, so yours has to be reachable from theirs.
 
 **Reachability.** On the same network nothing is needed. Over the internet use one of: forward port 443 (or your
@@ -282,4 +282,4 @@ the link's address and trusts exactly that root for your server, nobody else's. 
 served. This is an app-to-app trust only; browsers still need the root imported as in section 3.
 
 **What the other side can do.** Browse, mount, send to their boards and download the shared disks. When the Amiga saves,
-the result is a copy in their library; your disks are never changed. Revoke in Settings, Sharing ends access at once.
+the result is a copy in their library; your disks are never changed. Revoke in Settings, Library ends access at once.

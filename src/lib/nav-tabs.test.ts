@@ -20,7 +20,14 @@ describe('isMoreItemCurrent', () => {
     expect(isMoreItemCurrent('/remote/l1', '/remote')).toBe(true);
   });
   it('never marks an item with a hash: the pathname cannot tell one (Plan ruling)', () => {
-    expect(isMoreItemCurrent('/settings', '/settings#about')).toBe(false);
+    expect(isMoreItemCurrent('/settings', '/settings#x')).toBe(false);
+  });
+  it('marks only the most specific item: About this server on /settings/server, not Settings too (tabs 2026-10-28)', () => {
+    const hrefs = ['/remote', '/help', '/settings', '/settings/server'];
+    expect(isMoreItemCurrent('/settings/server', '/settings/server', hrefs)).toBe(true);
+    expect(isMoreItemCurrent('/settings/server', '/settings', hrefs)).toBe(false);
+    expect(isMoreItemCurrent('/settings/library', '/settings', hrefs)).toBe(true);
+    expect(isMoreItemCurrent('/settings', '/settings', hrefs)).toBe(true);
   });
 });
 
@@ -30,7 +37,7 @@ describe('moreItems', () => {
       ['more-remote', '/remote', 'Remote'],
       ['more-help', '/help', 'Help'],
       ['more-settings', '/settings', 'Settings'],
-      ['more-about', '/settings#about', 'About this server'],
+      ['more-about', '/settings/server', 'About this server'],
     ]);
   });
   it('adds Admin last only when the server said so', () => {

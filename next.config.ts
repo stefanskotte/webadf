@@ -26,7 +26,7 @@ const nextConfig: NextConfig = {
   // filesystem and before Proxy, so a bookmark, the Help topic's link and a signed-out visit all work (the signed-out
   // one then goes on to /sign-in, like any Settings visit). 307, not 308: browsers cache a 308 for good.
   async redirects() {
-    return [{ source: '/about', destination: '/settings#about', permanent: false }];
+    return [{ source: '/about', destination: '/settings/server', permanent: false }];
   },
   // A share link's landing page (library sharing spec §3.4) has the claim code in its path: no Referer may carry it
   // to another site, and no cache may keep it.

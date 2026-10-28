@@ -8,15 +8,14 @@ import { libraryUsage } from '@/lib/about/library-usage';
 import { signUpFresh, createAdf } from './helpers';
 import { hydrated } from './device-helpers';
 
-test('Settings > About this server: the list jumps to #about, focuses its heading, and shows the six groups', async ({ page }) => {
+test('Settings > Server: the Server tab shows About this server and its six groups', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await signUpFresh(page);
   await page.goto('/settings');
-  // The nav and the radios hydrate in the same pass (c5-layout's Settings test).
   await hydrated(page, 'pref-start-page', 'onKeyDown');
-  await page.getByTestId('settings-nav').getByRole('link', { name: 'About this server' }).click();
-  await expect(page).toHaveURL(/\/settings#about$/);
-  await expect(page.locator('#about-heading')).toBeFocused();
+  await page.getByTestId('settings-sections').getByRole('link', { name: 'Server' }).click();
+  await expect(page).toHaveURL(/\/settings\/server$/);
+  await expect(page.locator('#about-heading')).toBeVisible();
   for (const id of ['web-app', 'hosting', 'platform', 'firmware', 'library', 'about-webadf']) {
     await expect(page.getByTestId(`about-${id}`)).toBeVisible();
   }
@@ -32,16 +31,15 @@ test('Settings > About this server: the list jumps to #about, focuses its headin
   }
 });
 
-test('/about is a 307 to /settings#about: signed in it lands on the section at 1280 and 390, signed out on sign-in (Review Focus 1)', async ({ page, browser }) => {
+test('/about is a 307 to /settings/server: signed in it lands on the Server tab at 1280 and 390, signed out on sign-in (Review Focus 1)', async ({ page, browser }) => {
   await signUpFresh(page);
   const res = await page.request.get('/about', { maxRedirects: 0 });
   expect(res.status()).toBe(307);
-  expect(res.headers()['location']).toMatch(/\/settings#about$/);
+  expect(res.headers()['location']).toMatch(/\/settings\/server$/);
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/about');
-    await expect(page).toHaveURL(/\/settings#about$/);
-    // Below lg the section list is hidden but mounted: its arrival jump still lands here.
+    await expect(page).toHaveURL(/\/settings\/server$/);
     await expect(page.locator('#about-heading')).toBeInViewport();
   }
   const other = await browser.newContext();
@@ -58,7 +56,7 @@ test('stored bytes are a sum over distinct disk images, not 0 or NaN', async ({ 
   await createAdf(page, 'FFS');
   await expect(page.getByTestId('game-card')).toHaveCount(2);
   await page.goto('/about');
-  await expect(page).toHaveURL(/\/settings#about$/);   // the redirect (C7 spec §10.3)
+  await expect(page).toHaveURL(/\/settings\/server$/);   // the redirect (C7 spec §10.3; tabs 2026-10-28)
   await expect(page.getByTestId('about-library-disks')).toHaveText('2');
   await expect(page.getByTestId('about-library-titles')).toHaveText('2');
   // Two blank 880 KB images: identical bytes count once, different bytes twice.

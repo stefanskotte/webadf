@@ -592,13 +592,13 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          <strong>Sharing.</strong> In Settings, Sharing, choose what to share and press Share. You get a link to send to
+          <strong>Sharing.</strong> In Settings, Library, choose what to share and press Share. You get a link to send to
           the other person; it works once and expires after seven days. Revoke ends their access at any time.
         </p>
         <p>
           <strong>Reachable.</strong> Their WebFloppy must be able to open yours. On a home server forward port 443 from
           your router, put a reverse proxy in front, or use Tailscale Funnel or a Cloudflare Tunnel. On the same network
-          nothing needs forwarding. Settings, Sharing checks the address once you share something or open New share;
+          nothing needs forwarding. Settings, Library checks the address once you share something or open New share;
           before that, press Check.
         </p>
         <p>
@@ -679,7 +679,7 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          You find it at the end of Settings, above Delete account.
+          You find it in Settings, under Server.
         </p>
         <p>
           <strong>Web app.</strong> The commit the site was built from, and when. On our own site the commit links to
@@ -731,7 +731,7 @@ export const HELP_TOPICS = {
           everyone in your organization.
         </p>
         <p>
-          <strong>Changing them.</strong> Settings (the gear at the top; More, then Settings, on a phone) lists every preference in one place, and
+          <strong>Changing them.</strong> Settings (the gear at the top; More, then Settings, on a phone) lists every preference under Account, and
           each change there is kept as soon as you make it.
         </p>
         <p>

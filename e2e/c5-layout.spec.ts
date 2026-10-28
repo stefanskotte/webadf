@@ -71,8 +71,8 @@ test('Settings: the section list marks the section in view, and a click moves fo
   const nav = page.getByTestId('settings-nav');
   await expect(nav).toBeVisible();
   await expect(nav.getByRole('link', { name: 'Preferences' })).toHaveAttribute('aria-current', 'true');
-  const about = nav.getByRole('link', { name: 'About this server' });
-  await expect(about).toHaveAttribute('href', '#about');
+  // Tabs 2026-10-28: the list is the Account tab's four sections; Sharing and About have tabs of their own.
+  await expect(nav.getByRole('link')).toHaveText(['Preferences', 'Sign-in & password', 'Firmware updates', 'Delete account']);
   // The nav and the radios hydrate in the same pass (no Suspense boundary between them).
   await hydrated(page, 'pref-start-page', 'onKeyDown');
   const danger = nav.getByRole('link', { name: 'Delete account' });
@@ -84,12 +84,6 @@ test('Settings: the section list marks the section in view, and a click moves fo
   await page.waitForTimeout(800);   // past SideNav's 600 ms click lock: a scroll-derived mark would land by now
   await expect(danger).toHaveAttribute('aria-current', 'true');
   await expect(nav.getByRole('link', { name: 'Preferences' })).not.toHaveAttribute('aria-current', 'true');
-  await expect(about).not.toHaveAttribute('aria-current', 'true');
-  // C7 (spec §10.2): About this server is an in-page section now; a click marks it and focuses its heading.
-  await about.click();
-  await expect(page).toHaveURL(/#about$/);
-  await expect(page.locator('#about-heading')).toBeFocused();
-  await expect(about).toHaveAttribute('aria-current', 'true');
 });
 
 test('Settings: closing a form hands focus back to its opener; Sign out everywhere else hands it to the heading', async ({ page, browser }) => {
@@ -320,12 +314,12 @@ test('Help: topics in four groups, the one arrived at marked current, each artic
   await expect(page.getByTestId('help-section-write-protect')).toContainText('Help · Drives');
   await expect(page.getByTestId('help-section-library')).toContainText('Help · Library and disks');
   const order = await page.locator('article[data-testid^="help-section-"]').evaluateAll((els) => els.map((e) => e.id));
-  expect(order).toHaveLength(17);
+  expect(order).toHaveLength(19);
   expect(order.slice(0, 3)).toEqual(['boards', 'display', 'second-drive']);
   await expect(page.getByTestId('help-nav-toggle')).toBeHidden();   // the phone summary is not drawn from lg
 });
 
-test('Help: the filter keeps only matching topics, says how many, and Escape brings all 17 back', async ({ page }) => {
+test('Help: the filter keeps only matching topics, says how many, and Escape brings all 19 back', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await signUpFresh(page);
   await page.goto('/help');
@@ -333,23 +327,23 @@ test('Help: the filter keeps only matching topics, says how many, and Escape bri
   await hydrated(page, 'help-filter', 'onChange');
   await filter.fill('d');
   await expect(page.getByTestId('help-filter-count')).toHaveText('');
-  await expect(articles(page)).toHaveCount(17);
+  await expect(articles(page)).toHaveCount(19);
   // filterHelpTopics('drive') is second-drive, boards, network, send (pinned in src/lib/help/match.test.ts).
   await filter.fill('drive');
-  await expect(page.getByTestId('help-filter-count')).toHaveText('4 of 17 topics');
+  await expect(page.getByTestId('help-filter-count')).toHaveText('4 of 19 topics');
   await expect(articles(page)).toHaveCount(4);
   await expect(page.getByTestId('help-section-library')).toBeHidden();
   await expect(page.getByTestId('help-group-disks')).toHaveCount(0);
   await expect(page.getByTestId('help-nav').getByRole('link')).toHaveCount(4);
   await filter.fill('zzqx');
-  await expect(page.getByTestId('help-filter-empty')).toHaveText('No topic matches “zzqx”. Clear the search to see all 17.');
+  await expect(page.getByTestId('help-filter-empty')).toHaveText('No topic matches “zzqx”. Clear the search to see all 19.');
   await expect(articles(page)).toHaveCount(0);
-  await expect(page.getByTestId('help-filter-count')).toHaveText('0 of 17 topics');
+  await expect(page.getByTestId('help-filter-count')).toHaveText('0 of 19 topics');
   await expect(page.getByTestId('help-group-server')).toBeVisible();
   await expect(page.getByTestId('help-nav').getByRole('link')).toHaveCount(0);
   await filter.press('Escape');
   await expect(filter).toHaveValue('');
-  await expect(articles(page)).toHaveCount(17);
+  await expect(articles(page)).toHaveCount(19);
   await expect(page.getByTestId('help-filter-empty')).toHaveCount(0);
 });
 
@@ -359,12 +353,12 @@ test('Help at 390 px: the filter and a closed Topics disclosure sit above the ar
   await page.goto('/help');
   await hydrated(page, 'help-filter', 'onChange');
   const toggle = page.getByTestId('help-nav-toggle');
-  await expect(toggle).toHaveText('Topics · 17');
+  await expect(toggle).toHaveText('Topics · 19');
   await expect(page.getByTestId('help-nav')).toBeHidden();
   await toggle.click();
   await expect(page.getByTestId('help-nav')).toBeVisible();
   await page.getByTestId('help-filter').fill('drive');
-  await expect(toggle).toHaveText('Topics · 4 of 17');
+  await expect(toggle).toHaveText('Topics · 4 of 19');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
@@ -698,7 +692,7 @@ test('at 390 px: Settings stacks with no list, Help folds its topics, Search has
   await noSideways();
 
   await page.goto('/help');
-  await expect(page.getByTestId('help-nav-toggle')).toHaveText('Topics · 17');
+  await expect(page.getByTestId('help-nav-toggle')).toHaveText('Topics · 19');
   await noSideways();
 
   await hydrated(page, 'search-open');

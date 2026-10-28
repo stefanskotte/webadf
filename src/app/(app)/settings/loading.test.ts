@@ -10,16 +10,14 @@ describe('SettingsLoading (C5 spec §2.7)', () => {
     expect(html).toContain('role="status"');
     expect(html).toContain('Loading…');
   });
-  it("is the page's grid: five nav bones from lg, a heading, five cards, the first with four rows", () => {
+  it("is the Account tab's grid: four nav bones from lg and four cards, the first with four rows", () => {
     expect(html).toContain('lg:grid-cols-[240px_minmax(0,860px)]');
-    expect(html.match(/data-skeleton-nav/g)?.length).toBe(5);
-    expect(html.match(/data-skeleton-card/g)?.length).toBe(5);
+    expect(html.match(/data-skeleton-nav/g)?.length).toBe(4);
+    expect(html.match(/data-skeleton-card/g)?.length).toBe(4);
     expect(html.match(/data-skeleton-row/g)?.length).toBe(4);
-    expect(html).toContain('h-[30px]');
-    expect(html).toContain('sm:h-[44px]');
   });
-  it('has no outer page-header bones (the heading is in the main column)', () => {
-    expect(html).not.toContain('sm:h-[34px]');
+  it('has no heading bones (the layout draws the heading and the tabs)', () => {
+    expect(html).not.toContain('h-[30px]');
     expect(html.match(/pt-6/g)?.length).toBe(1);
   });
 });
