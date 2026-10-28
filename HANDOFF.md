@@ -1485,9 +1485,12 @@ arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
-- **Reorganize the Settings page** -- operator backlog item 2026-10-28, not started, no design yet. Settings has grown to
-  six cards in one column (Preferences, Sign-in & password, Firmware updates, Sharing, About this server, Delete
-  account) and Sharing's table is the widest thing on it. Brainstorm the grouping with the operator before building.
+- **Reorganize the Settings page -- SHIPPED 2026-10-28 (5e90908).** Operator's reason: mixed ownership; chose tabs over
+  one grouped page because more settings are coming. /settings = Account (Preferences, Sign-in & password, Firmware
+  updates, Delete account; keeps the section list), /settings/library = Sharing (full width), /settings/server = About
+  this server. Shared layout with heading + tabs (AdminSections pattern, src/components/prefs/settings-sections.tsx).
+  /about and More > About go to /settings/server; old #sharing/#about forward client-side; More marks only the most
+  specific item. New settings go on the tab that owns them (yours / the org's / this server's).
 - **Settings with a day-old session -- FIXED 2026-10-28 (fd875b3).** Better Auth's listSessions refuses a session past
   freshAge (one day) with SESSION_NOT_FRESH and Settings crashed on it (digest 3297751167, since A2 on 2026-10-23). It now
   redirects to /sign-in?expired=1&next=/settings with "Your session has expired. Please sign in again." and returns
