@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { signUpFresh } from './helpers';
+import { signUpFresh, SHARE_LINK_RE } from './helpers';
 import { hydrated } from './device-helpers';
 
 /**
@@ -22,7 +22,7 @@ test('Settings › Sharing: new share, edit, revoke, delete; the landing page', 
   const card = page.getByTestId('sharing-settings');
   await expect(card.getByTestId('sharing-empty')).toBeVisible();
   // Nothing shared yet: the server does not ping itself on load (final review 10); Check asks, and the line settles
-  // on an answer (this dev server is http: on loopback, so it is red here).
+  // on an answer (red on an http: loopback dev server, green on the hosted site).
   await expect(card.getByTestId('sharing-reach')).toHaveAttribute('data-state', 'idle');
   await hydrated(page, 'sharing-reach-check');
   await card.getByTestId('sharing-reach-check').click();
@@ -41,7 +41,7 @@ test('Settings › Sharing: new share, edit, revoke, delete; the landing page', 
   const created = page.getByTestId('sharing-created-dialog');
   await expect(created).toBeVisible();
   const link = await created.getByTestId('sharing-link').inputValue();
-  expect(link).toMatch(/^http:\/\/localhost:\d+\/s\/wfsc_[A-Za-z0-9_-]{43}$/);
+  expect(link).toMatch(SHARE_LINK_RE);
   await expect(created.getByTestId('sharing-expiry')).toContainText(/^It works once\. Unclaimed links expire on \d{1,2} \w{3} \d{4}\.$/);
   await created.getByRole('button', { name: 'Done' }).click();
   await expect(created).toBeHidden();

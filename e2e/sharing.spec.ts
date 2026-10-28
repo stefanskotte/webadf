@@ -11,12 +11,13 @@ import { formatVolume } from '@/lib/adffs/format';
 import { addFile, makeDirectory } from '@/lib/adffs/write';
 import { ROOT_BLOCK } from '@/lib/adffs/constants';
 import { TRACK_DATA_BYTES } from '@/lib/adfmfm';
-import { signUpFresh, runTag } from './helpers';
+import { signUpFresh, runTag, TARGET, SHARE_LINK_RE } from './helpers';
 import { pairDevice, seedDisk, addDisk, authHeader, cleanupSeeded, hydrated } from './device-helpers';
 
 /**
  * Library sharing end to end (spec §7, Task 11): two orgs on ONE server, sharing over real HTTP to itself
- * (http://localhost:3100, allowed only by playwright.config's WEBADF_SHARE_TEST_INSECURE / _PRIVATE_ADDRESSES).
+ * (http://localhost:3100, allowed only by playwright.config's WEBADF_SHARE_TEST_INSECURE / _PRIVATE_ADDRESSES; or the
+ * hosted site over HTTPS with BASE_URL=https://webadf.vercel.app).
  * Owner shares "Shared" (not "Private") with Rob; Rob's org adds the link, browses, downloads, mounts on a simulated
  * board, writes (D2: the disk becomes Rob's, Uncategorized), loses a title, then the share; a third org cannot reuse
  * the link. Run with `bash scripts/e2e-local.sh e2e/sharing.spec.ts` (its own Postgres).
@@ -88,7 +89,7 @@ test('two orgs: share, claim, browse, download, mount, write (D2), unshare, revo
   const made = await owner.request.post('/api/shares', { data: { label: 'Rob', everything: false, collectionIds: [sharedId] } });
   expect(made.ok()).toBe(true);
   const { share, link } = await made.json() as { share: { id: string }; link: string };
-  expect(link).toMatch(/^http:\/\/localhost:\d+\/s\/wfsc_/);
+  expect(link).toMatch(SHARE_LINK_RE);
 
   // ---- Recipient: Remote › Add with the link wrapped in spaces (Review Focus 4).
   const robCtx = await browser.newContext({ acceptDownloads: true });
@@ -97,7 +98,7 @@ test('two orgs: share, claim, browse, download, mount, write (D2), unshare, revo
   await rob.goto('/remote/add');
   await hydrated(rob, 'remote-add-form', 'onSubmit');
   await rob.getByTestId('remote-add-link').fill(`   ${link}   `);
-  await expect(rob.getByTestId('remote-add-confirm')).toContainText('localhost');
+  await expect(rob.getByTestId('remote-add-confirm')).toContainText(TARGET.hostname);
   await rob.getByTestId('remote-add-submit').click();
   await expect(rob).toHaveURL(/\/remote\/[0-9a-f-]{36}$/, { timeout: 30_000 });
   const libId = new URL(rob.url()).pathname.split('/').pop()!;
@@ -129,7 +130,7 @@ test('two orgs: share, claim, browse, download, mount, write (D2), unshare, revo
   await rob.goto('/remote');
   const card = rob.getByTestId('remote-library-card');
   await expect(card).toHaveCount(1);
-  await expect(card.getByTestId('remote-library-host')).toHaveText(/localhost/);
+  await expect(card.getByTestId('remote-library-host')).toContainText(TARGET.hostname);
   await expect(card.getByTestId('remote-library-collections')).toContainText('Shared');
   await expect(card.getByTestId('remote-status')).toHaveAttribute('data-status', 'ok');
   await rob.goto(`/remote/${libId}`);

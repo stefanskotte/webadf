@@ -36,6 +36,15 @@ function loadEnvLocal() {
 loadEnvLocal();
 
 /**
+ * The server under test, as playwright.config.ts picks it: BASE_URL (an existing server: the self-host stack, or the
+ * hosted site) or the dev server on PORT. Share links carry this origin, so the sharing specs check against it.
+ */
+export const TARGET = new URL(process.env.BASE_URL ?? `http://localhost:${process.env.PORT ?? 3000}`);
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** A share link on the server under test: `<origin>/s/wfsc_…`. */
+export const SHARE_LINK_RE = new RegExp(`^${escapeRe(TARGET.origin)}/s/wfsc_[A-Za-z0-9_-]{43}$`);
+
+/**
  * A per-run uniqueness suffix that can never be parsed as a disk number.
  *
  * The old `${Date.now()}-${Math.floor(Math.random() * 1e6)}` could draw 1-99,
