@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Link } from '@/components/shell/link';
 import { toast } from 'sonner';
 import type { MountChoice } from '@/lib/mount-choice';
+import { remoteErrorText } from '@/lib/remote/copy';
 
 /**
  * Kept as an alias rather than deleted: disk-row.tsx and the game page both
@@ -34,7 +35,14 @@ function DriveIcon({ up }: { up: boolean }) {
   );
 }
 
-export function MountAction({ diskId, choices }: { diskId: string; choices: MountChoice[] }) {
+/**
+ * A remote library's disk (library sharing spec §4.2): mounting it goes through this server's remote route, which asks
+ * the owner again and holds the bytes as a hidden disk before the ordinary mount. Ejects and a Cancel's re-ask name
+ * drives and local disks, so they keep the device routes.
+ */
+export type RemoteMount = { libraryId: string; titleId: string; diskId: string; host: string };
+
+export function MountAction({ diskId, choices, remote }: { diskId: string; choices: MountChoice[]; remote?: RemoteMount }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -72,14 +80,24 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
       : drive === 'df1'
         ? { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ drive }) }
         : { method: 'POST' };
+    const viaRemote = remote !== undefined && mountId === diskId;
     try {
-      const res = await fetch(`/api/devices/${choice.id}/${mountId ? 'mount' : 'eject'}`, init);
+      const res = viaRemote
+        ? await fetch(`/api/remote/${encodeURIComponent(remote.libraryId)}/disks/${encodeURIComponent(remote.diskId)}/mount`, {
+            method: 'POST', headers: JSON_HEADERS,
+            body: JSON.stringify({ titleId: remote.titleId, deviceId: choice.id, drive }),
+          })
+        : await fetch(`/api/devices/${choice.id}/${mountId ? 'mount' : 'eject'}`, init);
       if (!res.ok) {
         // A refusal the person can act on carries its own sentence (e.g. a
         // long-track HFE on a board whose firmware is too old, or DF1's rules);
-        // anything else falls back to the status.
-        const body = await res.json().catch(() => null) as { reason?: unknown } | null;
-        const reason = typeof body?.reason === 'string' ? body.reason : `The server answered ${res.status}.`;
+        // a remote refusal carries a code (ended, unreachable, not_shared...)
+        // worded by remoteErrorText; anything else falls back to the status.
+        const body = await res.json().catch(() => null) as { reason?: unknown; error?: unknown; host?: unknown } | null;
+        const reason = typeof body?.reason === 'string' ? body.reason
+          : viaRemote && typeof body?.error === 'string'
+            ? remoteErrorText(body.error, typeof body.host === 'string' ? body.host : remote.host)
+            : `The server answered ${res.status}.`;
         toast.error(ejecting ? 'Could not eject' : 'Could not mount', { description: reason });
         return;
       }

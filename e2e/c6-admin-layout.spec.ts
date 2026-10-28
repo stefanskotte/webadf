@@ -22,7 +22,7 @@ test('the admin header carries the Main nav with Admin current, the gear and Sig
     await page.goto(path);
     const header = page.getByTestId('admin-header');
     const main = header.getByRole('navigation', { name: 'Main' });
-    await expect(main.getByRole('link')).toHaveText(['Library', 'Devices', 'Upload', 'Help', 'Admin']);
+    await expect(main.getByRole('link')).toHaveText(['Library', 'Remote', 'Devices', 'Upload', 'Help', 'Admin']);
     // :visible -- the phone bar's More (hidden from lg) also marks itself current on an Admin page.
     await expect(main.locator('[aria-current="page"]:visible')).toHaveText(['Admin']);
     await expect(header.getByTestId('settings-link')).toBeVisible();

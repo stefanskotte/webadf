@@ -16,6 +16,8 @@ import { isMoreCurrent, isMoreItemCurrent, moreItems } from "@/lib/nav-tabs";
 
 const ITEMS = [
   { href: "/library", label: "Library", phone: true },
+  // Libraries shared with this team (library sharing spec §4.5). Below lg it is in the More menu: the bar is four cells.
+  { href: "/remote", label: "Remote", phone: false },
   { href: "/devices", label: "Devices", phone: true },
   // Label only -- the route stays /ingest. "Ingest" was jargon for what is
   // plainly an upload; the route and the /api/ingest/* namespace are
@@ -53,8 +55,8 @@ function TabBar({ current }: { current: boolean }) {
 }
 
 /**
- * The bar's fourth tab below lg (C7 spec §2.3, Ruling 4): a menu of Help, Settings, About this server, Admin (only
- * when the server said so) and Sign out. Current on /settings, /help and /admin. From lg the header carries Help,
+ * The bar's fourth tab below lg (C7 spec §2.3, Ruling 4): a menu of Remote, Help, Settings, About this server, Admin
+ * (only when the server said so) and Sign out. Current on /remote, /settings, /help and /admin. From lg the header carries Help,
  * the gear and Sign out instead, and this button is display:none.
  */
 function MoreTab({ showAdmin, pathname }: { showAdmin: boolean; pathname: string }) {
