@@ -209,6 +209,55 @@ describe('materialiseRemoteDisk', () => {
       .toEqual({ ok: false, reason: 'not_shared' });
   });
 
+  it('a revoke landing while the bytes are in flight leaves no hidden row and answers ended', async () => {
+    const b = adf(15);
+    const client = fakeClient(okListing(b), okBytes(b));
+    client.getBytes.mockImplementation(async () => {
+      await store.endRemoteLibrary(ORG, lib);
+      return okBytes(b);
+    });
+    expect(await materialiseRemoteDisk(ORG, lib, 'T1', 'D1', { client })).toEqual({ ok: false, reason: 'ended' });
+    expect(await rowsOf()).toEqual({ disks: [], games: [] });
+  });
+
+  it('a Remove landing while the bytes are in flight answers ended, not an error', async () => {
+    const b = adf(16);
+    const client = fakeClient(okListing(b), okBytes(b));
+    client.getBytes.mockImplementation(async () => {
+      await store.removeRemoteLibrary(ORG, lib);
+      return okBytes(b);
+    });
+    expect(await materialiseRemoteDisk(ORG, lib, 'T1', 'D1', { client })).toEqual({ ok: false, reason: 'ended' });
+    expect(await rowsOf()).toEqual({ disks: [], games: [] });
+  });
+
+  it('an owner year outside 1900..2100 is dropped, a long title is capped', async () => {
+    const b = adf(17);
+    const listing = detail(b);
+    listing.title = { ...listing.title, year: 99999, title: 'x'.repeat(1000) };
+    await materialiseRemoteDisk(ORG, lib, 'T1', 'D1', { client: fakeClient({ ok: true, value: listing }, okBytes(b)) });
+    const { games: gs } = await rowsOf();
+    expect(gs[0].year).toBeNull();
+    expect(gs[0].title).toHaveLength(300);
+  });
+
+  it('a sibling disk of a title that became local lands hidden, and the game stays local and keeps its name (C1)', async () => {
+    const b = adf(18);
+    await materialiseRemoteDisk(ORG, lib, 'T1', 'D1', { client: fakeClient(okListing(b), okBytes(b)) });
+    const db = getDb();
+    await db.update(disks).set({ remoteLibraryId: null, remoteDiskId: null }).where(eq(disks.id, hiddenDiskId()));
+    await db.update(games).set({ remoteLibraryId: null, remoteTitleId: null, title: 'My copy', sortTitle: 'my copy' }).where(eq(games.id, hiddenGameId()));
+    const two = adf(19);
+    const listing = { ok: true, value: { ...detail(b), disks: [...detail(b).disks, { ...detail(two).disks[0], id: 'D2', name: 'Disk 2', diskNo: 2 }] } };
+    listing.value.title = { ...listing.value.title, title: 'Owner renamed it' };
+    const r = await materialiseRemoteDisk(ORG, lib, 'T1', 'D2', { client: fakeClient(listing, okBytes(two)) });
+    expect(r).toEqual({ ok: true, diskId: stableId('rdisk', ORG, lib, 'D2') });
+    const [g] = await db.select().from(games).where(eq(games.id, hiddenGameId()));
+    expect(g).toMatchObject({ remoteLibraryId: null, title: 'My copy' });
+    const [d2] = await db.select().from(disks).where(eq(disks.id, stableId('rdisk', ORG, lib, 'D2')));
+    expect(d2).toMatchObject({ gameId: hiddenGameId(), remoteLibraryId: lib, remoteDiskId: 'D2' });
+  });
+
   it('a row that took its first write is the person\'s own: never refreshed, never re-hidden', async () => {
     const b = adf(13);
     await materialiseRemoteDisk(ORG, lib, 'T1', 'D1', { client: fakeClient(okListing(b), okBytes(b)) });

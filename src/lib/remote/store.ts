@@ -13,7 +13,7 @@
 // mounted. purgeHidden ejects them from every drive BEFORE deleting them (Review Focus 3): a disk row that simply
 // vanishes tells no board, because the board wakes only on a version bump.
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, inArray, ne, notExists, or, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, ne, notExists, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { organization } from '@/db/schema/auth';
 import { disks, games } from '@/db/schema/catalog';
@@ -53,6 +53,16 @@ export const LISTING_CACHE_MS = 60_000;
 const MAX_NAME = 200;
 
 let clientForTests: ShareClient | null = null;
+
+/** Network failures in a row, per library (spec §4.3 "repeated network failures"). In memory; any answer resets. */
+const failuresInARow = new Map<string, number>();
+/** How many network failures in a row make a library 'unreachable'. One blip is not enough. */
+export const UNREACHABLE_AFTER = 2;
+
+/** Tests only. */
+export function resetFailureCountsForTests(): void {
+  failuresInARow.clear();
+}
 
 /** Tests only (Ruling P3): every call in this module and materialise.ts uses `c` until reset with null. */
 export function setShareClientForTests(c: ShareClient | null): void {
@@ -114,7 +124,7 @@ export async function addRemoteLibrary(
 
   const id = randomUUID();
   await db.insert(remoteLibraries).values({
-    id, orgId, baseUrl: link.origin, tokenEnc: sealToken(r.value.token), tlsPin: link.pin,
+    id, orgId, baseUrl: link.origin, tokenEnc: sealToken(r.value.token, id), tlsPin: link.pin,
     name: cleanName(r.value.library.name, new URL(link.origin).host),
     status: 'ok', lastOkAt: new Date(), lastError: null, addedBy: userId,
   });
@@ -140,7 +150,7 @@ export async function getRemoteTarget(orgId: string, id: string): Promise<{ row:
   if (!r) return null;
   const { tokenEnc, tlsPin, ...row } = r;
   let token: string | undefined;
-  try { token = openToken(tokenEnc); } catch { token = undefined; }
+  try { token = openToken(tokenEnc, row.id); } catch { token = undefined; }
   return { row: row as RemoteLibraryRow, target: token ? { origin: row.baseUrl, pin: tlsPin, token } : { origin: row.baseUrl, pin: tlsPin } };
 }
 
@@ -151,6 +161,7 @@ export async function getRemoteTarget(orgId: string, id: string): Promise<{ row:
 export async function noteRemoteResult(orgId: string, id: string, r: ShareResult<unknown>): Promise<void> {
   const where = and(eq(remoteLibraries.id, id), eq(remoteLibraries.orgId, orgId), ne(remoteLibraries.status, 'ended'));
   const db = getDb();
+  if (r.ok || r.failure !== 'unreachable') failuresInARow.delete(id);
   if (r.ok || r.failure === 'not_found') {
     // A 404 is the owner answering properly about one item: the library itself is fine.
     await db.update(remoteLibraries).set({ status: 'ok', lastOkAt: new Date(), lastError: null }).where(where);
@@ -161,9 +172,13 @@ export async function noteRemoteResult(orgId: string, id: string, r: ShareResult
     case 'ended':
       await endRemoteLibrary(orgId, id);
       return;
-    case 'unreachable':
-      await db.update(remoteLibraries).set({ status: 'unreachable', lastError }).where(where);
+    case 'unreachable': {
+      const n = (failuresInARow.get(id) ?? 0) + 1;
+      failuresInARow.set(id, n);
+      await db.update(remoteLibraries)
+        .set(n >= UNREACHABLE_AFTER ? { status: 'unreachable', lastError } : { lastError }).where(where);
       return;
+    }
     case 'protocol':
       await db.update(remoteLibraries).set({ status: 'protocol', lastError }).where(where);
       return;
@@ -209,6 +224,7 @@ export async function endRemoteLibrary(orgId: string, id: string, reason = 'ende
   await getDb().update(remoteLibraries).set({ status: 'ended', lastError: reason })
     .where(and(eq(remoteLibraries.id, id), eq(remoteLibraries.orgId, orgId)));
   forgetCached(cacheKey(id, ''));
+  failuresInARow.delete(id);
   await purgeHidden(orgId, id);
 }
 
@@ -219,6 +235,7 @@ export async function removeRemoteLibrary(orgId: string, id: string): Promise<bo
     .where(and(eq(remoteLibraries.id, id), eq(remoteLibraries.orgId, orgId))).limit(1);
   if (!row) return false;
   forgetCached(cacheKey(id, ''));
+  failuresInARow.delete(id);
   // A mount racing this can materialise a new hidden row between the purge and the delete; the FK (no cascade)
   // then refuses the delete, and the purge runs again.
   for (let attempt = 0; ; attempt++) {
@@ -232,7 +249,7 @@ export async function removeRemoteLibrary(orgId: string, id: string): Promise<bo
   }
 }
 
-function isFkViolation(err: unknown): boolean {
+export function isFkViolation(err: unknown): boolean {
   for (const e of [err, (err as { cause?: unknown } | null)?.cause]) {
     if (e && typeof e === 'object' && (e as { code?: unknown }).code === '23503') return true;
   }
@@ -257,9 +274,13 @@ export async function purgeHidden(orgId: string, remoteLibraryId: string): Promi
     if (hidden.length === 0) break;
     const ids = hidden.map((d) => d.id);
 
-    // DF0: any board that wants or holds one of them is told to eject (clearDesired bumps the version).
+    // DF0: a board that wants one of them, or holds one and wants nothing else, is told to eject (clearDesired bumps
+    // the version). A board holding a hidden disk while a local one is on its way in keeps that local desire.
     const holders = await db.select({ id: devices.id }).from(devices)
-      .where(and(eq(devices.orgId, orgId), or(inArray(devices.desiredDiskId, ids), inArray(devices.mountedDiskId, ids))));
+      .where(and(eq(devices.orgId, orgId), or(
+        inArray(devices.desiredDiskId, ids),
+        and(isNull(devices.desiredDiskId), inArray(devices.mountedDiskId, ids)),
+      )));
     for (const h of holders) {
       await clearDesired(orgId, h.id);
       ejectedDevices.add(h.id);

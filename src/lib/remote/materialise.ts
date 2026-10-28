@@ -19,7 +19,8 @@ import type { ShareFailure } from '@/lib/share/client';
 import type { ShareDisk, ShareTitleDetail } from '@/lib/share/types';
 import { diskStore } from '@/lib/storage';
 import { makeSortTitle } from '@/lib/tosec';
-import { clientFor, noteRemoteResult, prepareRemote, type RemoteDeps } from './store';
+import { remoteLibraries } from '@/db/schema/sharing';
+import { clientFor, isFkViolation, noteRemoteResult, prepareRemote, purgeHidden, type RemoteDeps } from './store';
 
 export type MaterialiseResult =
   | { ok: true; diskId: string }
@@ -119,7 +120,8 @@ export async function materialiseRemoteDisk(
 
   const title = text(detail.title.title, 'Untitled');
   const name = text(d.name, `Disk ${d.diskNo}`);
-  const year = Number.isInteger(detail.title.year) ? detail.title.year : null;
+  const y = detail.title.year;
+  const year = typeof y === 'number' && Number.isInteger(y) && y >= 1900 && y <= 2100 ? y : null;
   const publisher = typeof detail.title.publisher === 'string' ? text(detail.title.publisher, '') || null : null;
   const diskFields = {
     sha256, sizeBytes: bytes.byteLength, diskNo: d.diskNo, label: name, isBoot: d.diskNo === 1,
@@ -130,27 +132,43 @@ export async function materialiseRemoteDisk(
     extractable: hfe?.extractable ?? null, extractReason: hfe?.extractReason ?? null, maxTrackBits: hfe?.maxTrackBits ?? null,
   };
 
-  await atomic((tx) => [
-    tx.insert(blobs).values({ sha256, sizeBytes: bytes.byteLength, storageKey: diskStore.storageKey(sha256) }).onConflictDoNothing(),
-    tx.insert(entitlements).values({ orgId, sha256, sourceFilename: `${name}.${d.imageFormat}` }).onConflictDoNothing(),
-    // The title follows the owner while the game is hidden; one that became local (D2) keeps its own.
-    tx.insert(games).values({
-      id: gameId, orgId, title, sortTitle: makeSortTitle(title), year, publisher,
-      remoteLibraryId, remoteTitleId, metadataSource: 'remote',
-    }).onConflictDoUpdate({
-      target: games.id,
-      set: { title, sortTitle: makeSortTitle(title), year, publisher },
-      setWhere: isNotNull(games.remoteLibraryId),
-    }),
-    tx.insert(disks).values({
-      id: diskId, gameId, orgId, ...diskFields, remoteLibraryId, remoteDiskId,
-    }).onConflictDoUpdate({
-      target: disks.id,
-      set: diskFields,
-      // Only an untouched hidden row follows the owner (D2).
-      setWhere: eq(disks.remoteLibraryId, remoteLibraryId),
-    }),
-  ]);
+  try {
+    await atomic((tx) => [
+      tx.insert(blobs).values({ sha256, sizeBytes: bytes.byteLength, storageKey: diskStore.storageKey(sha256) }).onConflictDoNothing(),
+      tx.insert(entitlements).values({ orgId, sha256, sourceFilename: `${name}.${d.imageFormat}` }).onConflictDoNothing(),
+      // The title follows the owner while the game is hidden; one that became local (D2) keeps its own.
+      tx.insert(games).values({
+        id: gameId, orgId, title, sortTitle: makeSortTitle(title), year, publisher,
+        remoteLibraryId, remoteTitleId, metadataSource: 'remote',
+      }).onConflictDoUpdate({
+        target: games.id,
+        set: { title, sortTitle: makeSortTitle(title), year, publisher },
+        setWhere: isNotNull(games.remoteLibraryId),
+      }),
+      tx.insert(disks).values({
+        id: diskId, gameId, orgId, ...diskFields, remoteLibraryId, remoteDiskId,
+      }).onConflictDoUpdate({
+        target: disks.id,
+        set: diskFields,
+        // Only an untouched hidden row follows the owner (D2).
+        setWhere: eq(disks.remoteLibraryId, remoteLibraryId),
+      }),
+    ]);
+  } catch (e) {
+    // A Remove deleted the library while the bytes were on their way: the FK (no cascade) refused the rows.
+    if (isFkViolation(e)) return fail('ended');
+    throw e;
+  }
+
+  // A revoke (endRemoteLibrary) that purged while the bytes were on their way would otherwise leave this new row
+  // mountable in an ended library that nothing purges again. Checked after the commit, so either the purge saw
+  // the row or this check sees 'ended'.
+  const [lib] = await db.select({ status: remoteLibraries.status }).from(remoteLibraries)
+    .where(and(eq(remoteLibraries.id, remoteLibraryId), eq(remoteLibraries.orgId, orgId))).limit(1);
+  if (!lib || lib.status === 'ended') {
+    await purgeHidden(orgId, remoteLibraryId);
+    return fail('ended');
+  }
 
   // The previous bytes of a refreshed row: this org no longer needs them unless another disk (or history) does.
   if (existing && existing.sha256 !== sha256) await releaseEntitlements(orgId, [existing.sha256]);

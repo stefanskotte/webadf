@@ -102,7 +102,7 @@ describe('remote library store', () => {
     await closeDb();
     await admin(`drop database if exists ${DB} with (force)`);
   });
-  beforeEach(() => { clearCacheForTests(); ejectSaw.length = 0; });
+  beforeEach(() => { clearCacheForTests(); store.resetFailureCountsForTests(); ejectSaw.length = 0; });
   afterEach(() => { vi.useRealTimers(); });
 
   it('a pasted text that is not a share link is bad_link, and nobody is contacted', async () => {
@@ -141,7 +141,8 @@ describe('remote library store', () => {
     expect(row.addedBy).toBe('u1');
     expect(row.tokenEnc).not.toContain(TOKEN);
     expect(row.tokenEnc).not.toContain('tttt');
-    expect(openToken(row.tokenEnc)).toBe(TOKEN);
+    expect(openToken(row.tokenEnc, id)).toBe(TOKEN);
+    expect(() => openToken(row.tokenEnc, 'another-library')).toThrow();
 
     const t = await store.getRemoteTarget(ORG, id);
     expect(t?.target).toEqual({ origin: 'https://owner.example', pin: PIN, token: TOKEN });
@@ -192,7 +193,15 @@ describe('remote library store', () => {
   it('status follows the answers: unreachable, protocol, rate limited (unchanged), ok; failures are not cached', async () => {
     const id = await addLib('status.example');
     const answer = (r: unknown) => fakeClient({ getJson: vi.fn(async () => r) });
-    await store.remoteCall(ORG, id, 'library', { client: answer({ ok: false, failure: 'unreachable', detail: 'timeout' }) });
+    const down = { ok: false, failure: 'unreachable', detail: 'timeout' };
+    // One blip is returned to the caller but leaves the status alone (spec §4.3: "repeated network failures").
+    expect(await store.remoteCall(ORG, id, 'library', { client: answer(down) })).toEqual(down);
+    expect((await statusOf(id)).status).toBe('ok');
+    // An answer in between resets the run.
+    await store.remoteCall(ORG, id, 'library', { client: answer({ ok: false, failure: 'rate_limited' }) });
+    await store.remoteCall(ORG, id, 'library', { client: answer(down) });
+    expect((await statusOf(id)).status).toBe('ok');
+    await store.remoteCall(ORG, id, 'library', { client: answer(down) });
     expect((await statusOf(id)).status).toBe('unreachable');
     expect((await statusOf(id)).lastError).toBe('unreachable: timeout');
     await store.remoteCall(ORG, id, 'library', { client: answer({ ok: false, failure: 'protocol', detail: 'remote_older' }) });
@@ -267,6 +276,33 @@ describe('remote library store', () => {
     expect(await db.select().from(disks).where(eq(disks.id, 'mine4d'))).toHaveLength(1);
     // Blobs stay for the GC
     expect(await db.select().from(blobs).where(eq(blobs.sha256, sha(2)))).toHaveLength(1);
+  });
+
+  it('purge leaves a local disk on its way into a board that still holds a hidden one', async () => {
+    const id = await addLib('busy.example');
+    await seedHidden(id, 6);
+    const db = getDb();
+    await db.insert(blobs).values({ sha256: sha(60), sizeBytes: 10, storageKey: sha(60) });
+    await db.insert(games).values({ id: 'lg60', orgId: ORG, title: 'L', sortTitle: 'l' });
+    await db.insert(disks).values({ id: 'ld60', gameId: 'lg60', orgId: ORG, diskNo: 1, sha256: sha(60), sizeBytes: 10 });
+    await db.insert(devices).values({
+      id: 'dev60', orgId: ORG, name: 'Busy', macAddress: 'AA:BB:CC:DD:EE:60', tokenHash: 'h60',
+      mountedDiskId: 'hd6', desiredDiskId: 'ld60', desiredSha256: sha(60),
+    });
+    // ...and an idle board holding a hidden disk with nothing desired is ejected.
+    await seedHidden(id, 7);
+    await db.insert(devices).values({ id: 'dev70', orgId: ORG, name: 'Idle', macAddress: 'AA:BB:CC:DD:EE:70', tokenHash: 'h70', mountedDiskId: 'hd7' });
+    const [busyBefore] = await db.select().from(devices).where(eq(devices.id, 'dev60'));
+    const [idleBefore] = await db.select().from(devices).where(eq(devices.id, 'dev70'));
+
+    expect(await store.purgeHidden(ORG, id)).toEqual({ ejected: 1, deleted: 2 });
+    const [busy] = await db.select().from(devices).where(eq(devices.id, 'dev60'));
+    expect(busy.desiredDiskId).toBe('ld60');
+    expect(busy.desiredSha256).toBe(sha(60));
+    expect(busy.desiredVersion).toBe(busyBefore.desiredVersion);
+    const [idle] = await db.select().from(devices).where(eq(devices.id, 'dev70'));
+    expect(idle.desiredVersion).toBe(idleBefore.desiredVersion + 1);
+    expect(idle.lastDiskId).toBeNull();
   });
 
   it('remove purges then deletes the library; another org cannot remove it', async () => {
