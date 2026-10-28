@@ -163,7 +163,9 @@ test('two orgs: share, claim, browse, download, mount, write (D2), unshare, revo
   await hydrated(rob, `mount-${a.diskId}`);
   const mount1 = rob.waitForResponse((r) => r.url().includes(`/api/remote/${libId}/disks/${a.diskId}/mount`));
   await rob.getByTestId(`mount-${a.diskId}`).click();
-  expect((await mount1).status()).toBe(200);
+  // Seen once locally (2026-10-28) as a 404 that did not repeat; the body says which of the route's 404s it was.
+  const mounted = await mount1;
+  expect(mounted.status(), await mounted.text()).toBe(200);
   const held = await boardHolds(request, token, deviceId);
   expect(held.sha256).toBe(a.sha256);
   const [hidden1] = await getDb().select().from(disks).where(eq(disks.id, held.diskId));
@@ -213,7 +215,8 @@ test('two orgs: share, claim, browse, download, mount, write (D2), unshare, revo
   await hydrated(rob, `mount-${a2DiskId}`);
   const mount2 = rob.waitForResponse((r) => r.url().includes(`/api/remote/${libId}/disks/${a2DiskId}/mount`));
   await rob.getByTestId(`mount-${a2DiskId}`).click();
-  expect((await mount2).status()).toBe(200);
+  const mounted2 = await mount2;
+  expect(mounted2.status(), await mounted2.text()).toBe(200);
   const held2 = await boardHolds(request, token, deviceId);
   expect(held2.sha256).toBe(a2sha);
   expect(await getDb().select({ id: disks.id }).from(disks)

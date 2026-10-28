@@ -1485,6 +1485,12 @@ arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **Sharing on the hosted site -- VERIFIED 2026-10-28.** Two @example.test orgs on webadf.vercel.app, over real HTTPS
+  to itself: `BASE_URL=https://webadf.vercel.app E2E_SIGNUP_GAP_MS=3000 pnpm exec playwright test e2e/sharing.spec.ts
+  e2e/sharing-owner.spec.ts --project=desktop` -> 3/3 (owner UI; /api/shares; share, claim, browse, download, mount on
+  a simulated board, first write -> own copy, unshare, revoke, link reuse refused). Teardown left 0 test users, shares,
+  remote libraries, hidden games. The specs now check links/hosts against BASE_URL (73baaae). Open: one LOCAL run saw
+  the remote mount answer 404 once (not repeated in 3 re-runs, trace lost); the spec now prints the body on failure.
 - **Reorganize the Settings page -- SHIPPED 2026-10-28 (5e90908).** Operator's reason: mixed ownership; chose tabs over
   one grouped page because more settings are coming. /settings = Account (Preferences, Sign-in & password, Firmware
   updates, Delete account; keeps the section list), /settings/library = Sharing (full width), /settings/server = About
