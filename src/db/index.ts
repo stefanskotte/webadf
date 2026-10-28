@@ -14,6 +14,7 @@ import * as stepUp from './schema/step-up';
 import * as transfers from './schema/transfers';
 import * as amigaUploads from './schema/amiga-uploads';
 import * as userPrefs from './schema/user-prefs';
+import * as sharing from './schema/sharing';
 
 // `authSchema` (the `pgSchema('auth')` object itself) isn't a table — drop it
 // so drizzle's schema map only contains the actual tables/relations.
@@ -21,7 +22,7 @@ const { authSchema: _authPgSchema, ...authTables } = authModule;
 void _authPgSchema;
 
 const schema = {
-  ...catalog, ...authTables, ...devices, ...tosec, ...openretro, ...collections, ...demozoo, ...diskHistory, ...firmware, ...stepUp, ...transfers, ...amigaUploads, ...userPrefs,
+  ...catalog, ...authTables, ...devices, ...tosec, ...openretro, ...collections, ...demozoo, ...diskHistory, ...firmware, ...stepUp, ...transfers, ...amigaUploads, ...userPrefs, ...sharing,
 };
 export type Db = NodePgDatabase<typeof schema>;
 
