@@ -1,6 +1,24 @@
 // src/lib/files/ops.db.test.ts
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Client } from 'pg';
+
+// The seam for "the source changed between the copy and the delete": applyDiskEdit passes through untouched, and
+// after the next successful edit runs `afterNextEdit` once (with the real applyDiskEdit), before runOp goes on.
+const seam = vi.hoisted(() => ({
+  afterNextEdit: null as null | ((real: typeof import('@/lib/disk-write').applyDiskEdit) => Promise<void>),
+}));
+vi.mock('@/lib/disk-write', async (importOriginal) => {
+  const m = await importOriginal<typeof import('@/lib/disk-write')>();
+  return {
+    ...m,
+    applyDiskEdit: async (...a: Parameters<typeof m.applyDiskEdit>) => {
+      const r = await m.applyDiskEdit(...a);
+      const hook = seam.afterNextEdit;
+      if (r.ok && hook) { seam.afterNextEdit = null; await hook(m.applyDiskEdit); }
+      return r;
+    },
+  };
+});
 
 const base = process.env.TEST_DATABASE_URL!;
 const DB = 'webadf_files_ops_test';
@@ -19,7 +37,7 @@ const { devices } = await import('@/db/schema/devices');
 const { diskVersions } = await import('@/db/schema/disk-history');
 const { diskStore } = await import('@/lib/storage');
 const { formatVolume } = await import('@/lib/adffs/format');
-const { addFile, makeDirectory } = await import('@/lib/adffs/write');
+const { addFile, makeDirectory, applyBatch } = await import('@/lib/adffs/write');
 const { ROOT_BLOCK } = await import('@/lib/adffs/constants');
 const { readVolume, readUsage, blocksForFile } = await import('@/lib/adffs');
 const { parsePath } = await import('./path');
@@ -83,7 +101,13 @@ beforeAll(async () => {
 
   let intl = formatVolume({ filesystem: 'FFS', volumeName: 'Intl', intl: true });
   intl = must(addFile(intl, ROOT_BLOCK, 'Grüße', new TextEncoder().encode('hallo')));
+  intl = must(applyBatch([
+    { op: 'mkdir', parentPath: '', name: 'Tree' }, { op: 'add', parentPath: 'Tree', name: 'Leaf', bytes: new TextEncoder().encode('leaf') },
+    { op: 'mkdir', parentPath: '', name: 'Prot' }, { op: 'add', parentPath: '', name: 'Moving', bytes: new TextEncoder().encode('abc') },
+  ])(intl));
   await seedDisk('g4', 'Intl', 'd4', 1, intl);
+  await seedDisk('g5', 'Spare', 'd5', 1, formatVolume({ filesystem: 'FFS', volumeName: 'Spare' }));
+  await seedDisk('g6', 'Gone', 'd6', 1, formatVolume({ filesystem: 'OFS', volumeName: 'Gone' }));
 });
 afterAll(async () => { await closeDb(); await admin(`drop database if exists ${DB} with (force)`); });
 
@@ -186,5 +210,47 @@ describe('keepBothName', () => {
     expect(keepBothName('ReadMe', t)).toBe('ReadMe_2');
     expect(keepBothName('a.txt', t)).toBe('a_1.txt');
     expect(keepBothName('x'.repeat(30), () => false).length).toBeLessThanOrEqual(30);
+  });
+});
+
+describe('fix round 1', () => {
+  const text = async (path: string) => new TextDecoder().decode((await readLibraryFile(ctx, P(path)))!.bytes);
+  it('carries a file\'s and a folder\'s protection bits (p set, d cleared) to the copy', async () => {
+    await runOp(ctx, { op: 'protect', sources: ['LIBRARY:/g4/d4/Grüße', 'LIBRARY:/g4/d4/Prot'], protection: 0x20 | 0x01 });
+    expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g4/d4/Grüße', 'LIBRARY:/g4/d4/Prot'], dest: 'LIBRARY:/g5/d5', onClash: 'ask' }))
+      .toMatchObject({ kind: 'done', items: [{ ok: true }, { ok: true }] });
+    const l = (await listLibrary(ctx, P('LIBRARY:/g5/d5')))!;
+    expect(['Grüße', 'Prot'].map((n) => l.entries.find((e) => e.name === n)?.protection)).toEqual(['--p-rwe-', '--p-rwe-']);
+  });
+  it('moves a non-empty folder between disks whole, and it is gone from the source', async () => {
+    expect((await runOp(ctx, { op: 'move', sources: ['LIBRARY:/g4/d4/Tree'], dest: 'LIBRARY:/g5/d5', onClash: 'ask' })).kind).toBe('done');
+    expect(await text('LIBRARY:/g5/d5/Tree/Leaf')).toBe('leaf');
+    expect(await listLibrary(ctx, P('LIBRARY:/g4/d4/Tree'))).toBeNull();
+  });
+  it('keeps an original that changed after it was copied: "copied, but the original could not be removed"', async () => {
+    seam.afterNextEdit = async (real) => {   // the copy into d5 just landed; now a board saves new bytes over d4's Moving
+      const r = await real('o1', 'd4', applyBatch([{ op: 'replace', parentPath: '', name: 'Moving', bytes: new TextEncoder().encode('xyz') }]));
+      if (!r.ok) throw new Error(r.reason);
+    };
+    expect(await runOp(ctx, { op: 'move', sources: ['LIBRARY:/g4/d4/Moving'], dest: 'LIBRARY:/g5/d5', onClash: 'ask' })).toEqual({
+      kind: 'done', items: [{ source: 'LIBRARY:/g4/d4/Moving', ok: false, refusal: { code: 'conflict', detail: 'copied, but the original could not be removed' } }] });
+    expect(seam.afterNextEdit).toBeNull();
+    expect(await text('LIBRARY:/g5/d5/Moving')).toBe('abc');
+    expect(await text('LIBRARY:/g4/d4/Moving')).toBe('xyz');
+  });
+  it('refuses replacing a file with itself as name_exists, not cycle', async () => {
+    const s = await sha('d5');
+    expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g5/d5/Moving'], dest: 'LIBRARY:/g5/d5', onClash: 'replace' })).toEqual({
+      kind: 'done', items: [{ source: 'LIBRARY:/g5/d5/Moving', ok: false, refusal: { code: 'name_exists', detail: 'same file' } }] });
+    expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g5/d5/Tree'], dest: 'LIBRARY:/g5/d5', onClash: 'replace' })).toEqual({
+      kind: 'done', items: [{ source: 'LIBRARY:/g5/d5/Tree', ok: false, refusal: { code: 'cycle' } }] });   // a folder stays cycle
+    expect(await sha('d5')).toBe(s);
+  });
+  it('a disk whose blob is gone is refused blob_unavailable 503, not thrown', async () => {
+    await diskStore.remove(await sha('d6'));
+    expect(await runOp(ctx, { op: 'makedir', dest: 'LIBRARY:/g6/d6', name: 'X' }))
+      .toEqual({ kind: 'refused', status: 503, refusal: { code: 'blob_unavailable' } });
+    expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g5/d5/Moving'], dest: 'LIBRARY:/g6/d6', onClash: 'ask' }))
+      .toEqual({ kind: 'refused', status: 503, refusal: { code: 'blob_unavailable' } });
   });
 });

@@ -7,7 +7,7 @@
 // earlier read: applyDiskEdit hands the edit whatever the store holds now, and a path is what survives in between.
 import {
   applyBatch, blocksForFile, blocksForPlan, deleteEntry, moveEntry, readFile, readUsage, readVolume, renameEntry,
-  setComment, setProtection, type AdfEntry, type BatchOp, type CostItem, type WriteResult,
+  setComment, setProtection, type AdfEntry, type BatchOp, type CostItem, type WriteError, type WriteResult,
 } from '@/lib/adffs';
 import { sameName } from '@/lib/adffs/write';
 import { applyDiskEdit, type DiskEditOutcome } from '@/lib/disk-write';
@@ -125,7 +125,7 @@ function checkName(name: string) {
 /** adffs stores a comment's characters as bytes, so the engine is the one place that keeps them Latin-1. */
 function checkComment(comment: string) {
   if (comment.length > AMIGA_COMMENT_MAX) refuse('comment_too_long', 400, `at most ${AMIGA_COMMENT_MAX} characters`);
-  if (/[^ -~ -ÿ]/.test(comment)) refuse('bad_name', 400, 'comment');
+  if (/[^\x20-\x7E\xA0-\xFF]/.test(comment)) refuse('bad_name', 400, 'comment');
 }
 
 const chain = (...steps: Step[]): Step => (adf) => {
@@ -186,15 +186,15 @@ function protectionBits(s: string): number {
   return bits;
 }
 
-function walk(d: ResolvedDisk, e: AdfEntry, rel: string[], out: PlanItem[]) {
+function walk(bytes: Uint8Array, e: AdfEntry, rel: string[], out: PlanItem[]) {
   checkName(e.name);
   const base = { rel, kind: e.kind, date: e.modifiedAt, protection: protectionBits(e.protection), comment: e.comment };
   if (e.kind === 'dir') {
     out.push(base);
-    for (const c of e.children) walk(d, c, [...rel, c.name], out);
+    for (const c of e.children) walk(bytes, c, [...rel, c.name], out);
     return;
   }
-  const f = readFile(d.bytes, e.block);
+  const f = readFile(bytes, e.block);
   if (!f?.complete) refuse('failed', 500, `${e.name} cannot be read whole`);
   out.push({ ...base, bytes: f.bytes });
 }
@@ -251,7 +251,7 @@ async function copyOrMove(ctx: FsCtx, req: Extract<OpRequest, { op: 'copy' | 'mo
 
   const fs = dd.info.filesystem!;
   const deletes: Step[] = []; const moves: Step[] = []; const adds: PlanItem[] = [];
-  const removeAfter: Src[] = [];
+  const removeAfter: (Src & { copied: PlanItem[] })[] = [];
   let freed = 0;
   const taken = (n: string) => dest.children.some((c) => same(c.name, n)) || placed.some((p) => same(p, n));
   for (const p of planned) {
@@ -265,9 +265,10 @@ async function copyOrMove(ctx: FsCtx, req: Extract<OpRequest, { op: 'copy' | 'mo
       }
       // Everything that can refuse this item runs before any of its steps is queued.
       const mine: PlanItem[] = [];
-      if (!(move && p.local)) walk(p.d, p.hit.entry, [name], mine);
+      if (!(move && p.local)) walk(p.d.bytes, p.hit.entry, [name], mine);
       if (p.clash && req.onClash === 'replace') {
         // Deleting what the source sits inside (or is) would delete the source with it.
+        if (p.local && p.clash.block === p.hit.entry.block && p.clash.kind === 'file') refuse('name_exists', 409, 'same file');
         if (p.local && isWithin(p.loc.path, childOf(destLoc.path, p.clash.name), same)) refuse('cycle', 400);
         deletes.push(onEntry([...destLoc.names, p.clash.name], (adf, h) => deleteEntry(adf, h.parentBlock, h.entry.block)));
         freed += blocksOf(p.clash, fs);
@@ -280,7 +281,7 @@ async function copyOrMove(ctx: FsCtx, req: Extract<OpRequest, { op: 'copy' | 'mo
         return;
       }
       adds.push(...mine);
-      if (move) removeAfter.push(p);
+      if (move) removeAfter.push({ ...p, copied: mine });
     });
     results.set(p.raw, item);
   }
@@ -306,13 +307,34 @@ async function copyOrMove(ctx: FsCtx, req: Extract<OpRequest, { op: 'copy' | 'mo
   // A move between disks: the copies are written, so now each source disk loses its originals, one edit per disk.
   for (const [d, list] of groupBy(removeAfter, (s) => s.d)) {
     try {
-      await edit(ctx, d, chain(...deepestFirst(list).map((s) => onEntry(s.loc.names, (adf, h) => deleteEntry(adf, h.parentBlock, h.entry.block)))));
+      await edit(ctx, d, chain(...deepestFirst(list).map((s) => onEntry(s.loc.names, (adf, h) => (
+        stillAsCopied(adf, h, s) ? deleteEntry(adf, h.parentBlock, h.entry.block) : { ok: false, reason: CONFLICT })))));
     } catch (e) {
       if (!(e instanceof Refused)) throw e;
       for (const s of list) results.set(s.raw, { source: s.raw, ok: false, refusal: { code: e.refusal.code, detail: 'copied, but the original could not be removed' } });
     }
   }
   return { kind: 'done', items: req.sources.map((s) => results.get(s)!) };
+}
+
+// Not an adffs WriteError: the engine's own refusal, which applyDiskEdit passes through and fromEdit maps to `conflict`.
+const CONFLICT = 'conflict' as WriteError;
+
+/**
+ * The original about to be deleted is exactly what was copied: the same header block, and a fresh walk of it gives the
+ * same names, bytes, dates, bits and comments. The copy was read from the snapshot loadDisk took; anything saved to the
+ * source since (a board's write, another tab) would otherwise be deleted without ever having been copied.
+ */
+function stillAsCopied(adf: Uint8Array, h: Hit, s: { hit: Hit; copied: PlanItem[] }): boolean {
+  if (h.entry.block !== s.hit.entry.block) return false;
+  const now: PlanItem[] = [];
+  try { walk(adf, h.entry, s.copied[0].rel, now); } catch (e) { if (e instanceof Refused) return false; throw e; }
+  const sameBytes = (a?: Uint8Array, b?: Uint8Array) => (!a && !b) || (!!a && !!b && a.length === b.length && a.every((x, i) => x === b[i]));
+  return now.length === s.copied.length && now.every((n, i) => {
+    const c = s.copied[i];
+    return n.rel.join('/') === c.rel.join('/') && n.kind === c.kind && n.protection === c.protection && n.comment === c.comment
+      && n.date?.getTime() === c.date?.getTime() && sameBytes(n.bytes, c.bytes);
+  });
 }
 
 function groupBy<T, K>(xs: T[], key: (x: T) => K): Map<K, T[]> {
