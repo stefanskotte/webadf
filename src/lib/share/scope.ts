@@ -20,8 +20,8 @@ export async function scopedCollectionIds(auth: ShareAuth): Promise<string[]> {
   return rows.map((r) => r.id);
 }
 
-/** The scope test, evaluated at the moment of the request: own org, never a hidden remote copy, and shared. */
-function gameInScope(auth: ShareAuth) {
+/** The scope test (a WHERE over `games`), evaluated at the moment of the request: own org, never a hidden remote copy, and shared. */
+export function gameInScope(auth: ShareAuth) {
   const base = and(eq(games.orgId, auth.orgId), isNull(games.remoteLibraryId));
   if (auth.everything) return base;
   return and(base, exists(
