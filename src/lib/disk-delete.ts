@@ -90,7 +90,7 @@ export function entitlementsToKeep(
  * fetch, because the entitlement IS the access boundary those paths check.
  * Nor while the org's disk history still names it (entitlementsToKeep).
  */
-async function releaseEntitlements(orgId: string, shas: string[]): Promise<string[]> {
+export async function releaseEntitlements(orgId: string, shas: string[]): Promise<string[]> {
   if (shas.length === 0) return [];
   const db = getDb();
   const [stillUsed, inHistory] = await Promise.all([

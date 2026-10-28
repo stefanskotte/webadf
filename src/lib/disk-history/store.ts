@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm';
 import { atomic, type Tx } from '@/db/atomic';
 import { getDb } from '@/db';
-import { blobs, disks, entitlements } from '@/db/schema/catalog';
+import { blobs, disks, entitlements, games } from '@/db/schema/catalog';
 import { diskVersions } from '@/db/schema/disk-history';
 import { diskStore } from '@/lib/storage';
 import type { VersionEntry, VersionKind } from './chain';
@@ -152,6 +152,19 @@ export async function recordVersion(input: RecordInput): Promise<Recorded | null
   // disks.id is NEVER part of this SET -- only sha256 moves.
   stmts.push(tx.update(disks).set({ sha256 })
     .where(and(eq(disks.id, input.diskId), eq(disks.orgId, input.orgId))));
+  // Library sharing D2 (spec §4.2 First write): the first change to a hidden remote disk makes it the person's
+  // own -- an ordinary disk in their library, Uncategorized (a hidden game is in no collection), never refreshed
+  // from the owner again. Its game first (found through the disk, whose game_id never changes), then the disk.
+  // Both no-ops on a local disk. In this transaction, so a purge racing the write either deletes the hidden row
+  // before it (the write then fails on the missing row) or finds it local and leaves it.
+  stmts.push(tx.update(games).set({ remoteLibraryId: null, remoteTitleId: null })
+    .where(and(
+      eq(games.orgId, input.orgId), isNotNull(games.remoteLibraryId),
+      inArray(games.id, tx.select({ id: disks.gameId }).from(disks)
+        .where(and(eq(disks.id, input.diskId), eq(disks.orgId, input.orgId), isNotNull(disks.remoteLibraryId)))),
+    )));
+  stmts.push(tx.update(disks).set({ remoteLibraryId: null, remoteDiskId: null })
+    .where(and(eq(disks.id, input.diskId), eq(disks.orgId, input.orgId), isNotNull(disks.remoteLibraryId))));
 
   return stmts;
   };
