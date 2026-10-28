@@ -579,7 +579,16 @@ export function replaceFile(adf: Uint8Array, entryBlock: number, bytes: Uint8Arr
   const exts = blocks.slice(dataCount);
 
   writeDataBlocks(out, data, bytes, entryBlock, boot.filesystem, perBlock);
+  // writeFileHeader stamps now and clears the comment (right for a NEW file);
+  // a replace keeps the entry's own date and comment, so carry the raw bytes
+  // (date 420..431, comment 328..407) across the rewrite and re-checksum.
+  const hs = entryBlock * BLOCK_BYTES;
+  const keptDate = adf.slice(hs + 420, hs + 432);
+  const keptComment = adf.slice(hs + 328, hs + 408);
   writeFileHeader(out, entryBlock, parentBlock, name, bytes.length, data.slice(0, HASH_TABLE_SIZE), exts[0] ?? 0);
+  out.set(keptDate, hs + 420);
+  out.set(keptComment, hs + 328);
+  recheck(out, entryBlock);
   writeExtensionBlocks(out, exts, data, entryBlock);
   return { ok: true, adf: out };
 }
