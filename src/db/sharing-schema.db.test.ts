@@ -52,11 +52,12 @@ describe('library sharing schema', () => {
 
   it('claim code and token hashes are unique, nulls are not', async () => {
     const db = getDb();
-    const mk = (id: string, code: string | null) => ({
-      id, orgId: ORG, label: id, claimCodeHash: code, claimExpiresAt: new Date(), createdBy: 'u1',
+    const mk = (id: string, code: string | null, token: string | null = null) => ({
+      id, orgId: ORG, label: id, claimCodeHash: code, tokenHash: token, claimExpiresAt: new Date(), createdBy: 'u1',
     });
-    await db.insert(libraryShares).values([mk('u1', null), mk('u2', null), mk('u3', 'b'.repeat(64))]);
+    await db.insert(libraryShares).values([mk('u1', null), mk('u2', null), mk('u3', 'b'.repeat(64), 'c'.repeat(64))]);
     await expect(db.insert(libraryShares).values(mk('u4', 'b'.repeat(64)))).rejects.toThrow();
+    await expect(db.insert(libraryShares).values(mk('u5', null, 'c'.repeat(64)))).rejects.toThrow();
   });
 
   it('a remote library can be pointed at by a game and a disk', async () => {

@@ -1,5 +1,5 @@
 {
-  "id": "483f04ea-9401-4a7e-a937-1ccb03bdc345",
+  "id": "c5bb3e19-627d-4c62-a136-9567ca35b30a",
   "prevId": "82b2f9a1-d809-4758-bb47-cd9aed336ce4",
   "version": "7",
   "dialect": "postgresql",
@@ -1574,6 +1574,21 @@
             },
             {
               "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "games_remote_idx": {
+          "name": "games_remote_idx",
+          "columns": [
+            {
+              "expression": "remote_library_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

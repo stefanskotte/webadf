@@ -48,4 +48,5 @@ CREATE UNIQUE INDEX "library_shares_token_idx" ON "library_shares" USING btree (
 CREATE INDEX "remote_libraries_org_idx" ON "remote_libraries" USING btree ("org_id");--> statement-breakpoint
 ALTER TABLE "disks" ADD CONSTRAINT "disks_remote_library_id_remote_libraries_id_fk" FOREIGN KEY ("remote_library_id") REFERENCES "public"."remote_libraries"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "games" ADD CONSTRAINT "games_remote_library_id_remote_libraries_id_fk" FOREIGN KEY ("remote_library_id") REFERENCES "public"."remote_libraries"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "disks_remote_idx" ON "disks" USING btree ("remote_library_id","remote_disk_id");
+CREATE INDEX "disks_remote_idx" ON "disks" USING btree ("remote_library_id","remote_disk_id");--> statement-breakpoint
+CREATE INDEX "games_remote_idx" ON "games" USING btree ("remote_library_id");

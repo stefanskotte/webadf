@@ -36,7 +36,7 @@ export const remoteLibraries = pgTable('remote_libraries', {
   tokenEnc: text('token_enc').notNull(),
   tlsPin: text('tls_pin'),
   name: text('name').notNull(),
-  status: text('status').notNull().default('ok'),   // 'ok' | 'unreachable' | 'ended' | 'protocol'
+  status: text('status').$type<'ok' | 'unreachable' | 'ended' | 'protocol'>().notNull().default('ok'),
   lastOkAt: timestamp('last_ok_at', { withTimezone: true }),
   lastError: text('last_error'),
   addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
