@@ -1,4 +1,5 @@
 import { headers } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { requireOrg } from '@/lib/session';
 import { auth } from '@/lib/auth';
 import { getUserPrefs } from '@/lib/user-prefs';
@@ -13,6 +14,7 @@ import { SharingSettings } from '@/components/prefs/sharing-settings';
 import { listShares } from '@/lib/share/store';
 import { toShareView } from '@/lib/share/view';
 import { listCollections } from '@/lib/collections';
+import { expiredSignInHref, isSessionNotFresh } from '@/lib/sign-in-return';
 
 export const metadata = { title: 'Settings' };
 
@@ -38,10 +40,16 @@ export default async function SettingsPage() {
   const { userId, email, orgId } = await requireOrg();
   const [prefs, sessions, shares, collections] = await Promise.all([
     getUserPrefs(userId),
-    auth.api.listSessions({ headers: await headers() }),
+    // listSessions wants a session younger than Better Auth's freshAge (a day); an older one is still signed in
+    // everywhere else, so send it back through sign-in instead of failing the page.
+    auth.api.listSessions({ headers: await headers() }).catch((err: unknown) => {
+      if (isSessionNotFresh(err)) return null;
+      throw err;
+    }),
     listShares(orgId),
     listCollections(orgId),
   ]);
+  if (!sessions) redirect(expiredSignInHref('/settings'));
   return (
     <div className="px-4 pb-10 pt-6 sm:px-7 lg:grid lg:grid-cols-[240px_minmax(0,860px)] lg:items-start lg:gap-8">
       <aside className="hidden lg:sticky lg:top-6 lg:block lg:self-start">

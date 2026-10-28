@@ -7,8 +7,9 @@ import {
   AUTH_ERROR, AUTH_ERROR_STYLE, AUTH_FIELD, AUTH_FIELD_STYLE, AUTH_FIELD_WRAP, AUTH_FORM, AUTH_H1, AUTH_LABEL, AUTH_SUBMIT,
   AUTH_SUBMIT_STYLE,
 } from '../auth-look';
+import { safeReturnPath } from '@/lib/sign-in-return';
 
-export function SignInForm() {
+export function SignInForm({ expired = false, next = '/' }: { expired?: boolean; next?: string }) {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -25,13 +26,19 @@ export function SignInForm() {
     catch { setError('Could not reach the server. Try again.'); return; }
     finally { setBusy(false); }
     if (err) { setError(authErrorText('in', err)); return; }
-    // "/" sends the person to their chosen start page (src/app/page.tsx).
-    router.push('/');
+    // "/" sends the person to their chosen start page (src/app/page.tsx); an expired session goes back where it was.
+    router.push(safeReturnPath(next));
   }
 
   return (
     <form onSubmit={onSubmit} data-testid="sign-in-form" className={AUTH_FORM}>
       <h1 className={AUTH_H1} style={{ color: 'var(--ink)' }}>Welcome back</h1>
+      {expired && (
+        <p role="status" data-testid="session-expired" className={AUTH_ERROR}
+           style={{ background: 'var(--warning-bg)', color: 'var(--warning-fg)' }}>
+          Your session has expired. Please sign in again.
+        </p>
+      )}
       <div className={AUTH_FIELD_WRAP}>
         <label htmlFor="email" className={AUTH_LABEL} style={{ color: 'var(--ink)' }}>Email</label>
         <input id="email" type="email" autoComplete="email" required value={email}

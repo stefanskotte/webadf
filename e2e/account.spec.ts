@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
-import { user } from '@/db/schema/auth';
+import { session, user } from '@/db/schema/auth';
 import { signUpFresh, runTag } from './helpers';
 import { seedDisk, pairDevice, authHeader, cleanupSeeded, hydrated } from './device-helpers';
 
@@ -134,4 +134,34 @@ test('deleting the account takes the password and DELETE, then removes the libra
   expect((await request.get('/api/device/poll?since=0', { headers: authHeader(token) })).status()).toBe(401);
   await signIn(page, email, password);
   await expect(page).toHaveURL(/\/sign-in/);
+});
+
+// Better Auth's listSessions refuses a session older than freshAge (a day) with SESSION_NOT_FRESH; Settings used to
+// fail the whole page on it (production 2026-10-28, digest 3297751167). Now it goes back through sign-in and returns.
+test('Settings with a day-old session asks for sign-in again and comes back', async ({ page }) => {
+  const { email, password } = await signUpFresh(page);
+  const db = getDb();
+  const [u] = await db.select({ id: user.id }).from(user).where(eq(user.email, email));
+  await db.update(session).set({ createdAt: new Date(Date.now() - 2 * 24 * 3600_000) }).where(eq(session.userId, u.id));
+
+  await page.goto('/settings');
+  await expect(page).toHaveURL(/\/sign-in\?expired=1&next=%2Fsettings/);
+  await expect(page.getByTestId('session-expired')).toHaveText('Your session has expired. Please sign in again.');
+
+  await page.getByLabel('Email').fill(email);
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+});
+
+test('sign-in ignores a next= that leaves the site', async ({ page }) => {
+  const { email, password } = await signUpFresh(page);
+  await page.context().clearCookies();
+  await page.goto('/sign-in?next=%2F%2Fevil.example');
+  await expect(page.getByTestId('session-expired')).toHaveCount(0);
+  await page.getByLabel('Email').fill(email);
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page).toHaveURL(/localhost:\d+\/library/);
 });
