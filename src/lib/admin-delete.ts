@@ -34,8 +34,9 @@ export interface DeleteUserResult {
 
 /**
  * How many OTHER people share an organization with `userId` (across every membership). Self-service delete refuses
- * when this is above zero: deleteUserCascade below removes everything each of the user's organizations owns, which
- * would be the other members' library too. Nothing in the app adds a second member today, so this is 0 in practice.
+ * when this is above zero, so nobody deletes themselves out of a shared library by surprise. (deleteUserCascade
+ * itself only removes organizations the user is the last member of.) Nothing in the app adds a second member today,
+ * so this is 0 in practice.
  */
 export async function otherMemberCount(userId: string): Promise<number> {
   const db = getDb();
@@ -48,7 +49,8 @@ export async function otherMemberCount(userId: string): Promise<number> {
 }
 
 /**
- * Delete a user and everything their organization owns.
+ * Delete a user and everything owned by the organizations they are the last member of. An organization someone else
+ * is still in keeps all of its data; the user just leaves it.
  *
  * ATOMICITY. Every delete below is built up first and then submitted
  * through atomic(): one transaction, all or nothing, results in order. The
@@ -103,7 +105,10 @@ export async function deleteUserCascade(userId: string): Promise<DeleteUserResul
 
   const results = await atomic((tx) => {
   const stmts: PromiseLike<unknown>[] = [];
-  for (const orgId of orgIds) {
+  // Only the organizations this user is the last member of. Another one is the other members' library: the user
+  // leaves it (the member row goes with the user's cascade below) and everything in it stays. Until 2026-10-28 this
+  // looped over every membership, so an admin delete wiped a shared organization's titles, boards and shares.
+  for (const orgId of soleOrgIds) {
     // entitlements first: they reference blobs, and clearing them is what
     // makes a blob reclaimable later by the backlog GC. Never blobs themselves.
     stmts.push(tx.delete(entitlements).where(eq(entitlements.orgId, orgId)));

@@ -1517,8 +1517,9 @@ table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the revie
   share-test** (WEBADF_IMAGE_TAG=share-test in its .env, .env.bak-share is the previous one) -- kept for triage; switch
   back to latest after the next web-* release. **Owed:** A500 bench of the first-write rule (mount a remote disk, save,
   see the own copy); Send to Amiga from a remote disk untested end to end. **Pre-existing bug found (not this
-  branch):** admin delete of a user loops over EVERY org the user belongs to (src/lib/admin-delete.ts, no
-  otherMemberCount guard), wiping a shared org's data -- needs a fix. Deferred minors are listed in the final message
+  branch):** admin delete of a user looped over EVERY org the user belongs to, wiping a shared org's data --
+  **FIXED 2026-10-28**: deleteUserCascade only clears organizations the user is the last member of
+  (src/lib/admin-delete.db.test.ts, RED->GREEN). Deferred minors are listed in the final message
   of the session that built it (ledger deleted).
 - **PaulaNET compression experiments -- PARKED by the operator 2026-10-28 ("an experiment for later").**
   (1) Raw RLE toward the Amiga stalls with real file data (BestWB1.adf) even at a 1973.5 ns cell; single gaps up to
