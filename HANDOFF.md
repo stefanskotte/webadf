@@ -1487,12 +1487,14 @@ first; memory note webadf-dual-pane-file-manager-idea.
 local remote-mount 404; OMV back to `latest` after the next web-* release; the sharing deferred minors.
 (3) **Web app, smaller:** "Put on a disk" from From the Amiga; .lzh dropped onto a disk in Browse; documentation for
 file transfer (Send to Amiga / Transfer 2.1).
-(4) **Hardware:** B10 on the A4000D when it is on the bench; NFC detects rarely since rev B (measure first); rev C
+(4) **Hardware:** NFC detects rarely since rev B (measure first); rev C
 (own RP2350 + antenna port, LWB+ breadboard test when the Mouser parts arrive, keyed I2C + display FFC connectors,
 next-disk button, activity LED, DF0 passthrough).
 (5) **Firmware state:** the bench board is on TEST seq 123 (1.21.1+gc324fbd); leaving TEST needs a release above 123.
-(6) **Open, not scheduled:** the 128x64 setup-screen check on glass; HD bench leftovers (rev B WDATA retest, steps
+(6) **Open, not scheduled:** HD bench leftovers (rev B WDATA retest, steps
 4-7); layered disks (never designed).
+**Closed 2026-10-28 (operator):** B10 -- the board works on the A4000D too; the 128x64 setup screen was confirmed
+by a user.
 **Parked/deferred by the operator:** PaulaNET compression (LZSA2, pre-encode N+1); proof of possession at ingest.
 Entries below marked SHIPPED/FIXED/FOLDED are kept for their history only.
 
@@ -2090,7 +2092,7 @@ Entries below marked SHIPPED/FIXED/FOLDED are kept for their history only.
   Answer the POST at once with a "Joining <SSID>... this network will disappear; watch the board's screen; the
   device appears in the web app when paired" page (flush it before portal_stop()), then associate. On a failed
   association the AP comes back with last_error, as today -- say so on that page too.
-- **Initial setup screen on 128x64 panels** (operator, 2026-10-09): check that the "Setup needed" + SSID screen
+- **CLOSED 2026-10-28: confirmed on a 128x64 panel by a user (operator).** **Initial setup screen on 128x64 panels** (operator, 2026-10-09): check that the "Setup needed" + SSID screen
   (and the other built-in screens: boot, connecting, error) is fully visible on the 1.3" SH1106 and 0.96" SSD1306
   128x64 panels. Built-in screens use the panel's default layout and sit at the top (3ax ruling); verify on glass
   that nothing is cut off and the SSID is readable.
@@ -5474,8 +5476,8 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 ### 3cd. Amiga-upload bench closed; fw 1.20.2 RELEASED (uploads 4.6x faster, 5 s reconnect); Receive renamed Transfer (master e0e525b) -- 2026-10-21
 
 - **Bench (A500, fw 1.19.1 seq 111):** B0 ran (keep window 2 x 16 KB, ooseq 2,920 B; 1.19.1 because the registry
-  refuses rollback). B1-B5, B7, B9 PASS; B6 and B8 SKIPPED by the operator ("I trust you on that"); B10 waits for
-  the A4000D. Results in `.superpowers/sdd/2026-10-19-amiga-to-web-upload/progress.md`. Rates on 1.19.1: 2.3-8.5 KB/s.
+  refuses rollback). B1-B5, B7, B9 PASS; B6 and B8 SKIPPED by the operator ("I trust you on that"); B10 (the A4000D)
+  CLOSED 2026-10-28: the operator reports the board works on the A4000D as well. Results in `.superpowers/sdd/2026-10-19-amiga-to-web-upload/progress.md`. Rates on 1.19.1: 2.3-8.5 KB/s.
 - **Found and fixed (fw 1.20.2+g68b7b8e, TEST seq 114, on the bench board):**
   - The slow uploads were TLS connection loss about every 30 s: tls_write sized writes from altcp_tls's sndbuf,
     which subtracts mbedTLS's expansion ESTIMATE; near a full buffer a 1-byte write became a 37-byte record TCP
