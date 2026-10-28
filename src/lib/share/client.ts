@@ -9,15 +9,16 @@
 //   - The socket connects to that vetted address (lookup pinned); TLS still uses the real host name (SNI and,
 //     unpinned, ordinary certificate verification).
 //   - Redirects are never followed: a 3xx is a bad response. Bodies are capped as they stream; one deadline per call.
-//   - With a pin (the owner runs Caddy's internal CA), the TLS chain must end in exactly the pinned self-signed root,
-//     verified signature by signature, and the leaf must name the host, BEFORE the request -- and the bearer token
-//     in it -- is written.
+//   - With a pin (the owner runs Caddy's internal CA, which does not send its root), the owner's Caddy serves that
+//     root at /.well-known/webadf-root.pem. It is fetched (same address guard, unverified TLS for that one GET, no
+//     token, 16 KB, no redirects), must be self-signed and hash to the pin, and the real request is then verified by
+//     Node against exactly that root (`ca`) with the usual host-name check. Verified roots are cached 1 h per
+//     (origin, pin). A wrong pin means the real request -- and the bearer token in it -- is never sent.
 //   - Failures come back as a few coarse codes; nothing the remote said is passed through as text.
 
 import http from 'node:http';
 import https from 'node:https';
-import tls from 'node:tls';
-import { BlockList, isIP, type LookupFunction, type Socket } from 'node:net';
+import { BlockList, isIP, type LookupFunction } from 'node:net';
 import { createHash, X509Certificate } from 'node:crypto';
 import { isPublicAddress, defaultResolver } from '@/lib/url-fetch';
 import { MAX_DISK_BYTES } from '@/lib/blob-upload';
@@ -31,7 +32,12 @@ export type ShareResult<T> = { ok: true; value: T; etag?: string } | { ok: false
 export type ShareTarget = { origin: string; pin: string | null; token?: string };
 export type ShareTransport = (req: {
   url: URL; method: 'GET' | 'POST'; headers: Record<string, string>; body?: string;
-  address: string; pin: string | null; timeoutMs: number; maxBytes: number;
+  address: string;
+  /** PEM of the only root to trust (a pinned owner); null = the system's roots. */
+  ca: string | null;
+  /** Skip certificate verification. ONLY for fetching the root PEM that is then checked against the pin. */
+  insecureTls?: boolean;
+  timeoutMs: number; maxBytes: number;
 }) => Promise<{ status: number; headers: Record<string, string>; body: Uint8Array }>;
 
 /** Spec §5 / global constraints: listings 2 MB in 10 s; bytes the largest disk the app accepts in 60 s. */
@@ -101,56 +107,44 @@ function bareHost(url: URL): string {
 
 // ------------------------------------------------------------ root pin
 
-function validNow(c: X509Certificate, now: Date): boolean {
-  return new Date(c.validFrom) <= now && now <= new Date(c.validTo);
-}
+/** Where an owner's Caddy serves its internal root (Task 10 adds it to the Caddyfile). */
+export const ROOT_PEM_PATH = '/.well-known/webadf-root.pem';
+const ROOT_PEM_MAX_BYTES = 16 * 1024;
+const ROOT_CACHE_MS = 60 * 60 * 1000;
 
-/**
- * True when `chain` (leaf first, as the server presented it) is a real chain -- each certificate issued AND signed by
- * the next, every issuer a CA, all valid now -- ending in a self-signed root whose DER hashes (SHA-256, base64url) to
- * `pin`. A chain that stops short of a self-signed root never matches, even if the pin is right: the root's
- * certificate is public, so only a verified signature path to it proves anything.
- */
-export function rootPinMatches(chain: X509Certificate[], pin: string, now: Date = new Date()): boolean {
-  if (!pin || chain.length === 0 || chain.length > 10) return false;
+/** The pin of a self-signed CA certificate in `pem` (base64url SHA-256 of its DER), or null when it is not one. */
+export function pinOfRootPem(pem: string): string | null {
   try {
-    for (let i = 0; i < chain.length; i++) {
-      const c = chain[i];
-      if (!validNow(c, now)) return false;
-      const issuer = i + 1 < chain.length ? chain[i + 1] : c;
-      if (i > 0 && !c.ca) return false;
-      if (!c.checkIssued(issuer) || !c.verify(issuer.publicKey)) return false;
-    }
-    const root = chain[chain.length - 1];
-    return createHash('sha256').update(root.raw).digest('base64url') === pin;
+    const c = new X509Certificate(pem);
+    if (!c.ca || !c.checkIssued(c) || !c.verify(c.publicKey)) return null;
+    const now = new Date();
+    if (new Date(c.validFrom) > now || now > new Date(c.validTo)) return null;
+    return createHash('sha256').update(c.raw).digest('base64url');
   } catch {
-    return false;
+    return null;
   }
 }
 
-/** The presented chain, leaf first, from a connected TLS socket. */
-function peerChain(sock: tls.TLSSocket): X509Certificate[] {
-  const out: X509Certificate[] = [];
-  let c: tls.DetailedPeerCertificate | undefined = sock.getPeerCertificate(true);
-  const seen = new Set<string>();
-  while (c && c.raw && out.length < 10) {
-    const fp = c.fingerprint256;
-    if (seen.has(fp)) break; // a self-signed root points at itself
-    seen.add(fp);
-    out.push(new X509Certificate(c.raw));
-    c = c.issuerCertificate;
-  }
-  return out;
+/** True when `pem` is a self-signed CA certificate whose pin is `pin`. */
+export function rootPemMatchesPin(pem: string, pin: string): boolean {
+  return !!pin && pinOfRootPem(pem) === pin;
+}
+
+/** Verified roots, per `${origin} ${pin}`. In memory, per function instance. */
+const rootCache = new Map<string, { pem: string; expires: number }>();
+
+/** Tests only. */
+export function clearShareRootCache(): void {
+  rootCache.clear();
 }
 
 // ------------------------------------------------------------ the transport
 
 /**
- * node:http(s) to the vetted address. Unpinned https: agent:false, lookup pinned, servername = the real host, so the
- * certificate is verified for the name the link gave. Pinned: the TLS socket is made here with
- * rejectUnauthorized:false, the chain is checked against the pin on secureConnect, and only then is the socket handed
- * to the request -- nothing (no token) is written to a server that fails the pin. Plain http only reaches here when
- * the client allowed it (WEBADF_SHARE_TEST_INSECURE=1).
+ * node:http(s) to the vetted address: agent:false, lookup pinned, servername = the real host, so the certificate is
+ * verified for the name the link gave (an IP origin is checked against the certificate's IP SANs). `ca` replaces the
+ * system roots with the one pinned root. `insecureTls` is only ever set for the root-PEM fetch. Plain http only
+ * reaches here when the client allowed it (WEBADF_SHARE_TEST_INSECURE=1).
  */
 export const nodeShareTransport: ShareTransport = (req) => new Promise((resolve, reject) => {
   const isHttps = req.url.protocol === 'https:';
@@ -173,7 +167,11 @@ export const nodeShareTransport: ShareTransport = (req) => new Promise((resolve,
     settled = true;
     clearTimeout(timer);
     request?.destroy();
-    reject(e instanceof ShareTransportError ? e : new ShareTransportError('network', e instanceof Error ? e.message : String(e)));
+    if (e instanceof ShareTransportError) { reject(e); return; }
+    const code = String((e as { code?: unknown })?.code ?? '');
+    // Node/OpenSSL certificate failures: untrusted chain, wrong host name, expired, self-signed.
+    const kind = /CERT|SIGNATURE|ISSUER|ALTNAME|SELF_SIGNED/.test(code) ? 'certificate' : 'network';
+    reject(new ShareTransportError(kind, e instanceof Error ? e.message : String(e)));
   };
   const timer = setTimeout(() => fail(new ShareTransportError('timeout')), req.timeoutMs);
 
@@ -189,40 +187,17 @@ export const nodeShareTransport: ShareTransport = (req) => new Promise((resolve,
     headers,
   };
 
-  if (isHttps && req.pin) {
-    const pin = req.pin;
-    // No agent: ClientRequest then calls createConnection with a callback, and waits for it.
-    options.createConnection = ((_opts: unknown, oncreate: (err: Error | null, socket?: Socket) => void) => {
-      // CA verification is replaced, not dropped: rootPinMatches + checkServerIdentity below run before any write.
+  options.agent = false;
+  options.lookup = pinned;
+  if (isHttps) {
+    if (servername) options.servername = servername;
+    if (req.insecureTls) {
+      // Only for the root PEM, which is then checked against the pin before anything is trusted or sent.
       // nosemgrep: problem-based-packs.insecure-transport.js-node.bypass-tls-verification.bypass-tls-verification
-      const sock = tls.connect({ host: req.address, port, servername, rejectUnauthorized: false, ALPNProtocols: ['http/1.1'] });
-      let done = false;
-      sock.once('secureConnect', () => {
-        if (done) return;
-        done = true;
-        let good = false;
-        try {
-          // The pinned root vouches for the chain; the leaf must still be for the host the link named.
-          good = rootPinMatches(peerChain(sock), pin) && tls.checkServerIdentity(host, sock.getPeerCertificate()) === undefined;
-        } catch { good = false; }
-        if (!good) {
-          sock.destroy();
-          fail(new ShareTransportError('certificate'));
-          return;
-        }
-        oncreate(null, sock);
-      });
-      sock.once('error', (e) => {
-        if (done) return;
-        done = true;
-        fail(e);
-      });
-      return undefined;
-    }) as unknown as https.RequestOptions['createConnection'];
-  } else {
-    options.agent = false;
-    options.lookup = pinned;
-    if (isHttps && servername) options.servername = servername;
+      options.rejectUnauthorized = false;
+    } else if (req.ca) {
+      options.ca = [req.ca];
+    }
   }
 
   const r = (isHttps ? https : http).request(options);
@@ -316,6 +291,37 @@ export function shareClient(deps: { resolve?: typeof defaultResolver; transport?
     return { ok: true, address: addrs[0].address };
   }
 
+  /** The pinned root's PEM for this origin, fetched and checked against the pin, or the failure. Never sends a token. */
+  async function pinnedRoot(origin: URL, pin: string, address: string, deadline: Promise<never>, timeoutMs: number)
+    : Promise<{ ok: true; pem: string } | Fail> {
+    const key = `${origin.origin} ${pin}`;
+    const hit = rootCache.get(key);
+    if (hit && hit.expires > Date.now()) return { ok: true, pem: hit.pem };
+    let res: Awaited<ReturnType<ShareTransport>>;
+    try {
+      res = await Promise.race([
+        transport({
+          url: new URL(ROOT_PEM_PATH, origin), method: 'GET',
+          headers: { 'user-agent': webadfUserAgent(), accept: 'application/x-pem-file, */*', 'accept-encoding': 'identity' },
+          address, ca: null, insecureTls: true, timeoutMs, maxBytes: ROOT_PEM_MAX_BYTES,
+        }),
+        deadline,
+      ]);
+    } catch (e) {
+      if (e instanceof ShareTransportError && e.kind !== 'too_large' && e.kind !== 'certificate') return failure('unreachable', e.kind);
+      if (!(e instanceof ShareTransportError)) return failure('unreachable', 'network');
+      return failure('unreachable', 'certificate');
+    }
+    if (res.status >= 500) return failure('unreachable', `status_${res.status}`);
+    if (res.status !== 200 || !(res.body instanceof Uint8Array) || res.body.byteLength > ROOT_PEM_MAX_BYTES) {
+      return failure('unreachable', 'certificate');
+    }
+    const pem = new TextDecoder().decode(res.body);
+    if (!rootPemMatchesPin(pem, pin)) return failure('unreachable', 'certificate');
+    rootCache.set(key, { pem, expires: Date.now() + ROOT_CACHE_MS });
+    return { ok: true, pem };
+  }
+
   async function call(
     t: ShareTarget, method: 'GET' | 'POST', path: string,
     o: { limits: { maxBytes: number; timeoutMs: number }; accept: string; body?: string; auth: boolean },
@@ -333,6 +339,13 @@ export function shareClient(deps: { resolve?: typeof defaultResolver; transport?
       const where = await vetHost(url, p, deadline);
       if (!where.ok) return where;
 
+      let ca: string | null = null;
+      if (t.pin && url.protocol === 'https:') {
+        const root = await pinnedRoot(origin.url, t.pin, where.address, deadline, o.limits.timeoutMs);
+        if (!root.ok) return root;
+        ca = root.pem;
+      }
+
       const headers: Record<string, string> = {
         'user-agent': webadfUserAgent(),
         accept: o.accept,
@@ -346,7 +359,7 @@ export function shareClient(deps: { resolve?: typeof defaultResolver; transport?
       let res: Awaited<ReturnType<ShareTransport>>;
       try {
         res = await Promise.race([
-          transport({ url, method, headers, body: o.body, address: where.address, pin: t.pin, timeoutMs: o.limits.timeoutMs, maxBytes: o.limits.maxBytes }),
+          transport({ url, method, headers, body: o.body, address: where.address, ca, timeoutMs: o.limits.timeoutMs, maxBytes: o.limits.maxBytes }),
           deadline,
         ]);
       } catch (e) {
@@ -431,3 +444,42 @@ export function shareClient(deps: { resolve?: typeof defaultResolver; transport?
 }
 
 export type ShareClient = ReturnType<typeof shareClient>;
+
+/**
+ * The pin for `origin`'s own internal root (Task 4: the owner's instance pins itself into its links). Fetches
+ * <origin>/.well-known/webadf-root.pem through the guarded transport (unverified TLS, no token). Returns null when
+ * that URL answers 404 -- an instance with a publicly trusted certificate serves no such file. Throws on anything
+ * else (unreachable, refused address, not a self-signed CA), so the caller can tell "no pin needed" from "broken".
+ */
+export async function fetchLocalRootPin(
+  origin: string,
+  deps: { resolve?: typeof defaultResolver; transport?: ShareTransport; env?: ShareEnv } = {},
+): Promise<string | null> {
+  const resolve = deps.resolve ?? defaultResolver;
+  const transport = deps.transport ?? nodeShareTransport;
+  const p = policyFrom(deps.env ?? process.env);
+  const o = vetOrigin(origin, p);
+  if (!o.ok) throw new Error(`root pin: ${o.detail ?? o.failure}`);
+  if (o.url.protocol !== 'https:') return null;
+  const host = bareHost(o.url);
+  let address: string;
+  if (isIP(host)) {
+    address = host;
+  } else {
+    const addrs = await resolve(host);
+    if (addrs.length === 0) throw new Error('root pin: dns');
+    if (!addrs.every((a) => addressAllowed(a.address, p))) throw new Error('root pin: address_not_allowed');
+    address = addrs[0].address;
+  }
+  if (!addressAllowed(address, p)) throw new Error('root pin: address_not_allowed');
+  const res = await transport({
+    url: new URL(ROOT_PEM_PATH, o.url), method: 'GET',
+    headers: { 'user-agent': webadfUserAgent(), accept: 'application/x-pem-file, */*', 'accept-encoding': 'identity' },
+    address, ca: null, insecureTls: true, timeoutMs: SHARE_LIMITS.listing.timeoutMs, maxBytes: ROOT_PEM_MAX_BYTES,
+  });
+  if (res.status === 404) return null;
+  if (res.status !== 200) throw new Error(`root pin: status_${res.status}`);
+  const pin = pinOfRootPem(new TextDecoder().decode(res.body));
+  if (!pin) throw new Error('root pin: not a self-signed CA certificate');
+  return pin;
+}

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,7 +8,8 @@ import https from 'node:https';
 import { createHash, X509Certificate } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import {
-  shareClient, rootPinMatches, nodeShareTransport, ShareTransportError, SHARE_LIMITS,
+  shareClient, nodeShareTransport, ShareTransportError, SHARE_LIMITS, ROOT_PEM_PATH,
+  rootPemMatchesPin, pinOfRootPem, fetchLocalRootPin, clearShareRootCache,
   type ShareTransport,
 } from './client';
 import type { ResolvedAddress } from '@/lib/url-fetch';
@@ -194,10 +195,39 @@ describe('requests', () => {
     expect(SHARE_LIMITS.bytes).toEqual({ maxBytes: MAX_DISK_BYTES, timeoutMs: 60_000 });
   });
 
-  it('passes the pin to the transport', async () => {
+  it('pinned: fetches the root PEM first (unverified, no token), then trusts only that root', async () => {
+    clearShareRootCache();
+    const h = harness({
+      reply: (req) => req.url.pathname === ROOT_PEM_PATH
+        ? { status: 200, headers: {}, body: enc.encode(pem.rootA) }
+        : json(200, { name: 'Rob' }),
+    });
+    const r = await h.client.getJson(
+      { origin: 'https://owner.example.com', pin: b64sha(certs.rootA.raw), token: TOKEN }, 'library');
+    expect(r).toEqual({ ok: true, value: { name: 'Rob' } });
+    expect(h.calls).toHaveLength(2);
+    expect(h.calls[0].url.toString()).toBe(`https://owner.example.com${ROOT_PEM_PATH}`);
+    expect(h.calls[0]).toMatchObject({ insecureTls: true, ca: null, maxBytes: 16 * 1024, address: PUBLIC_IP });
+    expect(h.calls[0].headers.authorization).toBeUndefined();
+    expect(h.calls[1].insecureTls).toBeFalsy();
+    expect(h.calls[1].ca).toBe(pem.rootA);
+    expect(h.calls[1].headers.authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it('pinned: a root PEM behind a redirect is refused', async () => {
+    clearShareRootCache();
+    const h = harness({ reply: { status: 302, headers: { location: 'https://evil.example/root.pem' }, body: new Uint8Array() } });
+    expect(await h.client.ping({ origin: 'https://owner.example.com', pin: b64sha(certs.rootA.raw) }))
+      .toEqual({ ok: false, failure: 'unreachable', detail: 'certificate' });
+    expect(h.calls).toHaveLength(1);
+  });
+
+  it('unpinned: no root fetch, system roots', async () => {
     const h = harness();
-    await h.client.ping({ origin: 'https://owner.example.com', pin: 'P'.repeat(43) });
-    expect(h.calls[0].pin).toBe('P'.repeat(43));
+    await h.client.ping(OWNER);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0].ca).toBeNull();
+    expect(h.calls[0].insecureTls).toBeFalsy();
   });
 
   it('claim POSTs JSON with protocol 1 and no Authorization', async () => {
@@ -397,41 +427,143 @@ beforeAll(() => {
 
 afterAll(() => { if (dir) rmSync(dir, { recursive: true, force: true }); });
 
-describe('rootPinMatches', () => {
-  it('matches a chain that ends in the pinned self-signed root', () => {
+describe('root PEM pin helpers', () => {
+  it('a self-signed CA matching the pin', () => {
     const pinA = b64sha(certs.rootA.raw);
-    expect(rootPinMatches([certs.leaf, certs.inter, certs.rootA], pinA)).toBe(true);
+    expect(pinOfRootPem(pem.rootA)).toBe(pinA);
+    expect(rootPemMatchesPin(pem.rootA, pinA)).toBe(true);
   });
 
-  it('refuses a different root', () => {
-    expect(rootPinMatches([certs.leaf, certs.inter, certs.rootA], b64sha(certs.rootB.raw))).toBe(false);
-    expect(rootPinMatches([certs.rootB], b64sha(certs.rootA.raw))).toBe(false);
+  it('refuses a different root, an intermediate, a leaf, garbage and an empty pin', () => {
+    expect(rootPemMatchesPin(pem.rootA, b64sha(certs.rootB.raw))).toBe(false);
+    expect(rootPemMatchesPin(pem.inter, b64sha(certs.inter.raw))).toBe(false);
+    expect(rootPemMatchesPin(pem.leaf, b64sha(certs.leaf.raw))).toBe(false);
+    expect(rootPemMatchesPin('-----BEGIN CERTIFICATE-----\nnope\n-----END CERTIFICATE-----\n', 'x')).toBe(false);
+    expect(rootPemMatchesPin(pem.rootA, '')).toBe(false);
+    expect(pinOfRootPem(pem.inter)).toBeNull();
+  });
+});
+
+async function tlsServer(certChain: string, key: string, handler: http.RequestListener) {
+  const s = https.createServer({ cert: certChain, key }, handler);
+  await new Promise<void>((r) => s.listen(0, '127.0.0.1', r));
+  return { server: s, port: (s.address() as AddressInfo).port };
+}
+
+describe('pinned owner (Caddy internal CA: leaf + intermediate, root at the well-known URL)', () => {
+  const LOCAL = { WEBADF_SHARE_TEST_INSECURE: '1' };
+  const toLoopback = async () => [{ address: '127.0.0.1', family: 4 as const }];
+  let pinA = '';
+
+  async function owner(opts: { chain?: string; key?: string; rootPem?: string | null } = {}) {
+    const hits: { url: string; auth?: string }[] = [];
+    const { server, port } = await tlsServer(opts.chain ?? pem.leaf + pem.inter, opts.key ?? pem.leafKey, (q, res) => {
+      hits.push({ url: q.url ?? '', auth: q.headers.authorization });
+      if (q.url === ROOT_PEM_PATH) {
+        if (opts.rootPem === null) { res.writeHead(404); res.end(); return; }
+        res.end(opts.rootPem ?? pem.rootA);
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json', 'X-WebFloppy-Share-Protocol': '1' });
+      res.end('{"name":"Rob"}');
+    });
+    const client = shareClient({ env: LOCAL, resolve: toLoopback });
+    const authed = () => hits.filter((h) => h.auth !== undefined);
+    return { server, port, hits, authed, client };
+  }
+
+  beforeEach(() => { clearShareRootCache(); pinA = b64sha(certs.rootA.raw); });
+
+  it('pin match: the real request is verified against the served root and succeeds; the root is cached', async () => {
+    const o = await owner();
+    try {
+      const t = { origin: `https://localhost:${o.port}`, pin: pinA, token: TOKEN };
+      expect(await o.client.getJson(t, 'library')).toEqual({ ok: true, value: { name: 'Rob' } });
+      expect(o.hits).toEqual([{ url: ROOT_PEM_PATH, auth: undefined }, { url: '/api/share/v1/library', auth: `Bearer ${TOKEN}` }]);
+      expect(await o.client.getJson(t, 'library')).toMatchObject({ ok: true });
+      expect(o.hits.filter((h) => h.url === ROOT_PEM_PATH)).toHaveLength(1);
+    } finally { o.server.close(); }
   });
 
-  it('refuses a chain that stops before a self-signed root, even when the pin is the right one', () => {
-    expect(rootPinMatches([certs.leaf, certs.inter], b64sha(certs.rootA.raw))).toBe(false);
-    expect(rootPinMatches([certs.leaf, certs.inter], b64sha(certs.inter.raw))).toBe(false);
+  it('an IP-address origin is checked against the IP SAN', async () => {
+    const o = await owner();
+    try {
+      expect(await o.client.getJson({ origin: `https://127.0.0.1:${o.port}`, pin: pinA, token: TOKEN }, 'library'))
+        .toEqual({ ok: true, value: { name: 'Rob' } });
+    } finally { o.server.close(); }
   });
 
-  it('refuses a forged leaf presented with the real (public) root', () => {
-    expect(certs.forgedLeaf.issuer).toBe(certs.rootA.subject);
-    expect(rootPinMatches([certs.forgedLeaf, certs.rootA], b64sha(certs.rootA.raw))).toBe(false);
+  it('wrong pin: refused, and no token-bearing request reaches the server', async () => {
+    const o = await owner();
+    try {
+      expect(await o.client.getJson({ origin: `https://localhost:${o.port}`, pin: b64sha(certs.rootB.raw), token: TOKEN }, 'library'))
+        .toEqual({ ok: false, failure: 'unreachable', detail: 'certificate' });
+      expect(o.authed()).toHaveLength(0);
+      expect(o.hits.map((h) => h.url)).toEqual([ROOT_PEM_PATH]);
+    } finally { o.server.close(); }
   });
 
-  it('refuses a chain with a link skipped or out of order', () => {
-    const pinA = b64sha(certs.rootA.raw);
-    expect(rootPinMatches([certs.leaf, certs.rootA], pinA)).toBe(false);
-    expect(rootPinMatches([certs.inter, certs.leaf, certs.rootA], pinA)).toBe(false);
+  it('a served PEM that is not self-signed is refused, even when it hashes to the pin', async () => {
+    const o = await owner({ rootPem: pem.inter });
+    try {
+      expect(await o.client.getJson({ origin: `https://localhost:${o.port}`, pin: b64sha(certs.inter.raw), token: TOKEN }, 'library'))
+        .toEqual({ ok: false, failure: 'unreachable', detail: 'certificate' });
+      expect(o.authed()).toHaveLength(0);
+    } finally { o.server.close(); }
   });
 
-  it('refuses an expired chain', () => {
-    const pinA = b64sha(certs.rootA.raw);
-    expect(rootPinMatches([certs.leaf, certs.inter, certs.rootA], pinA, new Date(Date.now() + 5 * 86_400_000))).toBe(false);
+  it('a 404 for the PEM with a pin set is refused', async () => {
+    const o = await owner({ rootPem: null });
+    try {
+      expect(await o.client.getJson({ origin: `https://localhost:${o.port}`, pin: pinA, token: TOKEN }, 'library'))
+        .toEqual({ ok: false, failure: 'unreachable', detail: 'certificate' });
+      expect(o.authed()).toHaveLength(0);
+    } finally { o.server.close(); }
   });
 
-  it('refuses an empty chain and an empty pin', () => {
-    expect(rootPinMatches([], b64sha(certs.rootA.raw))).toBe(false);
-    expect(rootPinMatches([certs.rootA], '')).toBe(false);
+  it('the right root served, but a leaf from another CA: TLS fails before the token is sent', async () => {
+    const o = await owner({ chain: pem.forgedLeaf + pem.rootA, key: pem.forgedKey });
+    try {
+      expect(await o.client.getJson({ origin: `https://localhost:${o.port}`, pin: pinA, token: TOKEN }, 'library'))
+        .toEqual({ ok: false, failure: 'unreachable', detail: 'certificate' });
+      expect(o.authed()).toHaveLength(0);
+    } finally { o.server.close(); }
+  });
+
+  it('a leaf under the pinned root but for another host name is refused', async () => {
+    const o = await owner();
+    try {
+      expect(await o.client.getJson({ origin: `https://other.example.com:${o.port}`, pin: pinA, token: TOKEN }, 'library'))
+        .toEqual({ ok: false, failure: 'unreachable', detail: 'certificate' });
+      expect(o.authed()).toHaveLength(0);
+    } finally { o.server.close(); }
+  });
+
+  it('unpinned: the private CA fails ordinary verification', async () => {
+    const o = await owner();
+    try {
+      expect(await o.client.getJson({ origin: `https://localhost:${o.port}`, pin: null, token: TOKEN }, 'library'))
+        .toEqual({ ok: false, failure: 'unreachable', detail: 'certificate' });
+      expect(o.hits).toHaveLength(0);
+    } finally { o.server.close(); }
+  });
+
+  it('fetchLocalRootPin returns the pin, null on 404, and throws on a PEM that is not a root', async () => {
+    const deps = { env: LOCAL, resolve: toLoopback };
+    const ok = await owner();
+    const missing = await owner({ rootPem: null });
+    const bad = await owner({ rootPem: pem.inter });
+    try {
+      expect(await fetchLocalRootPin(`https://localhost:${ok.port}`, deps)).toBe(pinA);
+      expect(await fetchLocalRootPin(`https://localhost:${missing.port}`, deps)).toBeNull();
+      await expect(fetchLocalRootPin(`https://localhost:${bad.port}`, deps)).rejects.toThrow(/root pin/);
+      expect(ok.authed()).toHaveLength(0);
+    } finally { ok.server.close(); missing.server.close(); bad.server.close(); }
+  });
+
+  it('fetchLocalRootPin keeps the address guard', async () => {
+    await expect(fetchLocalRootPin('https://owner.example.com', { env: {}, resolve: async () => [{ address: '10.0.0.5', family: 4 }] }))
+      .rejects.toThrow(/address_not_allowed/);
   });
 });
 
@@ -440,75 +572,7 @@ describe('rootPinMatches', () => {
 describe('nodeShareTransport', () => {
   const base = (url: string, extra: Partial<Req> = {}): Req => ({
     url: new URL(url), method: 'GET', headers: { accept: 'application/json' }, address: '127.0.0.1',
-    pin: null, timeoutMs: 5_000, maxBytes: 1_000_000, ...extra,
-  });
-
-  async function tlsServer(certChain: string, key: string, handler: http.RequestListener) {
-    const s = https.createServer({ cert: certChain, key }, handler);
-    await new Promise<void>((r) => s.listen(0, '127.0.0.1', r));
-    return { server: s, port: (s.address() as AddressInfo).port };
-  }
-
-  it('pinned: a chain ending in the pinned root connects', async () => {
-    let seen = 0;
-    const { server, port } = await tlsServer(pem.leaf + pem.inter + pem.rootA, pem.leafKey, (_q, res) => { seen++; res.end('ok'); });
-    try {
-      const r = await nodeShareTransport(base(`https://localhost:${port}/api/share/v1/ping`, { pin: b64sha(certs.rootA.raw) }));
-      expect(r.status).toBe(200);
-      expect(new TextDecoder().decode(r.body)).toBe('ok');
-      expect(seen).toBe(1);
-    } finally { server.close(); }
-  });
-
-  it('pinned: a wrong pin refuses before the request (and its token) is sent', async () => {
-    let seen = 0;
-    const { server, port } = await tlsServer(pem.leaf + pem.inter + pem.rootA, pem.leafKey, (_q, res) => { seen++; res.end('ok'); });
-    try {
-      const p = nodeShareTransport(base(`https://localhost:${port}/x`, {
-        pin: b64sha(certs.rootB.raw), headers: { authorization: `Bearer ${TOKEN}` },
-      }));
-      await expect(p).rejects.toMatchObject({ kind: 'certificate' });
-      expect(seen).toBe(0);
-    } finally { server.close(); }
-  });
-
-  it('pinned: a leaf under the pinned root but for another host name is refused', async () => {
-    let seen = 0;
-    const { server, port } = await tlsServer(pem.leaf + pem.inter + pem.rootA, pem.leafKey, (_q, res) => { seen++; res.end('ok'); });
-    try {
-      await expect(nodeShareTransport(base(`https://other.example.com:${port}/x`, { pin: b64sha(certs.rootA.raw) })))
-        .rejects.toMatchObject({ kind: 'certificate' });
-      expect(seen).toBe(0);
-    } finally { server.close(); }
-  });
-
-  it('pinned: a server that does not send its root (leaf + intermediate only) is refused', async () => {
-    let seen = 0;
-    const { server, port } = await tlsServer(pem.leaf + pem.inter, pem.leafKey, (_q, res) => { seen++; res.end('ok'); });
-    try {
-      await expect(nodeShareTransport(base(`https://localhost:${port}/x`, { pin: b64sha(certs.rootA.raw) })))
-        .rejects.toMatchObject({ kind: 'certificate' });
-      expect(seen).toBe(0);
-    } finally { server.close(); }
-  });
-
-  it('pinned: a forged leaf shown with the real root is refused', async () => {
-    let seen = 0;
-    const { server, port } = await tlsServer(pem.forgedLeaf + pem.rootA, pem.forgedKey, (_q, res) => { seen++; res.end('ok'); });
-    try {
-      await expect(nodeShareTransport(base(`https://localhost:${port}/x`, { pin: b64sha(certs.rootA.raw) })))
-        .rejects.toMatchObject({ kind: 'certificate' });
-      expect(seen).toBe(0);
-    } finally { server.close(); }
-  });
-
-  it('unpinned: a private CA is refused by ordinary verification', async () => {
-    let seen = 0;
-    const { server, port } = await tlsServer(pem.leaf + pem.inter + pem.rootA, pem.leafKey, (_q, res) => { seen++; res.end('ok'); });
-    try {
-      await expect(nodeShareTransport(base(`https://localhost:${port}/x`))).rejects.toBeTruthy();
-      expect(seen).toBe(0);
-    } finally { server.close(); }
+    ca: null, timeoutMs: 5_000, maxBytes: 1_000_000, ...extra,
   });
 
   describe('plain http (TEST_INSECURE only)', () => {
