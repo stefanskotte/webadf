@@ -1,6 +1,9 @@
 // The share API's wire format, protocol 1 (spec §3.2). CLIENT-SAFE: no @/db, no node: imports -- the
 // owner's routes (src/app/api/share/v1/) and the recipient's client code both import from here (Ruling P2).
 
+/** Share API protocol version, exchanged at claim and sent on every response. */
+export const SHARE_PROTOCOL = 1;
+
 /** One title as a recipient sees it. `collectionIds` lists only the shared collections it is in. */
 export type ShareTitle = {
   id: string;
@@ -10,6 +13,8 @@ export type ShareTitle = {
   kind: string | null;
   diskCount: number;
   hasCover: boolean;
+  /** Content identifier of the cover the title resolves to right now (also the covers route's ETag); null when none. */
+  coverDigest: string | null;
   collectionIds: string[];
 };
 

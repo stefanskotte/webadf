@@ -1,5 +1,5 @@
 import { MAX_DISK_BYTES } from '@/lib/blob-upload';
-import { authorizeShare, notFound, shareBody, shareJson } from '@/lib/share/api';
+import { authorizeShare, notFound, shareBody, shareJson, withShare } from '@/lib/share/api';
 import { diskInScope } from '@/lib/share/scope';
 import { diskStore } from '@/lib/storage';
 
@@ -11,7 +11,7 @@ export const maxDuration = 60;
  * collection 404s here even if the recipient listed it a moment ago. For this route the scope check replaces the
  * entitlements gate -- the owner chose to distribute (spec §3.2).
  */
-export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
+export const GET = withShare(async (req: Request, ctx: { params: Promise<{ id: string }> }) => {
   const auth = await authorizeShare(req, 'bytes');
   if (auth instanceof Response) return auth;
   const { id } = await ctx.params;
@@ -28,4 +28,4 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     ETag: `"${disk.sha256}"`,
     'X-Content-Type-Options': 'nosniff',
   });
-}
+});

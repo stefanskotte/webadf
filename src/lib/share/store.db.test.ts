@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Client } from 'pg';
 
 const base = process.env.TEST_DATABASE_URL!;
@@ -210,5 +210,24 @@ describe('share store', () => {
     const { eq } = await import('drizzle-orm');
     await getDb().update(libraryShares).set({ claimExpiresAt: new Date(Date.now() - DAY) }).where(eq(libraryShares.id, r.share.id));
     expect(await store.authenticateShare(`Bearer ${c.token}`)).not.toBeNull();
+  });
+  it('logs a successful claim and the revoke that took effect, never a code or token (spec §5)', async () => {
+    const spy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const r = await make();
+      const c = await store.claimShare(r.code, claimant);
+      if (!c.ok) throw new Error('claim');
+      expect(spy).toHaveBeenCalledWith('[share] claimed', { shareId: r.share.id, orgId: 'o1', claimedByUrl: claimant.url });
+      await store.claimShare(r.code, claimant);
+      await store.revokeShare('o1', r.share.id);
+      await store.revokeShare('o1', r.share.id);
+      expect(spy).toHaveBeenCalledWith('[share] revoked', { shareId: r.share.id, orgId: 'o1' });
+      expect(spy).toHaveBeenCalledTimes(2);
+      const logged = JSON.stringify(spy.mock.calls);
+      expect(logged).not.toContain(r.code);
+      expect(logged).not.toContain(c.token);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

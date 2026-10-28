@@ -120,7 +120,7 @@ describe('share listing', () => {
     const eps = p!.titles.find((t) => t.id === 'g5')!;
     expect(eps).toEqual({
       id: 'g5', title: 'Epsilon', year: 1990, publisher: 'Psygnosis', kind: null,
-      diskCount: 2, hasCover: true, collectionIds: ['cs'],
+      diskCount: 2, hasCover: true, coverDigest: COVER, collectionIds: ['cs'],
     });
     expect(p!.titles.find((t) => t.id === 'g1')!.hasCover).toBe(false);
     expect(p!.titles.map((t) => t.id)).not.toContain('gr');

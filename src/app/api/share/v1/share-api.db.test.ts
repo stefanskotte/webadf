@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Client } from 'pg';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -28,7 +28,9 @@ const { collections, collectionGames } = await import('@/db/schema/collections')
 const { games, disks, blobs } = await import('@/db/schema/catalog');
 const { diskStore, coverStore } = await import('@/lib/storage');
 const { formatVolume } = await import('@/lib/adffs/format');
+const { addFile, makeDirectory, readVolume } = await import('@/lib/adffs');
 const store = await import('@/lib/share/store');
+const api = await import('@/lib/share/api');
 
 const ping = await import('./ping/route');
 const claim = await import('./claim/route');
@@ -45,10 +47,11 @@ const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 let ipSeq = 0;
 const freshIp = () => `203.0.113.${++ipSeq}`;
 
-function get(path: string, token?: string) {
-  return new Request(`${HOST}/api/share/v1/${path}`, {
-    headers: token ? { authorization: `Bearer ${token}` } : {},
-  });
+function get(path: string, token?: string, ip?: string) {
+  const headers: Record<string, string> = {};
+  if (token) headers.authorization = `Bearer ${token}`;
+  if (ip) headers['x-forwarded-for'] = ip;
+  return new Request(`${HOST}/api/share/v1/${path}`, { headers });
 }
 function postClaim(body: unknown, ip = freshIp()) {
   return new Request(`${HOST}/api/share/v1/claim`, {
@@ -89,7 +92,14 @@ describe('share API v1', () => {
       { id: 'cs', orgId: 'o1', name: 'Shared', sortKey: 1 },
       { id: 'cu', orgId: 'o1', name: 'Unshared', sortKey: 2 },
     ]);
+    const must = (r: { ok: true; adf: Uint8Array } | { ok: false; reason: string }) => { if (!r.ok) throw new Error(r.reason); return r.adf; };
     adf = formatVolume({ filesystem: 'FFS', volumeName: 'ShareVol' });
+    adf = must(addFile(adf, 880, 'ReadMe', new TextEncoder().encode('hello amiga\n')));
+    adf = must(makeDirectory(adf, 880, 'S'));
+    const vol = readVolume(adf);
+    if (!vol.ok) throw new Error('no volume');
+    const sDir = vol.root.find((e) => e.name === 'S')!;
+    adf = must(addFile(adf, sDir.block, 'Startup-Sequence', new TextEncoder().encode('echo hi\n')));
     adfSha = sha(adf);
     await diskStore.put(adfSha, adf);
     await coverStore.put(coverSha, coverBytes, 'image/png');
@@ -205,7 +215,9 @@ describe('share API v1', () => {
     const { token } = await tokenFor({ everything: false, collectionIds: ['cs'] });
     const res = await title.GET(get('titles/g3', token), ctx('g3'));
     const body = await res.json();
-    expect(body.title).toMatchObject({ id: 'g3', title: 'Gamma', diskCount: 2, collectionIds: ['cs'] });
+    expect(body.title).toMatchObject({ id: 'g3', title: 'Gamma', diskCount: 2, collectionIds: ['cs'], hasCover: false, coverDigest: null });
+    const withCover = await (await title.GET(get('titles/g1', token), ctx('g1'))).json();
+    expect(withCover.title).toMatchObject({ hasCover: true, coverDigest: coverSha });
     expect(body.disks.map((d: { id: string }) => d.id)).toEqual(['d3', 'dh']);
     const out = await title.GET(get('titles/gu', token), ctx('gu'));
     expect(out.status).toBe(404);
@@ -222,7 +234,16 @@ describe('share API v1', () => {
     expect(body.volume.name).toBe('ShareVol');
     expect(body.volume.filesystem).toBe('FFS');
     expect(new Date(body.volume.createdAt).toISOString()).toBe(body.volume.createdAt);
-    expect(body.root).toEqual([]);
+    const byName = Object.fromEntries(body.root.map((e: { name: string }) => [e.name, e]));
+    expect(Object.keys(byName).sort()).toEqual(['ReadMe', 'S']);
+    expect(byName.ReadMe).toMatchObject({ kind: 'file', sizeBytes: 12 });
+    expect(byName.ReadMe.children).toBeUndefined();
+    // addFile stamps no date (only makeDirectory does): an undated entry stays null, never the epoch.
+    expect(byName.ReadMe.modifiedAt).toBeNull();
+    expect(byName.S.kind).toBe('dir');
+    expect(new Date(byName.S.modifiedAt).toISOString()).toBe(byName.S.modifiedAt);
+    expect(byName.S.children).toEqual([expect.objectContaining({ name: 'Startup-Sequence', kind: 'file', sizeBytes: 8 })]);
+    expect(byName.S).not.toHaveProperty('block');
     expect(body.usage.totalBlocks).toBeGreaterThan(0);
     const hfe = await files.GET(get('disks/dh/files', token), ctx('dh'));
     expect(await hfe.json()).toEqual({ unreadable: 'track 7 unreadable' });
@@ -262,6 +283,7 @@ describe('share API v1', () => {
     expect(res.headers.get('content-type')).toBe('image/png');
     expect(res.headers.get('content-security-policy')).toContain('sandbox');
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(coverBytes);
+    expect(res.headers.get('etag')).toBe(`"${coverSha}"`);
     expect((await covers.GET(get('covers/g2', token), ctx('g2'))).status).toBe(404);
     expect((await covers.GET(get('covers/gu', token), ctx('gu'))).status).toBe(404);
   });
@@ -269,14 +291,15 @@ describe('share API v1', () => {
   it('a revoked or unknown token is 401 on every authenticated route', async () => {
     const { token, shareId } = await tokenFor({ everything: true, collectionIds: [] });
     await store.revokeShare('o1', shareId);
+    const ip = freshIp();
     for (const t of [token, 'wfst_unknown', undefined]) {
       const calls: Response[] = await Promise.all([
-        library.GET(get('library', t)),
-        titles.GET(get('titles', t)),
-        title.GET(get('titles/g1', t), ctx('g1')),
-        files.GET(get('disks/d1/files', t), ctx('d1')),
-        bytes.GET(get('disks/d1/bytes', t), ctx('d1')),
-        covers.GET(get('covers/g1', t), ctx('g1')),
+        library.GET(get('library', t, ip)),
+        titles.GET(get('titles', t, ip)),
+        title.GET(get('titles/g1', t, ip), ctx('g1')),
+        files.GET(get('disks/d1/files', t, ip), ctx('d1')),
+        bytes.GET(get('disks/d1/bytes', t, ip), ctx('d1')),
+        covers.GET(get('covers/g1', t, ip), ctx('g1')),
       ]);
       for (const res of calls) {
         expect(res.status).toBe(401);
@@ -308,6 +331,43 @@ describe('share API v1', () => {
     const res = await library.GET(get('library', token));
     expect(res.status).toBe(429);
     expectShareHeaders(res);
+  });
+
+  it('covers have their own budget: 121 in a minute pass and the listing budget is untouched', async () => {
+    const { token } = await tokenFor({ everything: false, collectionIds: ['cs'] });
+    for (let i = 0; i < 121; i++) {
+      const res = await covers.GET(get('covers/g1', token), ctx('g1'));
+      expect(res.status).toBe(200);
+      await res.arrayBuffer();
+    }
+    for (let i = 0; i < 120; i++) expect((await title.GET(get('titles/gu', token), ctx('gu'))).status).toBe(404);
+    expect((await library.GET(get('library', token))).status).toBe(429);
+  });
+
+  it('failed authentication is limited per client IP; a good token from that IP still works', async () => {
+    const ip = freshIp();
+    for (let i = 0; i < 60; i++) expect((await library.GET(get('library', 'wfst_nope', ip))).status).toBe(401);
+    const blocked = await library.GET(get('library', 'wfst_nope', ip));
+    expect(blocked.status).toBe(429);
+    expect(Number(blocked.headers.get('retry-after'))).toBeGreaterThan(0);
+    expectShareHeaders(blocked);
+    expect((await library.GET(get('library', 'wfst_nope', freshIp()))).status).toBe(401);
+    const { token } = await tokenFor({ everything: false, collectionIds: ['cs'] });
+    expect((await library.GET(get('library', token, ip))).status).toBe(200);
+  });
+
+  it('an uncaught error still answers with the protocol header (503) and is logged', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const h = api.withShare(async () => { throw new Error('boom'); });
+      const res = await h();
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: 'unavailable' });
+      expectShareHeaders(res);
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('every route sets force-dynamic; bytes sets maxDuration 60', () => {

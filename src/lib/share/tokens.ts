@@ -1,7 +1,6 @@
 import { randomBytes, createHash } from 'node:crypto';
 
-/** Share API protocol version, exchanged at claim and sent on every response. */
-export const SHARE_PROTOCOL = 1;
+export { SHARE_PROTOCOL } from './types';
 
 export function hashSecret(plaintext: string): string {
   return createHash('sha256').update(plaintext).digest('hex');

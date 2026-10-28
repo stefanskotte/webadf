@@ -1,7 +1,7 @@
-import { limitClaim, shareJson } from '@/lib/share/api';
+import { limitClaim, shareJson, withShare } from '@/lib/share/api';
 import { libraryName } from '@/lib/share/listing';
 import { claimShare } from '@/lib/share/store';
-import { SHARE_PROTOCOL } from '@/lib/share/tokens';
+import { SHARE_PROTOCOL } from '@/lib/share/types';
 import type { ShareClaimResponse } from '@/lib/share/types';
 
 export const dynamic = 'force-dynamic';
@@ -13,7 +13,7 @@ const invalid = () => shareJson({ error: 'invalid_or_used' }, 404);
  * Exchange a one-time claim code for the share's bearer token (spec §3.2). Rate-limited per client IP, counted on
  * attempts. The protocol is checked BEFORE claimShare, so a recipient that needs an update keeps its code.
  */
-export async function POST(req: Request) {
+export const POST = withShare(async (req: Request) => {
   const limited = limitClaim(req);
   if (limited) return limited;
 
@@ -30,4 +30,4 @@ export async function POST(req: Request) {
     token: claimed.token, protocol: SHARE_PROTOCOL, library: { name: await libraryName(claimed.orgId) },
   };
   return shareJson(res);
-}
+});

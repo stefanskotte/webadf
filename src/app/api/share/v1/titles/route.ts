@@ -1,10 +1,10 @@
-import { authorizeShare, notFound, shareJson } from '@/lib/share/api';
+import { authorizeShare, notFound, shareJson, withShare } from '@/lib/share/api';
 import { decodeCursor, listScopedTitles, TITLES_DEFAULT_LIMIT, TITLES_MAX_LIMIT } from '@/lib/share/listing';
 
 export const dynamic = 'force-dynamic';
 
 /** ?collection=&q=&cursor=&limit= -- one page of titles in scope. An unshared collection is 404. */
-export async function GET(req: Request) {
+export const GET = withShare(async (req: Request) => {
   const auth = await authorizeShare(req, 'list');
   if (auth instanceof Response) return auth;
 
@@ -20,4 +20,4 @@ export async function GET(req: Request) {
     cursor, limit,
   });
   return page ? shareJson(page) : notFound();
-}
+});

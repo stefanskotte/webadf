@@ -74,6 +74,27 @@ function containsPattern(q: string): string {
   return `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 }
 
+export type CoverSource = { store: 'image'; digest: string } | { store: 'cover'; digest: string };
+
+const IMAGE_URL = /^\/api\/images\/([0-9a-f]{40})$/;
+const OVERRIDE_URL = /^\/api\/games\/[^/]+\/cover\/([0-9a-f]{64})$/;
+
+/** The store and digest behind a cover URL from coverUrlsForGames; null for a URL this API cannot serve. */
+export function coverSourceOf(url: string | undefined): CoverSource | null {
+  if (!url) return null;
+  const image = IMAGE_URL.exec(url);
+  if (image) return { store: 'image', digest: image[1] };
+  const own = OVERRIDE_URL.exec(url);
+  if (own) return { store: 'cover', digest: own[1] };
+  return null;
+}
+
+/** hasCover and coverDigest agree with what the covers route will serve. */
+function coverFields(url: string | undefined): { hasCover: boolean; coverDigest: string | null } {
+  const src = coverSourceOf(url);
+  return { hasCover: src !== null, coverDigest: src?.digest ?? null };
+}
+
 type TitleRow = { id: string; title: string; year: number | null; publisher: string | null; diskCount: number };
 
 /** Kind, cover flag and the shared collections each title is in -- batched over the page, never per title. */
@@ -96,7 +117,7 @@ async function toShareTitles(auth: ShareAuth, rows: TitleRow[]): Promise<ShareTi
     id: r.id, title: r.title, year: r.year, publisher: r.publisher,
     kind: kinds.get(r.id) ?? null,
     diskCount: r.diskCount,
-    hasCover: covers.has(r.id),
+    ...coverFields(covers.get(r.id)),
     collectionIds: (inColl.get(r.id) ?? []).sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0)),
   }));
 }
@@ -185,11 +206,6 @@ export async function scopedDisk(auth: ShareAuth, diskId: string): Promise<Scope
   return rows[0] ?? null;
 }
 
-export type CoverSource = { store: 'image'; digest: string } | { store: 'cover'; digest: string };
-
-const IMAGE_URL = /^\/api\/images\/([0-9a-f]{40})$/;
-const OVERRIDE_URL = /^\/api\/games\/[^/]+\/cover\/([0-9a-f]{64})$/;
-
 /**
  * Where an in-scope title's cover lives, by the library's one precedence rule (coverUrlsForGames ->
  * effectiveCoverUrl): the owner's own image in the cover store, else an enriched one in the image store.
@@ -198,11 +214,5 @@ export async function scopedCoverSource(auth: ShareAuth, gameId: string): Promis
   const inScope = await getDb().select({ id: games.id }).from(games)
     .where(and(eq(games.id, gameId), gameInScope(auth))).limit(1);
   if (inScope.length === 0) return null;
-  const url = (await coverUrlsForGames(auth.orgId, [gameId])).get(gameId);
-  if (!url) return null;
-  const image = IMAGE_URL.exec(url);
-  if (image) return { store: 'image', digest: image[1] };
-  const own = OVERRIDE_URL.exec(url);
-  if (own) return { store: 'cover', digest: own[1] };
-  return null;
+  return coverSourceOf((await coverUrlsForGames(auth.orgId, [gameId])).get(gameId));
 }

@@ -2,14 +2,16 @@
 // auth, and the per-token / per-IP rate limits. Server only (reaches @/db through store.ts).
 import { SlidingWindowLimiter } from '@/lib/url-fetch-limit';
 import { authenticateShare, type ShareAuth } from './store';
-import { SHARE_PROTOCOL } from './tokens';
-import { SHARE_PROTOCOL_HEADER } from './types';
+import { SHARE_PROTOCOL, SHARE_PROTOCOL_HEADER } from './types';
 
 const MINUTE = 60_000;
 export const SHARE_RATE = {
   listPerMinute: 120,
   bytesPerMinute: 30,
+  /** Its own bucket: a grid of covers must not eat the listing budget (fix round 1 ruling). */
+  coversPerMinute: 600,
   claimPerMinutePerIp: 10,
+  authFailuresPerMinutePerIp: 60,
 } as const;
 
 // In memory, per function instance -- the same trade-off url-fetch-limit.ts records for upload from a URL.
@@ -51,14 +53,40 @@ export function limitClaim(req: Request): Response | null {
   return r.ok ? null : tooMany(r.retryAfterMs);
 }
 
+const BUDGET = {
+  list: SHARE_RATE.listPerMinute,
+  bytes: SHARE_RATE.bytesPerMinute,
+  covers: SHARE_RATE.coversPerMinute,
+} as const;
+
 /**
  * Authenticate the bearer token (unknown and revoked alike answer 401) and take one request from the token's
- * `list` or `bytes` budget. Returns the auth, or the Response to send instead.
+ * budget. A failed authentication counts against the client IP (`share-auth-fail:<ip>`); past that budget the
+ * answer is 429 instead of 401. A successful one never touches the IP budget. Returns the auth, or the Response.
  */
-export async function authorizeShare(req: Request, budget: 'list' | 'bytes'): Promise<ShareAuth | Response> {
+export async function authorizeShare(req: Request, budget: keyof typeof BUDGET): Promise<ShareAuth | Response> {
   const auth = await authenticateShare(req.headers.get('authorization'));
-  if (!auth) return unauthorized();
-  const limit = budget === 'bytes' ? SHARE_RATE.bytesPerMinute : SHARE_RATE.listPerMinute;
-  const r = limiter.take([{ key: `share:${auth.shareId}:${budget}`, limit, windowMs: MINUTE }]);
+  if (!auth) {
+    const f = limiter.take([{
+      key: `share-auth-fail:${clientIp(req)}`, limit: SHARE_RATE.authFailuresPerMinutePerIp, windowMs: MINUTE,
+    }]);
+    return f.ok ? unauthorized() : tooMany(f.retryAfterMs);
+  }
+  const r = limiter.take([{ key: `share:${auth.shareId}:${budget}`, limit: BUDGET[budget], windowMs: MINUTE }]);
   return r.ok ? auth : tooMany(r.retryAfterMs);
+}
+
+/**
+ * Every share route handler goes through this: an uncaught exception is logged and still answers with the
+ * protocol header (503 unavailable), never the framework's bare 500.
+ */
+export function withShare<A extends unknown[]>(handler: (...args: A) => Promise<Response>): (...args: A) => Promise<Response> {
+  return async (...args: A) => {
+    try {
+      return await handler(...args);
+    } catch (err) {
+      console.error('[share] handler failed', err);
+      return shareJson({ error: 'unavailable' }, 503);
+    }
+  };
 }

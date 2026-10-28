@@ -109,8 +109,11 @@ export async function revokeShare(orgId: string, shareId: string): Promise<boole
   const [own] = await db.select({ id: libraryShares.id }).from(libraryShares)
     .where(and(eq(libraryShares.id, shareId), eq(libraryShares.orgId, orgId)));
   if (!own) return false;
-  await db.update(libraryShares).set({ revokedAt: new Date() })
-    .where(and(eq(libraryShares.id, shareId), isNull(libraryShares.revokedAt)));
+  const revoked = await db.update(libraryShares).set({ revokedAt: new Date() })
+    .where(and(eq(libraryShares.id, shareId), isNull(libraryShares.revokedAt)))
+    .returning({ id: libraryShares.id });
+  // Spec §5: claims and revokes are logged. Ids only, never a code or token. Once, on the revoke that took effect.
+  if (revoked.length > 0) console.info('[share] revoked', { shareId, orgId });
   return true;
 }
 
@@ -155,6 +158,7 @@ export async function claimShare(
   )).returning({ id: libraryShares.id, orgId: libraryShares.orgId });
   const row = rows[0];
   if (!row) return { ok: false };
+  console.info('[share] claimed', { shareId: row.id, orgId: row.orgId, claimedByUrl: who.url });
   return { ok: true, token: token.plaintext, orgId: row.orgId, shareId: row.id };
 }
 

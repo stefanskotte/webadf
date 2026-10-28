@@ -1,5 +1,6 @@
 import { readUsage, readVolume, type AdfEntry } from '@/lib/adffs';
-import { authorizeShare, notFound, shareJson } from '@/lib/share/api';
+import { MAX_DISK_BYTES } from '@/lib/blob-upload';
+import { authorizeShare, notFound, shareJson, withShare } from '@/lib/share/api';
 import { scopedDisk } from '@/lib/share/listing';
 import type { ShareEntry, ShareFiles } from '@/lib/share/types';
 import { diskStore } from '@/lib/storage';
@@ -19,7 +20,7 @@ function toEntry(e: AdfEntry): ShareEntry {
 }
 
 /** The disk's file listing, as the local disk files page reads it; `{unreadable}` when it has no readable volume. */
-export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
+export const GET = withShare(async (req: Request, ctx: { params: Promise<{ id: string }> }) => {
   const auth = await authorizeShare(req, 'list');
   if (auth instanceof Response) return auth;
   const { id } = await ctx.params;
@@ -29,8 +30,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   // An HFE image is not an ADF; the local page does not list one either.
   if (disk.imageFormat === 'hfe') return shareJson({ unreadable: disk.extractReason ?? 'hfe' } satisfies ShareFiles);
 
+  if (disk.sizeBytes > MAX_DISK_BYTES) return shareJson({ error: 'unavailable' }, 503);
   let bytes: Uint8Array;
   try { bytes = await diskStore.read(disk.sha256); } catch { return shareJson({ error: 'unavailable' }, 503); }
+  if (bytes.byteLength > MAX_DISK_BYTES) return shareJson({ error: 'unavailable' }, 503);
   const vol = readVolume(bytes);
   if (!vol.ok) return shareJson({ unreadable: vol.reason } satisfies ShareFiles);
   const body: ShareFiles = {
@@ -43,4 +46,4 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     usage: readUsage(bytes),
   };
   return shareJson(body);
-}
+});
