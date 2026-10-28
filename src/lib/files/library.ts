@@ -18,6 +18,11 @@ const ROOT: Crumb = { label: 'LIBRARY:', path: 'LIBRARY:' };
 const lib = (...segs: string[]) => formatPath({ device: 'LIBRARY', segments: segs });
 const diskName = (d: { label: string | null; diskNo: number }) => d.label ?? `Disk ${d.diskNo}`;
 
+/** The disk's row exists but its image cannot be read from the store: the one failure the routes call blob_unavailable. */
+export class BlobUnavailableError extends Error {
+  constructor(readonly sha256: string, cause: unknown) { super(`disk image ${sha256} is unavailable`, { cause }); }
+}
+
 export async function loadDisk(ctx: FsCtx, gameId: string, diskId: string): Promise<ResolvedDisk | null> {
   const db = getDb();
   const [row] = await db
@@ -29,7 +34,7 @@ export async function loadDisk(ctx: FsCtx, gameId: string, diskId: string): Prom
     .where(and(eq(disks.id, diskId), eq(disks.gameId, gameId), eq(disks.orgId, ctx.orgId), isLocal(disks)))
     .limit(1);
   if (!row) return null;
-  const bytes = await diskStore.read(row.sha256);
+  const bytes = await diskStore.read(row.sha256).catch((e) => { throw new BlobUnavailableError(row.sha256, e); });
   const vol = readVolume(bytes);
   const usage = vol.ok ? readUsage(bytes) : null;
   const holder = await findHolder(db, ctx.orgId, row.sha256);

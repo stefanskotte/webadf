@@ -1,7 +1,7 @@
 // GET /api/files/download?path= -- one file's bytes (spec 2026-10-29).
 import { requireOrg } from '@/lib/session';
 import { parsePath } from '@/lib/files/path';
-import { readLibraryFile } from '@/lib/files/library';
+import { BlobUnavailableError, readLibraryFile } from '@/lib/files/library';
 
 export async function GET(request: Request) {
   const { orgId, userId } = await requireOrg();
@@ -9,7 +9,10 @@ export async function GET(request: Request) {
   if (!p) return Response.json({ error: 'bad_path' }, { status: 400 });
   if (p.device !== 'LIBRARY') return Response.json({ error: 'not_found' }, { status: 404 });
   let f: Awaited<ReturnType<typeof readLibraryFile>>;
-  try { f = await readLibraryFile({ orgId, userId }, p); } catch { return Response.json({ error: 'blob_unavailable' }, { status: 503 }); }
+  try { f = await readLibraryFile({ orgId, userId }, p); } catch (e) {
+    if (e instanceof BlobUnavailableError) return Response.json({ error: 'blob_unavailable' }, { status: 503 });
+    throw e;
+  }
   if (!f) return Response.json({ error: 'not_found' }, { status: 404 });
   return new Response(f.bytes as BodyInit, {
     headers: {

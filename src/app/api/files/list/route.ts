@@ -1,7 +1,7 @@
 // GET /api/files/list?path= -- one folder of the Files manager (spec 2026-10-29).
 import { requireOrg } from '@/lib/session';
 import { parsePath } from '@/lib/files/path';
-import { listLibrary } from '@/lib/files/library';
+import { BlobUnavailableError, listLibrary } from '@/lib/files/library';
 
 export async function GET(request: Request) {
   const { orgId, userId } = await requireOrg();
@@ -9,7 +9,10 @@ export async function GET(request: Request) {
   if (!p) return Response.json({ error: 'bad_path' }, { status: 400 });
   if (p.device !== 'LIBRARY') return Response.json({ error: 'not_found' }, { status: 404 });
   let listing: Awaited<ReturnType<typeof listLibrary>>;
-  try { listing = await listLibrary({ orgId, userId }, p); } catch { return Response.json({ error: 'blob_unavailable' }, { status: 503 }); }
+  try { listing = await listLibrary({ orgId, userId }, p); } catch (e) {
+    if (e instanceof BlobUnavailableError) return Response.json({ error: 'blob_unavailable' }, { status: 503 });
+    throw e;
+  }
   if (!listing) return Response.json({ error: 'not_found' }, { status: 404 });
   return Response.json(listing);
 }

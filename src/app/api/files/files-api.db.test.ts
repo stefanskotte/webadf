@@ -16,6 +16,13 @@ vi.mock('@/lib/disk-write', async (importOriginal) => {
   };
 });
 
+// findHolder runs inside loadDisk after the image is read, so a failure there is a database error, not a missing blob.
+const holderSeam = vi.hoisted(() => ({ fail: false }));
+vi.mock('@/lib/disk-holder', async (importOriginal) => {
+  const m = await importOriginal<typeof import('@/lib/disk-holder')>();
+  return { ...m, findHolder: async (...a: Parameters<typeof m.findHolder>) => { if (holderSeam.fail) throw new Error('db down'); return m.findHolder(...a); } };
+});
+
 const base = process.env.TEST_DATABASE_URL!;
 const DB = 'webadf_files_api_test';
 const url = new URL(base); url.pathname = `/${DB}`; process.env.DATABASE_URL = url.toString();
@@ -126,5 +133,13 @@ describe('/api/files', () => {
       expect([o.status, (await o.json()).error]).toEqual([404, 'not_found']);
       expect((await GET_DL(req('/api/files/download?path=' + encodeURIComponent('LIBRARY:/g1/d1/ReadMe')))).status).toBe(404);
     } finally { asOrg('o1'); }
+  });
+  it('a database error is not reported as blob_unavailable', async () => {
+    holderSeam.fail = true;
+    try {
+      await expect(GET_LIST(req('/api/files/list?path=LIBRARY:/g1/d1'))).rejects.toThrow('db down');
+      await expect(GET_DL(req('/api/files/download?path=' + encodeURIComponent('LIBRARY:/g1/d1/ReadMe')))).rejects.toThrow('db down');
+      await expect(POST_OPS(json({ op: 'makedir', dest: 'LIBRARY:/g1/d1', name: 'X' }))).rejects.toThrow('db down');
+    } finally { holderSeam.fail = false; }
   });
 });

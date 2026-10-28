@@ -13,7 +13,7 @@ import { sameName } from '@/lib/adffs/write';
 import { applyDiskEdit, type DiskEditOutcome } from '@/lib/disk-write';
 import { isMountedReason } from '@/lib/mount-wording';
 import { AMIGA_COMMENT_MAX, AMIGA_NAME_MAX, amigaNameProblem, childOf, formatPath, isWithin, parsePath, type FsPath } from './path';
-import { loadDisk, readOnlyReasonOf, resolveInDisk, type FsCtx, type ResolvedDisk } from './library';
+import { BlobUnavailableError, loadDisk, readOnlyReasonOf, resolveInDisk, type FsCtx, type ResolvedDisk } from './library';
 import type { Refusal, RefusalCode } from './types';
 
 export type OpRequest =
@@ -94,7 +94,7 @@ async function diskOf(ctx: FsCtx, cache: Disks, loc: Loc): Promise<ResolvedDisk>
   const hit = cache.get(key);
   if (hit) return hit;
   let d: ResolvedDisk | null;
-  try { d = await loadDisk(ctx, loc.gameId, loc.diskId); } catch { refuse('blob_unavailable', 503); }
+  try { d = await loadDisk(ctx, loc.gameId, loc.diskId); } catch (e) { if (e instanceof BlobUnavailableError) refuse('blob_unavailable', 503); throw e; }
   if (!d) refuse('not_found', 404);
   cache.set(key, d);
   return d;
