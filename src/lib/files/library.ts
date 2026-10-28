@@ -42,7 +42,8 @@ export async function loadDisk(ctx: FsCtx, gameId: string, diskId: string): Prom
   return { info, bytes, root: vol.ok ? vol.root : [], rootBlock: vol.ok ? vol.rootBlock : 0, intl: vol.ok ? vol.volume.intl : false };
 }
 
-export function resolveInDisk(d: ResolvedDisk, names: string[]) {
+/** Walk `names` down from the root. Takes only the tree, so ops.ts can resolve against an edit's own bytes too. */
+export function resolveInDisk(d: Pick<ResolvedDisk, 'root' | 'rootBlock' | 'intl'>, names: string[]) {
   let children = d.root; let dirBlock = d.rootBlock; let parentBlock = d.rootBlock; let entry: AdfEntry | null = null;
   for (const [i, n] of names.entries()) {
     const hit = children.find((c) => sameName(c.name, n, d.intl));
@@ -52,6 +53,12 @@ export function resolveInDisk(d: ResolvedDisk, names: string[]) {
     else if (i !== names.length - 1) return null;
   }
   return { entry, parentBlock, dirBlock };
+}
+
+/** Why a disk's folders cannot be written, or null: a board holds it, it is an HFE original, or it has no filesystem. */
+export function readOnlyReasonOf(info: DiskInfo): string | null {
+  return info.holder ? mountedReason(info.holder)
+    : info.imageFormat === 'hfe' ? 'hfe_read_only' : !info.filesystem ? 'no_filesystem' : null;
 }
 
 function toEntry(base: string[], e: AdfEntry): FsEntry {
@@ -93,8 +100,7 @@ export async function listLibrary(ctx: FsCtx, p: FsPath): Promise<Listing | null
   if (!at || (at.entry && at.entry.kind !== 'dir')) return null;
   const children = at.entry ? at.entry.children : d.root;
   const base = [gameId, diskId, ...(names.length ? names : [])];
-  const readOnlyReason = d.info.holder ? mountedReason(d.info.holder)
-    : d.info.imageFormat === 'hfe' ? 'hfe_read_only' : !d.info.filesystem ? 'no_filesystem' : null;
+  const readOnlyReason = readOnlyReasonOf(d.info);
   const dirs = children.filter((c) => c.kind === 'dir').length;
   const crumbs: Crumb[] = [ROOT, titleCrumb, { label: d.info.label, path: lib(gameId, diskId) }];
   names.forEach((_, i) => crumbs.push({ label: resolveInDisk(d, names.slice(0, i + 1))!.entry!.name, path: lib(gameId, diskId, ...names.slice(0, i + 1)) }));
