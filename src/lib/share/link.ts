@@ -32,15 +32,13 @@ function parse(raw: string, env: ShareEnv, unwrap: boolean): ParsedLink | null {
   } catch {
     return null;
   }
-  const httpOk = shareInsecureAllowed(env);
-  if (url.protocol !== 'https:' && !(httpOk && url.protocol === 'http:')) return null;
   if (url.username !== '' || url.password !== '' || url.hostname === '') return null;
-
   const path = url.pathname.replace(/\/+$/, '');
 
-  // The recipient's own Add page, carrying the link in its fragment. Unwrapped once only.
-  if (path === '/remote/add') {
-    if (!unwrap || !url.hash.startsWith('#link=')) return null;
+  // The recipient's own Add page, carrying the link in its fragment. Unwrapped once only. Its scheme is not
+  // policed: a LAN self-host's address bar may well be http:. Only the inner share link's origin is contacted.
+  if (unwrap && path === '/remote/add' && (url.protocol === 'http:' || url.protocol === 'https:')) {
+    if (!url.hash.startsWith('#link=')) return null;
     let inner: string;
     try {
       inner = decodeURIComponent(url.hash.slice('#link='.length));
@@ -49,6 +47,9 @@ function parse(raw: string, env: ShareEnv, unwrap: boolean): ParsedLink | null {
     }
     return parse(inner, env, false);
   }
+
+  const httpOk = shareInsecureAllowed(env);
+  if (url.protocol !== 'https:' && !(httpOk && url.protocol === 'http:')) return null;
 
   const m = /^\/s\/([^/]+)$/.exec(path);
   if (!m || !SHARE_CODE_RE.test(m[1])) return null;

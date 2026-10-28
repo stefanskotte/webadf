@@ -46,6 +46,13 @@ describe('parseShareLink: the shapes Add must accept (Review Focus 4)', () => {
     expect(parseShareLink(` https://mine.example.org/remote/add/#link=${LINK}/ `, NO_ENV)).toEqual(plain);
   });
 
+  it('an http: Add-page wrapper (a LAN self-host) is fine; only the inner link is policed', () => {
+    expect(parseShareLink(`http://192.168.1.10:8080/remote/add#link=${encodeURIComponent(PINNED)}`, NO_ENV)).toEqual(pinned);
+    expect(parseShareLink(`http://192.168.1.10/remote/add#link=${encodeURIComponent(`http://floppy.example.com/s/${CODE}`)}`, NO_ENV))
+      .toBeNull();
+    expect(parseShareLink(`ftp://192.168.1.10/remote/add#link=${encodeURIComponent(LINK)}`, NO_ENV)).toBeNull();
+  });
+
   it('a port and an upper-case host are kept as the origin', () => {
     expect(parseShareLink(`https://Floppy.Example.com:8443/s/${CODE}`, NO_ENV))
       .toEqual({ origin: 'https://floppy.example.com:8443', code: CODE, pin: null });

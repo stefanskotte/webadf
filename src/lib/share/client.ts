@@ -38,6 +38,8 @@ export type ShareTransport = (req: {
   /** Skip certificate verification. ONLY for fetching the root PEM that is then checked against the pin. */
   insecureTls?: boolean;
   timeoutMs: number; maxBytes: number;
+  /** Aborted when the caller gave up (its deadline won the race): close the socket now. */
+  signal?: AbortSignal;
 }) => Promise<{ status: number; headers: Record<string, string>; body: Uint8Array }>;
 
 /** Spec §5 / global constraints: listings 2 MB in 10 s; bytes the largest disk the app accepts in 60 s. */
@@ -112,8 +114,13 @@ export const ROOT_PEM_PATH = '/.well-known/webadf-root.pem';
 const ROOT_PEM_MAX_BYTES = 16 * 1024;
 const ROOT_CACHE_MS = 60 * 60 * 1000;
 
-/** The pin of a self-signed CA certificate in `pem` (base64url SHA-256 of its DER), or null when it is not one. */
+/**
+ * The pin of a self-signed CA certificate in `pem` (base64url SHA-256 of its DER), or null when it is not one.
+ * Exactly ONE certificate: X509Certificate parses only the first, while `ca: [pem]` would trust every one in the
+ * string -- a second, attacker-owned root riding behind the real one would otherwise pass the pin.
+ */
 export function pinOfRootPem(pem: string): string | null {
+  if (typeof pem !== 'string' || (pem.match(/-----BEGIN/g) ?? []).length !== 1) return null;
   try {
     const c = new X509Certificate(pem);
     if (!c.ca || !c.checkIssued(c) || !c.verify(c.publicKey)) return null;
@@ -125,7 +132,7 @@ export function pinOfRootPem(pem: string): string | null {
   }
 }
 
-/** True when `pem` is a self-signed CA certificate whose pin is `pin`. */
+/** True when `pem` is exactly one self-signed CA certificate whose pin is `pin`. */
 export function rootPemMatchesPin(pem: string, pin: string): boolean {
   return !!pin && pinOfRootPem(pem) === pin;
 }
@@ -174,6 +181,10 @@ export const nodeShareTransport: ShareTransport = (req) => new Promise((resolve,
     reject(new ShareTransportError(kind, e instanceof Error ? e.message : String(e)));
   };
   const timer = setTimeout(() => fail(new ShareTransportError('timeout')), req.timeoutMs);
+  if (req.signal) {
+    if (req.signal.aborted) { fail(new ShareTransportError('timeout')); return; }
+    req.signal.addEventListener('abort', () => fail(new ShareTransportError('timeout')), { once: true });
+  }
 
   const headers: Record<string, string> = { ...req.headers };
   if (req.body !== undefined) headers['content-length'] = String(Buffer.byteLength(req.body));
@@ -269,31 +280,53 @@ function vetOrigin(raw: string, p: Policy): { ok: true; url: URL } | Fail {
   return { ok: true, url };
 }
 
+/** One deadline per call: rejects `deadline` and aborts `signal` (closing any socket) when the time is up. */
+function makeDeadline(ms: number) {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, rej) => {
+    timer = setTimeout(() => { controller.abort(); rej(new ShareTransportError('timeout')); }, ms);
+  });
+  deadline.catch(() => {});
+  return {
+    deadline,
+    signal: controller.signal,
+    /** Stop the clock and close whatever a lost race left open. */
+    done: () => { clearTimeout(timer); controller.abort(); },
+  };
+}
+
+/** Where to connect for `url`, or why not. DNS is raced against the call's deadline. */
+async function vetHost(
+  resolve: typeof defaultResolver, url: URL, p: Policy, deadline: Promise<never>,
+): Promise<{ ok: true; address: string } | Fail> {
+  const host = bareHost(url);
+  if (isIP(host)) return addressAllowed(host, p) ? { ok: true, address: host } : failure('unreachable', 'address_not_allowed');
+  const lower = host.toLowerCase().replace(/\.$/, '');
+  if ((lower === 'localhost' || lower.endsWith('.localhost')) && !p.loopbackOk) return failure('unreachable', 'address_not_allowed');
+  let addrs;
+  try {
+    addrs = await Promise.race([resolve(host), deadline]);
+  } catch (e) {
+    return failure('unreachable', e instanceof ShareTransportError ? e.kind : 'dns');
+  }
+  if (!addrs || addrs.length === 0) return failure('unreachable', 'dns');
+  // ALL of them: a name with one allowed and one refused record is somebody arranging to reach the refused one.
+  if (!addrs.every((a) => addressAllowed(a.address, p))) return failure('unreachable', 'address_not_allowed');
+  return { ok: true, address: addrs[0].address };
+}
+
+const ROOT_PEM_HEADERS = () => ({ 'user-agent': webadfUserAgent(), accept: 'application/x-pem-file, */*', 'accept-encoding': 'identity' });
+
 export function shareClient(deps: { resolve?: typeof defaultResolver; transport?: ShareTransport; env?: ShareEnv } = {}) {
   const resolve = deps.resolve ?? defaultResolver;
   const transport = deps.transport ?? nodeShareTransport;
   const env = deps.env ?? process.env;
 
-  async function vetHost(url: URL, p: Policy, deadline: Promise<never>): Promise<{ ok: true; address: string } | Fail> {
-    const host = bareHost(url);
-    if (isIP(host)) return addressAllowed(host, p) ? { ok: true, address: host } : failure('unreachable', 'address_not_allowed');
-    const lower = host.toLowerCase().replace(/\.$/, '');
-    if ((lower === 'localhost' || lower.endsWith('.localhost')) && !p.loopbackOk) return failure('unreachable', 'address_not_allowed');
-    let addrs;
-    try {
-      addrs = await Promise.race([resolve(host), deadline]);
-    } catch (e) {
-      return failure('unreachable', e instanceof ShareTransportError ? e.kind : 'dns');
-    }
-    if (!addrs || addrs.length === 0) return failure('unreachable', 'dns');
-    // ALL of them: a name with one allowed and one refused record is somebody arranging to reach the refused one.
-    if (!addrs.every((a) => addressAllowed(a.address, p))) return failure('unreachable', 'address_not_allowed');
-    return { ok: true, address: addrs[0].address };
-  }
-
   /** The pinned root's PEM for this origin, fetched and checked against the pin, or the failure. Never sends a token. */
-  async function pinnedRoot(origin: URL, pin: string, address: string, deadline: Promise<never>, timeoutMs: number)
-    : Promise<{ ok: true; pem: string } | Fail> {
+  async function pinnedRoot(
+    origin: URL, pin: string, address: string, deadline: Promise<never>, signal: AbortSignal, timeoutMs: number,
+  ): Promise<{ ok: true; pem: string } | Fail> {
     const key = `${origin.origin} ${pin}`;
     const hit = rootCache.get(key);
     if (hit && hit.expires > Date.now()) return { ok: true, pem: hit.pem };
@@ -302,8 +335,8 @@ export function shareClient(deps: { resolve?: typeof defaultResolver; transport?
       res = await Promise.race([
         transport({
           url: new URL(ROOT_PEM_PATH, origin), method: 'GET',
-          headers: { 'user-agent': webadfUserAgent(), accept: 'application/x-pem-file, */*', 'accept-encoding': 'identity' },
-          address, ca: null, insecureTls: true, timeoutMs, maxBytes: ROOT_PEM_MAX_BYTES,
+          headers: ROOT_PEM_HEADERS(),
+          address, ca: null, insecureTls: true, timeoutMs, maxBytes: ROOT_PEM_MAX_BYTES, signal,
         }),
         deadline,
       ]);
@@ -318,8 +351,10 @@ export function shareClient(deps: { resolve?: typeof defaultResolver; transport?
     }
     const pem = new TextDecoder().decode(res.body);
     if (!rootPemMatchesPin(pem, pin)) return failure('unreachable', 'certificate');
-    rootCache.set(key, { pem, expires: Date.now() + ROOT_CACHE_MS });
-    return { ok: true, pem };
+    // Trust exactly the certificate that was verified, re-encoded -- never the served text as such.
+    const one = new X509Certificate(pem).toString();
+    rootCache.set(key, { pem: one, expires: Date.now() + ROOT_CACHE_MS });
+    return { ok: true, pem: one };
   }
 
   async function call(
@@ -332,16 +367,15 @@ export function shareClient(deps: { resolve?: typeof defaultResolver; transport?
     const url = apiUrl(origin.url, path);
     if (!url) return failure('bad_response', 'path');
 
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new ShareTransportError('timeout')), o.limits.timeoutMs); });
-    deadline.catch(() => {});
+    const { deadline, signal, done } = makeDeadline(o.limits.timeoutMs);
     try {
-      const where = await vetHost(url, p, deadline);
+      const where = await vetHost(resolve, url, p, deadline);
       if (!where.ok) return where;
 
       let ca: string | null = null;
+      // A pin on an http origin has no TLS to pin; vetOrigin only lets http through under WEBADF_SHARE_TEST_INSECURE=1.
       if (t.pin && url.protocol === 'https:') {
-        const root = await pinnedRoot(origin.url, t.pin, where.address, deadline, o.limits.timeoutMs);
+        const root = await pinnedRoot(origin.url, t.pin, where.address, deadline, signal, o.limits.timeoutMs);
         if (!root.ok) return root;
         ca = root.pem;
       }
@@ -359,7 +393,7 @@ export function shareClient(deps: { resolve?: typeof defaultResolver; transport?
       let res: Awaited<ReturnType<ShareTransport>>;
       try {
         res = await Promise.race([
-          transport({ url, method, headers, body: o.body, address: where.address, ca, timeoutMs: o.limits.timeoutMs, maxBytes: o.limits.maxBytes }),
+          transport({ url, method, headers, body: o.body, address: where.address, ca, timeoutMs: o.limits.timeoutMs, maxBytes: o.limits.maxBytes, signal }),
           deadline,
         ]);
       } catch (e) {
@@ -395,7 +429,7 @@ export function shareClient(deps: { resolve?: typeof defaultResolver; transport?
     } catch {
       return failure('unreachable', 'network');
     } finally {
-      clearTimeout(timer);
+      done();
     }
   }
 
@@ -461,22 +495,22 @@ export async function fetchLocalRootPin(
   const o = vetOrigin(origin, p);
   if (!o.ok) throw new Error(`root pin: ${o.detail ?? o.failure}`);
   if (o.url.protocol !== 'https:') return null;
-  const host = bareHost(o.url);
-  let address: string;
-  if (isIP(host)) {
-    address = host;
-  } else {
-    const addrs = await resolve(host);
-    if (addrs.length === 0) throw new Error('root pin: dns');
-    if (!addrs.every((a) => addressAllowed(a.address, p))) throw new Error('root pin: address_not_allowed');
-    address = addrs[0].address;
+  const timeoutMs = SHARE_LIMITS.listing.timeoutMs;
+  const { deadline, signal, done } = makeDeadline(timeoutMs);
+  let res: Awaited<ReturnType<ShareTransport>>;
+  try {
+    const where = await vetHost(resolve, o.url, p, deadline);
+    if (!where.ok) throw new Error(`root pin: ${where.detail ?? where.failure}`);
+    res = await Promise.race([
+      transport({
+        url: new URL(ROOT_PEM_PATH, o.url), method: 'GET', headers: ROOT_PEM_HEADERS(),
+        address: where.address, ca: null, insecureTls: true, timeoutMs, maxBytes: ROOT_PEM_MAX_BYTES, signal,
+      }),
+      deadline,
+    ]);
+  } finally {
+    done();
   }
-  if (!addressAllowed(address, p)) throw new Error('root pin: address_not_allowed');
-  const res = await transport({
-    url: new URL(ROOT_PEM_PATH, o.url), method: 'GET',
-    headers: { 'user-agent': webadfUserAgent(), accept: 'application/x-pem-file, */*', 'accept-encoding': 'identity' },
-    address, ca: null, insecureTls: true, timeoutMs: SHARE_LIMITS.listing.timeoutMs, maxBytes: ROOT_PEM_MAX_BYTES,
-  });
   if (res.status === 404) return null;
   if (res.status !== 200) throw new Error(`root pin: status_${res.status}`);
   const pin = pinOfRootPem(new TextDecoder().decode(res.body));

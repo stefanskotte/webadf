@@ -222,6 +222,13 @@ describe('requests', () => {
     expect(h.calls).toHaveLength(1);
   });
 
+  it('hands the transport a signal that is aborted once the call is over', async () => {
+    const h = harness();
+    await h.client.ping(OWNER);
+    expect(h.calls[0].signal).toBeInstanceOf(AbortSignal);
+    expect(h.calls[0].signal!.aborted).toBe(true);
+  });
+
   it('unpinned: no root fetch, system roots', async () => {
     const h = harness();
     await h.client.ping(OWNER);
@@ -417,12 +424,14 @@ beforeAll(() => {
   // A different key under root A's NAME: what a forger can mint, since the real root A certificate is public.
   root('fakeA', 'Test Root A');
   signed('forgedLeaf', 'localhost', 'fakeA', 'leaf.ext');
-  for (const n of ['rootA', 'inter', 'leaf', 'rootB', 'fakeA', 'forgedLeaf']) {
+  signed('leafB', 'localhost', 'rootB', 'leaf.ext');
+  for (const n of ['rootA', 'inter', 'leaf', 'rootB', 'fakeA', 'forgedLeaf', 'leafB']) {
     pem[n] = readFileSync(join(dir, `${n}.crt`), 'utf8');
     certs[n] = new X509Certificate(pem[n]);
   }
   pem.leafKey = readFileSync(join(dir, 'leaf.key'), 'utf8');
   pem.forgedKey = readFileSync(join(dir, 'forgedLeaf.key'), 'utf8');
+  pem.leafBKey = readFileSync(join(dir, 'leafB.key'), 'utf8');
 });
 
 afterAll(() => { if (dir) rmSync(dir, { recursive: true, force: true }); });
@@ -441,6 +450,13 @@ describe('root PEM pin helpers', () => {
     expect(rootPemMatchesPin('-----BEGIN CERTIFICATE-----\nnope\n-----END CERTIFICATE-----\n', 'x')).toBe(false);
     expect(rootPemMatchesPin(pem.rootA, '')).toBe(false);
     expect(pinOfRootPem(pem.inter)).toBeNull();
+  });
+
+  it('refuses a PEM carrying more than one certificate, even when the first is the pinned root', () => {
+    const pinA = b64sha(certs.rootA.raw);
+    expect(rootPemMatchesPin(pem.rootA + pem.rootB, pinA)).toBe(false);
+    expect(rootPemMatchesPin(pem.rootA + pem.rootA, pinA)).toBe(false);
+    expect(pinOfRootPem(pem.rootA + pem.rootB)).toBeNull();
   });
 });
 
@@ -512,6 +528,16 @@ describe('pinned owner (Caddy internal CA: leaf + intermediate, root at the well
     } finally { o.server.close(); }
   });
 
+  it('the pinned root with a second (attacker) root appended: a leaf from the second root never gets the token', async () => {
+    const o = await owner({ chain: pem.leafB, key: pem.leafBKey, rootPem: pem.rootA + pem.rootB });
+    try {
+      expect(await o.client.getJson({ origin: `https://localhost:${o.port}`, pin: pinA, token: TOKEN }, 'library'))
+        .toEqual({ ok: false, failure: 'unreachable', detail: 'certificate' });
+      expect(o.authed()).toHaveLength(0);
+      expect(o.hits.map((h) => h.url)).toEqual([ROOT_PEM_PATH]);
+    } finally { o.server.close(); }
+  });
+
   it('a 404 for the PEM with a pin set is refused', async () => {
     const o = await owner({ rootPem: null });
     try {
@@ -559,6 +585,13 @@ describe('pinned owner (Caddy internal CA: leaf + intermediate, root at the well
       await expect(fetchLocalRootPin(`https://localhost:${bad.port}`, deps)).rejects.toThrow(/root pin/);
       expect(ok.authed()).toHaveLength(0);
     } finally { ok.server.close(); missing.server.close(); bad.server.close(); }
+  });
+
+  it('fetchLocalRootPin refuses localhost names without asking DNS (no TEST_INSECURE)', async () => {
+    let asked = 0;
+    await expect(fetchLocalRootPin('https://localhost', { env: {}, resolve: async () => { asked++; return [{ address: '127.0.0.1', family: 4 }]; } }))
+      .rejects.toThrow(/address_not_allowed/);
+    expect(asked).toBe(0);
   });
 
   it('fetchLocalRootPin keeps the address guard', async () => {
@@ -620,6 +653,15 @@ describe('nodeShareTransport', () => {
     it('abandons a body over maxBytes, declared or streamed', async () => {
       await expect(nodeShareTransport(base(`http://127.0.0.1:${port}/big`, { maxBytes: 1000 }))).rejects.toMatchObject({ kind: 'too_large' });
       await expect(nodeShareTransport(base(`http://127.0.0.1:${port}/big-chunked`, { maxBytes: 1000 }))).rejects.toMatchObject({ kind: 'too_large' });
+    });
+
+    it('closes promptly when the caller aborts', async () => {
+      const ac = new AbortController();
+      const started = Date.now();
+      const p = nodeShareTransport(base(`http://127.0.0.1:${port}/hang`, { timeoutMs: 30_000, signal: ac.signal }));
+      setTimeout(() => ac.abort(), 50);
+      await expect(p).rejects.toMatchObject({ kind: 'timeout' });
+      expect(Date.now() - started).toBeLessThan(5_000);
     });
 
     it('times out a server that never answers', async () => {
