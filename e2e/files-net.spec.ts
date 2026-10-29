@@ -1,18 +1,20 @@
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { transfers } from '@/db/schema/transfers';
 import { signUpFresh } from './helpers';
-import { authHeader, cleanupSeeded, pairDevice } from './device-helpers';
+import { cleanupSeeded, pairDevice } from './device-helpers';
 import { synthDrop } from './drag-drop-helpers';
-import { boardSays } from './amiga-board';
+import { boardQueue, boardSays, boardTakesNext, boardUploads } from './amiga-board';
 
 /**
  * Files increment 3, Task 2: NET: in the panes. A paired board on firmware 1.15.0+ is a BRD row under NET: with its key
  * digits; Copy → into its queue sends (one queued row per file, a folder's files by their paths), Move into it and
  * anything out of it are refused in words, the pane re-reads the queue as the board takes files, Delete cancels what
- * waits and clears what finished, and files from the computer dropped on the queue are sent too. Task 7 covers the
- * rest of NET: (the Send drop zone, the phone picker's Send here, redirects).
+ * waits and clears what finished, and files from the computer dropped on the queue are sent too. Task 7 adds the rest
+ * end to end: which boards NET: lists, a drop on the Send zone the board takes, the 32-file queue refused whole from
+ * both ways in, the device card's lines and the retired Upload page's URLs landing in Files. (A folder copied from a
+ * disk into NET: is send-to-amiga.spec.ts's "Files: a folder copied from a disk…".)
  */
 
 test.afterAll(cleanupSeeded);
@@ -22,18 +24,19 @@ const rowAt = (page: Page, side: 'left' | 'right', name: string) =>
   page.getByTestId(`pane-${side}`).locator(`[data-testid="pane-row"][data-name="${name}"]`);
 const toast = (page: Page, text: RegExp | string) => page.locator('[data-sonner-toast]').filter({ hasText: text });
 
-/** The board takes its queue's NEXT file whole and says it was saved as `savedAs` (send-to-amiga.spec.ts's way). */
-async function boardTakesNext(request: APIRequestContext, token: string, savedAs: string) {
-  const text = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');
-  const m = /^NEXT (\S+) (\d+) /.exec(text);
-  expect(m, text).not.toBeNull();
-  const [, id, size] = m!;
-  for (let off = 0; off < Number(size); off += 16_384) {
-    expect((await request.get(`/api/device/send/${id}?offset=${off}&length=16384`, { headers: authHeader(token) })).status()).toBe(200);
-  }
-  expect((await request.post(`/api/device/send/${id}/done`, { headers: authHeader(token), data: { ok: true, savedAs } })).status()).toBe(204);
-  return id;
+async function openFiles(page: Page, left: string, right: string, active: 'left' | 'right') {
+  await page.goto(`/files?${new URLSearchParams({ left, right, active })}`);
+  // Hydrated, so clicks, drops and pickers reach React's handlers.
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="files-manager"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  });
 }
+/** The panes the page shows now, read from its URL (the router may spell the colon either way). */
+const panes = (page: Page) => {
+  const sp = new URL(page.url()).searchParams;
+  return { path: new URL(page.url()).pathname, left: sp.get('left'), right: sp.get('right'), active: sp.get('active') };
+};
 
 async function queued(orgId: string, deviceId: string) {
   const rows = await getDb().select().from(transfers).where(and(eq(transfers.orgId, orgId), eq(transfers.deviceId, deviceId)));
@@ -97,7 +100,7 @@ test('NET: in the panes: a board row with its key; Copy → queues, the pane fol
   await expect(rowAt(page, 'right', 'notes.txt')).toHaveAttribute('draggable', 'false');
 
   // The board takes the oldest; the pane reads it delivered without a reload (the poll).
-  const took = await boardTakesNext(request, token, 'enigma_2.mod');
+  const took = await boardTakesNext(request, token, { ok: true, savedAs: 'enigma_2.mod' });
   const [taken] = await getDb().select({ path: transfers.path }).from(transfers).where(eq(transfers.id, took));
   expect(taken.path).toBe('Mods/enigma.mod');   // queued in the order the rows are drawn: the folder first
   await expect(rowAt(page, 'right', 'Mods/enigma.mod')).toContainText('Delivered · saved as enigma_2.mod', { timeout: LIVE });
@@ -113,8 +116,7 @@ test('NET: in the panes: a board row with its key; Copy → queues, the pane fol
   await expect(rowAt(page, 'right', 'Mods/enigma.mod')).toHaveCount(0);
   await expect(rowAt(page, 'right', 'notes.txt')).toContainText('Cancelled');
   expect(await queued(orgId, deviceId)).toEqual({ 'notes.txt': { status: 'cancelled', size: 11, comment: '' } });
-  const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');
-  expect(q).toBe('NEXT -\nLIST 0\n');
+  expect(await boardQueue(request, token)).toBe('NEXT -\nLIST 0\n');
 
   // Files from the computer dropped on the queue are sent to the board (C2), not stored in STASH:.
   await synthDrop(page, [{ name: 'Drop.txt', kind: 'file', content: 'dropped' }], '[data-testid="pane-right"]');
@@ -173,4 +175,109 @@ test('Send files to the Amiga: with no board that can receive, the zone says so 
   await expect(empty).toContainText('No board can receive files yet. Sending needs a board on firmware 1.15.0 or newer.');
   await expect(empty.getByRole('link', { name: 'Devices' })).toHaveAttribute('href', '/devices');
   await expect(page.getByTestId('files-send-input')).toHaveCount(0);
+});
+
+test('NET: lists a board on 1.15.0 and not one below', async ({ page, request }) => {
+  await signUpFresh(page);
+  const now = await pairDevice(page, request, 'New enough');
+  await boardSays(request, now.token, '1.15.0+gabc1234');
+  const old = await pairDevice(page, request, 'Too old');
+  await boardSays(request, old.token, '1.14.0+gdef5678');
+  await openFiles(page, 'NET:', 'STASH:', 'left');
+  const boards = page.getByTestId('pane-left').locator('[data-testid="pane-row"][data-kind="board"]');
+  await expect(boards).toHaveCount(1);
+  await expect(boards).toHaveAttribute('data-name', 'New enough');
+  await expect(rowAt(page, 'left', 'Too old')).toHaveCount(0);
+});
+
+test('a file dropped on the Send zone waits in NET:, the board takes it, and its row reads Delivered with the saved name', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  await openFiles(page, 'STASH:', 'LIBRARY:', 'left');
+
+  await synthDrop(page, [{ name: 'hello.txt', kind: 'file', content: 'hello amiga' }], '[data-testid="files-drop-send"]');
+  const sent = toast(page, 'Queued 1 file for Bench');
+  await expect(sent).toBeVisible({ timeout: LIVE });
+  await sent.getByRole('button', { name: 'Show queue' }).click();
+  await expect.poll(() => panes(page).right).toBe(`NET:/${deviceId}`);
+  await expect(rowAt(page, 'right', 'hello.txt')).toContainText('Waiting', { timeout: LIVE });
+  expect(await boardQueue(request, token)).toMatch(/^NEXT \S+ 11 [0-9a-f]+ [0-9a-f]+ 9:hello\.txt 0:\n/);
+
+  // Transfer saves it under another name (one was there): the row says which, without a reload.
+  await boardTakesNext(request, token, { ok: true, savedAs: 'hello_2.txt' });
+  await expect(rowAt(page, 'right', 'hello.txt')).toContainText('Delivered · saved as hello_2.txt', { timeout: LIVE });
+
+  // A file the Amiga could not save says why (R4: no Retry; the person sends it again).
+  await page.getByTestId('files-send-input').setInputFiles([{ name: 'full.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(300, 3) }]);
+  await expect(rowAt(page, 'right', 'full.bin')).toContainText('Waiting', { timeout: LIVE });
+  await boardTakesNext(request, token, { ok: false, code: 'space', text: 'disk full' });
+  await expect(rowAt(page, 'right', 'full.bin')).toContainText('Failed · not enough space on the Amiga', { timeout: LIVE });
+});
+
+test('more than 32 files for one board are refused whole: from the computer, and by Copy from STASH:', async ({ page, request }) => {
+  test.setTimeout(90_000);
+  const { orgId } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  await openFiles(page, 'STASH:', `NET:/${deviceId}`, 'left');
+  const words = "The board's queue holds 32 files / 16 MB; wait for it to empty or cancel some.";
+  const many = Array.from({ length: 33 }, (_, i) => ({ name: `f${String(i).padStart(2, '0')}.txt`, content: `file ${i}` }));
+
+  // 33 picked on the Send zone: nothing goes up.
+  await page.getByTestId('files-send-input').setInputFiles(many.map((f) => ({ name: f.name, mimeType: 'text/plain', buffer: Buffer.from(f.content) })));
+  await expect(toast(page, words)).toBeVisible({ timeout: LIVE });
+  expect(await queued(orgId, deviceId)).toEqual({});
+  expect(await boardQueue(request, token)).toBe('NEXT -\nLIST 0\n');
+  await expect(toast(page, words)).toHaveCount(0, { timeout: 20_000 });   // gone, so the next one is the copy's
+
+  // A folder of 33 in STASH: copied into the board: refused whole by the server, nothing queued, the folder kept.
+  await synthDrop(page, [{ name: 'Many', kind: 'dir', children: many.map((f) => ({ ...f, kind: 'file' as const })) }], '[data-testid="files-drop-stash"]');
+  await expect(rowAt(page, 'left', 'Many')).toBeVisible({ timeout: LIVE });
+  await rowAt(page, 'left', 'Many').click();
+  await page.getByTestId('files-copy').click();
+  await expect(toast(page, words)).toBeVisible({ timeout: LIVE });
+  expect(await queued(orgId, deviceId)).toEqual({});
+  expect(await boardQueue(request, token)).toBe('NEXT -\nLIST 0\n');
+  await expect(page.getByTestId('pane-right').getByTestId('pane-row')).toHaveCount(0);
+  await expect(rowAt(page, 'left', 'Many')).toBeVisible();
+});
+
+test('the device card\'s lines open Files: the send line on the board\'s queue, the Amiga\'s files in STASH:', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  expect((await page.request.post(`/api/transfers?deviceId=${deviceId}&name=a.txt`, { data: Buffer.from('a'),
+    headers: { 'content-type': 'application/octet-stream' } })).status()).toBe(201);
+  await boardUploads(request, token, 'Up.txt', Buffer.from('from the amiga'));
+
+  await page.goto('/devices');
+  await expect(page.getByTestId(`device-send-${deviceId}`)).toContainText('1 file waiting');
+  await page.getByTestId(`device-send-${deviceId}`).click();
+  await expect.poll(() => panes(page)).toEqual({ path: '/files', left: 'STASH:', right: `NET:/${deviceId}`, active: 'right' });
+  await expect(rowAt(page, 'right', 'a.txt')).toContainText('Waiting', { timeout: LIVE });
+
+  await page.goto('/devices');
+  await page.getByTestId(`device-upload-${deviceId}`).click();
+  await expect.poll(() => panes(page)).toEqual({ path: '/files', left: 'STASH:', right: `NET:/${deviceId}`, active: 'left' });
+  await expect(rowAt(page, 'left', 'Up.txt')).toBeVisible({ timeout: LIVE });
+});
+
+test('the Upload page\'s URLs land in Files: ?board= on the queue, ?from= on STASH:, the bare one on Files', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+
+  const hop = await page.request.get(`/ingest?board=${deviceId}`, { maxRedirects: 0 });
+  expect(hop.status()).toBe(307);
+  await page.goto(`/ingest?board=${deviceId}`);
+  await expect.poll(() => panes(page)).toEqual({ path: '/files', left: 'STASH:', right: `NET:/${deviceId}`, active: 'right' });
+  await expect(page.getByTestId('pane-right-crumb-1')).toHaveText('Bench');
+
+  await page.goto(`/ingest?from=${deviceId}`);
+  await expect.poll(() => panes(page)).toEqual({ path: '/files', left: 'STASH:', right: `NET:/${deviceId}`, active: 'left' });
+
+  await page.goto('/ingest');
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/files');
+  await expect(page.getByTestId('files-manager')).toBeVisible();
 });

@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { deflateRawSync } from 'node:zlib';
 import { signUpFresh, runTag } from './helpers';
 import { cleanupSeeded, seedDisk } from './device-helpers';
@@ -141,6 +142,25 @@ test('a dropped .zip holding an ADF adds the ADF and notes what else it held', a
   await expect(rowOf(page, `lib:${sha(a)}`)).toContainText(`LibAdd Zipped ${tag} (1990)(X).adf`);
   await expect(page.getByTestId('library-tray-note')).toHaveText('game.zip: 1 other file inside, not disk images, left out');
   await expect(card(page, `LibAdd Zipped ${tag}`)).toHaveCount(1);
+});
+
+test('an .lha dropped anywhere on the page adds the disks inside it, the overlay up while it is dragged', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/library');
+  await page.waitForFunction((sel) => document.querySelector(sel)?.getAttribute('data-native-drop') === 'ready', TARGET);
+  // The drag over the page first: the overlay comes up, and goes with the drop.
+  await page.evaluate(() => {
+    const e = new Event('dragenter', { bubbles: true, cancelable: true });
+    (e as unknown as { dataTransfer: unknown }).dataTransfer = { types: ['Files'], items: [{ kind: 'file' }], dropEffect: 'none' };
+    document.body.dispatchEvent(e);
+  });
+  await expect(page.getByTestId('library-drop-overlay')).toBeVisible();
+  // Two fixed disks (the archive module's fixture): new to this org, though their blobs may be held from another run.
+  const lha = readFileSync('src/lib/archive/fixtures/disks.lha');
+  await synthDrop(page, [{ name: 'disks.lha', kind: 'file', bytes: bytes(lha) }], 'body');
+  await expect(summary(page)).toHaveText('2 added', { timeout: 30_000 });
+  await expect(page.getByTestId('library-tray-row')).toHaveText([/Disk1\.adf\s*Added/, /Disk2\.adf\s*Added/]);
+  await expect(page.getByTestId('library-drop-overlay')).toHaveCount(0);
 });
 
 test('an ADF already in the library says so, newest drop first', async ({ page }) => {

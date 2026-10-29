@@ -169,6 +169,19 @@ export async function stagingReady(page: Page) {
     .toBeVisible({ timeout: 15_000 });
 }
 
+// ---- The Library page's Add disks ▾ and its tray (Files increment 3, R8/R9; they replace the Staging list's) ----
+
+/** The tray's rows, newest drop first; `data-state` is hashing|uploading|deduped|done|failed, as libRows' was. */
+export const trayRows = (page: Page) => page.locator('[data-testid="library-tray-row"]');
+
+/** Waits until Add disks ▾ has hydrated: a pick before that has no change handler and silently does nothing. */
+export async function libraryAddReady(page: Page) {
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="library-add-disks"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  }, undefined, { timeout: 15_000 });
+}
+
 // ---- The library's ⋯ title menu (Phase C1, spec 2026-10-24 §2) ----
 
 /**

@@ -32,20 +32,15 @@ import { blobs, disks } from '@/db/schema/catalog';
 import { formatVolume } from '@/lib/adffs/format';
 import { diskStore } from '@/lib/storage';
 import { devices } from '@/db/schema/devices';
-import { amigaUploads } from '@/db/schema/amiga-uploads';
-import { transfers } from '@/db/schema/transfers';
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { signInAsSuperAdmin, SUPERADMIN_EMAIL, gotoAdminUserRow } from './admin-helpers';
-import { boardSays, boardOpens, boardSendsChunks, boardUploads } from './amiga-board';
+import { boardSays, boardOpens, boardSendsChunks, boardTakesNext, boardUploads } from './amiga-board';
 import { zipSync } from 'fflate';
 
-// Upload test rows: all belong to that test's own fresh org; amiga_uploads are removed by id here (the org's other
-// rows go with its teardown), transfers cascade with the paired device in cleanupSeeded().
-const uploadIdsToDelete: string[] = [];
+// Transfers and Amiga uploads made here belong to a fresh org: cleanupSeeded() removes its boards and the org.
 test.afterAll(async () => {
   await cleanupTestReleases();
-  if (uploadIdsToDelete.length) await getDb().delete(amigaUploads).where(inArray(amigaUploads.id, uploadIdsToDelete)).catch(() => undefined);
   await cleanupTosec(); await cleanupSeeded();
 });
 
@@ -465,71 +460,110 @@ test('the Devices pairs are legible: drive box, tile caption, offline strip, pil
   }
 });
 
-// Phase C3 (spec §8): the Upload pairs, measured on the real elements of a seeded org -- a stored, a receiving and a
-// failed Amiga file, a queued send, and one library row from a real drop. Every row belongs to this test's own org.
-test('the Upload pairs are legible: pills, statuses, where on a hovered row, counts, footnote, receiver, Delete, Browse, hint', async ({ page, request }) => {
-  const u = await signUpFresh(page);
-  const { deviceId, token } = await pairDevice(page, request, `Up ${runTag().slice(0, 6)}`);
-  expect((await request.post('/api/device/status', { headers: authHeader(token),
-    data: { mountedSha256: null, firmwareVersion: '1.19.0+gabc1234', secondDrive: 'net', driveVersion: 0, upKey: 'ab12' } })).status()).toBe(204);
-  const now = Date.now();
-  const ids = { stored: randomUUID(), moving: randomUUID(), failed: randomUUID(), queued: randomUUID() };
-  await getDb().insert(amigaUploads).values([
-    { id: ids.stored, orgId: u.orgId, deviceId, deviceName: 'Up', path: 'Keep.txt', sizeBytes: 11, amigaDate: '17000.600.0',
-      status: 'stored', receivedBytes: 11, blobSha256: '0'.repeat(64), createdAt: new Date(now), storedAt: new Date(now), expiresAt: new Date(now + 30 * 86_400_000) },
-    { id: ids.moving, orgId: u.orgId, deviceId, deviceName: 'Up', path: 'Moving.bin', sizeBytes: 20_000, amigaDate: '17000.600.0',
-      status: 'receiving', receivedBytes: 16_384, createdAt: new Date(now - 1000), expiresAt: new Date(now + 86_400_000) },
-    { id: ids.failed, orgId: u.orgId, deviceId, deviceName: 'Up', path: 'Bad.txt', sizeBytes: 11, amigaDate: '17000.600.0',
-      status: 'failed', receivedBytes: 11, errorCode: 'crc', createdAt: new Date(now - 2000), expiresAt: new Date(now + 86_400_000) },
-  ]);
-  uploadIdsToDelete.push(ids.stored, ids.moving, ids.failed);
-  await getDb().insert(transfers).values([
-    { id: ids.queued, orgId: u.orgId, deviceId, createdByUserId: 'e2e-contrast', path: 'Wait.bin', sizeBytes: 11, crc32: 0,
-      blobSha256: '0'.repeat(64), status: 'queued', createdAt: new Date(now - 3000), expiresAt: new Date(now + 7 * 86_400_000) },
-  ]);
-  await page.setViewportSize({ width: 1440, height: 1100 });
-  await page.goto('/ingest');
-  const k = (p: string, id: string) => `[data-testid="${p}-${id}"]`;
-  await expect(page.locator(k('staging-status', `amiga:${ids.moving}`))).toContainText('Arriving', { timeout: 15_000 });
+// Files increment 3 (Task 7): the Upload page retired into Files (NET:, the Send drop zone) and the Library (Add disks
+// ▾, the drop overlay, the tray), so its pairs are measured there now. NET: at 1280 x 900: the Send zone (title, hint,
+// board line, receiver line), a board row's marks and a queue row's state marks (Waiting, Delivered · saved as …,
+// Failed · …), one style each, each measured. Every row belongs to this test's own org.
 
-  // A library row from a real drop into this org (a fake ADF whose first bytes are unique to this run).
+/** Marks a pane row's mark span reading `text` for probe(): the marks share one class list, so they are told by text. */
+async function tagMark(page: Page, side: 'left' | 'right', name: string, text: string, tag: string) {
+  await page.evaluate(({ side, name, text, tag }) => {
+    const row = document.querySelector(`[data-testid="pane-${side}"] [data-testid="pane-row"][data-name="${name}"]`);
+    const m = [...(row?.querySelectorAll('span.rounded-full.border') ?? [])].find((s) => s.textContent === text);
+    m?.setAttribute('data-probe', tag);
+  }, { side, name, text, tag });
+  return `[data-probe="${tag}"]`;
+}
+
+test('the Files NET: pairs are legible: Send zone title, hint, board and receiver lines; board marks; queue state marks', async ({ page, request }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  for (const name of ['Wait.txt', 'Done.txt', 'Full.txt']) {
+    expect((await page.request.post(`/api/transfers?deviceId=${deviceId}&name=${name}`, { data: Buffer.from(name),
+      headers: { 'content-type': 'application/octet-stream' } })).status()).toBe(201);
+  }
+  // The oldest two taken: Wait.txt was queued first, so it is delivered; Done.txt fails; Full.txt waits.
+  await boardTakesNext(request, token, { ok: true, savedAs: 'Wait_2.txt' });
+  await boardTakesNext(request, token, { ok: false, code: 'space', text: 'disk full' });
+  await page.goto(`/files?${new URLSearchParams({ left: 'NET:', right: `NET:/${deviceId}`, active: 'right' })}`);
+  await hydrated(page, 'files-manager', 'onKeyDown');
+  await expect(page.getByTestId('files-send-receiver')).toBeVisible();
+  await expect(page.locator('[data-testid="pane-right"] [data-testid="pane-row"][data-name="Wait.txt"]')).toContainText('Delivered', { timeout: 15_000 });
+  await page.mouse.move(0, 0);
+  await legible(page, 'net', [
+    ['Send zone title', '#files-drop-send-heading'],
+    ['Send zone hint', '[data-testid="files-drop-send-hint"]'],
+    ['board line', '[data-testid="files-send-board"]'],
+    ['receiver line', '[data-testid="files-send-receiver"]'],
+    ['board "key AB12" mark', await tagMark(page, 'left', 'Bench', 'key AB12', 'key')],
+    ['board "1 waiting" mark', await tagMark(page, 'left', 'Bench', '1 waiting', 'waiting')],
+    ['"Waiting" mark', await tagMark(page, 'right', 'Full.txt', 'Waiting', 'w')],
+    ['"Delivered · saved as" mark', await tagMark(page, 'right', 'Wait.txt', 'Delivered · saved as Wait_2.txt', 'd')],
+    ['"Failed · …" mark', await tagMark(page, 'right', 'Done.txt', 'Failed · not enough space on the Amiga', 'f')],
+  ]);
+  await page.screenshot({ path: 'test-results/zz-files-net.png', fullPage: true });
+});
+
+// The Library's own way in (Files increment 3, R8/R9): Add disks ▾ and its menu, the drop overlay's words over the
+// scrim, and the tray (summary, Added, Already in the library, Refused — why, Open title) at 1280 x 900.
+test('the Library add pairs are legible: Add disks, its menu, the drop overlay, the tray summary and row states', async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await signUpFresh(page);
+  await page.goto('/library');
+  await hydrated(page, 'library-add-disks', 'onClick');
+  await legible(page, 'library', [['Add disks', '[data-testid="library-add-disks"]']]);
+  await page.getByTestId('library-add-disks').click();
+  await expect(page.getByTestId('library-add-disks-panel')).toBeVisible();
+  await legible(page, 'library', [
+    ['menu Browse files…', '[data-testid="library-add-browse"]'],
+    ['menu Paste a URL…', '[data-testid="library-add-url"]'],
+  ]);
+  await page.keyboard.press('Escape');
+
+  // The overlay, raised by a drag over the page.
+  await page.waitForFunction(() => document.querySelector('[data-testid="library-drop-target"]')?.getAttribute('data-native-drop') === 'ready');
+  await page.evaluate(() => {
+    const e = new Event('dragenter', { bubbles: true, cancelable: true });
+    (e as unknown as { dataTransfer: unknown }).dataTransfer = { types: ['Files'], items: [{ kind: 'file' }], dropEffect: 'none' };
+    document.body.dispatchEvent(e);
+  });
+  await expect(page.getByTestId('library-drop-overlay')).toBeVisible();
+  await legible(page, 'library', [
+    ['overlay title', '[data-testid="library-drop-overlay"] h3'],
+    ['overlay kinds line', '[data-testid="library-drop-overlay"] p'],
+  ]);
+  await page.evaluate(() => {
+    const e = new Event('dragleave', { bubbles: true, cancelable: true });
+    (e as unknown as { dataTransfer: unknown }).dataTransfer = { types: ['Files'], items: [{ kind: 'file' }], dropEffect: 'none' };
+    document.body.dispatchEvent(e);
+  });
+  await expect(page.getByTestId('library-drop-overlay')).toHaveCount(0);
+
+  // The tray: one added, then the same again (already in the library) beside a refused text file.
   const adf = Buffer.alloc(901_120);
   adf.write(`DOS\0contrast-${runTag()}`, 0);
-  const libSha = createHash('sha256').update(adf).digest('hex');
-  await page.getByTestId('file-input').setInputFiles({ name: 'contrast.adf', mimeType: 'application/octet-stream', buffer: adf });
-  await expect(page.locator(`[data-testid="staging-row"][data-key="lib:${libSha}"]`)).toHaveAttribute('data-state', 'done', { timeout: 30_000 });
-
-  const pairs: [string, string][] = [
-    ['From Amiga pill', k('staging-dir', `amiga:${ids.stored}`)],
-    ['To Amiga pill', k('staging-dir', `send:${ids.queued}`)],
-    ['To library pill', k('staging-dir', `lib:${libSha}`)],
-    ['done status', k('staging-status', `amiga:${ids.stored}`)],
-    ['moving status', k('staging-status', `amiga:${ids.moving}`)],
-    ['waiting status', k('staging-status', `send:${ids.queued}`)],
-    ['failed status', k('staging-status', `amiga:${ids.failed}`)],
-    ['size', k('staging-size', `amiga:${ids.stored}`)],
-    ['unchecked filter count', '[data-testid="staging-filter-in"] > span'],
-    ['footnote', '#from-amiga footer > span:first-child'],
-    ['receiver line', '[data-testid="send-receiver"]'],
-    ['Delete', k('staging-delete', `amiga:${ids.stored}`)],
-    ['Browse files', '[data-testid="add-browse"]'],
-    ['drop-card hint', '[data-testid="dropzone-hint"]'],
-  ];
-  for (const [what, sel] of pairs) {
-    const p = await probe(page, sel);
-    expect(p, `${what}: ${sel} not found`).toBeTruthy();
-    const r = ratio(p!.fg, p!.bg);
-    console.log(`upload    ${what.padEnd(24)} ${r.toFixed(2)}:1  "${p!.text.slice(0, 24)}"`);
-    expect(r, what).toBeGreaterThan(4.5);
-  }
-  // A hovered row sits on --modal-foot; its where line is --muted-2.
-  await page.locator(`[data-testid="staging-row"][data-key="amiga:${ids.stored}"]`).hover();
-  const where = await probe(page, k('staging-where', `amiga:${ids.stored}`));
-  expect(where, 'where line not found').toBeTruthy();
-  const rw = ratio(where!.fg, where!.bg);
-  console.log(`upload    where on a hovered row   ${rw.toFixed(2)}:1`);
-  expect(rw, 'where on a hovered row').toBeGreaterThan(4.5);
-  await page.screenshot({ path: 'test-results/zz-upload.png', fullPage: true });
+  const sha = createHash('sha256').update(adf).digest('hex');
+  const pick = (files: { name: string; buffer: Buffer }[]) => page.getByTestId('file-input')
+    .setInputFiles(files.map((f) => ({ ...f, mimeType: 'application/octet-stream' })));
+  await pick([{ name: 'Contrast (1990)(X).adf', buffer: adf }]);
+  await expect(page.getByTestId('library-tray-summary')).toHaveText('1 added', { timeout: 30_000 });
+  await legible(page, 'library', [
+    ['tray "Added"', `[data-key="lib:${sha}"] [data-testid="library-tray-state"]`],
+    ['tray Open title', `[data-testid="library-tray-open-${sha}"]`],
+  ]);
+  await pick([{ name: 'Contrast (1990)(X).adf', buffer: adf }, { name: 'notes.txt', buffer: Buffer.from('not a disk') }]);
+  await expect(page.getByTestId('library-tray-summary')).toHaveText(/already in the library/, { timeout: 30_000 });
+  await page.mouse.move(0, 0);
+  await legible(page, 'library', [
+    ['tray summary', '[data-testid="library-tray-summary"]'],
+    ['tray "Already in the library"', '[data-testid="library-tray-row"][data-state="deduped"] [data-testid="library-tray-state"]'],
+    ['tray "Refused — why"', '[data-testid="library-tray-row"][data-state="failed"] [data-testid="library-tray-state"]'],
+  ]);
+  await page.screenshot({ path: 'test-results/zz-library-add.png', fullPage: true });
 });
 
 // Files increment 1 (Task 11): the Files pairs at 1280 x 900, on a fresh org's own disks -- the active and inactive

@@ -1,12 +1,13 @@
 // PaulaNET Phase 4 increment 3 (spec 2026-10-16 §4, §7 e2e): the web side of sending to the Amiga. The board is
 // simulated through its own routes (status, poll, queue, chunk, done), as e2e/device-send.spec.ts does.
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
-import { signUpFresh, stagingReady, openRowMenu } from './helpers';
+import { signUpFresh, stagingReady } from './helpers';
 import { createHash } from 'node:crypto';
 import { diskStore } from '@/lib/storage';
 import { formatVolume } from '@/lib/adffs/format';
-import { addFile, makeDirectory, readVolume } from '@/lib/adffs';
+import { addFile, makeDirectory, readVolume, setComment } from '@/lib/adffs';
 import { pairDevice, authHeader, cleanupSeeded, seedDisk } from './device-helpers';
+import { boardQueue, boardTakesNext } from './amiga-board';
 import { runTag } from './helpers';
 
 test.afterAll(async () => { await cleanupSeeded(); });
@@ -23,20 +24,6 @@ async function boardSays(request: APIRequestContext, token: string, rx: 'c' | 'r
   expect((await request.post('/api/device/status', { headers: authHeader(token),
     data: { mountedSha256: null, firmwareVersion: firmware, secondDrive: 'net', driveVersion: 0 } })).status()).toBe(204);
   expect((await request.get(`/api/device/poll?since=999999&xferAck=0&rx=${rx}`, { headers: authHeader(token) })).status()).toBe(200);
-}
-
-/** The board takes the queue's NEXT file whole and posts the outcome. */
-async function boardTakesNext(request: APIRequestContext, token: string,
-  outcome: { ok: true; savedAs: string } | { ok: false; code: string; text: string }) {
-  const text = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');
-  const m = /^NEXT (\S+) (\d+) /.exec(text);
-  expect(m, text).not.toBeNull();
-  const [, id, size] = m!;
-  for (let off = 0; off < Number(size); off += 16_384) {
-    expect((await request.get(`/api/device/send/${id}?offset=${off}&length=16384`, { headers: authHeader(token) })).status()).toBe(200);
-  }
-  expect((await request.post(`/api/device/send/${id}/done`, { headers: authHeader(token), data: outcome })).status()).toBe(204);
-  return id;
 }
 
 async function dropFile(page: Page, name: string, buffer: Buffer) {
@@ -131,28 +118,41 @@ async function seedSendDisk(orgId: string, title: string) {
   const v = readVolume(adf); if (!v.ok) throw new Error('no volume');
   const mods = v.root.find((e) => e.name === 'mods')!.block;
   const a = addFile(adf, mods, 'a.txt', new TextEncoder().encode('hello'), 0x40); if (!a.ok) throw new Error(a.reason); adf = a.adf;
+  // A comment, so a send from the disk shows it travels with the file (Files increment 3, R2).
+  const v2 = readVolume(adf); if (!v2.ok) throw new Error('no volume');
+  const file = v2.root.find((e) => e.name === 'mods')!.children.find((e) => e.name === 'a.txt')!.block;
+  const c = setComment(adf, mods, file, 'a note'); if (!c.ok) throw new Error(c.reason); adf = c.adf;
   const sha = createHash('sha256').update(adf).digest('hex');
   if (!(await diskStore.stat(sha))) await diskStore.put(sha, adf);
   return { ...(await seedDisk(orgId, { title, diskNo: 1, sha256: sha })), mods };
 }
 
-// Files increment 1 (Task 9) made the head of a disk the Files manager, which has no Send yet: Send to the Amiga
-// returns with NET: in Files increment 3. Until then this waits, unchanged.
-test.fixme('Browse: Send on a folder queues its files with their paths and protection', async ({ page, request }) => {
+// Files increment 1 (Task 9) made the head of a disk the Files manager; Send on a folder returned with NET: in Files
+// increment 3 (Task 7) as a copy of the folder into the board's queue: its files go by their paths inside it, with
+// their protection and comment, and the board takes them as before.
+test('Files: a folder copied from a disk into NET:/<board> queues its files with their paths, protection and comment', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
-  const { token } = await pairDevice(page, request, 'Bench');
+  const { deviceId, token } = await pairDevice(page, request, 'Bench');
   await boardSays(request, token, 'c');
-  const { diskId, mods } = await seedSendDisk(orgId, `S${runTag().slice(0, 6)}`);
-  await page.goto(`/disks/${diskId}/files`);
-  await openRowMenu(page, mods);
-  await page.getByTestId(`fs-send-${mods}`).click();
-  await expect(page.getByText('Queued for Bench')).toBeVisible();
-  const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');
-  expect(q).toMatch(/^NEXT \S+ 5 [0-9a-f]+ 40 10:mods\/a\.txt 0:\n/);
-  await page.getByRole('button', { name: 'See queue' }).click();
-  await expect(page).toHaveURL(/\/ingest\?board=/);
-  await expect(page.getByTestId('staging-filter-out')).toHaveAttribute('aria-checked', 'true');   // the queue: To the Amiga
-  await expect(sendRows(page, 'queued')).toContainText('mods/a.txt', { timeout: LIVE });
+  const { gameId, diskId } = await seedSendDisk(orgId, `S${runTag().slice(0, 6)}`);
+  await page.goto(`/files?${new URLSearchParams({ left: `LIBRARY:/${gameId}/${diskId}`, right: `NET:/${deviceId}`, active: 'left' })}`);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="files-manager"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  });
+  const row = (side: 'left' | 'right', name: string) =>
+    page.getByTestId(`pane-${side}`).locator(`[data-testid="pane-row"][data-name="${name}"]`);
+  await row('left', 'mods').click();
+  await page.getByTestId('files-copy').click();
+  await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'Queued 1 file to Bench.' })).toBeVisible({ timeout: LIVE });
+  // size 5, crc, protection 0x40, the path inside the folder, the comment.
+  expect(await boardQueue(request, token)).toMatch(/^NEXT \S+ 5 [0-9a-f]+ 40 10:mods\/a\.txt 6:a note\n/);
+  await expect(row('right', 'mods/a.txt')).toContainText('Waiting', { timeout: LIVE });
+
+  await boardTakesNext(request, token, { ok: true, savedAs: 'a.txt' });
+  await expect(row('right', 'mods/a.txt')).toContainText('Delivered · saved as a.txt', { timeout: LIVE });
+  // The disk is unchanged: a send is a copy.
+  await expect(row('left', 'mods')).toBeVisible();
 });
 
 test('a title page: Send .adf to Amiga queues the whole disk as <name>.adf', async ({ page, request }) => {

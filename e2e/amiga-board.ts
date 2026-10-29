@@ -41,3 +41,25 @@ export async function boardUploads(request: APIRequestContext, token: string, pa
   expect((await boardCloses(request, token, id, crc32(data) >>> 0)).status()).toBe(200);
   return id;
 }
+
+// The send side (PaulaNET Phase 4 increment 3; Files increment 3 NET:): what Transfer pulls from the board's queue.
+
+/** The board's queue as the firmware reads it (`NEXT …` then `LIST n`), Latin-1. */
+export async function boardQueue(request: APIRequestContext, token: string): Promise<string> {
+  const res = await request.get('/api/device/send/queue', { headers: authHeader(token) });
+  expect(res.status()).toBe(200);
+  return Buffer.from(await res.body()).toString('latin1');
+}
+/** The board takes its queue's NEXT file whole, in 16 KB reads, and posts the outcome; the transfer's id. */
+export async function boardTakesNext(request: APIRequestContext, token: string,
+  outcome: { ok: true; savedAs: string } | { ok: false; code: string; text: string }) {
+  const text = await boardQueue(request, token);
+  const m = /^NEXT (\S+) (\d+) /.exec(text);
+  expect(m, text).not.toBeNull();
+  const [, id, size] = m!;
+  for (let off = 0; off < Number(size); off += 16_384) {
+    expect((await request.get(`/api/device/send/${id}?offset=${off}&length=16384`, { headers: authHeader(token) })).status()).toBe(200);
+  }
+  expect((await request.post(`/api/device/send/${id}/done`, { headers: authHeader(token), data: outcome })).status()).toBe(204);
+  return id;
+}
