@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { transfers } from '@/db/schema/transfers';
+import { devices } from '@/db/schema/devices';
 import { signUpFresh } from './helpers';
 import { cleanupSeeded, pairDevice } from './device-helpers';
 import { synthDrop } from './drag-drop-helpers';
@@ -213,6 +214,24 @@ test('a file dropped on the Send zone waits in NET:, the board takes it, and its
   await expect(rowAt(page, 'right', 'full.bin')).toContainText('Waiting', { timeout: LIVE });
   await boardTakesNext(request, token, { ok: false, code: 'space', text: 'disk full' });
   await expect(rowAt(page, 'right', 'full.bin')).toContainText('Failed · not enough space on the Amiga', { timeout: LIVE });
+});
+
+test("the Send zone's line follows the board's queue: a send makes files wait, and once none wait it says so, without a reload", async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  // The board has seen the Amiga, which does not answer: the line then says whether files wait.
+  await getDb().update(devices).set({ sendRx: 'u', sendRxAt: new Date() }).where(eq(devices.id, deviceId));
+  await openFiles(page, 'STASH:', 'LIBRARY:', 'left');
+  const line = page.getByTestId('files-send-receiver');
+  await expect(line).toHaveText('• The Amiga does not answer');
+  await page.getByTestId('files-send-input').setInputFiles([{ name: 'a.txt', mimeType: 'text/plain', buffer: Buffer.from('aaa') }]);
+  await expect(toast(page, 'Queued 1 file for Bench')).toBeVisible({ timeout: LIVE });
+  await expect(line).toHaveText('• Start Transfer on the Amiga');
+  // Cancelled elsewhere (another tab, the device card): no file waits any more. (A board taking it would also
+  // report Transfer running, which says nothing about the count.)
+  await getDb().update(transfers).set({ status: 'cancelled', finishedAt: new Date() }).where(eq(transfers.deviceId, deviceId));
+  await expect(line).toHaveText('• The Amiga does not answer', { timeout: LIVE });
 });
 
 test('more than 32 files for one board are refused whole: from the computer, and by Copy from STASH:', async ({ page, request }) => {

@@ -19,6 +19,7 @@ import {
   acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, offersUndo, placeOf,
 } from '@/lib/files/pane-rules';
 import { netPollMs, NET_MOVE_IN, NET_PICK_BOARD } from '@/lib/files/net-rules';
+import { stashPollMs, trackArriving, withStalls, type ArrivingSeen } from '@/lib/files/arriving';
 import { netDropRefusal, sendToBoard } from '@/lib/files/net-send';
 import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
@@ -180,11 +181,18 @@ function wordsFor(code: unknown, detail: unknown): string {
   return typeof code === 'string' && KNOWN_CODES.has(code) ? refusalWords(code as RefusalCode, d) : refusalWords('failed');
 }
 
+/** When each listing was read in this tab: an arriving STASH: row's stall clock runs on it. The server's first has none. */
+const readAt = new WeakMap<Listing, number>();
+
 /** `code`: the refusal's own code, for a caller that answers one differently (an archive that does not open). */
 async function fetchListing(path: string): Promise<{ listing: Listing } | { gone: true } | { error: string; code?: unknown }> {
   try {
     const res = await fetch(`/api/files/list?path=${encodeURIComponent(path)}`, { cache: 'no-store' });
-    if (res.ok) return { listing: (await res.json()) as Listing };
+    if (res.ok) {
+      const listing = (await res.json()) as Listing;
+      readAt.set(listing, Date.now());
+      return { listing };
+    }
     if (res.status === 404 || res.status === 400) return { gone: true };
     const body = (await res.json().catch(() => null)) as { error?: unknown; detail?: unknown } | null;
     return { error: wordsFor(body?.error, body?.detail), code: body?.error };
@@ -217,8 +225,24 @@ function useMarks(l: Listing | null, strips: Record<string, StripData>): Readonl
   return useMemo(() => (history ? addedIn(history) : NO_MARKS), [history]);
 }
 
-function shown(l: Listing | null, marks: ReadonlyMap<string, number>): Listing | null {
-  return l && marks.size ? { ...l, entries: withAddedIn(l.entries, marks) } : l;
+/**
+ * The arriving STASH: rows a pane's listings have shown, and when the newest was read (trackArriving): taken afresh
+ * each time the pane's listing changes. A listing this tab did not read (the server's first) starts no clock.
+ */
+function useArriving(l: Listing | null): { seen: ArrivingSeen; at: number } {
+  const [t, setT] = useState<{ l: Listing | null; seen: ArrivingSeen; at: number }>({ l, seen: {}, at: 0 });
+  if (t.l !== l) {
+    const at = l ? readAt.get(l) : undefined;
+    setT(l && at !== undefined ? { l, seen: trackArriving(t.seen, l.entries, at), at } : { l, seen: t.seen, at: t.at });
+  }
+  return t;
+}
+
+/** What a pane draws: the "new in vN" marks, and a stopped arriving row's words in place of its percentage. */
+function shown(l: Listing | null, marks: ReadonlyMap<string, number>, arr: { seen: ArrivingSeen; at: number }): Listing | null {
+  if (!l) return l;
+  const entries = withStalls(marks.size ? withAddedIn(l.entries, marks) : l.entries, arr.seen, arr.at);
+  return entries === l.entries ? l : { ...l, entries };
 }
 
 /** One button of the column. The reason sits on a wrapper too: a disabled button takes no pointer events, so its
@@ -299,8 +323,10 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   // What each pane draws: its listing with the "new in vN" marks from its disk's History (the strip carries it).
   const marksLeft = useMarks(panes.left.listing, strips);
   const marksRight = useMarks(panes.right.listing, strips);
-  const shownLeft = useMemo(() => shown(panes.left.listing, marksLeft), [panes.left.listing, marksLeft]);
-  const shownRight = useMemo(() => shown(panes.right.listing, marksRight), [panes.right.listing, marksRight]);
+  const arrLeft = useArriving(panes.left.listing);
+  const arrRight = useArriving(panes.right.listing);
+  const shownLeft = useMemo(() => shown(panes.left.listing, marksLeft, arrLeft), [panes.left.listing, marksLeft, arrLeft]);
+  const shownRight = useMemo(() => shown(panes.right.listing, marksRight, arrRight), [panes.right.listing, marksRight, arrRight]);
   const rowsLeft = useMemo(() => (shownLeft ? sortFsEntries(shownLeft.entries, sorts[deviceOf(shownLeft.path)]) : []), [shownLeft, sorts]);
   const rowsRight = useMemo(() => (shownRight ? sortFsEntries(shownRight.entries, sorts[deviceOf(shownRight.path)]) : []), [shownRight, sorts]);
   const rowsOf = (s: Side) => (s === 'left' ? rowsLeft : rowsRight);
@@ -389,8 +415,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   }, []);
 
   /**
-   * The NET: poll (increment 3): a fresh listing of the place a pane already shows, in place -- no busy line, and the
-   * picked rows follow their entries. An answer is dropped when a navigation (or a reload) began since it was asked
+   * The NET: and arriving-STASH: poll (increment 3): a fresh listing of the place a pane already shows, in place --
+   * no busy line, and the picked rows follow their entries. An answer is dropped when a navigation (or a reload) began since it was asked
    * (the `seq` guard) or the pane is loading; a failed read changes nothing, and the next one tries again.
    */
   async function refresh(side: Side) {
@@ -408,10 +434,11 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     });
   }
 
-  // A pane showing a board's queue re-reads it: every 3 s while anything waits or sends, else every 10 s (netPollMs),
-  // and only while the tab is visible.
-  const pollLeft = netPollMs(panes.left.listing);
-  const pollRight = netPollMs(panes.right.listing);
+  // A pane showing a board's queue re-reads it: every 3 s while anything waits or sends, else every 10 s (netPollMs);
+  // a STASH: pane showing a file arriving from the Amiga, every 3 s while it moves, every 10 s once it has stopped,
+  // not at all once none is arriving (stashPollMs). Only while the tab is visible.
+  const pollLeft = netPollMs(panes.left.listing) ?? stashPollMs(panes.left.listing, arrLeft.seen, arrLeft.at);
+  const pollRight = netPollMs(panes.right.listing) ?? stashPollMs(panes.right.listing, arrRight.seen, arrRight.at);
   useEffect(() => {
     const timers = (['left', 'right'] as const).flatMap((s) => {
       const ms = s === 'left' ? pollLeft : pollRight;
@@ -1105,9 +1132,12 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const dest = dropFolder(l, e);
     if (data.paths.includes(dest)) return;                       // a folder dropped on itself
     if (data.from === side && dest === l.path) return;           // put back where it was picked up
+    const from = panes[data.from]?.listing;
+    // A STASH: file that failed to arrive holds no bytes: said as Copy → says it, not as the op's "not found".
+    const failed = failedReason(from?.entries.filter((x) => data.paths.includes(x.path)) ?? []);
+    if (failed) { toast.error(failed); return; }
     const op = e.shiftKey ? 'move' : 'copy';
     if (op === 'move' && netBoardOf(l)) { toast.error(`${NET_MOVE_IN}.`); return; }   // C16
-    const from = panes[data.from]?.listing;
     if (op === 'move' && from && !from.writable) { toast.error(readOnly(from)); return; }
     activate(side);
     const label = where(l);
@@ -1167,6 +1197,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       </div>
       <div className="grid min-w-0 max-sm:grid-cols-2 max-sm:gap-x-2.5 max-sm:gap-y-2 sm:contents">
         <SendDropZone targets={send.targets} initialBoard={send.initialBoard} serverNow={send.serverNow} onSent={sentTo}
+                      paneQueues={[panes.left.listing?.queue, panes.right.listing?.queue]}
                       onShowQueue={(id) => navigate('right', `NET:/${id}`)} />
       </div>
     </div>

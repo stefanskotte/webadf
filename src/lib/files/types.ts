@@ -12,6 +12,8 @@ export type FsEntry = {
   marks: string[];
   /** The version that added this entry to its disk ("new in vN", from the disk's History); absent for none. */
   addedIn?: number;
+  /** A STASH: file still arriving from the Amiga: the bytes it holds so far (a pane tells a stopped one by it). */
+  received?: number;
   /** A folder inside a disk: everything under it, at any depth (what deleting it removes as well). */
   inside?: { files: number; folders: number };
 };

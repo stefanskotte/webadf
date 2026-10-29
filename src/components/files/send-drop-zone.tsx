@@ -11,6 +11,7 @@ import { longOffline, orderTargets, receiverLine, targetState, type SendTarget }
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
 import { netDropRefusal, sendToBoard, type NetSendResult } from '@/lib/files/net-send';
 import { SIGNED_OUT_TEXT } from '@/lib/signed-out';
+import { NET_REFRESH_ACTIVE_MS, NET_REFRESH_IDLE_MS } from '@/lib/files/net-rules';
 import type { Listing } from '@/lib/files/types';
 
 /** Below sm the "?" sits in the tile's top-right corner: a sibling of the label, so a tap on it does not open the chooser. */
@@ -33,8 +34,10 @@ export function sentReport(r: NetSendResult, total: number, boardName: string): 
  * A drop or pick (files and folders) is checked whole against the board's queue and the 4 MB cap, then goes up one
  * file a POST; the board is the one useSendBoard remembers. What it queued shows under NET:/<board>.
  */
-export function SendDropZone({ targets, initialBoard, serverNow, onSent, onShowQueue }: {
+export function SendDropZone({ targets, initialBoard, serverNow, paneQueues = [], onSent, onShowQueue }: {
   targets: SendTarget[]; initialBoard: string | null; serverNow: number;
+  /** What the panes showing a board's queue last read (Listing.queue): the chosen board's, when shown, is the count. */
+  paneQueues?: (Listing['queue'] | undefined)[];
   /** Files were queued for this board: any pane showing it reloads. */
   onSent(deviceId: string): void;
   /** The toast's Show queue: the right pane goes to NET:/<deviceId>. */
@@ -43,19 +46,29 @@ export function SendDropZone({ targets, initialBoard, serverNow, onSent, onShowQ
   const [board, setBoard] = useSendBoard(targets, serverNow, initialBoard);
   const [showOffline, setShowOffline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  // What waits on the chosen board, for the receiver line ("Start Transfer on the Amiga" needs to know files wait).
-  const [waiting, setWaiting] = useState(0);
+  // What waits on the chosen board, for the receiver line ("Start Transfer on the Amiga" needs to know files wait):
+  // a pane showing its queue re-reads it already (netPollMs), so its count is taken; else the zone reads the queue
+  // itself, at once, after each send, and as a pane would (every 3 s while files wait, else 10 s) while the tab is
+  // visible -- never a count the board has since taken files from.
+  const [read, setRead] = useState<{ board: string | null; files: number }>({ board: null, files: 0 });
+  const [sends, setSends] = useState(0);
   const current = targets.find((t) => t.id === board) ?? null;
+  const fromPane = paneQueues.find((q) => q?.deviceId === board);
+  const waiting = fromPane ? fromPane.files : read.board === board ? read.files : 0;
+  const waits = waiting > 0;
 
   useEffect(() => {
-    if (!board) return;
+    if (!board || fromPane) return;
     let live = true;
-    void fetch(`/api/files/list?path=${encodeURIComponent(`NET:/${board}`)}`, { cache: 'no-store' })
+    const readQueue = () => fetch(`/api/files/list?path=${encodeURIComponent(`NET:/${board}`)}`, { cache: 'no-store' })
       .then((r) => (r.ok ? (r.json() as Promise<Listing>) : null))
-      .then((l) => { if (live) setWaiting(l?.queue?.files ?? 0); })
+      .then((l) => { if (live && l?.queue) setRead({ board, files: l.queue.files }); })
       .catch(() => {});
-    return () => { live = false; };
-  }, [board]);
+    void readQueue();
+    const timer = setInterval(() => { if (document.visibilityState === 'visible') void readQueue(); },
+      waits ? NET_REFRESH_ACTIVE_MS : NET_REFRESH_IDLE_MS);
+    return () => { live = false; clearInterval(timer); };
+  }, [board, !!fromPane, waits, sends]);   // eslint-disable-line react-hooks/exhaustive-deps -- fromPane's count is read in render
 
   if (targets.length === 0) {
     return (
@@ -107,7 +120,7 @@ export function SendDropZone({ targets, initialBoard, serverNow, onSent, onShowQ
       } else {
         toast.error(rep.title, rep.lines.length ? { description: <ul data-testid="files-send-report">{rep.lines.map((x, i) => <li key={i}>{x}</li>)}</ul> } : undefined);
       }
-      setWaiting((w) => w + r.queued);
+      setSends((n) => n + 1);
     } finally {
       setBusy(null);
     }

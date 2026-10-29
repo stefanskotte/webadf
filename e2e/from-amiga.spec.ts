@@ -230,6 +230,18 @@ test('a file that fails its CRC shows as failed, is neither copied, downloaded n
     await expect(page.getByTestId(action)).toHaveAttribute('title', FAILED_ROW);
   }
   await expect(page.getByTestId('files-addlib')).toBeDisabled();
+  // Dragged onto the board's queue, it says the same, not the copy's "not found".
+  await page.evaluate(() => {
+    // The panes' own drag, dispatched: one DataTransfer from the row's dragstart to the other pane's drop.
+    const dt = new DataTransfer();
+    document.querySelector('[data-testid="pane-left"] [data-testid="pane-row"][data-name="Damaged.adf"]')!
+      .dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    const to = document.querySelector('[data-testid="pane-right"]')!;
+    to.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    to.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+  });
+  await expect(toast(page, FAILED_ROW)).toBeVisible();
+  await expect(page.getByTestId('pane-right').getByTestId('pane-row')).toHaveCount(0);
   expect((await page.request.get(`/api/files/download?path=${encodeURIComponent('STASH:/Disks/Damaged.adf')}`)).status()).toBe(404);
   expect((await page.request.get(`/api/uploads/${id}/file`)).status()).toBe(404);
   // A failed file had Clear on the Staging list; in STASH: it is Deleted.
@@ -259,6 +271,22 @@ test('a file the board stopped sending resumes at the next chunk and is listed o
     .where(and(eq(amigaUploads.orgId, orgId), eq(amigaUploads.path, 'Docs/Big.bin')))).length).toBe(1);
   const dl = await page.request.get(`/api/files/download?path=${encodeURIComponent('STASH:/Docs/Big.bin')}`);
   expect(Buffer.from(await dl.body()).equals(data)).toBe(true);
+});
+
+test('a STASH: pane shows a file arriving move on as the board sends it, without a reload, and stored once it closes', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  const data = Buffer.alloc(40_000, 3);
+  const { id } = await boardOpens(request, token, 'Slow.bin', data.length);
+  await boardSendsChunks(request, token, id, data, 0, 1);
+  await openFiles(page, 'STASH:', 'LIBRARY:');
+  await expect(row(page, 'Slow.bin')).toContainText('arriving 40%');
+  await boardSendsChunks(request, token, id, data, 16_384, 1);
+  await expect(row(page, 'Slow.bin')).toContainText('arriving 81%', { timeout: LIVE });
+  await boardSendsChunks(request, token, id, data, 32_768);
+  expect((await boardCloses(request, token, id, crc32(data) >>> 0)).status()).toBe(200);
+  await expect(row(page, 'Slow.bin')).not.toContainText('arriving', { timeout: LIVE });
 });
 
 test('an empty file is stored and listed as 0 B', async ({ page, request }) => {

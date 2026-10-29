@@ -522,7 +522,8 @@ export const HELP_TOPICS = {
   // Sources: spec docs/superpowers/specs/2026-10-18-amiga-to-web-upload-design.md §1 (U2 the ways to send, U4 resume,
   // U5 limits, U6 the area, U7 trust), §2 (Receive, now Transfer), §4 (Add to library, attachments), §6 (the key digits);
   // Files spec 2026-10-29 §4.2 and increment 3 (STASH: holds the Amiga's files, marked with the board; Delete stops one
-  // still arriving; the key digits on the board's row under NET:, plan-writer ruling 8);
+  // still arriving; the key digits on the board's row under NET:, plan-writer ruling 8); src/lib/files/arriving.ts
+  // (a pane re-reads an arriving row; STALL_MS two minutes, the stopped words);
   // src/lib/amiga-upload-limits.ts (UPLOAD_FW, limits), src/lib/from-amiga-ui.ts, tools/receive/amiga/gui.c.
   'from-amiga': {
     title: 'Files from the Amiga',
@@ -542,7 +543,8 @@ export const HELP_TOPICS = {
           stops, and <em>Trust this board</em> (or <em>TRUST</em> in the Shell) accepts the new one.
         </p>
         <p>
-          <strong>In STASH:.</strong> <em>Add to library</em> puts a stored disk image in your library; the
+          <strong>In STASH:.</strong> A file arriving that has not moved for two minutes reads <em>Stopped at N %</em>:
+          send it again from the Amiga. <em>Add to library</em> puts a stored disk image in your library; the
           toast&apos;s <em>Open title</em> goes to it. <em>Delete</em> removes a file, or stops one still arriving and
           deletes what arrived.
         </p>

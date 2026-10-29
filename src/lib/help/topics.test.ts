@@ -52,9 +52,10 @@ describe('help topics say what the app really does', () => {
     const b = HELP_TOPICS['from-amiga'].short + bodyText('from-amiga');
     for (const w of ['1.19.0', 'Install', 'Send…', 'Transfer SEND', 'Trusted board AB12', 'Trust this board', 'TRUST',
       '4 MB', '500 files', '256 MB', '30 days', '24 hours', 'Add to library', 'Open title', 'Delete', 'STASH:',
-      'Files page']) expect(b).toContain(w);
-    // The Staging list's controls retired with the Upload page (Files increment 3).
-    for (const w of ['Clear all', 'Clear finished', 'Stop']) expect(b).not.toContain(w);
+      'Files page', 'Stopped at N %']) expect(b).toContain(w);
+    // The Staging list's controls retired with the Upload page (Files increment 3); "Stopped at" is a row's words.
+    for (const w of ['Clear all', 'Clear finished']) expect(b).not.toContain(w);
+    expect(b).not.toMatch(/\bStop\b/);
   });
   it('send describes the Files page: the Send drop zone, copies into NET:, the board\'s rows, Delete (increment 3)', () => {
     const b = bodyText('send').replace(/\s+/g, ' ');

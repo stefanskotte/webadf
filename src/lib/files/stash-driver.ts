@@ -142,7 +142,8 @@ function entryOf(s: LoadedStash, c: StashNode, here: readonly string[]): FsEntry
   const path = stashPath([...here, c.name]);
   const meta = { date: iso(row?.date ?? null), protection: row ? protectionString(row.protection) : NO_BITS, comment: row?.comment || null };
   if (c.kind === 'dir') return { name: c.name, kind: 'dir', path, size: null, ...meta, marks: [] };
-  return { name: c.name, kind: isArchiveRow(c, row) ? 'archive' : 'file', path, size: row!.sizeBytes, ...meta, marks: marksOf(row!) };
+  return { name: c.name, kind: isArchiveRow(c, row) ? 'archive' : 'file', path, size: row!.sizeBytes, ...meta, marks: marksOf(row!),
+    ...(row!.status === 'receiving' ? { received: row!.receivedBytes } : {}) };
 }
 
 async function list(ctx: FsCtx, p: FsPath): Promise<Listing | null> {
