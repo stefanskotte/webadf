@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { MENU_ITEM } from '@/components/ui/menu-item-look';
+import { cn } from '@/lib/utils';
 import type { DiskInfo, FsEntry, Listing, RefusalCode, StripData } from '@/lib/files/types';
 import { nextSort, sortFsEntries, type FilesSort, type FilesSortKey } from '@/lib/files/sort';
 import { EMPTY_SELECTION, moveCursor, selectClick, togglePick, type Selection } from '@/lib/files/selection';
@@ -21,6 +24,7 @@ import { IdentityConfirmDialog, requestUndo } from '@/components/disks/file-acti
 import { Pane } from './pane';
 import { DiskStrip } from './disk-strip';
 import { DropReview } from './drop-review';
+import { CopyToPicker } from './copy-to-picker';
 import {
   ClashDialog, ConfirmDeleteDialog, InfoDialog, NameDialog, ProtectDialog, placeName, type Clash, type ClashChoice,
 } from './dialogs';
@@ -36,6 +40,12 @@ import {
  * opened, showing loading.tsx's skeleton in place of both panes each time.)
  *
  * Selections are indexes into the SORTED rows (pane.tsx), so every index here goes through `rowsOf`.
+ *
+ * Below lg (the C7 phone convention) only the ACTIVE pane is drawn, under a Left | Right switch; the button column is
+ * a bar at the bottom with Copy to… · Move to… · Delete · More, and Copy to… / Move to… pick the place in a dialog
+ * (copy-to-picker.tsx) since the other pane is out of sight. A tap on a folder row opens it and a tap on a file row
+ * picks it. Which layout applies is read from the width at the moment of the tap, never at render, so the server's
+ * HTML and the first client render are the same at every width.
  */
 
 type Side = 'left' | 'right';
@@ -65,6 +75,8 @@ type Dialog =
   | { kind: 'rename'; side: Side; entry: FsEntry }
   | { kind: 'protect'; side: Side; entries: FsEntry[] }
   | { kind: 'info'; side: Side; entry: FsEntry }
+  /** Copy to… / Move to… on a phone: `sources` from the active pane, the picker starting at the other pane's place. */
+  | { kind: 'pick'; op: 'copy' | 'move'; sources: string[]; start: string }
   /** The TOSEC-identity confirm before the first write to `disk` this visit; `next` goes on once it is confirmed. */
   | { kind: 'identity'; disk: DiskInfo; next(): void }
   /** Files from the computer, being read, under review for `folder` (from the disk's root) of `disk`. */
@@ -82,6 +94,8 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<RefusalCode>([
 const CONTROL = 'button, a, [role="button"], [role="checkbox"]';
 
 const otherSide = (s: Side): Side => (s === 'left' ? 'right' : 'left');
+/** Below lg: the one-pane phone layout (Tailwind's lg is 64rem). */
+const isPhone = () => window.matchMedia('(max-width: 63.98rem)').matches;
 const deviceOf = (path: string): DeviceKey => (path.startsWith('STASH:') ? 'stash' : path.startsWith('NET:') ? 'net' : 'library');
 const baseName = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 const items = (n: number) => (n === 1 ? '1 item' : `${n} items`);
@@ -170,12 +184,28 @@ function ActionButton({ id, label, reason, busy, onClick, primary = false }: {
   id: string; label: string; reason: string | null; busy: boolean; onClick(): void; primary?: boolean;
 }) {
   return (
-    <span title={reason ?? undefined} className="flex">
+    <span title={reason ?? undefined} className="flex max-lg:hidden">
       <Button variant={primary ? 'default' : 'outline'} size="sm" className="w-full" onClick={onClick}
               disabled={reason !== null || busy} title={reason ?? undefined} data-testid={`files-${id}`}>
         {label}
       </Button>
     </span>
+  );
+}
+
+/**
+ * One button of the phone bar. A finger gets no tooltip, so a button that cannot act now is not `disabled`: it looks
+ * dimmed (aria-disabled) and a tap says why (act() toasts the reason).
+ */
+function PhoneButton({ id, label, reason, busy, onClick, primary = false }: {
+  id: string; label: string; reason: string | null; busy: boolean; onClick(): void; primary?: boolean;
+}) {
+  return (
+    <Button variant={primary ? 'default' : 'outline'} onClick={onClick} data-testid={`files-phone-${id}`}
+            aria-disabled={reason !== null || busy || undefined}
+            className="min-h-11 min-w-0 flex-1 px-1.5 aria-disabled:opacity-50 lg:hidden">
+      {label}
+    </Button>
   );
 }
 
@@ -340,6 +370,18 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     saver.save({ files: { sort } }).catch(() => toast.error("Couldn't remember this sort order for next time."));
   }
 
+  /** A row tapped on a phone: a folder (title, disk) opens, a file is picked or let go. Desktop clicks select. */
+  function rowClick(side: Side, index: number, mods: { shift: boolean; toggle: boolean }) {
+    activate(side);
+    const e = rowsOf(side)[index];
+    if (e && !mods.shift && !mods.toggle && isPhone()) {
+      if (e.kind === 'file') setSelection(side, (s) => togglePick({ ...s, cursor: index }, index));
+      else navigate(side, e.path);
+      return;
+    }
+    setSelection(side, (s) => selectClick(s, index, mods));
+  }
+
   function openRow(side: Side, index: number) {
     const e = rowsOf(side)[index];
     if (!e) return;
@@ -380,6 +422,9 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     // One file by path; several, or a folder, as a .zip (spec §3.3).
     download: sourceReason(false)
       ?? (downloadHref(picked, folderName).length > DOWNLOAD_URL_MAX ? 'Too many items to download at once — download their folder instead' : null),
+    // The phone's Copy to… / Move to…: the place is picked afterwards, so only the source is checked here.
+    copyTo: sourceReason(false),
+    moveTo: sourceReason(true),
   };
 
   // ---- running an operation -----------------------------------------------------------------------------------
@@ -528,7 +573,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     next();
   }
 
-  function act(cmd: 'copy' | 'move' | 'delete' | 'rename' | 'makedir' | 'protect' | 'info' | 'download') {
+  function act(cmd: 'copy' | 'move' | 'delete' | 'rename' | 'makedir' | 'protect' | 'info' | 'download' | 'copyTo' | 'moveTo') {
     if (busy) return;
     const reason = reasons[cmd];
     if (reason) { toast.error(reason); return; }
@@ -542,6 +587,8 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
       case 'makedir': guarded([src?.disk], () => setDialog({ kind: 'makedir', side })); return;
       case 'protect': guarded([src?.disk], () => setDialog({ kind: 'protect', side, entries: picked })); return;
       case 'info': setDialog({ kind: 'info', side, entry: picked[0] }); return;
+      case 'copyTo': setDialog({ kind: 'pick', op: 'copy', sources, start: panes[otherSide(side)].path }); return;
+      case 'moveTo': setDialog({ kind: 'pick', op: 'move', sources, start: panes[otherSide(side)].path }); return;
       case 'download': {
         const a = document.createElement('a');
         a.href = downloadHref(picked, folderName);
@@ -550,6 +597,20 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
         return;
       }
     }
+  }
+
+  /**
+   * The picker chose `l`: the other pane goes there (so switching to it shows the result) and the copy or move runs as
+   * the desktop's does -- the TOSEC confirm, the clash dialog, the versioned toast with Undo.
+   */
+  function placePicked(d: Extract<Dialog, { kind: 'pick' }>, l: Listing) {
+    setDialog(null);
+    const side = otherSide(active);
+    if (panes[side].path !== l.path) {
+      void load(side, l.path);
+      window.history.pushState(null, '', urlOf(side === 'left' ? l.path : panes.left.path, side === 'right' ? l.path : panes.right.path, active));
+    }
+    guarded([l.disk, d.op === 'move' ? src?.disk : null], () => transfer(d.op, d.sources, l.path, l.disk!.label));
   }
 
   /** A dialog's operation: the dialog stays open (busy) while it runs and closes once it is done. */
@@ -687,12 +748,13 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     const disk = p.listing?.disk ?? null;
     const strip = disk ? strips[disk.diskId] : undefined;
     return (
-      <div className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] max-lg:h-[460px]">
+      // Below lg only the active side is drawn, as tall as its rows: the page scrolls, not a box inside it.
+      <div className={`grid min-h-0 min-w-0 lg:grid-rows-[minmax(0,1fr)] ${active === side ? '' : 'max-lg:hidden'}`}>
         <Pane side={side} active={active === side} listing={side === 'left' ? shownLeft : shownRight} loading={p.loading} error={p.error}
               sort={sortOf(p.listing, p.path)} selection={p.selection} showComment={false}
               onActivate={() => activate(side)} onNavigate={(path) => navigate(side, path)}
               onSort={(key) => changeSort(side, key)}
-              onRowClick={(i, mods) => { activate(side); setSelection(side, (s) => selectClick(s, i, mods)); }}
+              onRowClick={(i, mods) => rowClick(side, i, mods)}
               onRowOpen={(i) => openRow(side, i)}
               onDragStartRows={(ix, e) => dragStart(side, ix, e)} onDropRows={(e) => drop(side, e)}
               strip={disk && strip ? (
@@ -720,11 +782,22 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
            toast.error('Open a disk to drop files into it');
          }}
          className="rounded-[20px] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)">
-      <div className="grid overflow-hidden rounded-[20px] lg:h-[clamp(480px,calc(100dvh-260px),900px)] lg:grid-cols-[minmax(0,1fr)_92px_minmax(0,1fr)]"
+      {/* Below lg: which pane is on screen. The same choice as the active side, so Tab, a tap and the URL agree. */}
+      <div data-testid="files-side-switch" role="group" aria-label="Pane shown" className="seg mb-3 lg:hidden">
+        {(['left', 'right'] as const).map((s) => (
+          <button key={s} type="button" aria-pressed={active === s} data-testid={`files-side-${s}`} onClick={() => activate(s)}
+                  className="seg-item min-h-11 flex-1 justify-center focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)">
+            {s === 'left' ? 'Left' : 'Right'}
+          </button>
+        ))}
+      </div>
+      {/* Below lg nothing clips: a clip would cut off the strip's History over a short pane, and `hidden` would make
+          this a scroll box the phone bar could not stick out of. The pane's top and the bar round their own corners. */}
+      <div className="grid rounded-[20px] lg:overflow-hidden max-lg:grid-cols-[minmax(0,1fr)] lg:h-[clamp(480px,calc(100dvh-260px),900px)] lg:grid-cols-[minmax(0,1fr)_92px_minmax(0,1fr)]"
            style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
         {pane('left')}
         <div data-testid="files-actions" role="group" aria-label="File actions"
-             className="flex flex-wrap gap-[7px] border-y px-2 py-4 lg:flex-col lg:border-x lg:border-y-0"
+             className="files-bar flex flex-wrap gap-1.5 border-t p-2 max-lg:order-last max-lg:rounded-b-[20px] lg:flex-col lg:gap-[7px] lg:border-x lg:border-t-0 lg:px-2 lg:py-4"
              style={{ borderColor: 'var(--line)', background: 'var(--surface-2)' }}>
           <ActionButton busy={busy !== null} id="copy" label={arrow ? 'Copy →' : '← Copy'} reason={reasons.copy} onClick={() => act('copy')}
                         primary={picked.length > 0} />
@@ -738,7 +811,30 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
           {sep}
           <ActionButton busy={busy !== null} id="download" label="Download" reason={reasons.download} onClick={() => act('download')} />
           <ActionButton busy={busy !== null} id="swap" label="Swap ⇄" reason={null} onClick={swap} />
-          <p role="status" data-testid="files-busy" className="text-center text-[12px] lg:mt-auto" style={{ color: 'var(--muted)' }}>
+          {/* The phone bar: one row of four, the rest under More. */}
+          <PhoneButton busy={busy !== null} id="copy" label="Copy to…" reason={reasons.copyTo} onClick={() => act('copyTo')}
+                       primary={picked.length > 0} />
+          <PhoneButton busy={busy !== null} id="move" label="Move to…" reason={reasons.moveTo} onClick={() => act('moveTo')} />
+          <PhoneButton busy={busy !== null} id="delete" label="Delete" reason={reasons.delete} onClick={() => act('delete')} />
+          <DropdownMenu>
+            <DropdownMenuTrigger data-testid="files-more" aria-haspopup="menu"
+                                 className="inline-flex min-h-11 min-w-0 flex-1 items-center justify-center rounded-[10px] border px-1.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-(--ring) lg:hidden"
+                                 style={{ borderColor: 'var(--line)', background: 'var(--surface)', color: 'var(--ink)' }}>
+              More ▾
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="end" data-testid="files-more-menu"
+                                 className="w-[min(240px,calc(100vw-32px))] rounded-2xl"
+                                 style={{ background: 'var(--surface)', color: 'var(--ink)', border: '1px solid var(--line)', boxShadow: 'var(--shadow-card)' }}>
+              {([['rename', 'Rename…'], ['makedir', 'Makedir…'], ['protect', 'Protect…'], ['info', 'Info'], ['download', 'Download']] as const).map(([id, label]) => (
+                // Not disabled: a tap on one that cannot act now says why.
+                <DropdownMenuItem key={id} data-testid={`files-more-${id}`} aria-disabled={reasons[id] !== null || undefined}
+                                  onClick={() => act(id)} className={cn(MENU_ITEM, 'h-11 sm:h-11 font-medium aria-disabled:opacity-50')}>
+                  {label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <p role="status" data-testid="files-busy" className="text-center text-[12px] max-lg:basis-full max-lg:empty:hidden lg:mt-auto" style={{ color: 'var(--muted)' }}>
             {busy ?? ''}
           </p>
         </div>
@@ -776,6 +872,10 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
                       guarded([dialogListing?.disk], () => void runFromDialog({ op: 'comment', source: entry.path, comment },
                         'Saving the comment…', () => `Comment saved on ${entry.name}.`));
                     }} />
+      )}
+      {dialog?.kind === 'pick' && (
+        <CopyToPicker op={dialog.op} count={dialog.sources.length} start={dialog.start} busy={dialogBusy} list={fetchListing}
+                      onCancel={() => setDialog(null)} onPick={(l) => placePicked(dialog, l)} />
       )}
       {dialog?.kind === 'identity' && dialog.disk.tosecName && (
         <IdentityConfirmDialog tosecName={dialog.disk.tosecName} onCancel={() => setDialog(null)} onConfirm={confirmIdentity} />

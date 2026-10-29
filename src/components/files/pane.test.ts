@@ -3,7 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { FsEntry, Listing } from '@/lib/files/types';
 import { EMPTY_SELECTION, type Selection } from '@/lib/files/selection';
-import { Pane, type PaneProps } from './pane';
+import { Pane, subLine, type PaneProps } from './pane';
 
 const entry = (name: string, kind: FsEntry['kind'], o: Partial<FsEntry> = {}): FsEntry => ({
   name, kind, path: `LIBRARY:/g/d/${name}`, size: kind === 'file' ? 1000 : null, date: '2019-08-14T00:00:00.000Z',
@@ -130,5 +130,23 @@ describe('Pane (Files increment 1, Task 7)', () => {
     const marks = [...html.matchAll(/data-testid="pane-new-([^"]+)"[^>]*>([^<]*)</g)].map((m) => [m[1], m[2]]);
     expect(marks).toEqual([['List', 'new in v3']]);
   });
-});
 
+  it('below lg: the size and date under the name, the other columns hidden (Task 10)', () => {
+    expect(subLine(entry('List', 'file', { size: 5120 }))).toBe('5 KB · 2019-08-14');
+    expect(subLine(entry('Tools', 'dir'))).toBe('2019-08-14');
+    expect(subLine(entry('SysInfo', 'title', { date: null }))).toBe('');
+    const html = render();
+    const subs = [...html.matchAll(/data-testid="pane-row-sub"[^>]*>([^<]*)</g)].map((m) => m[1]);
+    expect(subs).toEqual(['2019-08-14', '3 KB · 2019-08-14', '5 KB · 2019-08-14']);
+    expect(tagOf(html, 'pane-row-sub')).toContain('lg:hidden');
+    for (const k of ['size', 'protection', 'date']) expect(tagOf(html, `pane-left-sort-${k}`), k).toContain('max-lg:hidden');
+    expect(tagOf(html, 'pane-left-sort-name')).not.toContain('max-lg:hidden');
+    // A title has neither: no empty second line.
+    expect(render({ listing: rootListing })).not.toContain('pane-row-sub');
+  });
+
+  it('below lg the controls a finger presses are 44 px (Task 10)', () => {
+    const html = render();
+    for (const id of ['pane-left-dev-LIBRARY', 'pane-left-up', 'pane-left-crumb-0']) expect(tagOf(html, id), id).toContain('max-lg:min-h-11');
+  });
+});
