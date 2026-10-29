@@ -262,12 +262,12 @@ describe('fix round 1', () => {
 });
 
 describe('devices', () => {
-  it('a device with no driver is unsupported, and nothing is written', async () => {
+  it('every device has a driver now (NET: in increment 3): a board that is not there is not found, and nothing is written', async () => {
     const s = await sha('d2');
     expect(await runOp(ctx, { op: 'delete', sources: ['NET:/board1/x'] }))
-      .toMatchObject({ kind: 'refused', status: 400, refusal: { code: 'unsupported' } });
+      .toMatchObject({ kind: 'refused', status: 404, refusal: { code: 'not_found' } });
     expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/ReadMe'], dest: 'NET:/board1', onClash: 'ask' }))
-      .toMatchObject({ kind: 'refused', status: 400, refusal: { code: 'unsupported' } });
+      .toMatchObject({ kind: 'refused', status: 404, refusal: { code: 'not_found' } });
     expect(await sha('d2')).toBe(s);
   });
 });

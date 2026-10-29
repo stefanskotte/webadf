@@ -2,7 +2,8 @@
 // The Files ops engine's front door (spec 2026-10-29 §4): copy, move, delete, makedir, rename, protect, comment and
 // Add to library. It sends each op to the driver of the device its paths name (drivers.ts); a device's storage rules
 // live in its driver (LIBRARY: library-driver.ts, STASH: stash-driver.ts). A copy or move between devices is collect on
-// the source's driver, write on the destination's, then (a move) remove of what was written. SERVER ONLY.
+// the source's driver, write on the destination's, then (a move) remove of what was written. NET: (net-driver.ts) takes
+// copies only: a copy into NET:/<board> queues the files for the board's Amiga. SERVER ONLY.
 import { parsePath, type FsPath } from './path';
 import { driverFor } from './drivers';
 import {
@@ -10,6 +11,7 @@ import {
   type Added, type CopyMove, type FsCtx, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome, type VolumeDriver,
 } from './driver';
 import { stashEntryOf, STILL_ARRIVING } from './stash-driver';
+import { NET_MOVE_IN } from './net-rules';
 import { addUploadToLibrary } from '@/lib/stash-library';
 import { libraryEligible } from '@/lib/from-amiga-ui';
 import type { Refusal } from './types';
@@ -28,7 +30,7 @@ export type OpRequest =
   | { op: 'add-to-library'; sources: string[] };                  // STASH: disk images into the library (R8)
 export type OpResult =
   /** `versions`: each history version the op saved, in the order it saved them (Undo needs exactly one, Task 9b). */
-  | ({ kind: 'done'; items: OpItem[]; added?: Added[] } & { versions: OpVersion[] })
+  | ({ kind: 'done'; items: OpItem[]; added?: Added[]; queued?: number } & { versions: OpVersion[] })
   | Extract<Outcome, { kind: 'clashes' }>
   | { kind: 'refused'; refusal: Refusal; status: number };
 
@@ -38,7 +40,8 @@ export async function runOp(ctx: FsCtx, req: OpRequest): Promise<OpResult> {
     const r = await dispatch(run, req);
     // `written` is the engine's own business (crossDevice); the caller hears items, what was added, and the versions.
     if (r.kind !== 'done') return r;
-    return { kind: 'done', items: r.items, ...(r.added ? { added: r.added } : {}), versions: run.versions };
+    return { kind: 'done', items: r.items, ...(r.added ? { added: r.added } : {}), ...(r.queued !== undefined ? { queued: r.queued } : {}),
+      versions: run.versions };
   } catch (e) {
     if (e instanceof Refused) return { kind: 'refused', refusal: e.refusal, status: e.status };
     throw e;
@@ -67,6 +70,8 @@ async function dispatch(ctx: OpCtx, req: OpRequest): Promise<Outcome> {
     case 'copy': case 'move': {
       const dest = pathOf(req.dest); const dd = driverOf(dest);
       const srcs = req.sources.map(pathOf); srcs.forEach(driverOf);
+      // C16: a send never takes the original away; Move into NET: is offered nowhere, and the engine says why.
+      if (req.op === 'move' && dest.device === 'NET') refuse('unsupported', 400, NET_MOVE_IN);
       if (srcs.every((s) => s.device === dest.device)) return (need(dd, 'within') as NonNullable<VolumeDriver['within']>).call(dd, ctx, req as CopyMove);
       return crossDevice(ctx, req, srcs, dest);
     }

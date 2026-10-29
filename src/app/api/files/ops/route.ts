@@ -24,7 +24,9 @@ export async function POST(request: Request) {
   const body = Body.safeParse(await request.json().catch(() => null));
   if (!body.success) return Response.json({ error: 'invalid_body' }, { status: 400 });
   const r = await runOp({ orgId, userId }, body.data as OpRequest);
-  if (r.kind === 'done') return Response.json({ items: r.items, versions: r.versions, ...(r.added ? { added: r.added } : {}) });
+  if (r.kind === 'done') {
+    return Response.json({ items: r.items, versions: r.versions, ...(r.added ? { added: r.added } : {}), ...(r.queued !== undefined ? { queued: r.queued } : {}) });
+  }
   if (r.kind === 'clashes') return Response.json({ error: 'clashes', clashes: r.clashes }, { status: 409 });
   return Response.json({ error: r.refusal.code, detail: r.refusal.detail }, { status: r.status });
 }

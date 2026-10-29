@@ -132,6 +132,15 @@ describe('POST /api/uploads/<id>/library', () => {
     expect(registerUploads).toHaveBeenCalledWith('org-1', [{ sha256: sha(ADF), sizeBytes: 901_120, filename: 'Lemmings.adf' }]);
     expect(U.setLibraryDisk).toHaveBeenCalledWith(expect.anything(), 'org-1', 'up-1', 'disk-9');
   });
+  it('never registers bytes planted at the image\'s key: they are checked and replaced (carry a, Files increment 3)', async () => {
+    store.delete(sha(ADF)); store.set('up-blob', ADF);
+    const planted = new Uint8Array(901_120).fill(0x66);
+    store.set(sha(ADF), planted);
+    U.getUpload.mockResolvedValue(stored({ blobSha256: 'up-blob' }));
+    registerUploads.mockResolvedValue(Response.json({ created: 1, disks: 1, rejected: 0, rejectedReasons: {} }));
+    expect((await libraryPOST(new Request('http://x', { method: 'POST' }), ctx('up-1'))).status).toBe(200);
+    expect(sha(store.get(sha(ADF))!)).toBe(sha(ADF));
+  });
   it('answers the disk already added without registering again', async () => {
     U.getUpload.mockResolvedValue(stored({ libraryDiskId: 'disk-9' }));
     const r = await libraryPOST(new Request('http://x', { method: 'POST' }), ctx('up-1'));

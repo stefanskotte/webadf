@@ -7,7 +7,7 @@ const ALL: Record<RefusalCode, true> = {
   not_found: true, read_only: true, mounted: true, disk_full: true, name_exists: true, bad_name: true,
   comment_too_long: true, cycle: true, no_filesystem: true, hfe_read_only: true, conflict: true,
   unsupported: true, blob_unavailable: true, failed: true,
-  stash_full: true, too_large: true, archive_unreadable: true, not_a_disk_image: true,
+  stash_full: true, too_large: true, archive_unreadable: true, not_a_disk_image: true, queue_full: true,
 };
 
 describe('refusalWords', () => {
@@ -63,5 +63,12 @@ describe('refusalWords', () => {
     expect(refusalWords('bad_name', 'empty')).toBe('Type a name.');
     expect(refusalWords('bad_name', 'too-long')).toBe('AmigaDOS names are at most 30 characters.');
     expect(refusalWords('bad_name', 'bad-char')).toBe('Names cannot contain : or /, or characters an Amiga cannot show.');
+  });
+  it('says the NET: things (increment 3)', () => {
+    expect(refusalWords('queue_full')).toBe("The board's queue holds 32 files / 16 MB; wait for it to empty or cancel some.");
+    expect(refusalWords('unsupported', 'Files waiting for the Amiga cannot be copied out')).toBe('Files waiting for the Amiga cannot be copied out.');
+    expect(refusalWords('unsupported', 'Files sent to the Amiga stay where they are — use Copy')).toBe('Files sent to the Amiga stay where they are — use Copy.');
+    expect(refusalWords('read_only', 'Open a board to send files to it')).toBe('Open a board to send files to it.');
+    expect(refusalWords('too_large', 'Big.bin is over 4 MB')).toBe('Too large — Big.bin is over 4 MB.');
   });
 });

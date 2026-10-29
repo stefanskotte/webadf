@@ -9,7 +9,7 @@ import { getUpload, setLibraryDisk, usableBlob } from '@/lib/amiga-uploads';
 import { libraryEligible } from '@/lib/from-amiga-ui';
 import { diskStore } from '@/lib/storage';
 import { prepareImages } from '@/lib/url-ingest';
-import { contentHashes } from '@/lib/content-hashes';
+import { storeSendBytes } from '@/lib/send-http';
 import { registerUploads } from '@/lib/ingest-complete';
 import { isLocal } from '@/lib/remote-hidden';
 
@@ -43,8 +43,8 @@ export async function addUploadToLibrary(orgId: string, id: string): Promise<Add
     return { ok: false, status: 422, error: 'not_a_disk_image', ...(reason ? { reason } : {}) };
   }
   const img = prepared.images[0];
-  const sha256 = contentHashes(img.bytes).sha256;
-  if (!(await diskStore.stat(sha256))) await diskStore.put(sha256, img.bytes);
+  // Verified, not trusted by its key: a presigned PUT never committed may have planted other bytes there (storeSendBytes).
+  const sha256 = await storeSendBytes(img.bytes);
   const res = await registerUploads(orgId, [{ sha256, sizeBytes: img.bytes.byteLength, filename: img.filename }]);
   if (res.status !== 200 && res.status !== 409) return { ok: false, status: 502, error: 'ingest_failed' };
   const out = (await res.json()) as { rejectedReasons?: Record<string, string> };

@@ -4,8 +4,8 @@ import type { HistoryVersion } from '@/lib/disk-history/history';
 import type { DiskColor } from '@/lib/disk-icon';
 import type { AdfEntry } from '@/lib/adffs';
 import type { ExistingEntry } from '@/lib/staging';
-/** 'archive': a .lha/.lzh/.zip in STASH:, a file that also opens as a read-only folder. */
-export type EntryKind = 'title' | 'disk' | 'dir' | 'file' | 'archive';
+/** 'archive': a .lha/.lzh/.zip in STASH:, a file that also opens as a read-only folder. 'board': a board under NET:. */
+export type EntryKind = 'title' | 'disk' | 'dir' | 'file' | 'archive' | 'board';
 export type FsEntry = {
   name: string; kind: EntryKind; path: string;
   size: number | null; date: string | null; protection: string | null; comment: string | null;
@@ -31,11 +31,13 @@ export type Crumb = { label: string; path: string };
 export type Listing = {
   path: string; crumbs: Crumb[]; entries: FsEntry[];
   writable: boolean; readOnlyReason: string | null; disk: DiskInfo | null; meta: string;
+  /** NET:/<board> only: what counts against the board's 32 files / 16 MB now (a drop checks it before uploading). */
+  queue?: { deviceId: string; files: number; bytes: number };
 };
 export type RefusalCode =
   | 'not_found' | 'read_only' | 'mounted' | 'disk_full' | 'name_exists' | 'bad_name' | 'comment_too_long'
   | 'cycle' | 'no_filesystem' | 'hfe_read_only' | 'conflict' | 'unsupported' | 'blob_unavailable' | 'failed'
-  | 'stash_full' | 'too_large' | 'archive_unreadable' | 'not_a_disk_image';
+  | 'stash_full' | 'too_large' | 'archive_unreadable' | 'not_a_disk_image' | 'queue_full';
 export type Refusal = { code: RefusalCode; detail?: string };
 /**
  * What a pane inside a disk shows in its disk strip besides the listing (disk-strip-data.ts): the Mount choices, the

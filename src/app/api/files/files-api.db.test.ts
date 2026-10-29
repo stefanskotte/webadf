@@ -288,6 +288,22 @@ describe('/api/files', () => {
     // A readable disk's strip carries the same, from the database alone.
     expect((await (await GET_STRIP(req('/api/files/disk-strip?diskId=d1'))).json()).info).toMatchObject({ diskId: 'd1', title: 'SysInfo' });
   });
+  it('NET: (increment 3): a copy into a board answers how many files it queued; the board\'s listing carries its queue; another org 404s', async () => {
+    await getDb().insert(devices).values({ id: 'devN', orgId: 'o1', name: 'Net bench', tokenHash: 'hN', firmwareVersion: '1.15.0+gabc', lastSeenAt: new Date() });
+    const r = await POST_OPS(json({ op: 'copy', sources: ['STASH:/Mods', 'STASH:/Notes.txt'], dest: 'NET:/devN', onClash: 'ask' }));
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ items: [{ ok: true }, { ok: true }], queued: 2 });
+    const l = await GET_LIST(req('/api/files/list?path=NET:/devN'));
+    expect(l.status).toBe(200);
+    expect((await l.json()).queue).toEqual({ deviceId: 'devN', files: 2, bytes: 10 });
+    const moved = await POST_OPS(json({ op: 'move', sources: ['STASH:/Notes.txt'], dest: 'NET:/devN', onClash: 'ask' }));
+    expect(moved.status).toBe(400);
+    expect(await moved.json()).toEqual({ error: 'unsupported', detail: 'Files sent to the Amiga stay where they are — use Copy' });
+    asOrg('o2');
+    expect((await GET_LIST(req('/api/files/list?path=NET:/devN'))).status).toBe(404);
+    expect((await POST_OPS(json({ op: 'copy', sources: ['STASH:/Notes.txt'], dest: 'NET:/devN', onClash: 'ask' }))).status).toBe(404);
+    asOrg('o1');
+  });
   it('lists STASH: and 422s an unreadable archive, with the refusal\'s detail when it has one', async () => {
     expect((await GET_LIST(req('/api/files/list?path=STASH:'))).status).toBe(200);
     const bad = await GET_LIST(req('/api/files/list?path=' + encodeURIComponent('STASH:/bad.lha')));

@@ -3,13 +3,18 @@ import { driverFor } from './drivers';
 import { keepBothName, refuse, Refused, checkName } from './driver';
 
 describe('driverFor', () => {
-  it('has LIBRARY: with every operation, and nothing for a device not built yet', () => {
+  it('has LIBRARY: with every operation', () => {
     const lib = driverFor('LIBRARY')!;
     expect(lib.device).toBe('LIBRARY');
     for (const m of ['list', 'read', 'collect', 'within', 'write', 'remove', 'makedir', 'rename', 'setMeta'] as const) {
       expect(typeof lib[m], m).toBe('function');
     }
-    expect(driverFor('NET')).toBeNull();
+  });
+  it('has NET: (increment 3): boards and their queues, written by copying in, never copied out of', () => {
+    const net = driverFor('NET')!;
+    expect(net.device).toBe('NET');
+    for (const m of ['list', 'read', 'collect', 'within', 'write', 'remove', 'mustRemove'] as const) expect(typeof net[m], m).toBe('function');
+    for (const m of ['makedir', 'rename', 'setMeta'] as const) expect(net[m], m).toBeUndefined();
   });
   it('has STASH: listing, reading and collecting (its writes arrive in Task 5)', () => {
     const stash = driverFor('STASH')!;

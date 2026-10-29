@@ -46,10 +46,12 @@ export function paneSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** The type chip: the Browse glyph for files and folders; a title and a disk are folders here. */
+/** The type chip: the Browse glyph for files and folders; a title, a disk and a board are folders here. */
 function glyphOf(e: FsEntry): { label: string; bg: string; fg: string } {
   if (e.kind === 'title') return { label: 'TTL', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
   if (e.kind === 'disk') return { label: 'DSK', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
+  // A board under NET: opens as its queue, so it is a folder here too (increment 3; Task 2 dresses NET: panes).
+  if (e.kind === 'board') return { label: 'NET', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
   // An archive is a file to the glyph (its name picks it: LHA, ZIP) and to the row's look (ruling 7); its Open says more.
   return entryGlyph({ kind: e.kind === 'archive' ? 'file' : e.kind, name: e.name });
 }
