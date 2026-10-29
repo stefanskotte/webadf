@@ -1,6 +1,6 @@
 // src/lib/files/ops.ts
-// The Files ops engine's front door (spec 2026-10-29 §4): copy, move, delete, makedir, rename, protect, comment and
-// Add to library. It sends each op to the driver of the device its paths name (drivers.ts); a device's storage rules
+// The Files ops engine's front door (spec 2026-10-29 §4): copy, move, delete, makedir, rename, protect, comment,
+// Add to library and Create ADF. It sends each op to the driver of the device its paths name (drivers.ts); a device's storage rules
 // live in its driver (LIBRARY: library-driver.ts, STASH: stash-driver.ts). A copy or move between devices is collect on
 // the source's driver, write on the destination's, then (a move) remove of what was written. NET: (net-driver.ts) takes
 // copies only: a copy into NET:/<board> queues the files for the board's Amiga. SERVER ONLY.
@@ -12,6 +12,7 @@ import {
 } from './driver';
 import { NET_MOVE_IN } from './net-rules';
 import { addDiskImages } from './add-to-library';
+import { createAdf, type CreateAdfRequest } from './create-adf';
 import { deleteOnShelf, fileOnShelf, makeCollection, renameOnShelf, shelfDest, shelfItem } from './shelf';
 import type { Refusal } from './types';
 import type { OpVersion } from './edit-rules';
@@ -26,7 +27,8 @@ export type OpRequest =
   | { op: 'rename'; source: string; name: string }
   | { op: 'protect'; sources: string[]; protection: number }      // AmigaDOS bits, 0..0xff, as files/[block] PATCH takes
   | { op: 'comment'; source: string; comment: string }
-  | { op: 'add-to-library'; sources: string[] };                  // STASH: disk images into the library (R8)
+  | { op: 'add-to-library'; sources: string[] }                   // STASH: disk images into the library (R8)
+  | ({ op: 'create-adf' } & CreateAdfRequest);                    // a blank disk into STASH: or LIBRARY: (Files 2 §4)
 export type OpResult =
   /** `versions`: each history version the op saved, in the order it saved them (Undo needs exactly one, Task 9b). */
   | ({ kind: 'done'; items: OpItem[]; added?: Added[]; queued?: number } & { versions: OpVersion[] })
@@ -102,6 +104,7 @@ async function dispatch(ctx: OpCtx, req: OpRequest): Promise<Outcome> {
       return (need(d, 'makedir') as NonNullable<VolumeDriver['makedir']>).call(d, ctx, p, req.name);
     }
     case 'add-to-library': { const r = await addDiskImages(ctx, req.sources); return { kind: 'done', items: r.items, added: r.added }; }
+    case 'create-adf': return createAdf(ctx, req);
   }
 }
 

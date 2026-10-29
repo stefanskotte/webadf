@@ -17,6 +17,8 @@ const Body = z.discriminatedUnion('op', [
   z.object({ op: z.literal('protect'), sources, protection: z.number().int().min(0).max(255) }),
   z.object({ op: z.literal('comment'), source: path, comment: z.string().max(200) }),
   z.object({ op: z.literal('add-to-library'), sources }),
+  z.object({ op: z.literal('create-adf'), dest: path, name, filesystem: z.enum(['OFS', 'FFS']), density: z.enum(['dd', 'hd']),
+    onClash: z.enum(['ask', 'replace', 'skip', 'keep-both']) }),
 ]);
 
 export async function POST(request: Request) {

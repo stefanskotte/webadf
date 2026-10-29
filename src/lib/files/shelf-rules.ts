@@ -18,6 +18,10 @@ export const COLLECTIONS_STAY = 'Collections stay in LIBRARY:';
 export const COLLECTION_EXISTS = 'A collection with that name already exists';
 /** A disk image added to the library while its target collection was deleted: in the library, filed nowhere. */
 export const ADDED_UNFILED = 'The collection is gone; the disk was added to the library, in no collection';
+/** Create ADF in NET: (Files 2 §4): a blank disk is made in STASH: or LIBRARY:, never sent. */
+export const NOT_ON_NET = 'Disks are made in STASH: or LIBRARY:';
+/** Create ADF in a title's disk list or on a disk (§4): a new title is made on a shelf. */
+export const GO_UP = 'Go up to the library or a collection';
 /** The Library's own limit (`/api/collections`: trimmed, 1-80). */
 export const COLLECTION_NAME_MAX = 80;
 
@@ -30,7 +34,7 @@ export function collectionNameProblem(name: string): 'empty' | 'collection-too-l
 /** The refusal details that read as a sentence of their own. */
 export const SHELF_WORDS: readonly string[] = [
   TITLES_ON_LIBRARY_PAGE, IN_LIBRARY_ALREADY, NO_NESTED, NO_COLLECTION_IN_COLLECTION, ONLY_TITLES_FILED, FILE_ON_SHELF,
-  MAKEDIR_IN_DISK, COLLECTIONS_STAY,
+  MAKEDIR_IN_DISK, COLLECTIONS_STAY, NOT_ON_NET, GO_UP,
 ];
 
 /** Where titles are filed: the LIBRARY: root (`null`) or a collection. */
