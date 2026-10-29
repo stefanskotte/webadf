@@ -29,6 +29,9 @@ import { Pane } from './pane';
 import { DiskStrip } from './disk-strip';
 import { DropReview } from './drop-review';
 import { CopyToPicker } from './copy-to-picker';
+import { StashDropZone } from './stash-drop-zone';
+import { useStashUpload, type StashUploadResult } from './use-stash-upload';
+import { sameStashName } from '@/lib/files/stash-paths';
 import {
   ClashDialog, ConfirmDeleteDialog, InfoDialog, NameDialog, ProtectDialog, placeName, type Clash, type ClashChoice,
 } from './dialogs';
@@ -87,7 +90,16 @@ type Dialog =
   /** The TOSEC-identity confirm before the first write to `disk` this visit; `next` goes on once it is confirmed. */
   | { kind: 'identity'; disk: DiskInfo; next(): void }
   /** Files from the computer, being read, under review for `folder` (from the disk's root) of `disk`. */
-  | { kind: 'drop'; disk: DiskInfo; folder: string; where: string; items: Promise<DroppedItem[]> };
+  | { kind: 'drop'; disk: DiskInfo; folder: string; where: string; items: Promise<DroppedItem[]> }
+  /**
+   * Files from the computer for the STASH: folder `dir` whose top names clash with what is there: one answer each (or
+   * for all), then they go up in groups by answer; `later` waits behind them, `done` is what already landed.
+   */
+  | { kind: 'stash-clash'; dir: string; items: DroppedItem[]; clashes: Clash[]; at: number; choices: Record<string, ClashChoice>;
+      later: StashGroup[]; done: StashUploadResult; skipped: Set<string> };
+
+/** Dropped items going to STASH: with one clash answer. */
+type StashGroup = { onClash: 'ask' | ClashChoice; items: DroppedItem[] };
 
 const GONE = 'This place no longer exists.';
 const NO_MARKS: ReadonlyMap<string, number> = new Map();
@@ -105,6 +117,8 @@ const otherSide = (s: Side): Side => (s === 'left' ? 'right' : 'left');
 const isPhone = () => window.matchMedia('(max-width: 63.98rem)').matches;
 const deviceOf = (path: string): DeviceKey => (path.startsWith('STASH:') ? 'stash' : path.startsWith('NET:') ? 'net' : 'library');
 const baseName = (path: string) => path.slice(path.lastIndexOf('/') + 1);
+const topOf = (path: string) => path.split('/').filter(Boolean)[0] ?? path;
+const noneDone = (): StashUploadResult => ({ items: [], renamed: [], refused: [], stopped: null });
 const items = (n: number) => (n === 1 ? '1 item' : `${n} items`);
 const disks = (n: number) => (n === 1 ? '1 disk' : `${n} disks`);
 /** The disk a LIBRARY: path is in (LIBRARY:/<title>/<disk>/...), or null above the disks and anywhere else. */
@@ -232,7 +246,10 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   const [active, setActive] = useState<Side>(initial.active);
   const [sorts, setSorts] = useState(prefs.sort);
   const [dialog, setDialog] = useState<Dialog | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [opBusy, setBusy] = useState<string | null>(null);
+  // Files from the computer into STASH: (the top drop zone, or a pane in STASH:) keep the manager busy as an op does.
+  const stash = useStashUpload();
+  const busy = opBusy ?? stash.busy;
   const [saver] = useState(latestSaver);
   const [strips, setStrips] = useState<Record<string, StripData>>(() => byDisk(initial.strips));
   // A router refresh (the live device poll, a Mount) renders the page again with fresh strips and listings. The strips
@@ -616,6 +633,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   }
 
   function chooseClash(choice: ClashChoice, forAll: boolean) {
+    if (dialog?.kind === 'stash-clash') { chooseStashClash(choice, forAll); return; }
     if (dialog?.kind !== 'clash') return;
     const d: ClashDialogState = dialog;
     const choices = { ...d.choices };
@@ -629,6 +647,12 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   /** Cancel stops the run here; anything an earlier request already did is still reported. */
   function cancelClash() {
+    if (dialog?.kind === 'stash-clash') {
+      const d = dialog;
+      setDialog(null);
+      if (d.done.items.length || d.done.refused.length || d.done.stopped) reportStash(d.dir, d.done, d.skipped);
+      return;
+    }
     if (dialog?.kind !== 'clash') return;
     const d: ClashDialogState = dialog;
     setDialog(null);
@@ -812,6 +836,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
    */
   function dropFromComputer(side: Side, e: React.DragEvent) {
     const l = panes[side].listing;
+    if (l && !l.disk && holdsFiles(l)) { dropIntoStash(side, l, e); return; }
     if (!l?.disk) { toast.error('Open a disk to drop files into it'); return; }
     if (!l.writable) { toast.error(readOnly(l)); return; }
     // Busy, or a dialog open (the review would replace it, and whatever it was in the middle of): not taken, said.
@@ -825,6 +850,119 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     // Read synchronously, before any await or confirm: the browser empties the DataTransfer once this handler returns.
     const reading = readDroppedItems(e.dataTransfer.items);
     guarded([disk], () => setDialog({ kind: 'drop', disk, folder, where, items: reading }));
+  }
+
+  /**
+   * Files from the computer dropped on a pane in STASH: (any folder, or the folder row they landed on): stored there.
+   * Inside an archive, which is read-only, it is said instead.
+   */
+  function dropIntoStash(side: Side, l: Listing, e: React.DragEvent) {
+    if (!l.writable) { toast.error(readOnly(l)); return; }
+    const blocked = dropBlocked({ busy: busy !== null, dialogOpen: dialog !== null });
+    if (blocked) { toast.error(blocked); return; }
+    activate(side);
+    const dest = dropFolder(l, e);
+    // Read synchronously, before any await: the browser empties the DataTransfer once this handler returns.
+    void storeDrop(dest, readDroppedItems(e.dataTransfer.items));
+  }
+
+  /** The top drop zone's files (or Browse files): into the STASH: root (R1). */
+  function dropOnZone(reading: Promise<DroppedItem[]>) {
+    const blocked = dropBlocked({ busy: busy !== null, dialogOpen: dialog !== null });
+    if (blocked) { reading.catch(() => {}); toast.error(blocked); return; }
+    void storeDrop('STASH:', reading);
+  }
+
+  /** The names in the STASH: folder `dir`: from a pane that shows it, else a fresh listing; null when it cannot be listed. */
+  async function namesIn(dir: string): Promise<string[] | null> {
+    const { panes: cur } = latest.current;
+    const there = [cur.left.listing, cur.right.listing].find((l) => l?.path === dir);
+    if (there) return there.entries.map((x) => x.name);
+    const r = await fetchListing(dir);
+    return 'listing' in r ? r.listing.entries.map((x) => x.name) : null;
+  }
+
+  /**
+   * Dropped items into the STASH: folder `dir`. Their top names are compared with what the folder holds (case does not
+   * matter): any clash opens the Clash dialog first; none, and they go up asking (the server still answers a race).
+   */
+  async function storeDrop(dir: string, reading: Promise<DroppedItem[]>) {
+    stash.setBusy('Reading the drop…');
+    let dropped: DroppedItem[];
+    let names: string[] | null;
+    try {
+      [dropped, names] = await Promise.all([reading, namesIn(dir)]);
+    } catch {
+      toast.error('The dropped files could not be read.');
+      return;
+    } finally {
+      stash.setBusy(null);
+    }
+    if (!dropped.length) return;
+    const tops = [...new Set(dropped.map((i) => topOf(i.path)))];
+    const clashes = tops.filter((t) => names?.some((n) => sameStashName(n, t))).map((t) => ({ source: t, name: t, dest: dir }));
+    if (clashes.length) {
+      setDialog({ kind: 'stash-clash', dir, items: dropped, clashes, at: 0, choices: {}, later: [], done: noneDone(), skipped: new Set() });
+      return;
+    }
+    void runStash(dir, [{ onClash: 'ask', items: dropped }], noneDone(), new Set());
+  }
+
+  /** Each group up in turn; a clash the server found (a race) asks again, with the groups not yet sent waiting. */
+  async function runStash(dir: string, groups: StashGroup[], done: StashUploadResult, skipped: Set<string>) {
+    for (const [k, g] of groups.entries()) {
+      const r = await stash.upload(dir, g.items, g.onClash);
+      done.items.push(...r.items);
+      done.renamed.push(...r.renamed);
+      done.refused.push(...r.refused);
+      if (r.clashes && r.rest) {
+        setDialog({ kind: 'stash-clash', dir, items: r.rest, clashes: r.clashes, at: 0, choices: {}, later: groups.slice(k + 1), done, skipped });
+        return;
+      }
+      if (r.stopped) { done.stopped = r.stopped; break; }
+    }
+    reportStash(dir, done, skipped);
+  }
+
+  function chooseStashClash(choice: ClashChoice, forAll: boolean) {
+    if (dialog?.kind !== 'stash-clash') return;
+    const d = dialog;
+    const choices = { ...d.choices };
+    const upto = forAll ? d.clashes.length : d.at + 1;
+    for (let i = d.at; i < upto; i++) choices[d.clashes[i].source] = choice;
+    if (upto < d.clashes.length) { setDialog({ ...d, at: upto, choices }); return; }
+    ranOp.current = true;
+    setDialog(null);
+    const skipped = new Set(d.skipped);
+    for (const [top, c] of Object.entries(choices)) if (c === 'skip') skipped.add(top.toLowerCase());
+    const tops = [...new Set(d.items.map((i) => topOf(i.path)))];
+    const groups = clashGroups(tops, d.clashes.map((c) => c.source), choices).map((g): StashGroup => {
+      const take = new Set(g.sources.map((t) => t.toLowerCase()));
+      return { onClash: g.onClash, items: d.items.filter((i) => take.has(topOf(i.path).toLowerCase())) };
+    });
+    void runStash(d.dir, [...groups, ...d.later], d.done, skipped);
+  }
+
+  /**
+   * What a drop into STASH: did: "Added 3 items to STASH:/Mods", every name the server stored differently ("ReadMe
+   * stored as ReadMe_1") and every refusal listed under it; both panes reload. Tops answered Skip are not counted.
+   */
+  function reportStash(dir: string, r: StashUploadResult, skipped: Set<string>) {
+    reloadBoth();
+    const failed = r.items.filter((i): i is Extract<OpItem, { ok: false }> => !i.ok);
+    const added = r.items.filter((i) => i.ok && !skipped.has(i.source.toLowerCase())).length;
+    const lines = [
+      ...r.renamed.map((x) => `${x.from} stored as ${x.to}`),
+      ...failed.map((f) => `${baseName(f.source)}: ${refusalWords(f.refusal.code, f.refusal.detail)}`),
+      ...r.refused.map((x) => `${x.path}: ${x.why}`),
+      ...(r.stopped ? [r.stopped] : []),
+    ];
+    const title = added > 0 ? `Added ${items(added)} to ${dir}` : 'Nothing was added.';
+    const description = lines.length
+      ? <ul data-testid="files-stash-report">{lines.map((x, i) => <li key={i}>{x}</li>)}</ul>
+      : undefined;
+    if (failed.length || r.refused.length || r.stopped) toast.error(title, { description });
+    else toast.success(title, { description });
   }
 
   /** The review wrote its batch: fresh panes and strip, and the versioned toast with Undo. */
@@ -906,6 +1044,11 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   const sep = <div aria-hidden className="my-1 h-px max-lg:hidden" style={{ background: 'var(--line)' }} />;
 
   return (
+    <>
+    {/* The top drop zones (R1): Drop files into STASH:; the right cell waits for increment 3's Send files to the Amiga. */}
+    <div className="mb-5 grid grid-cols-2 gap-x-2.5 gap-y-2 sm:grid-cols-1 sm:gap-5 lg:grid-cols-2 lg:items-stretch">
+      <StashDropZone busy={stash.busy} onItems={dropOnZone} onFetched={() => reloadBoth()} />
+    </div>
     <div ref={rootRef} tabIndex={0} onKeyDown={onKeyDown} data-testid="files-manager" aria-label="File manager"
          onFocusCapture={(e) => { if (rootRef.current?.contains(e.target)) lastFocus.current = e.target; }}
          // Files from the computer never open in the tab: a drop the panes did not take is answered here.
@@ -979,8 +1122,8 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
         {pane('right')}
       </div>
 
-      {dialog?.kind === 'clash' && (
-        <ClashDialog key={dialog.at} clash={dialog.clashes[dialog.at]} remaining={dialog.clashes.length - dialog.at}
+      {(dialog?.kind === 'clash' || dialog?.kind === 'stash-clash') && (
+        <ClashDialog key={`${dialog.kind}:${dialog.at}`} clash={dialog.clashes[dialog.at]} remaining={dialog.clashes.length - dialog.at}
                      busy={dialogBusy} onChoose={chooseClash} onCancel={cancelClash} />
       )}
       {dialog?.kind === 'delete' && (
@@ -1023,5 +1166,6 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
                     onWritten={(w) => dropWritten(dialog, w)} />
       )}
     </div>
+    </>
   );
 }

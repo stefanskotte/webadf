@@ -110,3 +110,44 @@ export function uniqueStashPath(rows: readonly { path: string; kind: 'file' | 'd
   }
   return out.join('/');
 }
+
+/** One entry of a browser drop, as the planner needs it: `path` relative to the folder dropped into. */
+export type DropFile = { path: string; kind: 'file' | 'dir'; sizeBytes: number };
+export type StashDropRefusal = 'too_large' | 'folder_too_large' | 'folder_too_many';
+
+/**
+ * A drop split into commits (R6, ruling 12): a file over 20 MB is refused alone (`too_large`); the rest is grouped by
+ * its first segment, so a dropped folder always travels in one commit; a folder over 64 MB (`folder_too_large`) or over
+ * 200 entries, itself included (`folder_too_many`), is refused whole; the tops are packed in order into commits of at
+ * most 64 MB and 200 entries, a commit closing when the next top would not fit.
+ */
+export function planStashBatches<T extends DropFile>(items: readonly T[]): { batches: T[][]; refused: { path: string; why: StashDropRefusal }[] } {
+  const refused: { path: string; why: StashDropRefusal }[] = [];
+  const tops = new Map<string, T[]>();
+  for (const it of items) {
+    if (it.kind === 'file' && it.sizeBytes > STASH_FILE_MAX) { refused.push({ path: it.path, why: 'too_large' }); continue; }
+    const top = it.path.split('/').filter(Boolean)[0] ?? it.path;
+    const key = top.toLowerCase();
+    if (!tops.has(key)) tops.set(key, []);
+    tops.get(key)!.push(it);
+  }
+  const bytesOf = (xs: readonly T[]) => xs.reduce((a, x) => a + (x.kind === 'file' ? x.sizeBytes : 0), 0);
+  const batches: T[][] = [];
+  let cur: T[] = [];
+  let curBytes = 0;
+  for (const group of tops.values()) {
+    const top = group[0].path.split('/').filter(Boolean)[0] ?? group[0].path;
+    const bytes = bytesOf(group);
+    if (group.length > STASH_COMMIT_MAX_ENTRIES) { refused.push({ path: top, why: 'folder_too_many' }); continue; }
+    if (bytes > STASH_COMMIT_MAX_BYTES) { refused.push({ path: top, why: 'folder_too_large' }); continue; }
+    if (cur.length && (cur.length + group.length > STASH_COMMIT_MAX_ENTRIES || curBytes + bytes > STASH_COMMIT_MAX_BYTES)) {
+      batches.push(cur);
+      cur = [];
+      curBytes = 0;
+    }
+    cur.push(...group);
+    curBytes += bytes;
+  }
+  if (cur.length) batches.push(cur);
+  return { batches, refused };
+}

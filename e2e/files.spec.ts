@@ -63,6 +63,9 @@ const toast = (page: Page, text: RegExp | string) => page.locator('[data-sonner-
  * a move: in Chromium a mousedown with Shift already held never starts a drag of a draggable row (measured here).
  */
 async function dragRows(page: Page, source: Locator, target: Locator, { shift = false } = {}) {
+  // The drop zone sits above the panes (increment 2): the manager's top goes to the top of the window, so a pane's
+  // rows and its foot are on screen together for the mouse.
+  await page.getByTestId('files-manager').evaluate((el) => el.scrollIntoView({ block: 'start' }));
   const s = (await source.boundingBox())!;
   const t = (await target.boundingBox())!;
   await page.mouse.move(s.x + 40, s.y + s.height / 2);

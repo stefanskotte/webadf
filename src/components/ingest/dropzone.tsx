@@ -5,7 +5,7 @@ import { toAdf, DISK_IMAGE_PATTERN } from '@/lib/archive/disk-image';
 import { hashBlob } from '@/lib/browser-hash';
 import { mapLimit } from '@/lib/pool';
 import {
-  classifyUpload, isExpiredPresign, isUploadableSize, describeUnuploadableSize,
+  putPresigned, isUploadableSize, describeUnuploadableSize,
   splitBatches, MAX_HFE_PER_BATCH, type UploadOutcome,
 } from '@/lib/blob-upload';
 import { inspectHfe, describeInspection } from '@/lib/hfe/inspect';
@@ -122,18 +122,6 @@ export function Dropzone() {
     throw new Error(`/api/ingest/complete -> ${res.status} ${text}`);
   }
 
-  // One PUT attempt straight to Blob. Never logs, stores or renders `url` --
-  // a presigned URL is a credential, and it exists only as this argument.
-  async function putOnce(url: string, file: File) {
-    const res = await fetch(url, { method: 'PUT', body: file });
-    // The body is read only on failure, and only to classify it.
-    const body = res.ok ? '' : await res.text().catch(() => '');
-    return {
-      outcome: classifyUpload(res.status, res.ok, body),
-      expired: isExpiredPresign(res.status),
-    };
-  }
-
   // Fresh URL for one file whose presign expired mid-batch. Returns null if
   // even that fails, so the caller can mark just this file failed.
   async function represign(h: { file: File; sha256: string }): Promise<string | null> {
@@ -192,16 +180,9 @@ export function Dropzone() {
           // file: it is marked 'failed' and every other row keeps going.
           let outcome: UploadOutcome;
           try {
-            const first = await putOnce(urlFor.get(h.sha256)!, h.file);
-            outcome = first.outcome;
-            if (first.expired) {
-              // A 403 is an expired presigned URL (1 h TTL), not a bad file.
-              // Ask for a fresh one for this single file and try once more.
-              // Only a 403 retries: re-PUTting an over-size or otherwise
-              // rejected file would just fail again more slowly.
-              const fresh = await represign(h);
-              if (fresh) outcome = (await putOnce(fresh, h.file)).outcome;
-            }
+            // A 403 (an expired URL) asks for a fresh one for this single
+            // file and tries once more (putPresigned, src/lib/blob-upload.ts).
+            outcome = await putPresigned(urlFor.get(h.sha256)!, h.file, () => represign(h));
           } catch {
             outcome = 'failed';
           }

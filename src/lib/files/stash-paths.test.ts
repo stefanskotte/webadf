@@ -1,6 +1,6 @@
 // src/lib/files/stash-paths.test.ts
 import { describe, it, expect } from 'vitest';
-import { amigaDateText, dateOfAmigaText, stashTree, stashFind, rowsUnder, uniqueStashPath, keepBothName } from './stash-paths';
+import { amigaDateText, dateOfAmigaText, stashTree, stashFind, rowsUnder, uniqueStashPath, keepBothName, planStashBatches } from './stash-paths';
 
 describe('Amiga date text', () => {
   it('round-trips to the tick and matches what the board sends', () => {
@@ -48,5 +48,36 @@ describe('uniqueStashPath', () => {
   });
   it('keepBothName numbers before the extension', () => {
     expect(keepBothName('a.txt', () => false)).toBe('a_1.txt');
+  });
+});
+
+describe('planStashBatches', () => {
+  const MB = 1024 * 1024;
+  const f = (path: string, mb: number) => ({ path, kind: 'file' as const, sizeBytes: Math.round(mb * MB) });
+  it('keeps a folder in one batch and packs tops up to 64 MB', () => {
+    // (The brief's 30 MB files are over the 20 MB a file: three of 19 MB make the 57 MB folder.)
+    const { batches, refused } = planStashBatches([f('A/1', 19), f('A/2', 19), f('A/3', 19), f('b', 10), f('c', 10)]);
+    expect(batches.map((b) => b.map((x) => x.path))).toEqual([['A/1', 'A/2', 'A/3'], ['b', 'c']]);
+    expect(refused).toEqual([]);
+  });
+  it('refuses a file over 20 MB and a folder over 64 MB, and packs at most 200 entries', () => {
+    const { batches, refused } = planStashBatches([f('big.iso', 21), f('F/a', 19), f('F/b', 19), f('F/c', 19), f('F/d', 19),
+      ...Array.from({ length: 250 }, (_, i) => f(`t${i}`, 0.001))]);
+    expect(refused).toEqual([{ path: 'big.iso', why: 'too_large' }, { path: 'F', why: 'folder_too_large' }]);
+    expect(batches.map((b) => b.length)).toEqual([200, 50]);
+  });
+  it('refuses a single folder of more than 200 entries (ruling 12), counting the folder itself', () => {
+    const dir = (path: string) => ({ path, kind: 'dir' as const, sizeBytes: 0 });
+    const big = [dir('Big'), ...Array.from({ length: 200 }, (_, i) => f(`Big/${i}`, 0))];
+    const fits = [dir('Fits'), ...Array.from({ length: 199 }, (_, i) => f(`Fits/${i}`, 0))];
+    const { batches, refused } = planStashBatches([...big, ...fits, f('x', 1)]);
+    expect(refused).toEqual([{ path: 'Big', why: 'folder_too_many' }]);
+    expect(batches.map((b) => b.length)).toEqual([200, 1]);
+  });
+  it('takes empty files and empty folders, and keeps the rest of a folder when one file in it is too large', () => {
+    const { batches, refused } = planStashBatches([f('README', 0), { path: 'Empty', kind: 'dir', sizeBytes: 0 },
+      { path: 'D', kind: 'dir', sizeBytes: 0 }, f('D/huge', 25), f('D/ok', 1)]);
+    expect(refused).toEqual([{ path: 'D/huge', why: 'too_large' }]);
+    expect(batches.map((b) => b.map((x) => x.path))).toEqual([['README', 'Empty', 'D', 'D/ok']]);
   });
 });

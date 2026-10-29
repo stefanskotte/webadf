@@ -28,22 +28,25 @@ export const TILE_LOOK = 'max-sm:h-24 max-sm:w-full max-sm:flex-col max-sm:justi
  * (C7 Plan ruling, Task 7) the section is display:contents, so its children are items of the page's two-column grid:
  * the file label is the tile, the 34 px disk sits on it, the hint and the controls go under both tiles.
  */
-export function DropCard({ testId, headingId, title, help, hint, disk, tileCol, disabled, onFiles, children }: {
+export function DropCard({ testId, headingId, title, help, hint, disk, tileCol, disabled, onFiles, onItems, children }: {
   testId: string; headingId: string; title: string; help?: React.ReactNode; hint: React.ReactNode;
   disk: { color: DiskColor; set: string; title: string }; tileCol: 1 | 2; disabled?: boolean;
-  onFiles?: (files: FileList) => void; children?: React.ReactNode;
+  onFiles?: (files: FileList) => void;
+  /** In place of onFiles, for a card that takes folders: the drop's items, to read before the handler returns. */
+  onItems?: (items: DataTransferItemList) => void;
+  children?: React.ReactNode;
 }) {
   const [over, setOver] = useState(false);
-  const drop = !!onFiles && !disabled;
+  const drop = (!!onFiles || !!onItems) && !disabled;
   // Only a drag that carries files is the card's business; a dragged link belongs to the URL field (final review M3).
   const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
   const h = typeof hint === 'string' ? splitHint(hint) : null;
   return (
-    <section aria-labelledby={headingId} data-testid={testId} data-over={String(over)} data-drop={onFiles ? 'on' : 'off'}
+    <section aria-labelledby={headingId} data-testid={testId} data-over={String(over)} data-drop={onFiles || onItems ? 'on' : 'off'}
       onDragEnter={(e) => { if (!hasFiles(e)) return; e.preventDefault(); if (drop && !over) setOver(true); }}
       onDragOver={(e) => { if (!hasFiles(e)) return; e.preventDefault(); if (drop && !over) setOver(true); }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false); }}
-      onDrop={(e) => { if (!hasFiles(e)) return; e.preventDefault(); setOver(false); if (drop) onFiles(e.dataTransfer.files); }}
+      onDrop={(e) => { if (!hasFiles(e)) return; e.preventDefault(); setOver(false); if (!drop) return; if (onItems) onItems(e.dataTransfer.items); else onFiles!(e.dataTransfer.files); }}
       className="group relative flex min-w-0 items-center gap-4 rounded-[20px] border-[1.5px] border-dashed border-[var(--dash)] bg-[var(--surface)] p-5 hover:border-[var(--ink)] data-[over=true]:border-[var(--ink)] data-[over=true]:bg-[var(--surface-2)] max-sm:contents sm:gap-5 sm:p-6">
       <span aria-hidden="true" className={`pointer-events-none z-10 mt-[18px] self-start justify-self-center ${TILE[tileCol]} sm:hidden`}>
         <DiskIcon color={disk.color} size={34} />
