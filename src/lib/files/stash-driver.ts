@@ -16,7 +16,7 @@ import { formatPath, parsePath, type FsPath } from './path';
 import { keepBothName, rowsUnder, sameStashName, STASH_FILE_MAX, stashTree, type StashNode } from './stash-paths';
 import { openArchive, type OpenedArchive } from './stash-archive';
 import {
-  checkComment, checkName, itemResult, refuse, Refused, REMOVE_FAILED,
+  checkComment, checkName, itemResult, refuse, Refused, REMOVE_FAILED, skippedItem,
   type CopyMove, type FileBytes, type FsCtx, type IncomingItem, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome, type VolumeDriver,
 } from './driver';
 import type { Crumb, FsEntry, Listing } from './types';
@@ -365,8 +365,8 @@ export async function writeStash(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], o
   const written: string[] = [];
   const placedAt: { source: string; path: string }[] = [];
   for (const p of planned) {
+    if (p.clash && onClash === 'skip') { results.set(p.top.source, skippedItem(p.top.source)); continue; }
     results.set(p.top.source, itemResult(p.top.source, () => {
-      if (p.clash && onClash === 'skip') return;
       let name = p.name;
       if (p.clash && onClash === 'keep-both') { name = keepBothName(name, taken); placed.push(name); }
       if (p.clash && onClash === 'replace') replaceIds.push(...replaceable(s, folder.shown, p.clash, p.top.source));
@@ -428,8 +428,9 @@ async function moveWithin(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
   const replaceIds: string[] = [];
   const written: string[] = [];
   for (const p of planned) {
+    if (p.clash && req.onClash === 'skip') { results.set(p.raw, skippedItem(p.raw)); continue; }
     results.set(p.raw, itemResult(p.raw, () => {
-      if (p.noop || (p.clash && req.onClash === 'skip')) return;
+      if (p.noop) return;
       let name = p.node.name;
       if (p.clash && req.onClash === 'keep-both') { name = keepBothName(name, taken); placed.push(name); }
       if (p.clash && req.onClash === 'replace') {

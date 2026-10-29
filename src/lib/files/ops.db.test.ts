@@ -139,9 +139,16 @@ describe('copy', () => {
     expect((await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/ReadMe'], dest: 'LIBRARY:/g2/d2', onClash: 'keep-both' })).kind).toBe('done');
     expect(await readLibraryFile(ctx, P('LIBRARY:/g2/d2/ReadMe_1'))).not.toBeNull();
     const s = await sha('d2');
+    // A skipped item says so (final review): the toast must not count it as copied.
     expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/ReadMe'], dest: 'LIBRARY:/g2/d2', onClash: 'skip' }))
-      .toMatchObject({ kind: 'done', versions: [] });   // nothing written, nothing to undo
+      .toMatchObject({ kind: 'done', items: [{ source: 'LIBRARY:/g1/d1/ReadMe', ok: true, skipped: true }], versions: [] });   // nothing written, nothing to undo
     expect(await sha('d2')).toBe(s);
+    // A move answered Skip keeps its source where it was.
+    const s1 = await sha('d1');
+    expect(await runOp(ctx, { op: 'move', sources: ['LIBRARY:/g1/d1/ReadMe'], dest: 'LIBRARY:/g2/d2', onClash: 'skip' }))
+      .toMatchObject({ kind: 'done', items: [{ source: 'LIBRARY:/g1/d1/ReadMe', ok: true, skipped: true }], versions: [] });
+    expect([await sha('d1'), await sha('d2')]).toEqual([s1, s]);
+    expect(await readLibraryFile(ctx, P('LIBRARY:/g1/d1/ReadMe'))).not.toBeNull();
     await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/ReadMe'], dest: 'LIBRARY:/g2/d2', onClash: 'replace' });
     expect(new TextDecoder().decode((await readLibraryFile(ctx, P('LIBRARY:/g2/d2/ReadMe')))!.bytes)).toBe('hello');
   });

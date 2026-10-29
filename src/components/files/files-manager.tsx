@@ -26,7 +26,7 @@ import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
 import { identityToConfirm, undoTarget, withAddedIn, type OpVersion } from '@/lib/files/edit-rules';
-import { dropBlocked, fetchDownload, reloadsBoth, stripDiskOf } from '@/lib/files/manager-rules';
+import { dropBlocked, fetchDownload, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
 import { addedIn } from '@/lib/disk-history/added-in';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
 import { isFileDrag } from '@/components/disks/native-drop';
@@ -713,7 +713,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     opts: { undo?: boolean; action?: ToastAction } = {}) {
     const offer = (): { action?: ToastAction } => (opts.action ? { action: opts.action } : opts.undo === false ? {} : undoAction(versions));
     const failed = done.filter((i): i is Extract<OpItem, { ok: false }> => !i.ok);
-    const ok = done.length - failed.length;
+    // A clash answered Skip is neither done nor failed: said apart, never counted as moved or copied.
+    const tally = tallyItems(done);
+    const ok = tally.done;
     reloadBoth();
     // Every disk on screen may have a new version (a move changes its source too); the target's is the one named.
     const { panes: cur } = latest.current;
@@ -722,9 +724,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const head = target && ok > 0 ? await refreshStrip(target) : null;
     const seq = versions.filter((v) => v.diskId === target).at(-1)?.seq ?? head;
     const said = (n: number) => (seq === null ? success(n) : `${success(n).replace(/\.$/, '')} — saved as version ${seq}.`);
-    if (failed.length === 0) toast.success(said(done.length), offer());
+    if (failed.length === 0) toast.success(opTitle(tally, said, items), ok > 0 ? offer() : {});
     else {
-      toast.error(ok > 0 ? `${said(ok)} ${items(failed.length)} could not be done.` : `Nothing was done.`, {
+      toast.error(opTitle(tally, said, items), {
         ...(ok > 0 ? offer() : {}),
         description: (
           <ul data-testid="files-failures">
@@ -791,7 +793,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     if (upto < d.clashes.length) { setDialog({ ...d, at: upto, choices }); return; }
     ranOp.current = true;
     setDialog(null);
-    void runGroups(d, [...clashGroups(d.sources, d.clashes.map((c) => c.source), choices), ...d.rest], [...d.done], [...d.versions]);
+    // Mixed answers send no request for the skipped sources; they are reported as skipped all the same.
+    void runGroups(d, [...clashGroups(d.sources, d.clashes.map((c) => c.source), choices), ...d.rest],
+      [...d.done, ...skippedItems(d.sources, choices)], [...d.versions]);
   }
 
   /** Cancel stops the run here; anything an earlier request already did is still reported. */
@@ -1111,11 +1115,10 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     if (!dropped.length) return;
     const tops = [...new Set(dropped.map((i) => topOf(i.path)))];
     const clashes = tops.filter((t) => names?.some((n) => sameStashName(n, t))).map((t) => ({ source: t, name: t, dest: dir }));
-    // R4: an answer set in the Files settings is given without asking; Skip's tops are not counted as added.
+    // R4: an answer set in the Files settings is given without asking; the server says which tops Skip left out.
     const answer = prefs.files.onClash;
     if (clashes.length && answer !== 'ask') {
-      void runStash(dir, [{ onClash: answer, items: dropped }], noneDone(),
-        answer === 'skip' ? new Set(clashes.map((c) => c.source.toLowerCase())) : new Set());
+      void runStash(dir, [{ onClash: answer, items: dropped }], noneDone(), new Set());
       return;
     }
     if (clashes.length) {
@@ -1163,19 +1166,24 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
 
   /**
    * What a drop into STASH: did: "Added 3 items to STASH:/Mods", every name the server stored differently ("ReadMe
-   * stored as ReadMe_1") and every refusal listed under it; both panes reload. Tops answered Skip are not counted.
+   * stored as ReadMe_1") and every refusal listed under it; both panes reload. Tops answered Skip are said apart
+   * ("Skipped 1 (already there).") and never counted as added.
    */
   function reportStash(dir: string, r: StashUploadResult, skipped: Set<string>) {
     reloadBoth();
     const failed = r.items.filter((i): i is Extract<OpItem, { ok: false }> => !i.ok);
-    const added = r.items.filter((i) => i.ok && !skipped.has(i.source.toLowerCase())).length;
+    // Skipped: the tops a mixed answer never sent, and every top the server says it skipped (a Skip setting, a race).
+    const answered = new Set(r.items.map((i) => i.source.toLowerCase()));
+    const skips = new Set([...skipped].filter((t) => !answered.has(t)));
+    for (const i of r.items) if (i.ok && i.skipped) skips.add(i.source.toLowerCase());
+    const added = r.items.filter((i) => i.ok && !i.skipped).length;
     const lines = [
       ...r.renamed.map((x) => `${x.from} stored as ${x.to}`),
       ...failed.map((f) => `${baseName(f.source)}: ${refusalWords(f.refusal.code, f.refusal.detail)}`),
       ...r.refused.map((x) => `${x.path}: ${x.why}`),
       ...(r.stopped ? [r.stopped] : []),
     ];
-    const title = added > 0 ? `Added ${items(added)} to ${dir}` : 'Nothing was added.';
+    const title = stashTitle(added, skips.size, dir, items);
     const description = lines.length
       ? <ul data-testid="files-stash-report">{lines.map((x, i) => <li key={i}>{x}</li>)}</ul>
       : undefined;

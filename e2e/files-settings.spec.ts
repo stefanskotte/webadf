@@ -310,10 +310,32 @@ test('with Skip set, a move onto a clash asks nothing and leaves the source', as
 
   await row(page, 'right', 'ReadMe').click();
   await page.getByTestId('files-move').click();
-  await expect(toast(page, /Moved|Nothing/)).toBeVisible({ timeout: 15_000 });
+  // Skipped is said as skipped, never counted as moved (final review).
+  await expect(toast(page, /^Skipped 1 \(already there\)\.$/)).toBeVisible({ timeout: 15_000 });
+  await expect(toast(page, /Moved/)).toHaveCount(0);
   await expect(page.getByTestId('files-clash-dialog')).toHaveCount(0);
+  await expect(row(page, 'right', 'ReadMe')).toBeVisible();
   expect(names((await stored(a.diskId)).root)).toEqual(['ReadMe']);
+  expect((await stored(a.diskId)).sha256).toBe(a.sha256);
   expect((await stored(b.diskId)).sha256).toBe(b.sha256);
+});
+
+test('with Skip set, a STASH: drop onto a clash adds nothing and says it skipped', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  await setPrefs(page, { files: { onClash: 'skip' } });
+  await openFiles(page, 'STASH:', 'LIBRARY:', 'left');
+  const input = page.getByTestId('files-stash-input');
+  await input.setInputFiles([{ name: 'ReadMe', mimeType: 'text/plain', buffer: Buffer.from('first') }]);
+  await expect(row(page, 'left', 'ReadMe')).toBeVisible();
+  await input.setInputFiles([
+    { name: 'ReadMe', mimeType: 'text/plain', buffer: Buffer.from('second one') },
+    { name: 'Other', mimeType: 'text/plain', buffer: Buffer.from('other') },
+  ]);
+  await expect(toast(page, /^Added 1 item to STASH:\. Skipped 1 \(already there\)\.$/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('files-clash-dialog')).toHaveCount(0);
+  const rows = await stashRows(orgId);
+  expect(Object.keys(rows).sort()).toEqual(['Other', 'ReadMe']);
+  expect(rows['ReadMe'].sha).toBe(sha('first'));
 });
 
 test('with Replace set, a STASH: drop onto a clash replaces without asking', async ({ page }) => {

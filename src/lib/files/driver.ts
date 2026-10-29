@@ -10,7 +10,8 @@ export type FsCtx = { orgId: string; userId: string | null };
 /** The caller's context while an op runs, collecting every history version its edits save. */
 export type OpCtx = FsCtx & { versions: OpVersion[] };
 export type OnClash = 'ask' | 'replace' | 'skip' | 'keep-both';
-export type OpItem = { source: string; ok: true } | { source: string; ok: false; refusal: Refusal };
+/** `skipped`: a clash answered Skip left the item as it was (nothing written, a move's source kept). */
+export type OpItem = { source: string; ok: true; skipped?: true } | { source: string; ok: false; refusal: Refusal };
 export type Clash = { source: string; name: string; dest: string };
 /** A disk image Add to library placed (Task 5). */
 export type Added = { source: string; gameId: string; diskId: string };
@@ -62,6 +63,8 @@ export function groupBy<T, K>(xs: T[], key: (x: T) => K): Map<K, T[]> {
   for (const x of xs) m.set(key(x), [...(m.get(key(x)) ?? []), x]);
   return m;
 }
+
+export const skippedItem = (source: string): OpItem => ({ source, ok: true, skipped: true });
 
 /** Run `fn` for one item; a refusal becomes that item's result instead of the whole op's. */
 export function itemResult(source: string, fn: () => void): OpItem {

@@ -17,7 +17,7 @@ import { diskStore } from '@/lib/storage';
 import { BlobUnavailableError, listLibrary, loadDisk, readLibraryFile, readOnlyReasonOf, resolveInDisk, type ResolvedDisk } from './library';
 import type { RefusalCode } from './types';
 import {
-  checkComment, checkName, groupBy, itemResult, keepBothName, REMOVE_FAILED, refuse, Refused,
+  checkComment, checkName, groupBy, itemResult, keepBothName, REMOVE_FAILED, refuse, Refused, skippedItem,
   type CopyMove, type FsCtx, type IncomingItem, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome, type VolumeDriver,
 } from './driver';
 
@@ -195,8 +195,9 @@ async function copyOrMove(ctx: Run, req: CopyMove): Promise<Outcome> {
   let freed = 0;
   const taken = (n: string) => dest.children.some((c) => same(c.name, n)) || placed.some((p) => same(p, n));
   for (const p of planned) {
+    if (p.clash && req.onClash === 'skip') { results.set(p.raw, skippedItem(p.raw)); continue; }
     const item = itemResult(p.raw, () => {
-      if (p.noop || (p.clash && req.onClash === 'skip')) return;
+      if (p.noop) return;
       let name = p.hit.entry.name;
       if (p.clash && req.onClash === 'keep-both') {
         const siblings = p.local && move ? resolveInDisk(p.d, p.loc.names.slice(0, -1))?.entry?.children ?? p.d.root : [];
@@ -424,8 +425,8 @@ async function write(ctx: Run, dir: FsPath, tops: IncomingTop[], onClash: OnClas
   const written: string[] = [];
   const taken = (n: string) => dest.children.some((c) => same(c.name, n)) || placed.some((p) => same(p, n));
   for (const p of planned) {
+    if (p.clash && onClash === 'skip') { results.set(p.top.source, skippedItem(p.top.source)); continue; }
     results.set(p.top.source, itemResult(p.top.source, () => {
-      if (p.clash && onClash === 'skip') return;
       let name = p.name;
       if (p.clash && onClash === 'keep-both') { name = keepBothName(name, taken); placed.push(name); }
       if (p.clash && onClash === 'replace') {

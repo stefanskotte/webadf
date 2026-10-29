@@ -147,12 +147,13 @@ describe('copies between STASH: and disks', () => {
     await stash('Notes.txt', enc('second notes'));
     const v = await versions('d2');
     const r = await runOp(ctx, { op: 'move', sources: ['STASH:/Notes.txt'], dest: 'LIBRARY:/g2/d2', onClash: 'skip' });
-    expect(r).toMatchObject({ kind: 'done', items: [{ source: 'STASH:/Notes.txt', ok: true }] });
+    expect(r).toMatchObject({ kind: 'done', items: [{ source: 'STASH:/Notes.txt', ok: true, skipped: true }] });
     expect(await live()).toContain('Notes.txt');
     expect(await versions('d2')).toBe(v);
     // disk → STASH:: STASH: already holds C.
     const v1 = await versions('d1');
-    await runOp(ctx, { op: 'move', sources: ['LIBRARY:/g1/d1/C'], dest: 'STASH:', onClash: 'skip' });
+    expect(await runOp(ctx, { op: 'move', sources: ['LIBRARY:/g1/d1/C'], dest: 'STASH:', onClash: 'skip' }))
+      .toMatchObject({ kind: 'done', items: [{ source: 'LIBRARY:/g1/d1/C', ok: true, skipped: true }] });
     expect((await readLibraryFile(ctx, P('LIBRARY:/g1/d1/C/Assign')))).not.toBeNull();
     expect(await versions('d1')).toBe(v1);
   });
@@ -212,6 +213,17 @@ describe('inside STASH:', () => {
     expect((await live()).length).toBe(before.length + 1);
     await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g2/d2/readme.txt'], dest: 'STASH:', onClash: 'keep-both' });
     expect(await live()).toContain('readme_1.txt');
+  });
+  it('skip says skipped, on a copy and on a move, and the move keeps its source', async () => {
+    await runOp(ctx, { op: 'makedir', dest: 'STASH:', name: 'SkipDir' });
+    expect(await runOp(ctx, { op: 'copy', sources: ['STASH:/readme.txt'], dest: 'STASH:/SkipDir', onClash: 'ask' })).toMatchObject({ kind: 'done' });
+    const before = await live();
+    expect(await runOp(ctx, { op: 'copy', sources: ['STASH:/readme.txt'], dest: 'STASH:/SkipDir', onClash: 'skip' }))
+      .toMatchObject({ kind: 'done', items: [{ source: 'STASH:/readme.txt', ok: true, skipped: true }] });
+    expect(await runOp(ctx, { op: 'move', sources: ['STASH:/readme.txt'], dest: 'STASH:/SkipDir', onClash: 'skip' }))
+      .toMatchObject({ kind: 'done', items: [{ source: 'STASH:/readme.txt', ok: true, skipped: true }] });
+    expect(await live()).toEqual(before);
+    await runOp(ctx, { op: 'delete', sources: ['STASH:/SkipDir'] });
   });
   it('replace swaps the clashing entry in one go', async () => {
     const old = (await rowAt('Keep.txt'))!;
