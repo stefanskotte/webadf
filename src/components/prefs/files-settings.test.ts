@@ -31,6 +31,16 @@ describe('FilesSettings', () => {
     expect(tag(c, 'pref-files-on-clash')).toContain('data-value="skip"');
     expect(tag(c, 'pref-files-right')).toContain('data-value="NET"');
   });
+  it('says both values of each switch in words, and describes the switch by them', () => {
+    const d = html({});
+    expect(d).toMatch(/data-testid="pref-files-show-info-state"[^>]*>Shown</);
+    expect(d).toMatch(/data-testid="pref-files-confirm-delete-state"[^>]*>Asks</);
+    const c = html({ browse: { hideInfo: true }, files: { confirmDelete: false } });
+    expect(c).toMatch(/data-testid="pref-files-show-info-state"[^>]*>Hidden</);
+    expect(c).toMatch(/data-testid="pref-files-confirm-delete-state"[^>]*>Doesn&#x27;t ask</);
+    const id = tag(c, 'pref-files-show-info').match(/aria-describedby="(\S+) /)?.[1];
+    expect(id && c).toContain(`id="${id}"`);
+  });
   it('says STASH: and NET: always ask', () => {
     expect(html({})).toContain('STASH: and NET: always ask.');
   });

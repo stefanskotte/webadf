@@ -57,9 +57,9 @@ export function FilesSettings({ prefs }: { prefs: UserPrefs }) {
       </PrefRow>
       <PrefRow labelId={infoLabel} hintId={infoHint} label="Show .info files"
                hint="Workbench icon files. The switch in each pane changes this too.">
-        <Switch testId="pref-files-show-info" aria-labelledby={infoLabel} aria-describedby={infoHint}
-                checked={!draft.browse.hideInfo}
-                onChange={(checked) => void change({ ...draft, browse: { ...draft.browse, hideInfo: !checked } })} />
+        <SwitchWithWords testId="pref-files-show-info" labelId={infoLabel} hintId={infoHint}
+                         checked={!draft.browse.hideInfo} on="Shown" off="Hidden"
+                         onChange={(checked) => void change({ ...draft, browse: { ...draft.browse, hideInfo: !checked } })} />
       </PrefRow>
       <PrefRow labelId={commentLabel} hintId={commentHint} label="Comment column" hint="Wide screens only.">
         <SegRadioGroup testId="pref-files-comments" aria-labelledby={commentLabel} aria-describedby={commentHint}
@@ -69,8 +69,9 @@ export function FilesSettings({ prefs }: { prefs: UserPrefs }) {
       </PrefRow>
       <PrefRow labelId={confirmLabel} hintId={confirmHint} label="Ask before deleting"
                hint="Turned off, a delete on a disk happens at once and can be undone. STASH: and NET: always ask.">
-        <Switch testId="pref-files-confirm-delete" aria-labelledby={confirmLabel} aria-describedby={confirmHint}
-                checked={draft.files.confirmDelete} onChange={(confirmDelete) => setFiles({ confirmDelete })} />
+        <SwitchWithWords testId="pref-files-confirm-delete" labelId={confirmLabel} hintId={confirmHint}
+                         checked={draft.files.confirmDelete} on="Asks" off="Doesn't ask"
+                         onChange={(confirmDelete) => setFiles({ confirmDelete })} />
       </PrefRow>
       <PrefRow labelId={clashLabel} hintId={clashHint} label="When a name already exists"
                hint="Replace overwrites without asking; a disk keeps the old version in History, STASH: does not.">
@@ -80,5 +81,20 @@ export function FilesSettings({ prefs }: { prefs: UserPrefs }) {
                        onChange={(onClash: FilesOnClash) => setFiles({ onClash })} />
       </PrefRow>
     </section>
+  );
+}
+
+/** A switch with its current value in words beside it (an absent word is not a reading); the words are also part of its description. */
+function SwitchWithWords({ testId, labelId, hintId, checked, on, off, onChange }: {
+  testId: string; labelId: string; hintId: string; checked: boolean; on: string; off: string; onChange: (checked: boolean) => void;
+}) {
+  const wordsId = useId();
+  return (
+    <div className="flex items-center gap-2.5 sm:justify-end">
+      <span id={wordsId} data-testid={`${testId}-state`} className="text-[12px] font-semibold" style={{ color: checked ? 'var(--ink)' : 'var(--muted)' }}>
+        {checked ? on : off}
+      </span>
+      <Switch testId={testId} aria-labelledby={labelId} aria-describedby={`${wordsId} ${hintId}`} checked={checked} onChange={onChange} />
+    </div>
   );
 }
