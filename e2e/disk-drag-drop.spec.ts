@@ -6,7 +6,7 @@ import {
   readVolume, readFile, readUsage, blocksForPlan, type AdfEntry, type CostItem,
 } from '@/lib/adffs';
 import { ROOT_BLOCK } from '@/lib/adffs/constants';
-import { signUpFresh, createAdf, openRowMenu } from './helpers';
+import { signUpFresh, createAdf } from './helpers';
 import { cleanupSeeded } from './device-helpers';
 import { synthDrop, manyEmptyFilesTree, type DropNode } from './drag-drop-helpers';
 
@@ -23,6 +23,11 @@ import { synthDrop, manyEmptyFilesTree, type DropNode } from './drag-drop-helper
  *
  * Every disk here is made through `createAdf(page)` (FFS, root at block
  * 880), never seeded -- seedDisk's rows are byte-less and 503 on /adf.
+ *
+ * Files increment 1 (Task 11): the drops and moves happen in the Files manager -- a computer drop on a pane opens
+ * its drop review (the same staging list the Browse page had, in a dialog), and entries move by a native HTML5
+ * drag between rows and panes (Shift for a move) or by the keys. The Browse page's dnd-kit tree is gone from the
+ * head of a disk.
  */
 
 test.afterAll(cleanupSeeded);
@@ -96,40 +101,33 @@ async function apiUploadFile(
   if (!res.ok()) throw new Error(`test setup: upload "${name}" failed with ${res.status()}`);
 }
 
-/**
- * Drag with the real pointer, not `locator.dragTo()` -- copied from
- * collections.spec.ts's own `dragOnto`, whose comment explains why in
- * full: dnd-kit's `MouseSensor` has an 8px activation constraint
- * (file-tree.tsx copies collection-provider.tsx's sensor setup verbatim),
- * which means it has to actually SEE movement accumulate. A single jump
- * from source to target is one mousemove and never activates a drag at
- * all.
- */
-async function dragOnto(page: Page, source: Locator, target: Locator) {
-  // dnd-kit auto-scrolls the window whenever the pointer is within ~20% of the
-  // viewport's top/bottom edge. If the pair sits low on the page (the header
-  // above the tree has grown), the drag scrolls the folder out from under the
-  // pointer and the drop lands on nothing. Park the pair mid-viewport first.
-  await target.evaluate((el) => {
-    const r = el.getBoundingClientRect();
-    window.scrollBy(0, r.top - window.innerHeight / 2);
+/** The disk open in Files in both panes (the right one active), hydrated so drags, keys and drops reach React. */
+async function openInFiles(page: Page, disk: { id: string; gameId: string }, left?: string) {
+  const right = `LIBRARY:/${disk.gameId}/${disk.id}`;
+  await page.goto(`/files?${new URLSearchParams({ left: left ?? right, right, active: 'right' })}`);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="files-manager"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
   });
-  await source.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => done())));
-  const from = await source.boundingBox();
-  const to = await target.boundingBox();
-  if (!from || !to) throw new Error('drag: source or target is not visible');
+}
 
-  const sx = from.x + from.width / 2;
-  const sy = from.y + from.height / 2;
-  const tx = to.x + to.width / 2;
-  const ty = to.y + to.height / 2;
+const paneRow = (page: Page, side: 'left' | 'right', name: string) =>
+  page.getByTestId(`pane-${side}`).locator(`[data-testid="pane-row"][data-name="${name}"]`);
 
-  await page.mouse.move(sx, sy);
+/**
+ * A real HTML5 drag with the mouse, Shift held once it is under way (a move). In Chromium a mousedown with Shift
+ * already held never starts a drag of a draggable row, so a person presses it during the drag, as here.
+ */
+async function shiftDrag(page: Page, source: Locator, target: Locator) {
+  const from = (await source.boundingBox())!;
+  const to = (await target.boundingBox())!;
+  await page.mouse.move(from.x + 40, from.y + from.height / 2);
   await page.mouse.down();
-  await page.mouse.move(sx + 14, sy + 14, { steps: 6 });
-  await page.mouse.move(tx, ty, { steps: 15 });
-  await page.mouse.move(tx, ty, { steps: 2 });
+  await page.mouse.move(from.x + 60, from.y + from.height / 2, { steps: 4 });
+  await page.keyboard.down('Shift');
+  await page.mouse.move(to.x + 40, to.y + to.height / 2, { steps: 8 });
   await page.mouse.up();
+  await page.keyboard.up('Shift');
 }
 
 // ---------------------------------------------------------------------------
@@ -140,8 +138,7 @@ test('dropping a nested folder writes it, and the files read back out of the dis
   await createAdf(page);
   const disk = await authoredDisk(page, u.orgId);
 
-  await page.goto(`/disks/${disk.id}/files`);
-  await expect(page.getByTestId('drop-strip')).toBeVisible();
+  await openInFiles(page, disk, 'LIBRARY:');
 
   const assignContent = 'C:Assign stub, from an e2e drop';
   const startupContent = 'run C/Assign';
@@ -158,15 +155,16 @@ test('dropping a nested folder writes it, and the files read back out of the dis
     ],
   }];
 
-  await synthDrop(page, tree);
+  await synthDrop(page, tree, '[data-testid="pane-right"]');
 
-  // Workbench, C, Assign, S, Startup-Sequence, Empty -- six staged rows.
-  await expect(page.getByTestId('drop-staging-list')).toBeVisible();
-  await expect(page.locator('[data-testid^="stage-row-"]')).toHaveCount(6);
+  // Workbench, C, Assign, S, Startup-Sequence, Empty -- six staged rows, in the review.
+  const review = page.getByTestId('files-drop-review');
+  await expect(review.getByTestId('drop-staging-list')).toBeVisible();
+  await expect(review.locator('[data-testid^="stage-row-"]')).toHaveCount(6);
 
   const before = await diskRow(disk.id);
-  await page.getByTestId('drop-commit').click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="Workbench"]')).toBeVisible({ timeout: 15_000 });
+  await review.getByTestId('drop-commit').click();
+  await expect(paneRow(page, 'right', 'Workbench')).toBeVisible({ timeout: 15_000 });
 
   const after = await diskRow(disk.id);
   expect(after.id).toBe(disk.id);
@@ -206,7 +204,7 @@ test('a folder that does not fit is refused with numbers, before anything is wri
   await createAdf(page);
   const disk = await authoredDisk(page, u.orgId);
 
-  await page.goto(`/disks/${disk.id}/files`);
+  await openInFiles(page, disk, 'LIBRARY:');
 
   // The disk's REAL free-block count, read off its own bitmap -- never
   // hardcoded, because this test's whole point is that the number has to
@@ -231,21 +229,22 @@ test('a folder that does not fit is refused with numbers, before anything is wri
   const expectedBlocks = blocksForPlan(items, 'FFS');
   expect(expectedBlocks).toBeGreaterThan(freeBlocks);
 
-  await synthDrop(page, tree);
-  await expect(page.getByTestId('drop-staging-list')).toBeVisible();
-  await expect(page.locator('[data-testid^="stage-row-"]')).toHaveCount(FILE_COUNT + 1);
+  await synthDrop(page, tree, '[data-testid="pane-right"]');
+  const review = page.getByTestId('files-drop-review');
+  await expect(review.getByTestId('drop-staging-list')).toBeVisible();
+  await expect(review.locator('[data-testid^="stage-row-"]')).toHaveCount(FILE_COUNT + 1);
 
-  await expect(page.getByTestId('drop-total-blocks')).toHaveText(expectedBlocks.toLocaleString());
-  await expect(page.getByTestId('drop-free-blocks')).toHaveText(freeBlocks.toLocaleString());
+  await expect(review.getByTestId('drop-total-blocks')).toHaveText(expectedBlocks.toLocaleString());
+  await expect(review.getByTestId('drop-free-blocks')).toHaveText(freeBlocks.toLocaleString());
 
-  const warning = page.getByTestId('drop-capacity-warning');
+  const warning = review.getByTestId('drop-capacity-warning');
   await expect(warning).toBeVisible();
   await expect(warning).toContainText(expectedBlocks.toLocaleString());
   await expect(warning).toContainText(freeBlocks.toLocaleString());
 
   // The commit control itself is unusable -- this IS "refused before
   // anything is written": there is no path to a write from here.
-  await expect(page.getByTestId('drop-commit')).toBeDisabled();
+  await expect(review.getByTestId('drop-commit')).toBeDisabled();
 
   // Belt and braces: the server enforces the identical rule independently
   // (design §5 requires the client and the route to never disagree), with
@@ -306,23 +305,24 @@ test('a collision blocks the commit until resolved, and replace actually replace
   const originalBlock = originalEntry.block;
   const afterUpload = await diskRow(disk.id);
 
-  await page.goto(`/disks/${disk.id}/files`);
+  await openInFiles(page, disk, 'LIBRARY:');
   const newContent = 'replaced by an e2e drop';
-  await synthDrop(page, [{ name: 'DUPLICATE.TXT', kind: 'file', content: newContent }]);
+  await synthDrop(page, [{ name: 'DUPLICATE.TXT', kind: 'file', content: newContent }], '[data-testid="pane-right"]');
 
-  const row = page.locator('[data-testid^="stage-row-"]').filter({ hasText: 'DUPLICATE.TXT' });
+  const review = page.getByTestId('files-drop-review');
+  const row = review.locator('[data-testid^="stage-row-"]').filter({ hasText: 'DUPLICATE.TXT' });
   await expect(row).toBeVisible();
   await expect(row.locator('[data-testid^="stage-conflict-"]')).toContainText('DUPLICATE.TXT');
 
   // D-DD-4: never auto-resolved -- the commit is unusable until a decision
   // is made for this row.
-  await expect(page.getByTestId('drop-commit')).toBeDisabled();
+  await expect(review.getByTestId('drop-commit')).toBeDisabled();
 
   await row.locator('[data-testid^="stage-replace-"]').click();
   await expect(row.locator('[data-testid^="stage-resolution-"]')).toContainText('replace');
-  await expect(page.getByTestId('drop-commit')).toBeEnabled();
+  await expect(review.getByTestId('drop-commit')).toBeEnabled();
 
-  await page.getByTestId('drop-commit').click();
+  await review.getByTestId('drop-commit').click();
 
   // D-W-6: replace keeps the SAME header block -- it is the file's
   // identity -- and only its data changes. Polled, because the toast/
@@ -368,13 +368,15 @@ test('a move by drag leaves the entry\'s block number unchanged', async ({ page 
   const moved = findByName(beforeVolume.root, 'MOVEME.TXT')!;
   const movedBlock = moved.block;
 
-  await page.goto(`/disks/${disk.id}/files`);
-  const grip = page.getByTestId(`fs-drag-${movedBlock}`);
-  const dropTarget = page.getByTestId(`fs-drop-${target.block}`);
+  // Shift-dragged onto the TARGET row in the same pane: a move into that folder.
+  await openInFiles(page, disk, 'LIBRARY:');
+  const grip = paneRow(page, 'right', 'MOVEME.TXT');
+  const dropTarget = paneRow(page, 'right', 'TARGET');
   await expect(grip).toBeVisible();
-  await expect(dropTarget).toBeVisible();
+  await expect(dropTarget).toHaveAttribute('data-kind', 'dir');
+  expect(target.kind).toBe('dir');
 
-  await dragOnto(page, grip, dropTarget);
+  await shiftDrag(page, grip, dropTarget);
 
   await expect.poll(async () => {
     const adf = await fetchAdf(page, disk.id);
@@ -394,7 +396,7 @@ test('a move by drag leaves the entry\'s block number unchanged', async ({ page 
   expect(after.sha256).not.toBe(disk.sha256);
 });
 
-test('a move by keyboard through "Move to…" leaves the entry\'s block number unchanged', async ({ page }) => {
+test('a move by keyboard (F6 into the other pane) leaves the entry\'s block number unchanged', async ({ page }) => {
   const u = await signUpFresh(page);
   await page.goto('/library');
   await createAdf(page);
@@ -411,13 +413,14 @@ test('a move by keyboard through "Move to…" leaves the entry\'s block number u
   const moved = findByName(beforeVolume.root, 'KBMOVE.TXT')!;
   const movedBlock = moved.block;
 
-  await page.goto(`/disks/${disk.id}/files`);
-  await openRowMenu(page, movedBlock);
-  await page.getByTestId(`fs-move-${movedBlock}`).click();
-  const select = page.getByTestId(`fs-move-target-${movedBlock}`);
-  await expect(select).toBeVisible();
-  await select.selectOption(String(dest.block));
-  await page.getByTestId(`fs-move-submit-${movedBlock}`).click();
+  // The other pane shows DEST on the same disk; the keys pick KBMOVE.TXT (the last row) and F6 moves it there.
+  await openInFiles(page, disk, `LIBRARY:/${disk.gameId}/${disk.id}/DEST`);
+  expect(dest.kind).toBe('dir');
+  await page.getByTestId('files-manager').focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(paneRow(page, 'right', 'KBMOVE.TXT')).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('F6');
+  await expect(paneRow(page, 'left', 'KBMOVE.TXT')).toBeVisible({ timeout: 15_000 });
 
   await expect.poll(async () => {
     const adf = await fetchAdf(page, disk.id);
@@ -430,7 +433,7 @@ test('a move by keyboard through "Move to…" leaves the entry\'s block number u
   expect(after.sha256).not.toBe(disk.sha256);
 });
 
-test('moving a folder into its own child is refused, on the bytes and in the menu', async ({ page }) => {
+test('moving a folder into its own child is refused, on the bytes and in the panes', async ({ page }) => {
   const u = await signUpFresh(page);
   await page.goto('/library');
   await createAdf(page);
@@ -467,14 +470,18 @@ test('moving a folder into its own child is refused, on the bytes and in the men
   expect(afterAttempt.sha256).toBe(beforeAttempt.sha256);
   expect(afterAttempt.id).toBe(disk.id);
 
-  // And the interface never offers the destination in the first place
-  // (file-tree.tsx's `subtreeBlocks`) -- a drop the UI visibly accepted
-  // and then rejected would be worse than one it never offered.
-  await page.goto(`/disks/${disk.id}/files`);
-  await openRowMenu(page, parent.block);
-  await page.getByTestId(`fs-move-${parent.block}`).click();
-  const select = page.getByTestId(`fs-move-target-${parent.block}`);
-  await expect(select).toBeVisible();
-  await expect(select.locator(`option[value="${child.block}"]`)).toHaveCount(0);
-  await expect(select.locator(`option[value="${parent.block}"]`)).toHaveCount(0);
+  // And in Files: PARENT picked on the right, its own CHILD open on the left. Move → is refused with the words and
+  // nothing is written -- by Files' own route as well as the old one.
+  const childPath = `LIBRARY:/${disk.gameId}/${disk.id}/PARENT/CHILD`;
+  const op = await page.request.post('/api/files/ops', {
+    data: { op: 'move', sources: [`LIBRARY:/${disk.gameId}/${disk.id}/PARENT`], dest: childPath, onClash: 'ask' },
+  });
+  expect(op.status()).toBe(400);
+  expect((await op.json()).error).toBe('cycle');
+  await openInFiles(page, disk, childPath);
+  await paneRow(page, 'right', 'PARENT').click();
+  await page.getByTestId('files-move').click();
+  await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'A folder cannot go inside itself.' })).toBeVisible({ timeout: 15_000 });
+  expect((await diskRow(disk.id)).sha256).toBe(beforeAttempt.sha256);
+  await expect(paneRow(page, 'right', 'PARENT')).toBeVisible();
 });

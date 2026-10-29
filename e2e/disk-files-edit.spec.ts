@@ -3,8 +3,9 @@ import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks, blobs } from '@/db/schema/catalog';
 import { readVolume, readFile, type AdfEntry } from '@/lib/adffs';
-import { signUpFresh, runTag, createAdf, openRowMenu } from './helpers';
-import { cleanupSeeded, pairDevice, hydrated } from './device-helpers';
+import { signUpFresh, runTag, createAdf } from './helpers';
+import { cleanupSeeded, pairDevice } from './device-helpers';
+import { synthDrop } from './drag-drop-helpers';
 
 /**
  * Task 12: prove the write routes end to end, ON THE BYTES.
@@ -20,6 +21,10 @@ import { cleanupSeeded, pairDevice, hydrated } from './device-helpers';
  * Every disk here is made through `createAdf(page)` (FFS, root at block 880,
  * D-3-5), not seeded -- seedDisk's rows are byte-less and 503 on /adf, which
  * is useless for a test that has to read real bytes back.
+ *
+ * Files increment 1 (Task 11): the edits are made in the Files manager, the disk open in its right pane -- the
+ * Browse page's toolbar and row menus are gone from the head of a disk (its address redirects to Files). A file
+ * from the computer arrives through the drop review (R5), as it does in Files.
  */
 
 test.afterAll(cleanupSeeded);
@@ -74,6 +79,28 @@ async function fetchAdf(page: Page, diskId: string): Promise<Uint8Array> {
  */
 const AFTER_EDIT = { timeout: 15_000 };
 
+/** The disk open in Files, on the right, hydrated so clicks, keys and drops reach React. */
+async function openInFiles(page: Page, disk: { id: string; gameId: string }) {
+  const right = `LIBRARY:/${disk.gameId}/${disk.id}`;
+  await page.goto(`/files?${new URLSearchParams({ left: 'LIBRARY:', right, active: 'right' })}`);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="files-manager"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  });
+}
+
+const paneRow = (page: Page, name: string) =>
+  page.getByTestId('pane-right').locator(`[data-testid="pane-row"][data-name="${name}"]`);
+
+/** A file from the computer dropped on the right pane, through the drop review. */
+async function dropFile(page: Page, name: string, content: Buffer) {
+  await synthDrop(page, [{ name, kind: 'file', bytes: [...content] }], '[data-testid="pane-right"]');
+  const review = page.getByTestId('files-drop-review');
+  await expect(review.getByTestId('drop-staging-list')).toContainText(name);
+  await review.getByTestId('drop-commit').click();
+  await expect(review).toHaveCount(0, AFTER_EDIT);
+}
+
 function findByName(entries: AdfEntry[], name: string): AdfEntry | null {
   for (const e of entries) if (e.name === name) return e;
   return null;
@@ -85,17 +112,10 @@ test('uploading a file adds it to the disk, and it reads back byte for byte', as
   await createAdf(page);
   const disk = await authoredDisk(page, u.orgId);
 
-  await page.goto(`/disks/${disk.id}/files`);
-  await expect(page.getByTestId('file-toolbar')).toBeVisible();
-
+  await openInFiles(page, disk);
   const content = Buffer.from('Hello, Amiga! This file came from an e2e run.');
-  await hydrated(page, 'upload-input', 'onChange');
-  await page.getByTestId('upload-input').setInputFiles({
-    name: 'HELLO.TXT', mimeType: 'application/octet-stream', buffer: content,
-  });
-  await expect(page.getByTestId('upload-name')).toHaveValue('HELLO.TXT');
-  await page.getByTestId('upload-submit').click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="HELLO.TXT"]')).toBeVisible(AFTER_EDIT);
+  await dropFile(page, 'HELLO.TXT', content);
+  await expect(paneRow(page, 'HELLO.TXT')).toBeVisible(AFTER_EDIT);
 
   // disks.id NEVER changes; disks.sha256 always does -- a re-keyed row reads
   // as an eject in the device protocol (disk-write.ts).
@@ -125,27 +145,16 @@ test('deleting a file changes the digest but leaves the id alone', async ({ page
   await createAdf(page);
   const disk = await authoredDisk(page, u.orgId);
 
-  await page.goto(`/disks/${disk.id}/files`);
-  const content = Buffer.from('to be deleted');
-  await hydrated(page, 'upload-input', 'onChange');
-  await page.getByTestId('upload-input').setInputFiles({
-    name: 'DOOMED', mimeType: 'application/octet-stream', buffer: content,
-  });
-  await page.getByTestId('upload-submit').click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="DOOMED"]')).toBeVisible(AFTER_EDIT);
-
+  await openInFiles(page, disk);
+  await dropFile(page, 'DOOMED', Buffer.from('to be deleted'));
+  await expect(paneRow(page, 'DOOMED')).toBeVisible(AFTER_EDIT);
   const afterUpload = await diskRow(disk.id);
-  const uploadedAdf = await fetchAdf(page, disk.id);
-  const uploadedVolume = readVolume(uploadedAdf);
-  expect(uploadedVolume.ok).toBe(true);
-  if (!uploadedVolume.ok) return;
-  const entry = findByName(uploadedVolume.root, 'DOOMED')!;
 
-  await openRowMenu(page, entry.block);
-  await page.getByTestId(`fs-delete-${entry.block}`).click();
-  await expect(page.getByTestId(`fs-delete-confirm-${entry.block}`)).toBeVisible();
-  await page.getByTestId(`fs-delete-confirm-${entry.block}`).click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="DOOMED"]')).toHaveCount(0, AFTER_EDIT);
+  await paneRow(page, 'DOOMED').click();
+  await page.getByTestId('files-delete').click();
+  await expect(page.getByTestId('files-delete-dialog')).toContainText('DOOMED');
+  await page.getByTestId('files-delete-confirm').click();
+  await expect(paneRow(page, 'DOOMED')).toHaveCount(0, AFTER_EDIT);
 
   const afterDelete = await diskRow(disk.id);
   expect(afterDelete.id).toBe(disk.id);
@@ -164,28 +173,24 @@ test('renaming rewrites the entry on the bytes, not just on the page', async ({ 
   await createAdf(page);
   const disk = await authoredDisk(page, u.orgId);
 
-  await page.goto(`/disks/${disk.id}/files`);
+  await openInFiles(page, disk);
   const content = Buffer.from('rename me');
-  await hydrated(page, 'upload-input', 'onChange');
-  await page.getByTestId('upload-input').setInputFiles({
-    name: 'OLDNAME', mimeType: 'application/octet-stream', buffer: content,
-  });
-  await page.getByTestId('upload-submit').click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="OLDNAME"]')).toBeVisible(AFTER_EDIT);
+  await dropFile(page, 'OLDNAME', content);
+  await expect(paneRow(page, 'OLDNAME')).toBeVisible(AFTER_EDIT);
 
   const uploadedAdf = await fetchAdf(page, disk.id);
   const uploadedVolume = readVolume(uploadedAdf);
   expect(uploadedVolume.ok).toBe(true);
   if (!uploadedVolume.ok) return;
-  const entry = findByName(uploadedVolume.root, 'OLDNAME')!;
-  const block = entry.block;
+  const block = findByName(uploadedVolume.root, 'OLDNAME')!.block;
 
-  await openRowMenu(page, block);
-  await page.getByTestId(`fs-rename-${block}`).click();
-  await page.getByTestId(`fs-rename-name-${block}`).fill('NEWNAME');
-  await page.getByTestId(`fs-rename-submit-${block}`).click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="NEWNAME"]')).toBeVisible(AFTER_EDIT);
-  await expect(page.locator('[data-testid="fs-entry"][data-name="OLDNAME"]')).toHaveCount(0);
+  await paneRow(page, 'OLDNAME').click();
+  await page.getByTestId('files-rename').click();
+  await expect(page.getByTestId('files-name-input')).toHaveValue('OLDNAME');
+  await page.getByTestId('files-name-input').fill('NEWNAME');
+  await page.getByTestId('files-name-save').click();
+  await expect(paneRow(page, 'NEWNAME')).toBeVisible(AFTER_EDIT);
+  await expect(paneRow(page, 'OLDNAME')).toHaveCount(0);
 
   const adf = await fetchAdf(page, disk.id);
   const volume = readVolume(adf);
@@ -207,14 +212,14 @@ test('a new folder is a real directory on the disk, not just a row on the page',
   await createAdf(page);
   const disk = await authoredDisk(page, u.orgId);
 
-  await page.goto(`/disks/${disk.id}/files`);
-  await page.getByTestId('new-folder-trigger').click();
-  await page.getByTestId('new-folder-name').fill('STUFF');
-  await page.getByTestId('new-folder-submit').click();
+  await openInFiles(page, disk);
+  await page.getByTestId('files-makedir').click();
+  await page.getByTestId('files-name-input').fill('STUFF');
+  await page.getByTestId('files-name-save').click();
 
-  const dirRow = page.locator('[data-testid="fs-entry"][data-name="STUFF"]');
+  const dirRow = paneRow(page, 'STUFF');
   await expect(dirRow).toBeVisible(AFTER_EDIT);
-  await expect(dirRow.locator('[data-testid^="fs-toggle-"]')).toHaveCount(1);
+  await expect(dirRow).toHaveAttribute('data-kind', 'dir');
 
   const adf = await fetchAdf(page, disk.id);
   const volume = readVolume(adf);
@@ -249,16 +254,26 @@ test('editing a mounted disk is refused with 409, not propagated to the device',
   expect(body.error).toBe('edit_failed');
   expect(body.reason).toMatch(/^mounted on "/);
 
+  // Files' own route refuses the same way, naming the holder.
+  const right = `LIBRARY:/${disk.gameId}/${disk.id}`;
+  const op = await page.request.post('/api/files/ops', { data: { op: 'makedir', dest: right, name: 'Nope' } });
+  expect(op.status()).toBe(409);
+  expect((await op.json()).detail).toMatch(/^mounted on "/);
+
   const unchanged = await diskRow(disk.id);
   expect(unchanged.sha256).toBe(disk.sha256);
   expect(unchanged.id).toBe(disk.id);
 
-  // The page itself says so, computed the same way, before any control can
-  // even be pressed (D-W-3/D-W-4 rationale in file-actions.tsx).
-  await page.goto(`/disks/${disk.id}/files`);
-  await expect(page.getByTestId('file-edit-disabled')).toContainText('mounted on');
-  await expect(page.getByTestId('upload-trigger')).toBeDisabled();
-  await expect(page.getByTestId('new-folder-trigger')).toBeDisabled();
+  // The pane itself says so, computed the same way, before any control can
+  // even be pressed: every button that writes is off, with the reason.
+  await openInFiles(page, disk);
+  await expect(page.getByTestId('pane-right-readonly')).toContainText('mounted on');
+  await expect(page.getByTestId('files-makedir')).toBeDisabled();
+  await expect(page.getByTestId('files-makedir')).toHaveAttribute('title', /mounted on/);
+  // A computer drop is refused too, with nothing staged.
+  await synthDrop(page, [{ name: 'Nope.txt', kind: 'file', content: 'x' }], '[data-testid="pane-right"]');
+  await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'mounted on' })).toBeVisible();
+  await expect(page.getByTestId('files-drop-review')).toHaveCount(0);
 });
 
 test('a TOSEC-matched disk warns before the first edit drops its identity (D-W-3)', async ({ page }) => {
@@ -279,28 +294,27 @@ test('a TOSEC-matched disk warns before the first edit drops its identity (D-W-3
     .set({ matchState: 'matched', matchCheckedAt: new Date() })
     .where(eq(blobs.sha256, disk.sha256));
 
-  await page.goto(`/disks/${disk.id}/files`);
+  await openInFiles(page, disk);
 
-  // Attempt one, cancelled: no edit reaches the disk at all.
-  await page.getByTestId('new-folder-trigger').click();
-  await page.getByTestId('new-folder-name').fill('Cancelled');
-  await page.getByTestId('new-folder-submit').click();
+  // Attempt one, cancelled: no edit reaches the disk at all. Files asks
+  // before the name, so Cancel opens nothing.
+  await page.getByTestId('files-makedir').click();
   await expect(page.getByTestId('identity-confirm-dialog')).toBeVisible();
   await page.getByTestId('identity-confirm-cancel').click();
   await expect(page.getByTestId('identity-confirm-dialog')).toHaveCount(0);
-  await expect(page.locator('[data-testid="fs-entry"][data-name="Cancelled"]')).toHaveCount(0);
+  await expect(page.getByTestId('files-name-dialog')).toHaveCount(0);
 
   const afterCancel = await diskRow(disk.id);
   expect(afterCancel.sha256).toBe(disk.sha256);
 
   // Attempt two, confirmed: the edit proceeds, and the disk is genuinely
   // rewritten under a new digest -- the confirmation is not just cosmetic.
-  await page.getByTestId('new-folder-trigger').click();
-  await page.getByTestId('new-folder-name').fill('Proceeded');
-  await page.getByTestId('new-folder-submit').click();
+  await page.getByTestId('files-makedir').click();
   await expect(page.getByTestId('identity-confirm-dialog')).toBeVisible();
   await page.getByTestId('identity-confirm-proceed').click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="Proceeded"]')).toBeVisible(AFTER_EDIT);
+  await page.getByTestId('files-name-input').fill('Proceeded');
+  await page.getByTestId('files-name-save').click();
+  await expect(paneRow(page, 'Proceeded')).toBeVisible(AFTER_EDIT);
 
   const afterProceed = await diskRow(disk.id);
   expect(afterProceed.id).toBe(disk.id);

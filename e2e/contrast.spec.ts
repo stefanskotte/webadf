@@ -22,18 +22,19 @@ import { test, expect, type Page } from '@playwright/test';
  * this repo names. Assert the composited pixels.
  */
 import { randomUUID } from 'node:crypto';
-import { signUpFresh, runTag, createAdf, openRowMenu, openVersion, mintInviteCode } from './helpers';
+import { signUpFresh, runTag, openVersion, mintInviteCode } from './helpers';
 import { cleanupSeeded, seedDisk, pairDevice, authHeader, openBoardSettings, hydrated, seedDevices, publishTestRelease, cleanupTestReleases } from './device-helpers';
 import { readCurrentRelease } from '@/lib/firmware-releases';
 import { revokeInvite } from '@/lib/invites';
 import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
 import { getDb } from '@/db';
-import { blobs, games, disks } from '@/db/schema/catalog';
-import { readVolume } from '@/lib/adffs';
+import { blobs, disks } from '@/db/schema/catalog';
+import { formatVolume } from '@/lib/adffs/format';
+import { diskStore } from '@/lib/storage';
 import { devices } from '@/db/schema/devices';
 import { amigaUploads } from '@/db/schema/amiga-uploads';
 import { transfers } from '@/db/schema/transfers';
-import { and, eq, inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { signInAsSuperAdmin, SUPERADMIN_EMAIL, gotoAdminUserRow } from './admin-helpers';
 
@@ -529,78 +530,115 @@ test('the Upload pairs are legible: pills, statuses, where on a hovered row, cou
   await page.screenshot({ path: 'test-results/zz-upload.png', fullPage: true });
 });
 
-// Phase C4 (spec §11): the Disk files pairs, measured on the real elements of a fresh org's own disk.
-test('the Disk files pairs are legible: banner, rows, glyphs, chips, column heads, footer, History, menu, bar', async ({ page }) => {
-  test.setTimeout(90_000);   // a sign-up, a disk, four uploads and a dozen probes: over Playwright's 30 s default
+// Files increment 1 (Task 11): the Files pairs at 1280 x 900, on a fresh org's own disks -- the active and inactive
+// pane headers, a selected row, the button column, the current sort head, the strip's drive chip, the read-only line,
+// the "new in vN" mark, and the strip's History. Replaces the Browse page's Disk files block (C4): its head page now
+// redirects here. The per-version page (?version=N) is still the Browse page, so its banner is measured as before.
+test('the Files pairs are legible: pane headers, selected row, buttons, sort head, drive chip, read-only line, History', async ({ page, request }) => {
+  test.setTimeout(90_000);   // a sign-up, two stored disks, four edits and a few dozen probes
+  await page.setViewportSize({ width: 1280, height: 900 });
   const u = await signUpFresh(page);
-  await page.goto('/library');
-  await createAdf(page);
-  await expect(page.getByTestId('game-card')).toHaveCount(1, { timeout: 15_000 });
-  const [game] = await getDb().select().from(games).where(and(eq(games.orgId, u.orgId), eq(games.authored, true)));
-  const [disk] = await getDb().select().from(disks).where(eq(disks.gameId, game.id));
+  const run = runTag();
+  const stored = async (title: string) => {
+    const adf = formatVolume({ filesystem: 'FFS', volumeName: title.slice(0, 20) });
+    const sha256 = createHash('sha256').update(adf).digest('hex');
+    await diskStore.put(sha256, adf);
+    return { sha256, ...(await seedDisk(u.orgId, { title, diskNo: 1, sha256, writeProtected: false })) };
+  };
+  // Distinct bytes per title: the volume name is in them.
+  const own = await stored(`Contrast W ${run.slice(-6)}`);
+  const held = await stored(`Contrast H ${run.slice(-6)}`);
   for (const name of ['Prog', 'Prog.info', 'Notes.txt']) {
-    expect((await page.request.post(`/api/disks/${disk.id}/files`, { multipart: { parentBlock: '880', name,
+    expect((await page.request.post(`/api/disks/${own.diskId}/files`, { multipart: { parentBlock: '880', name,
       file: { name, mimeType: 'application/octet-stream', buffer: Buffer.from(name) } } })).status()).toBe(200);
   }
-  expect((await page.request.post(`/api/disks/${disk.id}/files`, { multipart: { parentBlock: '880', name: 'Docs' } })).status()).toBe(200);
-  const v = readVolume(new Uint8Array(await (await page.request.get(`/api/disks/${disk.id}/adf`)).body()));
-  if (!v.ok) throw new Error('fixture');
-  const blk = Object.fromEntries(v.root.map((e) => [e.name, e.block]));
-  await page.setViewportSize({ width: 1440, height: 1100 });
-  await page.goto(`/disks/${disk.id}/files`);
-  const sw = page.getByTestId('fs-hide-info');
-  const was = await sw.getAttribute('aria-checked');
-  if (was !== 'true') await sw.click();                       // .info badge on Prog
-  await page.getByTestId(`fs-select-${blk['Notes.txt']}`).check();   // a selected row and the ink strip
-  const pairs: [string, string][] = [
-    ['size', `[data-testid="fs-entry"][data-name="Prog"] .font-mono > span:first-child`],
-    ['selected row date', `[data-testid="fs-entry"][data-name="Notes.txt"] .font-mono > span:last-child`],
-    ['column head', '[data-testid="fs-columns"] > span:nth-child(3)'],
-    ['footer', '[data-testid="fs-footer"]'],
-    ['.info badge', `[data-testid="fs-info-${blk.Prog}"]`],
-    ['DIR glyph', `[data-testid="fs-glyph-${blk.Docs}"]`],
-    ['EXE glyph', `[data-testid="fs-glyph-${blk.Prog}"]`],
-    ['set protection bit', `[data-testid="fs-protect-${blk.Prog}"] > span:nth-child(5)`],
-    ['clear protection bit', `[data-testid="fs-protect-${blk.Prog}"] > span:nth-child(1)`],
-    ['new in vN', `[data-testid="fs-new-${blk.Prog}"]`],
-    ['selection button', '[data-testid="fs-bulk-move"]'],
-    ['Current', '[data-testid^="current-"]'],
-    ['version time', '[data-testid^="version-toggle-"] .font-mono'],
-    ['+N chip', '[data-testid^="version-counts-"] > span:first-child'],
-    ['drop bar sub line', '[data-testid="drop-strip"] .text-\\[12px\\]'],
-    ['holder words', `[data-testid="holder-${disk.id}"]`],
-  ];
-  for (const [what, sel] of pairs) {
-    const p = await probe(page, sel);
-    expect(p, `${what}: ${sel} not found`).toBeTruthy();
-    const r = ratio(p!.fg, p!.bg);
-    console.log(`disk-files ${what.padEnd(24)} ${r.toFixed(2)}:1  "${p!.text.slice(0, 24)}"`);
-    expect(r, what).toBeGreaterThan(4.5);
-  }
-  // A hovered row (surface-2) and a hovered older version: Restore... in --amber-text.
-  await page.locator(`[data-testid="fs-entry"][data-name="Prog"]`).hover();
-  const hovered = await probe(page, `[data-testid="fs-entry"][data-name="Prog"] .font-mono > span:first-child`);
-  expect(ratio(hovered!.fg, hovered!.bg), 'size on a hovered row').toBeGreaterThan(4.5);
+  expect((await page.request.post(`/api/disks/${own.diskId}/files`, { multipart: { parentBlock: '880', name: 'Docs' } })).status()).toBe(200);
+  const [h] = await getDb().select({ sha256: disks.sha256 }).from(disks).where(eq(disks.id, held.diskId));
+  const { deviceId } = await pairDevice(page, request, `Contrast ${run.slice(-6)}`);
+  await getDb().update(devices).set({
+    lastSeenAt: new Date(), desiredGameId: held.gameId, desiredDiskId: held.diskId, desiredSha256: h.sha256, desiredDiskNo: 1,
+    mountedGameId: held.gameId, mountedDiskId: held.diskId, mountedSha256: h.sha256, mountedDiskNo: 1,
+  }).where(eq(devices.id, deviceId));
+
+  // Left: the writable disk, active, Notes.txt selected. Right: the held disk, read-only.
+  const left = `LIBRARY:/${own.gameId}/${own.diskId}`;
+  const right = `LIBRARY:/${held.gameId}/${held.diskId}`;
+  await page.goto(`/files?${new URLSearchParams({ left, right, active: 'left' })}`);
+  await hydrated(page, 'files-manager', 'onKeyDown');
+  await page.getByTestId('pane-left').locator('[data-testid="pane-row"][data-name="Notes.txt"]').click();
+  await expect(page.getByTestId('files-delete')).toBeEnabled();
+  await expect(page.getByTestId('files-copy')).toBeDisabled();   // the other side is read-only
+  await page.mouse.move(0, 0);
+  const sel = '[data-testid="pane-left"] [data-testid="pane-row"][aria-selected="true"]';
+  await legible(page, 'files', [
+    ['active header crumb', '[data-testid="pane-left"][data-active="true"] [data-testid="pane-left-crumb-2"]'],
+    ['active header meta', '[data-testid="pane-left-meta"]'],
+    ['inactive header crumb', '[data-testid="pane-right"][data-active="false"] [data-testid="pane-right-crumb-2"]'],
+    ['inactive header meta', '[data-testid="pane-right-meta"]'],
+    ['device button (current)', '[data-testid="pane-left-dev-LIBRARY"]'],
+    ['selected row name', `${sel} td:nth-child(2) span.truncate`],
+    ['selected row size', `${sel} td:nth-child(3)`],
+    ['selected row date', `${sel} td:nth-child(5)`],
+    ['row size', '[data-testid="pane-left"] [data-testid="pane-row"][data-name="Prog"] td:nth-child(3)'],
+    ['set protection bit', '[data-testid="pane-left"] [data-testid="pane-row"][data-name="Prog"] td:nth-child(4) span > span:nth-child(5)'],
+    ['clear protection bit', '[data-testid="pane-left"] [data-testid="pane-row"][data-name="Prog"] td:nth-child(4) span > span:nth-child(1)'],
+    ['DIR glyph', '[data-testid="pane-left"] [data-testid="pane-row"][data-name="Docs"] td:nth-child(2) span[aria-hidden]'],
+    ['EXE glyph', '[data-testid="pane-left"] [data-testid="pane-row"][data-name="Prog"] td:nth-child(2) span[aria-hidden]'],
+    ['new in vN', '[data-testid="pane-new-Prog"]'],
+    ['sort head (current)', '[data-testid="pane-left-sort-name"] button'],
+    ['sort head', '[data-testid="pane-left-sort-size"] button'],
+    ['foot (selection)', '[data-testid="pane-left-foot"]'],
+    ['button (enabled)', '[data-testid="files-delete"]'],
+    ['button (Swap)', '[data-testid="files-swap"]'],
+    ['drive chip', '[data-testid="disk-strip-left"] [data-testid="disk-strip-drive"]'],
+    ['drive chip (held)', '[data-testid="disk-strip-right"] [data-testid="disk-strip-drive"]'],
+    ['strip usage', '[data-testid="disk-strip-left"] [data-testid="disk-strip-usage"]'],
+    ['read-only line (inactive pane)', '[data-testid="pane-right-readonly"]'],
+  ]);
+  // A disabled button is exempt (WCAG 1.4.3, inactive controls) and drawn at half opacity: measured with that
+  // opacity, logged, and required to say why it is off.
+  const off = await page.evaluate(() => {
+    let a = 1;
+    for (let n: Element | null = document.querySelector('[data-testid="files-copy"]'); n; n = n.parentElement) a *= Number(getComputedStyle(n).opacity);
+    return a;
+  });
+  const copy = await probe(page, '[data-testid="files-copy"]');
+  const blend = copy!.fg.slice(0, 3).map((v, i) => v * off + copy!.bg[i] * (1 - off));
+  console.log(`files     ${'button (disabled, exempt)'.padEnd(36)} ${ratio(blend, copy!.bg).toFixed(2)}:1  at opacity ${off}`);
+  await expect(page.getByTestId('files-copy')).toHaveAttribute('title', /in a drive/);
+  // A hovered row (surface-2).
+  await page.getByTestId('pane-left').locator('[data-testid="pane-row"][data-name="Prog"]').hover();
+  await legible(page, 'files', [['size on a hovered row', '[data-testid="pane-left"] [data-testid="pane-row"][data-name="Prog"] td:nth-child(3)']]);
+
+  // The right pane active: its read-only line and header on --viewing-bg.
+  await page.getByTestId('pane-right-foot').click();
+  await expect(page.getByTestId('pane-right')).toHaveAttribute('data-active', 'true');
+  await page.mouse.move(0, 0);
+  await legible(page, 'files', [
+    ['read-only line (active pane)', '[data-testid="pane-right-readonly"]'],
+    ['active header crumb (held)', '[data-testid="pane-right-crumb-2"]'],
+  ]);
+
+  // The strip's History over the left pane: Current, a version's time, the +N chip, Restore… on a hovered version.
+  await page.getByTestId('disk-strip-left').getByTestId('disk-strip-history-toggle').click();
+  const hist = page.getByTestId('disk-strip-history');
+  await expect(hist).toBeVisible();
+  await legible(page, 'history', [
+    ['Current', '[data-testid="disk-strip-history"] [data-testid^="current-"]'],
+    ['version time', '[data-testid="disk-strip-history"] [data-testid^="version-toggle-"] .font-mono'],
+    ['+N chip', '[data-testid="disk-strip-history"] [data-testid^="version-counts-"] > span:first-child'],
+  ]);
   await openVersion(page, 1);
-  await page.getByTestId('version-1').hover();
-  const restore = await probe(page, '[data-testid="restore-1"]');
-  expect(ratio(restore!.fg, restore!.bg), 'Restore... on a hovered version').toBeGreaterThan(4.5);
-  // The menu's Delete.
-  await openRowMenu(page, blk.Prog);
-  const del = await probe(page, `[data-testid="fs-delete-${blk.Prog}"]`);
-  expect(ratio(del!.fg, del!.bg), 'menu Delete').toBeGreaterThan(4.5);
-  await page.keyboard.press('Escape');
-  // The banner and the version on screen (--viewing-bg).
-  await page.goto(`/disks/${disk.id}/files?version=1`);
-  for (const [what, sel] of [['banner text', '[data-testid="version-banner"] > span'],
-    ['viewed version time', '[data-testid="version-toggle-1"] .font-mono']] as const) {
-    const p = await probe(page, sel);
-    expect(p, `${what}: ${sel} not found`).toBeTruthy();
-    expect(ratio(p!.fg, p!.bg), what).toBeGreaterThan(4.5);
-  }
-  await page.goto(`/disks/${disk.id}/files`);
-  if (was !== 'true') await page.getByTestId('fs-hide-info').click();
-  await page.screenshot({ path: 'test-results/zz-disk-files.png', fullPage: true });
+  await hist.getByTestId('version-1').hover();
+  await legible(page, 'history', [['Restore… on a hovered version', '[data-testid="restore-1"]']]);
+  await page.screenshot({ path: 'test-results/zz-files.png', fullPage: true });
+
+  // The per-version page (R3): the banner and the version on screen (--viewing-bg).
+  await page.goto(`/disks/${own.diskId}/files?version=1`);
+  await legible(page, 'version', [
+    ['banner text', '[data-testid="version-banner"] > span'],
+    ['viewed version time', '[data-testid="version-toggle-1"] .font-mono'],
+  ]);
 });
 
 // Phase C5 spec §11: the "?" and its open popover (the ink card).
