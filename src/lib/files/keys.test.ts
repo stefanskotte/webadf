@@ -29,4 +29,10 @@ describe('commandFor', () => {
     expect(commandFor(ev('F5', { altKey: true }))).toBeNull();
     expect(commandFor(ev('F5', { metaKey: true }))).toBeNull();
   });
+  it("'/' finds; never while typing in a field", () => {
+    const base = { target: { tagName: 'DIV' }, dialogOpen: false, altKey: false, ctrlKey: false, metaKey: false };
+    expect(commandFor({ ...base, key: '/' })).toBe('find');
+    expect(commandFor({ ...base, key: '/', target: { tagName: 'INPUT' } })).toBeNull();
+    expect(commandFor({ ...base, key: '/', dialogOpen: true })).toBeNull();
+  });
 });

@@ -12,6 +12,7 @@ import { nextSort, sortFsEntries, type FilesSort, type FilesSortKey } from '@/li
 import { EMPTY_SELECTION, moveCursor, selectClick, togglePick, type Selection } from '@/lib/files/selection';
 import { commandFor, type FilesCommand } from '@/lib/files/keys';
 import { refusalWords } from '@/lib/files/words';
+import { remapSelection } from '@/lib/files/view';
 import { DEFAULT_LEFT, DEFAULT_RIGHT, formatPath, PANE_DEVICES, parsePath } from '@/lib/files/path';
 import type { OpItem, OpRequest } from '@/lib/files/ops';
 import type { Added } from '@/lib/files/driver';
@@ -208,15 +209,6 @@ function firstState(path: string, listing: Listing | null, error: string | undef
 /** The picked entries, in the order the rows are drawn. */
 function pickedOf(rows: FsEntry[], sel: Selection): FsEntry[] {
   return [...sel.picked].filter((i) => i < rows.length).sort((a, b) => a - b).map((i) => rows[i]);
-}
-
-/** The same rows under another sort: the picked ones and the cursor follow their entries. */
-function remapSelection(before: FsEntry[], after: FsEntry[], sel: Selection): Selection {
-  const at = new Map(after.map((e, i) => [e.path, i]));
-  const map = (i: number | null) => (i === null || !before[i] ? null : at.get(before[i].path) ?? null);
-  const picked = new Set<number>();
-  for (const i of sel.picked) { const j = map(i); if (j !== null) picked.add(j); }
-  return { anchor: map(sel.anchor), cursor: map(sel.cursor) ?? 0, picked };
 }
 
 /** The "new in vN" marks of the disk a listing is inside, from its strip's History; none above the disks. */
@@ -896,6 +888,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
         return;
       }
       case 'switch': activate(otherSide(active)); return;
+      case 'find': return;   // Task 5: focus the active pane's filter
       default: act(cmd);
     }
   }

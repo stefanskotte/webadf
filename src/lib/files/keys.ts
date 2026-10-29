@@ -1,10 +1,10 @@
 // Keyboard commands for the Files panes. Client-safe: no DOM types needed.
 export type FilesCommand =
-  | 'up' | 'down' | 'pick' | 'open' | 'parent' | 'switch' | 'copy' | 'move' | 'makedir' | 'rename' | 'delete';
+  | 'up' | 'down' | 'pick' | 'open' | 'parent' | 'switch' | 'copy' | 'move' | 'makedir' | 'rename' | 'delete' | 'find';
 
 const KEYS: Record<string, FilesCommand> = {
   ArrowUp: 'up', ArrowDown: 'down', ' ': 'pick', Enter: 'open', Backspace: 'parent', Tab: 'switch',
-  F5: 'copy', F6: 'move', F7: 'makedir', F2: 'rename', Delete: 'delete',
+  F5: 'copy', F6: 'move', F7: 'makedir', F2: 'rename', Delete: 'delete', '/': 'find',
 };
 
 const TYPING = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
