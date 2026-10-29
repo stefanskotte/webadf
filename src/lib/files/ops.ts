@@ -124,7 +124,15 @@ async function crossDevice(ctx: OpCtx, req: CopyMove, srcs: FsPath[], dest: FsPa
     if (!items) refuse('not_found', 404);
     tops.push({ source: req.sources[i], items });
   }
-  if (req.op === 'move') for (const p of srcs) need(driverOf(p), 'remove');
+  if (req.op === 'move') {
+    // Every source must be removable BEFORE the destination is written (a held disk, an archive member, a file still
+    // arriving): a move refused afterwards would leave a copy the person did not ask for.
+    for (const [device, list] of groupBy(req.sources, (s) => pathOf(s).device)) {
+      const d = driverFor(device)!;
+      need(d, 'remove');
+      await (need(d, 'mustRemove') as NonNullable<VolumeDriver['mustRemove']>).call(d, ctx, list);
+    }
+  }
   const out = await write.call(dd, ctx, dest, tops, req.onClash);
   if (out.kind !== 'done' || req.op !== 'move') return out;
   const written = new Set(out.written ?? []);

@@ -469,6 +469,17 @@ async function remove(ctx: Run, sources: string[], unchanged?: ReadonlyMap<strin
   return { kind: 'done', items: sources.map((s) => results.get(s) ?? { source: s, ok: true }) };
 }
 
+/** A move's sources, before anything is written: each there, on a disk that can be changed (held, HFE: refused). */
+async function mustRemove(ctx: FsCtx, sources: string[]): Promise<void> {
+  const cache: Disks = new Map();
+  for (const raw of sources) {
+    const loc = locateEntry(raw);
+    const d = await diskOf(ctx, cache, loc);
+    entryAt(d, loc);
+    mustBeWritable(d);
+  }
+}
+
 async function setMeta(ctx: Run, sources: string[], meta: { protection?: number; comment?: string }): Promise<Outcome> {
   if (meta.protection !== undefined && meta.comment !== undefined) refuse('unsupported', 400, 'one change at a time');
   if (meta.protection !== undefined) return protectMany(ctx, sources, meta.protection);
@@ -498,6 +509,7 @@ export const libraryDriver: VolumeDriver = {
   within: (ctx, req: CopyMove) => guarded(() => copyOrMove(ctx, req)),
   write: (ctx, dir, tops, onClash) => guarded(() => write(ctx, dir, tops, onClash)),
   remove: (ctx, sources, unchanged) => guarded(() => remove(ctx, sources, unchanged)),
+  mustRemove: (ctx, sources) => guarded(() => mustRemove(ctx, sources)),
   makedir: (ctx, dir, name) => guarded(() => makeDir(ctx, formatPath(dir), name)),
   rename: (ctx, source, name) => guarded(() => renameOne(ctx, source, name)),
   setMeta: (ctx, sources, meta) => guarded(() => setMeta(ctx, sources, meta)),

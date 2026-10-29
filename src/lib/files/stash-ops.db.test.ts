@@ -30,6 +30,8 @@ const { readVolume, readUsage, blocksForFile } = await import('@/lib/adffs');
 const { parsePath } = await import('./path');
 const { readLibraryFile } = await import('./library');
 const { insertStash, listStash } = await import('@/lib/stash');
+const { protectionString } = await import('@/lib/adffs/dir');
+const { makeZip } = await import('@/lib/__fixtures__/make-zip');
 const { addUploadToLibrary } = await import('@/lib/stash-library');
 const { runOp } = await import('./ops');
 
@@ -95,6 +97,7 @@ beforeAll(async () => {
   await stash('Disk.adf', formatVolume({ filesystem: 'OFS', volumeName: 'Blank' }));
   await stash('t.zip', new Uint8Array(readFileSync('src/lib/archive/fixtures/t.zip')));
   await stash('Keep.txt', enc('keep me'));
+  await stash('amiga.zip', new Uint8Array(makeZip([{ name: 'Tool', data: Buffer.from('tool'), amigaProtection: 0x42 }])));
 });
 afterAll(async () => { await closeDb(); await admin(`drop database if exists ${DB} with (force)`); });
 
@@ -112,7 +115,8 @@ describe('copies between STASH: and disks', () => {
     expect((await runOp(ctx, { op: 'copy', sources: ['STASH:/Notes.txt'], dest: 'LIBRARY:/g2/d2', onClash: 'ask' })).kind).toBe('done');
     expect(await versions('d2')).toBe(v + 1);
     const f = (await readLibraryFile(ctx, P('LIBRARY:/g2/d2/Notes.txt')))!;
-    expect([new TextDecoder().decode(f.bytes), f.comment, f.date?.toISOString()]).toEqual(['notes', 'mine', '2020-01-02T00:00:00.000Z']);
+    expect([new TextDecoder().decode(f.bytes), f.comment, f.date?.toISOString(), f.protection])
+      .toEqual(['notes', 'mine', '2020-01-02T00:00:00.000Z', protectionString(0x02)]);
     expect(await live()).toContain('Notes.txt');   // a copy leaves the original
   });
   it('copies out of an archive with the date it records', async () => {
@@ -140,6 +144,25 @@ describe('copies between STASH: and disks', () => {
     await runOp(ctx, { op: 'move', sources: ['LIBRARY:/g1/d1/C'], dest: 'STASH:', onClash: 'skip' });
     expect((await readLibraryFile(ctx, P('LIBRARY:/g1/d1/C/Assign')))).not.toBeNull();
     expect(await versions('d1')).toBe(v1);
+  });
+  it('a move is refused before anything is written when its source cannot be removed', async () => {
+    // A held disk: nothing reaches STASH:, no version on the disk.
+    await getDb().update(devices).set({ desiredSha256: await sha('d1') }).where(eq(devices.id, 'dev1'));
+    const before = await live(); const v = await versions('d1');
+    expect(await runOp(ctx, { op: 'move', sources: ['LIBRARY:/g1/d1/S'], dest: 'STASH:', onClash: 'ask' }))
+      .toMatchObject({ kind: 'refused', status: 409, refusal: { code: 'read_only', detail: expect.stringMatching(/A500 bench/) } });
+    expect([await live(), await versions('d1')]).toEqual([before, v]);
+    await getDb().update(devices).set({ desiredSha256: null }).where(eq(devices.id, 'dev1'));
+    // An archive member: the disk is not written.
+    const s4 = await sha('d4');
+    expect(await runOp(ctx, { op: 'move', sources: ['STASH:/t.zip/src/tiny.txt'], dest: 'LIBRARY:/g4/d4', onClash: 'ask' }))
+      .toMatchObject({ kind: 'refused', status: 409, refusal: { code: 'read_only', detail: 'archive' } });
+    expect(await sha('d4')).toBe(s4);
+  });
+  it('an Amiga-made archive member keeps its protection in STASH:', async () => {
+    await runOp(ctx, { op: 'copy', sources: ['STASH:/amiga.zip/Tool'], dest: 'STASH:', onClash: 'ask' });
+    expect((await rowAt('Tool'))!.protection).toBe(0x42);
+    await runOp(ctx, { op: 'delete', sources: ['STASH:/Tool'] });
   });
   it('a disk that does not fit refuses the whole copy from STASH:', async () => {
     const s = await sha('d3');
@@ -170,10 +193,33 @@ describe('inside STASH:', () => {
     const old = (await rowAt('Keep.txt'))!;
     await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g2/d2/readme.txt'], dest: 'STASH:/Keep.txt', onClash: 'ask' })
       .then((r) => expect(r).toMatchObject({ kind: 'refused', status: 404 }));   // a file is not a folder to write into
-    const r = await runOp(ctx, { op: 'copy', sources: ['STASH:/readme.txt'], dest: 'STASH:', onClash: 'replace' });
+    const was = (await rowAt('readme.txt'))!.id;
+    const r = await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g2/d2/readme.txt'], dest: 'STASH:', onClash: 'replace' });
     expect(r.kind).toBe('done');
     expect((await live()).filter((p) => p.toLowerCase() === 'readme.txt')).toHaveLength(1);
+    expect((await rowAt('readme.txt'))!.id).not.toBe(was);
     expect((await rowAt('Keep.txt'))!.id).toBe(old.id);
+  });
+  it('replace refuses when the clashing entry is or holds the source, as LIBRARY: does', async () => {
+    const before = await live();
+    expect(await runOp(ctx, { op: 'copy', sources: ['STASH:/Keep.txt'], dest: 'STASH:', onClash: 'replace' }))
+      .toMatchObject({ kind: 'done', items: [{ ok: false, refusal: { code: 'name_exists', detail: 'same file' } }] });
+    await stash('Same/Same', enc('inner'));
+    expect(await runOp(ctx, { op: 'copy', sources: ['STASH:/Same/Same'], dest: 'STASH:', onClash: 'replace' }))
+      .toMatchObject({ kind: 'done', items: [{ ok: false, refusal: { code: 'cycle' } }] });
+    expect(await runOp(ctx, { op: 'move', sources: ['STASH:/Same/Same'], dest: 'STASH:', onClash: 'replace' }))
+      .toMatchObject({ kind: 'done', items: [{ ok: false, refusal: { code: 'cycle' } }] });
+    expect(await live()).toEqual([...before, 'Same/Same'].sort());
+    await runOp(ctx, { op: 'delete', sources: ['STASH:/Same'] });
+  });
+  it('replace never deletes a file still arriving from the Amiga', async () => {
+    await getDb().insert(amigaUploads).values({ id: 'arr3', orgId: 'o1', deviceId: 'dev1', deviceName: 'A500 bench', path: 'S/late.mod',
+      sizeBytes: 100, receivedBytes: 10, amigaDate: '17000.0.0', status: 'receiving', expiresAt: new Date(Date.now() + 3600_000) });
+    expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/S'], dest: 'STASH:', onClash: 'replace' }))
+      .toMatchObject({ kind: 'done', items: [{ ok: false, refusal: { code: 'unsupported', detail: 'still arriving from the Amiga' } }] });
+    const [row] = await getDb().select().from(amigaUploads).where(eq(amigaUploads.id, 'arr3'));
+    expect(row.status).toBe('receiving');
+    await runOp(ctx, { op: 'delete', sources: ['STASH:/S'] });
   });
   it('a copy inside STASH: reuses the blob, no new bytes', async () => {
     await runOp(ctx, { op: 'makedir', dest: 'STASH:', name: 'Dup' });

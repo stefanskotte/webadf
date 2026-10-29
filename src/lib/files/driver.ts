@@ -79,6 +79,8 @@ export interface VolumeDriver {
   write?(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], onClash: OnClash): Promise<Outcome>;   // absent = read-only device
   /** With `unchanged`, a source is removed only while it is still exactly what was collected (a move's second half). */
   remove?(ctx: OpCtx, sources: string[], unchanged?: ReadonlyMap<string, IncomingItem[]>): Promise<Outcome>;
+  /** Refuses (throws) unless every source could be removed now: what a move between devices asks before it writes. */
+  mustRemove?(ctx: FsCtx, sources: string[]): Promise<void>;
   makedir?(ctx: OpCtx, dir: FsPath, name: string): Promise<Outcome>;
   rename?(ctx: OpCtx, source: string, name: string): Promise<Outcome>;
   setMeta?(ctx: OpCtx, sources: string[], meta: { protection?: number; comment?: string }): Promise<Outcome>;

@@ -277,6 +277,30 @@ function checkCopiedName(name: string) {
   if (!p || p.segments.length !== 1) refuse('bad_name', 400, 'bad-char');
 }
 
+/**
+ * The row ids a replace deletes: refused when the clashing entry is (or holds) the source, as LIBRARY: refuses it, and
+ * when a file under it is still arriving from the Amiga (an upload in flight is never deleted by a replace).
+ */
+function replaceable(s: LoadedStash, folder: readonly string[], clash: StashNode, source: string): string[] {
+  const p = parsePath(source);
+  if (p?.device === 'STASH' && shownWithin(p.segments, [...folder, clash.name])) {
+    if (p.segments.length === folder.length + 1) refuse('name_exists', 409, 'same file');
+    refuse('cycle', 400);
+  }
+  const rows = rowsUnder(clash).map((i) => s.rows[i]);
+  if (rows.some((r) => r.status === 'receiving')) refuse('unsupported', 409, STILL_ARRIVING);
+  return rows.map((r) => r.id);
+}
+
+/** A move's sources, before anything is written: entries of STASH: itself (not archive members), nothing arriving. */
+async function mustRemove(ctx: FsCtx, sources: string[]): Promise<void> {
+  const s = await loadStash(ctx);
+  for (const raw of sources) {
+    const e = entryAt(s, raw);
+    if (rowsUnder(e.node).some((i) => s.rows[i].status === 'receiving')) refuse('unsupported', 409, STILL_ARRIVING);
+  }
+}
+
 const live = (rows: StashRow[]) => rows.filter((r) => r.status !== 'failed');
 
 /** The limit insertStash holds under its lock, checked first from the rows loaded, so a refused copy stores no bytes. */
@@ -337,7 +361,7 @@ export async function writeStash(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], o
       if (p.clash && onClash === 'skip') return;
       let name = p.name;
       if (p.clash && onClash === 'keep-both') { name = keepBothName(name, taken); placed.push(name); }
-      if (p.clash && onClash === 'replace') replaceIds.push(...rowsUnder(p.clash).map((i) => s.rows[i].id));
+      if (p.clash && onClash === 'replace') replaceIds.push(...replaceable(s, folder.shown, p.clash, p.top.source));
       for (const i of p.top.items) {
         entries.push({ path: [...folder.shown, name, ...i.rel.slice(1)].join('/'), kind: i.kind, sha256: i.sha256 ?? null, bytes: i.bytes,
           sizeBytes: i.kind === 'file' ? (i.bytes?.length ?? i.size!) : 0, date: i.date, protection: i.protection, comment: i.comment ?? '' });
@@ -397,9 +421,7 @@ async function moveWithin(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
       let name = p.node.name;
       if (p.clash && req.onClash === 'keep-both') { name = keepBothName(name, taken); placed.push(name); }
       if (p.clash && req.onClash === 'replace') {
-        // Deleting what the source sits inside would delete the source with it.
-        if (shownWithin(p.shown, [...folder.shown, p.clash.name])) refuse('cycle', 400);
-        replaceIds.push(...rowsUnder(p.clash).map((i) => s.rows[i].id));
+        replaceIds.push(...replaceable(s, folder.shown, p.clash, p.raw));
       }
       const depth = p.shown.length - 1;
       for (const i of rowsUnder(p.node)) {
@@ -539,6 +561,7 @@ export const stashDriver: VolumeDriver = {
   within: (ctx, req) => guarded(() => within(ctx, req)),
   write: (ctx, dir, tops, onClash) => guarded(() => writeStash(ctx, dir, tops, onClash, 'copy')),
   remove: (ctx, sources, unchanged) => guarded(() => remove(ctx, sources, unchanged)),
+  mustRemove: (ctx, sources) => guarded(() => mustRemove(ctx, sources)),
   makedir: (ctx, dir, name) => guarded(() => makedir(ctx, dir, name)),
   rename: (ctx, source, name) => guarded(() => rename(ctx, source, name)),
   setMeta: (ctx, sources, meta) => guarded(() => setMeta(ctx, sources, meta)),
