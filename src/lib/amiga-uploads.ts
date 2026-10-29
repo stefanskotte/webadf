@@ -131,7 +131,7 @@ export async function closeUpload(db: Db, deviceId: string, id: string, crc: num
   const done = await db.transaction(async (tx) => {
     // One name, one entry (R4): under the org lock, a path STASH: already holds is stored as its keep-both name.
     await lockOrg(tx, r.orgId);
-    const others = (await listStash(tx, r.orgId, now)).filter((x) => x.id !== id);
+    const others = (await listStash(tx, r.orgId, now)).filter((x) => x.id !== id && x.status !== 'failed');   // a failed stub holds no name: a retry of its path is stored as that path
     const path = uniqueStashPath(others, r.path);
     const hit = await tx.update(amigaUploads).set({ status: 'stored', crc32: crc >>> 0, blobSha256: sha, storedAt: sql`now()`, receivedBytes: r.sizeBytes,
       expiresAt: new Date(now.getTime() + UPLOAD_KEEP_MS), path, sentName: path === r.path ? null : r.path })

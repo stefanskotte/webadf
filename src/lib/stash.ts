@@ -82,7 +82,7 @@ export async function insertStash(db: Db, orgId: string, source: 'browser' | 'co
         createdAt: sql`clock_timestamp()`,   // now() is the transaction's start: a batch must keep its order (oldest first)
         expiresAt: new Date(now.getTime() + UPLOAD_KEEP_MS),
       });
-      if (e.kind === 'file') await touchStashDirs(tx, orgId, e.path, now);
+      await touchStashDirs(tx, orgId, e.path, now);
     }
     return { ok: true as const, ids };
   });
@@ -108,7 +108,11 @@ export async function moveStash(db: Db, orgId: string, moves: { id: string; path
     const busy = await tx.select({ id: amigaUploads.id }).from(amigaUploads)
       .where(and(eq(amigaUploads.orgId, orgId), inArray(amigaUploads.id, moves.map((m) => m.id)), eq(amigaUploads.status, 'receiving'), gt(amigaUploads.expiresAt, now)));
     if (busy.length) throw new StashBusy();
-    for (const m of moves) await tx.update(amigaUploads).set({ path: m.path, sentName: null }).where(and(eq(amigaUploads.id, m.id), eq(amigaUploads.orgId, orgId)));
+    for (const m of moves) {
+      const hit = await tx.update(amigaUploads).set({ path: m.path, sentName: null }).where(and(eq(amigaUploads.id, m.id), eq(amigaUploads.orgId, orgId)))
+        .returning({ id: amigaUploads.id });
+      if (hit.length) await touchStashDirs(tx, orgId, m.path, now);
+    }
   });
 }
 

@@ -121,4 +121,47 @@ describe('STASH: store', () => {
     expect((await listStash(db(), 'o1')).find((x) => x.id === o.id)!.path).toBe('Arr/part.bin');
     await deleteStash(db(), 'o1', [o.id]);
   });
+  it('a retry after a CRC-failed upload is stored under the plain name, not name_1', async () => {
+    const bad = await upload('Retry/X.bin', Buffer.from('abc'), '17000.600.0');
+    // upload() closed with the right CRC; make a failed stub by closing another with a wrong one
+    await deleteStash(db(), 'o1', [bad.id]);
+    const o = await openUpload(db(), { deviceId: 'dev1', orgId: 'o1' }, { size: 3, date: '17005.600.0', path: 'Retry/X.bin', comment: '', protection: 0 });
+    if (!o.ok) throw new Error(o.code);
+    await storeChunk(db(), 'dev1', o.id, 0, new Uint8Array(Buffer.from('abc')));
+    expect(await closeUpload(db(), 'dev1', o.id, 1)).toMatchObject({ ok: false, code: 'crc' });
+    const good = await upload('Retry/X.bin', Buffer.from('abc'), '17006.600.0');
+    expect(good.close).toEqual({ ok: true, name: 'Retry/X.bin' });
+    const rows = await listStash(db(), 'o1');
+    expect(rows.find((x) => x.id === good.id)!.path).toBe('Retry/X.bin');
+    await deleteStash(db(), 'o1', [o.id, good.id]);
+  });
+  it('ruling 16: a folder row under a folder, and a move into a folder, refresh every ancestor', async () => {
+    const t0 = new Date(Date.UTC(2026, 0, 1));
+    const mk = async (path: string) => ((await insertStash(db(), 'o1', 'browser', [{ ...file(path), kind: 'dir', sha256: null, sizeBytes: 0 }], { now: t0 })) as { ids: string[] }).ids[0];
+    const a = await mk('Anc'); const b = await mk('Anc/Mid');
+    const exp = async (id: string) => (await db().select().from(amigaUploads).where(eq(amigaUploads.id, id)))[0].expiresAt.getTime();
+    const t1 = new Date(Date.UTC(2026, 0, 10));
+    const c = await mk2('Anc/Mid/Leaf', t1);
+    expect(await exp(a)).toBe(t1.getTime() + 30 * 24 * 3600_000);
+    expect(await exp(b)).toBe(t1.getTime() + 30 * 24 * 3600_000);
+    const [f] = ((await insertStash(db(), 'o1', 'browser', [file('loose.txt')], { now: t0 })) as { ids: string[] }).ids;
+    const t2 = new Date(Date.UTC(2026, 0, 20));
+    await moveStash(db(), 'o1', [{ id: f, path: 'Anc/Mid/loose.txt' }], t2);
+    expect(await exp(a)).toBe(t2.getTime() + 30 * 24 * 3600_000);
+    expect(await exp(b)).toBe(t2.getTime() + 30 * 24 * 3600_000);
+    await deleteStash(db(), 'o1', [a, b, c, f]);
+    async function mk2(path: string, now: Date) { return ((await insertStash(db(), 'o1', 'browser', [{ ...file(path), kind: 'dir', sha256: null, sizeBytes: 0 }], { now })) as { ids: string[] }).ids[0]; }
+  });
+  it('another org\'s ids are ignored by delete, move, meta and replaceIds', async () => {
+    const [x] = ((await insertStash(db(), 'o2', 'browser', [file('theirs.txt')])) as { ids: string[] }).ids;
+    expect(await deleteStash(db(), 'o1', [x])).toBe(0);
+    await moveStash(db(), 'o1', [{ id: x, path: 'mine.txt' }]);
+    await setStashMeta(db(), 'o1', [x], { comment: 'mine', protection: 7 });
+    const r = await insertStash(db(), 'o1', 'copy', [file('new.txt')], { replaceIds: [x] });
+    expect(r.ok).toBe(true);
+    const [row] = await db().select().from(amigaUploads).where(eq(amigaUploads.id, x));
+    expect([row.status, row.path, row.comment, row.protection]).toEqual(['stored', 'theirs.txt', '', 0]);
+    await deleteStash(db(), 'o2', [x]);
+    await deleteStash(db(), 'o1', (r as { ids: string[] }).ids);
+  });
 });
