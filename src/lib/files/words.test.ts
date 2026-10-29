@@ -38,4 +38,19 @@ describe('refusalWords', () => {
     expect(refusalWords('name_exists', 'same file')).toMatch(/same file/i);
     expect(refusalWords('name_exists', 'two sources share a name')).toMatch(/same name/i);
   });
+  it('read_only reads the engine\'s reason, not just a mount', () => {
+    expect(refusalWords('read_only', 'hfe_read_only')).toBe('HFE disks are read-only.');
+    expect(refusalWords('read_only', 'no_filesystem')).toBe('This disk has no AmigaDOS filesystem.');
+    expect(refusalWords('read_only', 'something_else')).toBe('This disk is read-only.');
+  });
+  it('a copied-but-not-removed move says so, then the removal\'s reason', () => {
+    const d = 'copied, but the original could not be removed';
+    expect(refusalWords('conflict', d)).toBe('Copied, but the original could not be removed — The disk changed — the pane has been refreshed.');
+    expect(refusalWords('read_only', d)).toBe('Copied, but the original could not be removed — This disk is in a drive. Eject it to change it.');
+  });
+  it('bad_name details', () => {
+    expect(refusalWords('bad_name', 'empty')).toBe('Type a name.');
+    expect(refusalWords('bad_name', 'too-long')).toBe('AmigaDOS names are at most 30 characters.');
+    expect(refusalWords('bad_name', 'bad-char')).toBe('Names cannot contain : or /, or characters an Amiga cannot show.');
+  });
 });
