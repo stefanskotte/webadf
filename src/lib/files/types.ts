@@ -4,7 +4,8 @@ import type { HistoryVersion } from '@/lib/disk-history/history';
 import type { DiskColor } from '@/lib/disk-icon';
 import type { AdfEntry } from '@/lib/adffs';
 import type { ExistingEntry } from '@/lib/staging';
-export type EntryKind = 'title' | 'disk' | 'dir' | 'file';
+/** 'archive': a .lha/.lzh/.zip in STASH:, a file that also opens as a read-only folder. */
+export type EntryKind = 'title' | 'disk' | 'dir' | 'file' | 'archive';
 export type FsEntry = {
   name: string; kind: EntryKind; path: string;
   size: number | null; date: string | null; protection: string | null; comment: string | null;
@@ -33,7 +34,8 @@ export type Listing = {
 };
 export type RefusalCode =
   | 'not_found' | 'read_only' | 'mounted' | 'disk_full' | 'name_exists' | 'bad_name' | 'comment_too_long'
-  | 'cycle' | 'no_filesystem' | 'hfe_read_only' | 'conflict' | 'unsupported' | 'blob_unavailable' | 'failed';
+  | 'cycle' | 'no_filesystem' | 'hfe_read_only' | 'conflict' | 'unsupported' | 'blob_unavailable' | 'failed'
+  | 'stash_full' | 'too_large' | 'archive_unreadable' | 'not_a_disk_image';
 export type Refusal = { code: RefusalCode; detail?: string };
 /**
  * What a pane inside a disk shows in its disk strip besides the listing (disk-strip-data.ts): the Mount choices, the

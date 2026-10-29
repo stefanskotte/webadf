@@ -15,11 +15,14 @@ function byKey(a: FsEntry, b: FsEntry, key: FilesSortKey): number {
   }
 }
 
+/** An archive is a file here: it opens as a folder, but it sorts with the files (increment 2 ruling 7). */
+const isFolder = (e: FsEntry) => e.kind !== 'file' && e.kind !== 'archive';
+
 /** Folders (dir, title, disk) first whatever the key; ties break by name ascending. A new array. */
 export function sortFsEntries(entries: FsEntry[], sort: FilesSort): FsEntry[] {
   const sign = sort.dir === 'asc' ? 1 : -1;
   return [...entries].sort((a, b) => {
-    const fa = a.kind !== 'file', fb = b.kind !== 'file';
+    const fa = isFolder(a), fb = isFolder(b);
     if (fa !== fb) return fa ? -1 : 1;
     return sign * byKey(a, b, sort.key) || byName(a.name, b.name);
   });

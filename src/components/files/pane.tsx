@@ -46,7 +46,8 @@ export function paneSize(bytes: number): string {
 function glyphOf(e: FsEntry): { label: string; bg: string; fg: string } {
   if (e.kind === 'title') return { label: 'TTL', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
   if (e.kind === 'disk') return { label: 'DSK', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
-  return entryGlyph({ kind: e.kind, name: e.name });
+  // An archive is a file to the glyph (its name picks it); the rest of an archive row's look is Task 7's.
+  return entryGlyph({ kind: e.kind === 'archive' ? 'file' : e.kind, name: e.name });
 }
 
 /** Below lg, the line under a row's name: what the Size and Date columns say at lg ("6 B · 2019-08-14"). */

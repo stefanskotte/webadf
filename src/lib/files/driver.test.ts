@@ -11,6 +11,11 @@ describe('driverFor', () => {
     }
     expect(driverFor('NET')).toBeNull();
   });
+  it('has STASH: listing, reading and collecting (its writes arrive in Task 5)', () => {
+    const stash = driverFor('STASH')!;
+    expect(stash.device).toBe('STASH');
+    for (const m of ['list', 'read', 'collect'] as const) expect(typeof stash[m], m).toBe('function');
+  });
 });
 
 describe('shared helpers', () => {

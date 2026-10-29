@@ -54,6 +54,13 @@ describe('sortFsEntries', () => {
     expect(sortFsEntries(files, { key: 'size', dir: 'asc' }).map((x) => x.name)).toEqual(['y', 'x']);
   });
 
+  it('an archive sorts with the files, not the folders (increment 2 ruling 7)', () => {
+    const list = [e('b.lha', 'archive', { size: 20 }), e('Zdir', 'dir'), e('a.txt', 'file', { size: 30 }), e('c.zip', 'archive', { size: 10 })];
+    expect(sortFsEntries(list, { key: 'name', dir: 'asc' }).map((x) => x.name)).toEqual(['Zdir', 'a.txt', 'b.lha', 'c.zip']);
+    expect(sortFsEntries(list, { key: 'size', dir: 'desc' }).map((x) => x.name)).toEqual(['Zdir', 'a.txt', 'b.lha', 'c.zip']);
+    expect(sortFsEntries(list, { key: 'size', dir: 'asc' }).map((x) => x.name)).toEqual(['Zdir', 'c.zip', 'b.lha', 'a.txt']);
+  });
+
   it('protection sorts by the string', () => {
     const out = sortFsEntries(mixed, { key: 'protection', dir: 'asc' }).filter((x) => x.kind === 'file');
     expect(out.map((x) => x.name)).toEqual(['a.txt', 'b.txt']);

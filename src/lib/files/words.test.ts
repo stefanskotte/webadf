@@ -7,6 +7,7 @@ const ALL: Record<RefusalCode, true> = {
   not_found: true, read_only: true, mounted: true, disk_full: true, name_exists: true, bad_name: true,
   comment_too_long: true, cycle: true, no_filesystem: true, hfe_read_only: true, conflict: true,
   unsupported: true, blob_unavailable: true, failed: true,
+  stash_full: true, too_large: true, archive_unreadable: true, not_a_disk_image: true,
 };
 
 describe('refusalWords', () => {
@@ -16,6 +17,16 @@ describe('refusalWords', () => {
       expect(refusalWords(code, 'some detail').trim().length).toBeGreaterThan(0);
     });
   }
+  it('says the STASH: things (increment 2)', () => {
+    expect(refusalWords('stash_full')).toBe('STASH: holds 500 files / 256 MB; delete some first.');
+    expect(refusalWords('too_large')).toBe('That file is too large.');
+    expect(refusalWords('too_large', 'at most 20 MB')).toBe('Too large — at most 20 MB.');
+    expect(refusalWords('archive_unreadable')).toBe("Can't open this archive. You can still download it.");
+    expect(refusalWords('not_a_disk_image')).toBe('Only disk images (ADF, ADZ, DMS, DMZ, HFE) go into the library.');
+    expect(refusalWords('not_a_disk_image', 'notes.txt')).toBe('Not a disk image the library takes — notes.txt.');
+    expect(refusalWords('read_only', 'archive')).toBe('Archives are read-only — copy files out of them.');
+    expect(refusalWords('unsupported', 'still arriving from the Amiga')).toBe('That is still arriving from the Amiga.');
+  });
   it('says the specific things', () => {
     expect(refusalWords('disk_full', 'needs 10 KB, 4 KB free')).toBe('Not enough room on the disk — needs 10 KB, 4 KB free');
     expect(refusalWords('read_only', 'mounted on "A500 bench"')).toBe('This disk is in a drive (mounted on "A500 bench"). Eject it to change it.');
