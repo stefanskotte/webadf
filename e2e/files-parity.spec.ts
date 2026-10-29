@@ -37,7 +37,7 @@ async function seedRealDisk(orgId: string, tag: string) {
 }
 
 async function openDisk(page: Page, gameId: string, diskId: string) {
-  await page.goto(`/files?left=LIBRARY:&right=${encodeURIComponent(`LIBRARY:/${gameId}/${diskId}`)}&active=right`);
+  await page.goto(`/files?left=STASH:&right=${encodeURIComponent(`LIBRARY:/${gameId}/${diskId}`)}&active=right`);
   // Hydrated, so a click or a synthetic drop reaches React's handlers.
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-testid="files-manager"]');

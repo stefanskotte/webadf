@@ -27,9 +27,12 @@ export const ZIP_MAX_BYTES = 4 * 1024 * 1024;
 /** Longer download URLs than this risk a server's header limit; the person zips a folder instead. */
 export const DOWNLOAD_URL_MAX = 8000;
 
-/** One file by path; anything else (several entries, or a folder) as one .zip named after the pane's folder. */
+/**
+ * One file (an archive is one: its own bytes, not its members) by path; anything else (several entries, or a folder) as
+ * one .zip named after the pane's folder.
+ */
 export function downloadHref(entries: FsEntry[], folderName: string): string {
-  if (entries.length === 1 && entries[0].kind === 'file') return `/api/files/download?path=${encodeURIComponent(entries[0].path)}`;
+  if (entries.length === 1 && (entries[0].kind === 'file' || entries[0].kind === 'archive')) return `/api/files/download?path=${encodeURIComponent(entries[0].path)}`;
   const q = new URLSearchParams();
   for (const e of entries) q.append('paths', e.path);
   q.set('name', folderName);

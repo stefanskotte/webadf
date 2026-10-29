@@ -313,7 +313,7 @@ test.describe('an HFE on the game page', () => {
     await page.getByTestId(`extract-${h.id}`).click();
     await expect(page.getByTestId(`extract-edited-${h.id}`)).toContainText('has been edited since');
     await expect(page.getByTestId(`extract-edited-link-${h.id}`))
-      .toHaveAttribute('href', `/files?left=LIBRARY:&right=${encodeURIComponent(`LIBRARY:/${h.gameId}/${adfId}`)}&active=right#disk-history`);
+      .toHaveAttribute('href', `/files?left=STASH:&right=${encodeURIComponent(`LIBRARY:/${h.gameId}/${adfId}`)}&active=right#disk-history`);
   });
 
   test('extracting to an ADF whose blob already has a verdict puts it back in front of the sweeper', async ({ browser }) => {

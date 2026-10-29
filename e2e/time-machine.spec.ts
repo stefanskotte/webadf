@@ -61,7 +61,7 @@ async function uploadFile(page: Page, diskId: string, name: string, content: str
 
 /** Files with the disk on the right, and its strip's History open over the pane. */
 async function openHistory(page: Page, disk: { id: string; gameId: string }) {
-  await page.goto(`/files?left=LIBRARY:&right=${encodeURIComponent(`LIBRARY:/${disk.gameId}/${disk.id}`)}&active=right`);
+  await page.goto(`/files?left=STASH:&right=${encodeURIComponent(`LIBRARY:/${disk.gameId}/${disk.id}`)}&active=right`);
   await hydrated(page, 'disk-strip-history-toggle');
   await page.getByTestId('disk-strip-history-toggle').click();
   await expect(page.getByTestId('history-panel')).toBeVisible();
@@ -112,7 +112,7 @@ test('the library card reaches the history, and the wordmark leads back', async 
   await history.click();
 
   // Files with the disk on the right, its History open over the pane.
-  await expect(page).toHaveURL(/\/files\?left=LIBRARY.*#disk-history$/);
+  await expect(page).toHaveURL(/\/files\?left=STASH.*#disk-history$/);
   await expect(page.getByTestId('disk-strip-right')).toBeVisible();
   await expect(page.getByTestId('history-panel')).toBeVisible();
   // The card must not ALSO navigate to the title: the button lives inside the

@@ -331,7 +331,7 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   await shoot(page, 'game');
 
   // Files (increment 1): LIBRARY: on the left, the disk on the right with its strip and its History open over it.
-  await page.goto(`/files?${new URLSearchParams({ left: 'LIBRARY:', right: `LIBRARY:/${sysInfoGame}/${sysInfo.id}`, active: 'right' })}`);
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: `LIBRARY:/${sysInfoGame}/${sysInfo.id}`, active: 'right' })}`);
   await hydrated(page, 'disk-strip-history-toggle');
   await expect(page.getByTestId('pane-right').locator('[data-testid="pane-row"][data-name="ReadMe"]')).toBeVisible();
   await page.getByTestId('disk-strip-history-toggle').click();

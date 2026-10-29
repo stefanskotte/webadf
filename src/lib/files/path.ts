@@ -1,6 +1,6 @@
 // Files (spec 2026-10-29 §3.1): every place a pane can point at. CLIENT-SAFE: no imports.
 // LIBRARY:/<gameId>/<diskId>/<dir>/<file>: titles and disks by id, so two titles with one name never collide; inside a
-// disk, AmigaDOS names. STASH: and NET: arrive in increments 2 and 3.
+// disk, AmigaDOS names. STASH:/<folder>/<file>: by name (increment 2). NET: arrives in increment 3.
 
 export type Device = 'STASH' | 'NET' | 'LIBRARY';
 export type FsPath = { device: Device; segments: string[] };
@@ -34,12 +34,18 @@ export function formatPath(p: FsPath): string {
   return p.segments.length ? `${p.device}:/${p.segments.join('/')}` : `${p.device}:`;
 }
 
+/** The devices a pane's buttons offer, in order (increment 2, R1); increment 3 inserts NET. */
+export const PANE_DEVICES: readonly Device[] = ['STASH', 'LIBRARY'];
+/** Where the panes start when the URL names no place (increment 2, R1). */
+export const DEFAULT_LEFT = 'STASH:';
+export const DEFAULT_RIGHT = 'LIBRARY:';
+
 /**
- * Files with a library disk open on the right (increment 1, R1): what "Files…" and every link to a disk's files opens.
- * `#disk-history` (`history`) opens the disk strip's History over the pane.
+ * Files with STASH: on the left and a library disk open on the right (increment 2, R1): what "Files…" and every link
+ * to a disk's files opens. `#disk-history` (`history`) opens the disk strip's History over the pane.
  */
 export function filesHrefForDisk(gameId: string, diskId: string, history = false): string {
-  return `/files?left=LIBRARY:&right=${encodeURIComponent(`LIBRARY:/${gameId}/${diskId}`)}&active=right${history ? '#disk-history' : ''}`;
+  return `/files?left=${DEFAULT_LEFT}&right=${encodeURIComponent(`LIBRARY:/${gameId}/${diskId}`)}&active=right${history ? '#disk-history' : ''}`;
 }
 
 export function parentOf(p: FsPath): FsPath | null {

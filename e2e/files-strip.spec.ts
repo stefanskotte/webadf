@@ -50,11 +50,11 @@ test('Files… opens the disk on the right with its strip; the Browse address la
   await expect.poll(() => {
     const q = new URL(page.url()).searchParams;
     return [new URL(page.url()).pathname, q.get('left'), q.get('right'), q.get('active')];
-  }).toEqual(['/files', 'LIBRARY:', `LIBRARY:/${gameId}/${diskId}`, 'right']);
+  }).toEqual(['/files', 'STASH:', `LIBRARY:/${gameId}/${diskId}`, 'right']);
 
   const strip = page.getByTestId('disk-strip-right');
   await expect(strip).toBeVisible();
-  await expect(page.getByTestId('disk-strip-left')).toHaveCount(0);   // LIBRARY: itself is not a disk
+  await expect(page.getByTestId('disk-strip-left')).toHaveCount(0);   // STASH: is not a disk
   await expect(strip).toContainText(`Strip-${tag}`);
   await expect(strip.getByTestId('disk-strip-drive')).toHaveText('Not in a drive');
   await expect(strip.getByTestId('disk-strip-usage')).toHaveText(/^\d+ of 880 KB · \d+ KB free$/);
@@ -65,7 +65,7 @@ test('Files… opens the disk on the right with its strip; the Browse address la
 
   // The old address, without a version: Files, the disk on the right.
   await page.goto(`/disks/${diskId}/files`);
-  await expect(page).toHaveURL(/\/files\?left=LIBRARY/);
+  await expect(page).toHaveURL(/\/files\?left=STASH/);
   await expect(page.getByTestId('disk-strip-right')).toBeVisible();
 });
 
@@ -136,7 +136,7 @@ test('a disk in a drive: the chip says which, Eject to edit replaces Mount, and 
     mountedGameId: gameId, mountedDiskId: diskId, mountedSha256: sha256, mountedDiskNo: 1,
   }).where(eq(devices.id, deviceId));
 
-  await page.goto(`/files?left=LIBRARY:&right=${encodeURIComponent(`LIBRARY:/${gameId}/${diskId}`)}&active=right`);
+  await page.goto(`/files?left=STASH:&right=${encodeURIComponent(`LIBRARY:/${gameId}/${diskId}`)}&active=right`);
   const strip = page.getByTestId('disk-strip-right');
   await expect(strip.getByTestId('disk-strip-drive')).toHaveText('In DF0: of Strip Bench');
   await expect(strip.getByTestId(`mount-${diskId}`)).toHaveCount(0);

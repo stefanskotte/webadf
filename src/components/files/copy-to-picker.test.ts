@@ -15,16 +15,19 @@ const listing = (o: Partial<Listing>): Listing => ({
 });
 
 describe('CopyToPicker (Files increment 1, Task 10)', () => {
-  it('only a writable folder inside a disk takes the copy', () => {
+  it('only a writable folder inside a disk or in STASH: takes the copy', () => {
     expect(pickReason('copy', listing({}))).toBeNull();
-    expect(pickReason('copy', listing({ disk: null }))).toBe('Open a disk to copy into it');
-    expect(pickReason('move', listing({ disk: null }))).toBe('Open a disk to move into it');
+    expect(pickReason('copy', listing({ disk: null }))).toBe('Open a disk or STASH: to copy into it');
+    expect(pickReason('move', listing({ disk: null }))).toBe('Open a disk or STASH: to move into it');
+    expect(pickReason('copy', listing({ path: 'STASH:/Mods', disk: null }))).toBeNull();
+    expect(pickReason('copy', listing({ path: 'STASH:/t.zip', disk: null, writable: false, readOnlyReason: 'archive' })))
+      .toBe('Archives are read-only — copy files out of them.');
     expect(pickReason('copy', listing({ writable: false, readOnlyReason: 'write_protected' }))).toMatch(/\S/);
     expect(pickReason('copy', null)).toBeNull();   // still loading: no reason yet, and Copy here stays off
   });
 
-  it('offers the folders, titles and disks to go into, by name, never the files', () => {
-    const l = listing({ entries: [entry('zeta', 'dir'), entry('ReadMe', 'file'), entry('Alpha', 'dir'), entry('Disk 2', 'disk')] });
+  it('offers the folders, titles and disks to go into, by name, never the files or archives', () => {
+    const l = listing({ entries: [entry('zeta', 'dir'), entry('ReadMe', 'file'), entry('Alpha', 'dir'), entry('Disk 2', 'disk'), entry('t.zip', 'archive')] });
     expect(placesIn(l).map((e) => e.name)).toEqual(['Alpha', 'Disk 2', 'zeta']);
   });
 

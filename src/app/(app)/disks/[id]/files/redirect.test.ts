@@ -21,11 +21,11 @@ function call(id: string, sp: Record<string, string>) {
 describe('/disks/[id]/files redirects to Files (R3)', () => {
   beforeEach(() => { redirect.mockClear(); notFound.mockClear(); libraryDiskOf.mockReset(); });
 
-  it('with no version: Files, LIBRARY: on the left, the disk on the right, the right pane active', async () => {
+  it('with no version: Files, STASH: on the left, the disk on the right, the right pane active', async () => {
     libraryDiskOf.mockResolvedValue({ gameId: 'g1', imageFormat: 'adf' });
     await expect(call('d1', {})).rejects.toThrow('NEXT_REDIRECT');
     expect(libraryDiskOf).toHaveBeenCalledWith('o1', 'd1');
-    expect(redirect).toHaveBeenCalledWith(`/files?left=LIBRARY:&right=${encodeURIComponent('LIBRARY:/g1/d1')}&active=right`);
+    expect(redirect).toHaveBeenCalledWith(`/files?left=STASH:&right=${encodeURIComponent('LIBRARY:/g1/d1')}&active=right`);
   });
 
   it('an unknown or foreign disk is a 404, as before', async () => {

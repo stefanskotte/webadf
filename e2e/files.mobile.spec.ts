@@ -49,7 +49,7 @@ test('at 390: one pane, the side switch, the bottom bar; Copy to… copies a fil
   const from = await seedRealDisk(orgId, `PhoneA-${tag}`, true);
   const to = await seedRealDisk(orgId, `PhoneB-${tag}`, false);
 
-  // Files… from the disk's title page: the disk on the right, LIBRARY: on the left.
+  // Files… from the disk's title page: the disk on the right, STASH: on the left.
   await page.goto(`/games/${from.gameId}`);
   await page.getByTestId(`files-${from.diskId}`).click();
   await expect(page).toHaveURL(/\/files\?.*active=right/);
@@ -105,15 +105,22 @@ test('at 390: one pane, the side switch, the bottom bar; Copy to… copies a fil
   await bar.getByTestId('files-phone-copy').tap({ force: true });
   await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'Select something first' })).toBeVisible();
 
-  // A tap picks a file; Copy to… opens the picker at the other pane's place (LIBRARY:), which is not a disk.
+  // A tap picks a file; Copy to… opens the picker at the other pane's place (STASH:), which takes files. Its LIBRARY:
+  // chip goes to the library, which is not a disk.
   await readme.tap();
   await expect(readme).toHaveAttribute('aria-selected', 'true');
   await bar.getByTestId('files-phone-copy').tap();
   const picker = page.getByTestId('files-copy-to');
   await expect(picker).toBeVisible();
+  await expect(picker.getByTestId('files-copy-to-crumb-0')).toHaveText('STASH:');
+  await expect(picker.getByTestId('files-copy-to-dev-STASH')).toHaveAttribute('aria-pressed', 'true');
+  await expect(picker.getByTestId('files-copy-to-here')).toBeEnabled();
+  expect((await picker.getByTestId('files-copy-to-dev-LIBRARY').boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await picker.getByTestId('files-copy-to-dev-LIBRARY').tap();
   await expect(picker.getByTestId('files-copy-to-crumb-0')).toHaveText('LIBRARY:');
+  await expect(picker.getByTestId('files-copy-to-dev-LIBRARY')).toHaveAttribute('aria-pressed', 'true');
   await expect(picker.getByTestId('files-copy-to-here')).toBeDisabled();
-  await expect(picker.getByTestId('files-copy-to-reason')).toHaveText('Open a disk to copy into it');
+  await expect(picker.getByTestId('files-copy-to-reason')).toHaveText('Open a disk or STASH: to copy into it');
   await noSideways(page);
 
   // Drill into the other title, then its disk; "Copy here".
@@ -235,7 +242,7 @@ async function openPhoneDisk(page: Page, orgId: string, title: string) {
   const sha256 = createHash('sha256').update(r.adf).digest('hex');
   await diskStore.put(sha256, r.adf);
   const d = await seedDisk(orgId, { title, diskNo: 1, sha256, writeProtected: false });
-  await page.goto(`/files?${new URLSearchParams({ left: 'LIBRARY:', right: `LIBRARY:/${d.gameId}/${d.diskId}`, active: 'right' })}`);
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: `LIBRARY:/${d.gameId}/${d.diskId}`, active: 'right' })}`);
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-testid="files-side-switch"]');
     return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));

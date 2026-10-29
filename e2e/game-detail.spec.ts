@@ -311,7 +311,7 @@ async function seedStoredDisk(orgId: string, title: string) {
 }
 
 const filesUrl = (gameId: string, diskId: string) =>
-  `/files?left=LIBRARY:&right=${encodeURIComponent(`LIBRARY:/${gameId}/${diskId}`)}&active=right`;
+  `/files?left=STASH:&right=${encodeURIComponent(`LIBRARY:/${gameId}/${diskId}`)}&active=right`;
 
 test('the disk strip mounts and ejects the disk, and says where it is in words', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);

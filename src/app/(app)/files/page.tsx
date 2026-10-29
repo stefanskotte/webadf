@@ -1,6 +1,6 @@
 import { requireOrg } from '@/lib/session';
 import { getUserPrefs } from '@/lib/user-prefs';
-import { formatPath, parsePath } from '@/lib/files/path';
+import { DEFAULT_LEFT, DEFAULT_RIGHT, formatPath, PANE_DEVICES, parsePath } from '@/lib/files/path';
 import { driverFor } from '@/lib/files/drivers';
 import { Refused } from '@/lib/files/driver';
 import { refusalWords } from '@/lib/files/words';
@@ -16,35 +16,38 @@ export const metadata = { title: 'Files' };
 // byte-touching page and handler in this app sets.
 export const maxDuration = 60;
 
-const DEFAULT_PATH = 'LIBRARY:';
-
-/** A query value as a pane path: canonical when it parses, the default otherwise. Increment 1 lists LIBRARY: only. */
-function paneParam(raw: string | string[] | undefined): string {
+/** A query value as a pane path: canonical when it parses on a pane's device (R1), `fallback` otherwise. */
+function paneParam(raw: string | string[] | undefined, fallback: string): string {
   const p = typeof raw === 'string' ? parsePath(raw) : null;
-  return p && p.device === 'LIBRARY' ? formatPath(p) : DEFAULT_PATH;
+  return p && PANE_DEVICES.includes(p.device) ? formatPath(p) : fallback;
 }
 
-/** The pane's first listing; null when the place is gone, with the words when the image itself cannot be read. */
+/**
+ * The pane's first listing; null when the place is gone, with the words when it cannot be read: a disk image the
+ * store did not give back, or an archive that does not open (Task 4).
+ */
 async function firstListing(ctx: { orgId: string; userId: string }, path: string): Promise<{ listing: Listing | null; error?: string }> {
   try {
     const p = parsePath(path)!;
     return { listing: await driverFor(p.device)!.list(ctx, p) };
   } catch (e) {
-    if (e instanceof Refused && e.refusal.code === 'blob_unavailable') return { listing: null, error: refusalWords('blob_unavailable') };
+    if (e instanceof Refused && (e.refusal.code === 'blob_unavailable' || e.refusal.code === 'archive_unreadable')) {
+      return { listing: null, error: refusalWords(e.refusal.code) };
+    }
     throw e;
   }
 }
 
 /**
- * Files (spec 2026-10-29 §5): two panes over LIBRARY: with the button column between them. The state lives in the
- * URL -- `?left=<path>&right=<path>&active=left|right` -- so Back and reload restore both panes; the manager keeps
- * it there as it navigates.
+ * Files (spec 2026-10-29 §5): two panes over STASH: and LIBRARY: with the button column between them. The state lives
+ * in the URL -- `?left=<path>&right=<path>&active=left|right` -- so Back and reload restore both panes; the manager
+ * keeps it there as it navigates.
  */
 export default async function FilesPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { orgId, userId } = await requireOrg();
   const sp = await searchParams;
-  const leftPath = paneParam(sp.left);
-  const rightPath = paneParam(sp.right);
+  const leftPath = paneParam(sp.left, DEFAULT_LEFT);
+  const rightPath = paneParam(sp.right, DEFAULT_RIGHT);
   const active = sp.active === 'right' ? 'right' : 'left';
   const ctx = { orgId, userId };
   const [left, right, prefs] = await Promise.all([firstListing(ctx, leftPath), firstListing(ctx, rightPath), getUserPrefs(userId)]);

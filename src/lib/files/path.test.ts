@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePath, formatPath, parentOf, childOf, isWithin, amigaNameProblem, filesHrefForDisk } from './path';
+import { parsePath, formatPath, parentOf, childOf, isWithin, amigaNameProblem, filesHrefForDisk, PANE_DEVICES, DEFAULT_LEFT, DEFAULT_RIGHT } from './path';
 
 const ci = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
@@ -79,12 +79,19 @@ describe('amigaNameProblem', () => {
   });
 });
 
-describe('filesHrefForDisk (Task 9)', () => {
-  it('opens LIBRARY: on the left and the disk on the right, active; with history, its #disk-history', () => {
+describe('filesHrefForDisk (Task 9; increment 2 R1)', () => {
+  it('opens STASH: on the left and the disk on the right, active; with history, its #disk-history', () => {
     const href = filesHrefForDisk('g1', 'd1');
-    expect(href).toBe(`/files?left=LIBRARY:&right=${encodeURIComponent('LIBRARY:/g1/d1')}&active=right`);
+    expect(href).toBe('/files?left=STASH:&right=LIBRARY%3A%2Fg1%2Fd1&active=right');
     const q = new URL(href, 'http://x').searchParams;
-    expect([q.get('left'), q.get('right'), q.get('active')]).toEqual(['LIBRARY:', 'LIBRARY:/g1/d1', 'right']);
+    expect([q.get('left'), q.get('right'), q.get('active')]).toEqual(['STASH:', 'LIBRARY:/g1/d1', 'right']);
     expect(filesHrefForDisk('g1', 'd1', true)).toBe(`${href}#disk-history`);
+  });
+});
+
+describe('the panes\' devices (increment 2 R1)', () => {
+  it('STASH: and LIBRARY:, STASH: on the left and LIBRARY: on the right by default', () => {
+    expect(PANE_DEVICES).toEqual(['STASH', 'LIBRARY']);
+    expect([DEFAULT_LEFT, DEFAULT_RIGHT]).toEqual(['STASH:', 'LIBRARY:']);
   });
 });

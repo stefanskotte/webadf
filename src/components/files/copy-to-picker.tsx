@@ -5,13 +5,15 @@ import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
 import type { FsEntry, Listing } from '@/lib/files/types';
 import { refusalWords } from '@/lib/files/words';
+import { holdsFiles } from '@/lib/files/pane-rules';
+import { PANE_DEVICES } from '@/lib/files/path';
 import { managerReturnsFocus } from './dialogs';
 
 /**
  * Copy to… / Move to… on a phone (Files increment 1, Task 10): where the desktop copies into the other pane, a phone
- * shows one pane, so this picks the place instead. It starts at the other pane's location and walks LIBRARY: through
- * /api/files/list (`list`, the manager's own fetch) -- crumbs back up, the folders, titles and disks to go into -- and
- * hands back the listing it ends at; the manager runs the copy or move exactly as the desktop does.
+ * shows one pane, so this picks the place instead. It starts at the other pane's location and walks STASH: and LIBRARY:
+ * through /api/files/list (`list`, the manager's own fetch) -- the device chips, crumbs back up, the folders, titles and
+ * disks to go into -- and hands back the listing it ends at; the manager runs the copy or move as the desktop does.
  */
 export type ListResult = { listing: Listing } | { gone: true } | { error: string };
 
@@ -21,17 +23,17 @@ export type CopyToPickerProps = {
   onPick(listing: Listing): void; onCancel(): void;
 };
 
-/** Why the place shown cannot take the copy, or null when it can: only a writable folder inside a disk does. */
+/** Why the place shown cannot take the copy, or null when it can: a writable folder inside a disk or in STASH:. */
 export function pickReason(op: 'copy' | 'move', l: Listing | null): string | null {
   if (!l) return null;
-  if (!l.disk) return `Open a disk to ${op} into it`;
+  if (!holdsFiles(l)) return `Open a disk or STASH: to ${op} into it`;
   if (!l.writable) return refusalWords('read_only', l.readOnlyReason ?? undefined);
   return null;
 }
 
-/** What can be gone into: everything but files. */
+/** What can be gone into: everything but files and archives (an archive is read-only: nothing goes into it). */
 export function placesIn(l: Listing): FsEntry[] {
-  return l.entries.filter((e) => e.kind !== 'file').sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  return l.entries.filter((e) => e.kind !== 'file' && e.kind !== 'archive').sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }
 
 const PLACE_GLYPH: Record<string, string> = { title: 'TTL', disk: 'DSK', dir: 'DIR' };
@@ -72,6 +74,18 @@ export function CopyToPicker({ op, count, start, busy, list, onPick, onCancel }:
              </div>
            )}>
       <div className="flex flex-col gap-3 px-6 py-5 text-[14px]" style={{ color: 'var(--ink)' }}>
+        <div className="flex gap-1.5" role="group" aria-label="Device">
+          {PANE_DEVICES.map((d) => {
+            const on = (listing?.path ?? path).startsWith(`${d}:`);
+            return (
+              <button key={d} type="button" aria-pressed={on} data-testid={`files-copy-to-dev-${d}`} onClick={() => setPath(`${d}:`)}
+                      className={`rounded-[7px] px-3 py-1 font-mono text-[12px] ${tap}`}
+                      style={on ? { background: 'var(--ink)', color: 'var(--surface)' } : { background: 'var(--track)', color: 'var(--muted)' }}>
+                {d}:
+              </button>
+            );
+          })}
+        </div>
         <nav aria-label="Path" className="flex min-w-0 flex-wrap items-center font-mono text-[13px]">
           {crumbs.map((c, i) => (
             <span key={c.path} className="flex items-center">

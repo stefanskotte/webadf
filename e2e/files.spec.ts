@@ -159,7 +159,7 @@ test('move a folder between disks', async ({ page }) => {
 test('delete asks first', async ({ page }) => {
   const { orgId } = await signUpFresh(page);
   const a = await seedTitle(orgId, `Del-${runTag()}`);
-  await openFiles(page, 'LIBRARY:', a.path, 'right');
+  await openFiles(page, 'STASH:', a.path, 'right');
 
   await row(page, 'right', 'ReadMe').click();
   await page.keyboard.press('Delete');
@@ -177,7 +177,7 @@ test('sort headers flip asc/desc and are remembered', async ({ page }) => {
   const a = await seedTitle(orgId, `Sort-${runTag()}`, [
     ...STANDARD, { op: 'add', parentPath: '', name: 'Notes', bytes: enc('a longer file than the ReadMe\n') },
   ]);
-  await openFiles(page, 'LIBRARY:', a.path, 'right');
+  await openFiles(page, 'STASH:', a.path, 'right');
   const size = page.getByTestId('pane-right-sort-size');
   await expect(page.getByTestId('pane-right-sort-name')).toHaveAttribute('aria-sort', 'ascending');
   await expect.poll(() => rowNames(page, 'right')).toEqual(['C', 'S', 'Notes', 'ReadMe']);
@@ -205,7 +205,7 @@ test('Protect two files', async ({ page }) => {
   const a = await seedTitle(orgId, `Prot-${runTag()}`, [
     ...STANDARD, { op: 'add', parentPath: '', name: 'Notes', bytes: enc('notes\n') },
   ]);
-  await openFiles(page, 'LIBRARY:', a.path, 'right');
+  await openFiles(page, 'STASH:', a.path, 'right');
   const protection = (name: string) => row(page, 'right', name).locator('td').nth(3);
   await expect(protection('ReadMe')).toHaveText('----rwed');
 
@@ -338,8 +338,8 @@ test('/disks/<id>/files redirects to Files; ?version=1 still shows the old page'
   await page.goto(`/disks/${a.diskId}/files`);
   await expect.poll(() => {
     const u = new URL(page.url());
-    return [u.pathname, u.searchParams.get('right'), u.searchParams.get('active')];
-  }).toEqual(['/files', a.path, 'right']);
+    return [u.pathname, u.searchParams.get('left'), u.searchParams.get('right'), u.searchParams.get('active')];
+  }).toEqual(['/files', 'STASH:', a.path, 'right']);
   await expect(row(page, 'right', 'Edited')).toHaveCount(1);
   await expect(page.getByTestId('disk-strip-right').getByTestId('disk-strip-history-toggle')).toHaveText('History · v1');
 });
@@ -347,7 +347,7 @@ test('/disks/<id>/files redirects to Files; ?version=1 still shows the old page'
 test('Info edits a comment', async ({ page }) => {
   const { orgId } = await signUpFresh(page);
   const a = await seedTitle(orgId, `Info-${runTag()}`);
-  await openFiles(page, 'LIBRARY:', a.path, 'right');
+  await openFiles(page, 'STASH:', a.path, 'right');
 
   await row(page, 'right', 'ReadMe').click();
   await page.getByTestId('files-info').click();
@@ -373,7 +373,7 @@ test('a download over the cap says so in words and saves nothing; a smaller one 
   const many: BatchOp[] = [{ op: 'mkdir', parentPath: '', name: 'Many' },
     ...Array.from({ length: 1000 }, (_, i): BatchOp => ({ op: 'add', parentPath: 'Many', name: `F${i}`, bytes: new Uint8Array(0) }))];
   const a = await seedTitle(orgId, `Cap-${tag}`, [...STANDARD, ...many], 'hd');
-  await openFiles(page, 'LIBRARY:', a.path, 'right');
+  await openFiles(page, 'STASH:', a.path, 'right');
   const saved: string[] = [];
   page.on('download', (d) => saved.push(d.suggestedFilename()));
 

@@ -303,7 +303,7 @@ test('a blank HD disk is made, edited in the browser, and its history lists and 
 
   const AFTER_EDIT = { timeout: 15_000 };
   const row = (name: string) => page.getByTestId('pane-right').locator(`[data-testid="pane-row"][data-name="${name}"]`);
-  await page.goto(`/files?${new URLSearchParams({ left: 'LIBRARY:', right: `LIBRARY:/${game.id}/${disk.id}`, active: 'right' })}`);
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: `LIBRARY:/${game.id}/${disk.id}`, active: 'right' })}`);
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-testid="files-manager"]');
     return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));

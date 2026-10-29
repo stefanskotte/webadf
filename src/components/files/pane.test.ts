@@ -18,6 +18,16 @@ const diskListing: Listing = {
   writable: true, readOnlyReason: null, disk: null, meta: '1 folder · 2 files',
 };
 
+const stashListing: Listing = {
+  path: 'STASH:', crumbs: [{ label: 'STASH:', path: 'STASH:' }],
+  entries: [
+    entry('SysInfo.lha', 'archive', { path: 'STASH:/SysInfo.lha', size: 55296 }), entry('t.zip', 'archive', { path: 'STASH:/t.zip', size: 300 }),
+    entry('ReadMe', 'file', { path: 'STASH:/ReadMe' }), entry('Game.adf', 'file', { path: 'STASH:/Game.adf', size: 901120 }),
+    entry('Old.adf', 'file', { path: 'STASH:/Old.adf', size: 901120, marks: ['in the library'] }),
+  ],
+  writable: true, readOnlyReason: null, disk: null, meta: '3 files · 1 MB',
+};
+
 const rootListing: Listing = {
   path: 'LIBRARY:', crumbs: [{ label: 'LIBRARY:', path: 'LIBRARY:' }],
   entries: [entry('SysInfo', 'title', { path: 'LIBRARY:/g', protection: null, date: null })],
@@ -30,7 +40,7 @@ function render(o: Partial<PaneProps> = {}): string {
     side: 'left', active: true, listing: diskListing, loading: false, error: null,
     sort: { key: 'name', dir: 'asc' }, selection: EMPTY_SELECTION, showComment: false,
     onActivate: noop, onNavigate: noop, onSort: noop, onSetSort: noop, onRowClick: noop, onRowOpen: noop,
-    onDragStartRows: noop, onDropRows: noop, ...o,
+    onDragStartRows: noop, onDropRows: noop, onAddToLibrary: noop, ...o,
   };
   return renderToStaticMarkup(createElement(Pane, props));
 }
@@ -119,11 +129,43 @@ describe('Pane (Files increment 1, Task 7)', () => {
     expect(tagOf(root, 'pane-left-crumb-1')).toBeUndefined();
   });
 
-  it('only the LIBRARY: device button, pressed', () => {
+  it('the STASH: and LIBRARY: device buttons, the one shown pressed (increment 2 R1)', () => {
     const html = render();
     const devs = [...html.matchAll(/data-testid="pane-left-dev-([^"]+)"/g)].map((m) => m[1]);
-    expect(devs).toEqual(['LIBRARY']);
+    expect(devs).toEqual(['STASH', 'LIBRARY']);
     expect(attr(tagOf(html, 'pane-left-dev-LIBRARY')!, 'aria-pressed')).toBe('true');
+    expect(attr(tagOf(html, 'pane-left-dev-STASH')!, 'aria-pressed')).toBe('false');
+    const stash = render({ listing: stashListing });
+    expect(attr(tagOf(stash, 'pane-left-dev-STASH')!, 'aria-pressed')).toBe('true');
+    expect(attr(tagOf(stash, 'pane-left-dev-LIBRARY')!, 'aria-pressed')).toBe('false');
+  });
+
+  it('an archive row: a file to look at (size, glyph, weight) with an Open button (increment 2 ruling 7)', () => {
+    const html = render({ listing: stashListing });
+    const arc = rows(html).find((t) => attr(t, 'data-name') === 'SysInfo.lha')!;
+    expect(attr(arc, 'data-kind')).toBe('archive');
+    expect(html).toMatch(/>LHA<\/span><span class="truncate "[^>]*>SysInfo\.lha</);
+    expect(html).toMatch(/>ZIP<\/span><span class="truncate "[^>]*>t\.zip</);
+    expect(tagOf(html, 'pane-open-SysInfo.lha')).toMatch(/^<button\b/);
+    expect(tagOf(html, 'pane-open-ReadMe')).toBeUndefined();
+    expect(subLine(entry('SysInfo.lha', 'archive', { size: 55296 }))).toBe('54 KB · 2019-08-14');
+  });
+
+  it('a disk image in STASH: offers Add to library on its row, unless it is in the library already (increment 2 R8)', () => {
+    const html = render({ listing: stashListing });
+    expect(tagOf(html, 'pane-addlib-Game.adf')).toMatch(/^<button\b/);
+    expect(tagOf(html, 'pane-addlib-Old.adf')).toBeUndefined();
+    expect(tagOf(html, 'pane-addlib-ReadMe')).toBeUndefined();
+    // Not inside a disk: a disk's ADF files are files on it, not images to add.
+    const onDisk = render({ listing: { ...diskListing, entries: [entry('Game.adf', 'file')] } });
+    expect(tagOf(onDisk, 'pane-addlib-Game.adf')).toBeUndefined();
+  });
+
+  it('the foot of a writable STASH: folder with nothing picked invites a drop (increment 2)', () => {
+    expect(render({ listing: stashListing })).toMatch(/data-testid="pane-left-foot"[^>]*>(<[^>]*>)*3 files · 1 MB · Drop files here/);
+    expect(render()).not.toContain('Drop files here');
+    const inArchive = render({ listing: { ...stashListing, path: 'STASH:/t.zip', writable: false, readOnlyReason: 'archive' } });
+    expect(inArchive).not.toContain('Drop files here');
   });
 
   it('a meta line, a loading line and an error line', () => {
@@ -154,7 +196,7 @@ describe('Pane (Files increment 1, Task 7)', () => {
 
   it('below lg the controls a finger presses are 44 px (Task 10)', () => {
     const html = render();
-    for (const id of ['pane-left-dev-LIBRARY', 'pane-left-up', 'pane-left-crumb-0']) expect(tagOf(html, id), id).toContain('max-lg:min-h-11');
+    for (const id of ['pane-left-dev-STASH', 'pane-left-dev-LIBRARY', 'pane-left-up', 'pane-left-crumb-0']) expect(tagOf(html, id), id).toContain('max-lg:min-h-11');
   });
 
   it('below lg one sort button says the order in force, even one no phone column shows (Task 10 fix)', () => {

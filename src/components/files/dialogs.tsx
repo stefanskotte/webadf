@@ -97,10 +97,21 @@ export function deleteWhat(entries: FsEntry[]): string {
   return within ? `“${e.name}” and the ${within} in it` : `“${e.name}”`;
 }
 
+/**
+ * The delete confirm's sentence. A disk keeps every version, so its delete can be undone from History; STASH: keeps no
+ * versions (ruling 8), so it says so and counts the items picked (a STASH: folder does not say what it holds).
+ */
+export function deleteText(entries: FsEntry[], where: { title: string; label: string } | 'STASH:' | null): string {
+  if (where === 'STASH:') {
+    const what = entries.length === 1 ? `“${entries[0].name}”` : `${entries.length} items`;
+    return `Delete ${what} from STASH:? This cannot be undone.`;
+  }
+  return `Delete ${deleteWhat(entries)} from ${placeName(where)}? A new version keeps the old ones.`;
+}
+
 export function ConfirmDeleteDialog({ entries, where, busy, onConfirm, onCancel }: {
-  entries: FsEntry[]; where: { title: string; label: string } | null; busy: boolean; onConfirm(): void; onCancel(): void;
+  entries: FsEntry[]; where: { title: string; label: string } | 'STASH:' | null; busy: boolean; onConfirm(): void; onCancel(): void;
 }) {
-  const what = deleteWhat(entries);
   return (
     <Modal open finalFocus={managerReturnsFocus} onOpenChange={(o) => { if (!o) onCancel(); }} width={440} testId="files-delete-dialog"
            closeTestId="files-delete-close" title={entries.length === 1 ? 'Delete this item?' : 'Delete these items?'}
@@ -115,7 +126,7 @@ export function ConfirmDeleteDialog({ entries, where, busy, onConfirm, onCancel 
            )}>
       <div className={body} style={ink}>
         <p data-testid="files-delete-text" className="[overflow-wrap:anywhere]">
-          Delete {what} from {placeName(where)}? A new version keeps the old ones.
+          {deleteText(entries, where)}
         </p>
       </div>
     </Modal>
@@ -231,7 +242,10 @@ export function ProtectDialog({ entries, busy, onSave, onCancel }: {
   );
 }
 
-/** One entry's details; the comment is editable where the disk can be written, with the 79-character counter. */
+/**
+ * One entry's details; the comment is editable where the place can be written (a disk, or STASH: -- not an archive),
+ * with the 79-character counter.
+ */
 export function InfoDialog({ entry, writable, busy, onSaveComment, onClose }: {
   entry: FsEntry; writable: boolean; busy: boolean; onSaveComment(comment: string): void; onClose(): void;
 }) {
@@ -244,7 +258,7 @@ export function InfoDialog({ entry, writable, busy, onSaveComment, onClose }: {
   return (
     <Modal open finalFocus={managerReturnsFocus} onOpenChange={(o) => { if (!o) onClose(); }} width={440} testId="files-info-dialog"
            closeTestId="files-info-close" title={entry.name} dismissible={!busy}
-           subtitle={entry.kind === 'dir' ? 'Folder' : 'File'}
+           subtitle={entry.kind === 'dir' ? 'Folder' : entry.kind === 'archive' ? 'Archive' : 'File'}
            footer={(
              <div className={foot}>
                <Button variant="outline" onClick={onClose} disabled={busy}>{writable && changed ? 'Cancel' : 'Close'}</Button>
@@ -259,7 +273,7 @@ export function InfoDialog({ entry, writable, busy, onSaveComment, onClose }: {
             onSubmit={(e) => { e.preventDefault(); if (writable && changed && !tooLong && !busy) onSaveComment(comment); }}>
         <div className={row}><span style={label}>Name</span><span className="[overflow-wrap:anywhere]">{entry.name}</span></div>
         <div className={row}><span style={label}>Size</span>
-          <span className="font-mono">{entry.kind === 'file' && entry.size !== null ? `${paneSize(entry.size)} (${entry.size.toLocaleString()} bytes)` : '—'}</span></div>
+          <span className="font-mono">{(entry.kind === 'file' || entry.kind === 'archive') && entry.size !== null ? `${paneSize(entry.size)} (${entry.size.toLocaleString()} bytes)` : '—'}</span></div>
         <div className={row}><span style={label}>Date</span>
           <span className="font-mono">{entry.date ? entry.date.slice(0, 19).replace('T', ' ') : '—'}</span></div>
         <div className={row}><span style={label}>Protection</span>

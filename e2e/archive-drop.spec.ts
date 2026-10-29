@@ -25,7 +25,7 @@ const LHA = [...new Uint8Array(readFileSync(
 /** The disk open in Files, on the right, hydrated so a synthetic drop reaches React. */
 async function openInFiles(page: Page, disk: { id: string; gameId: string }) {
   const right = `LIBRARY:/${disk.gameId}/${disk.id}`;
-  await page.goto(`/files?${new URLSearchParams({ left: 'LIBRARY:', right, active: 'right' })}`);
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right, active: 'right' })}`);
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-testid="files-manager"]');
     return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));

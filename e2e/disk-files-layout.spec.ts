@@ -41,7 +41,7 @@ async function freshDisk(page: Page, files: { name: string; dir?: boolean; conte
 /** The disk open in Files, on the right, hydrated so clicks and keys reach React. */
 async function openInFiles(page: Page, disk: { id: string; gameId: string }) {
   const right = `LIBRARY:/${disk.gameId}/${disk.id}`;
-  await page.goto(`/files?${new URLSearchParams({ left: 'LIBRARY:', right, active: 'right' })}`);
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right, active: 'right' })}`);
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-testid="files-manager"]');
     return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));

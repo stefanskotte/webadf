@@ -7,6 +7,8 @@ import type { Selection } from '@/lib/files/selection';
 import { refusalWords } from '@/lib/files/words';
 import { entryGlyph } from '@/lib/disk-files-look';
 import { ProtectionCells } from '@/components/disks/protection-cells';
+import { PANE_DEVICES } from '@/lib/files/path';
+import { addToLibraryReason, holdsFiles } from '@/lib/files/pane-rules';
 
 /**
  * One side of the Files manager. Presentational: the manager (files-manager.tsx) owns fetching, sort and selection
@@ -22,12 +24,14 @@ export type PaneProps = {
   onSetSort(sort: FilesSort): void;
   onRowClick(index: number, mods: { shift: boolean; toggle: boolean }): void; onRowOpen(index: number): void;
   onDragStartRows(indexes: number[], e: React.DragEvent): void; onDropRows(e: React.DragEvent): void;
+  /** A disk image's own Add to library on its STASH: row (R8): that one row, whatever is picked. */
+  onAddToLibrary(index: number): void;
   strip?: ReactNode;   // the disk strip of the disk the pane is in (also one whose image could not be read)
   errorAction?: ReactNode;   // under the error, e.g. a way back to LIBRARY: when the place is gone
 };
 
-/** Increment 1 has one device (R1); STASH: and NET: join later. */
-const DEVICES = ['LIBRARY:'] as const;
+/** The device buttons (increment 2, R1): STASH: and LIBRARY:; NET: joins in increment 3. */
+const DEVICES = PANE_DEVICES.map((d) => `${d}:`);
 
 /** Below lg only Name is a column: the size and date go on a second line under the name (no sideways scroll). */
 const COLUMNS: { key: FilesSortKey; label: string; right?: boolean }[] = [
@@ -46,13 +50,16 @@ export function paneSize(bytes: number): string {
 function glyphOf(e: FsEntry): { label: string; bg: string; fg: string } {
   if (e.kind === 'title') return { label: 'TTL', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
   if (e.kind === 'disk') return { label: 'DSK', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
-  // An archive is a file to the glyph (its name picks it); the rest of an archive row's look is Task 7's.
+  // An archive is a file to the glyph (its name picks it: LHA, ZIP) and to the row's look (ruling 7); its Open says more.
   return entryGlyph({ kind: e.kind === 'archive' ? 'file' : e.kind, name: e.name });
 }
 
+/** A file, or an archive (a file that also opens as a folder): the rows that have a size. */
+const sized = (e: FsEntry) => (e.kind === 'file' || e.kind === 'archive') && e.size !== null;
+
 /** Below lg, the line under a row's name: what the Size and Date columns say at lg ("6 B · 2019-08-14"). */
 export function subLine(e: FsEntry): string {
-  return [e.kind === 'file' && e.size !== null ? paneSize(e.size) : null, e.date ? e.date.slice(0, 10) : null]
+  return [sized(e) ? paneSize(e.size!) : null, e.date ? e.date.slice(0, 10) : null]
     .filter((x): x is string => x !== null).join(' · ');
 }
 
@@ -74,7 +81,13 @@ export function Pane(p: PaneProps) {
 
   const picked = [...selection.picked].filter((i) => i < rows.length).sort((a, b) => a - b);
   const pickedBytes = picked.reduce((n, i) => n + (rows[i].size ?? 0), 0);
-  const foot = picked.length > 0 ? `${picked.length} of ${rows.length} selected · ${paneSize(pickedBytes)}` : listing?.meta ?? '';
+  // A writable STASH: folder takes files from the computer: said where the eye ends up, with nothing picked.
+  const dropHere = listing && !listing.disk && holdsFiles(listing) && listing.writable;
+  const foot = picked.length > 0 ? `${picked.length} of ${rows.length} selected · ${paneSize(pickedBytes)}`
+    : listing ? (dropHere ? `${listing.meta} · Drop files here` : listing.meta) : '';
+  // A STASH: folder's disk images can each go into the library from their row (R8); not inside an archive.
+  const addable = (e: FsEntry) => !!listing && !e.marks.includes('in the library') && addToLibraryReason(listing, [e]) === null;
+  const rowAct = 'shrink-0 rounded-[4px] text-[11.5px] underline underline-offset-2 max-lg:min-h-11 max-lg:px-1 focus-visible:outline-2 focus-visible:outline-(--ring)';
 
   const cell = 'border-b px-2.5 py-[7px] whitespace-nowrap';
   const cellStyle = { borderColor: 'var(--hairline)' } as const;
@@ -83,8 +96,8 @@ export function Pane(p: PaneProps) {
     <section data-testid={`pane-${side}`} data-active={p.active ? 'true' : 'false'}
              aria-label={side === 'left' ? 'Left pane' : 'Right pane'}
              onMouseDown={p.onActivate} onFocus={p.onActivate}
-             // Only a writable folder inside a disk takes a drop; anywhere else the browser shows no-drop.
-             onDragOver={(e) => { if (listing?.disk && listing.writable) e.preventDefault(); }}
+             // Only a writable folder inside a disk or in STASH: takes a drop; anywhere else the browser shows no-drop.
+             onDragOver={(e) => { if (holdsFiles(listing) && listing!.writable) e.preventDefault(); }}
              onDrop={(e) => { e.preventDefault(); p.onDropRows(e); }}
              className="flex min-w-0 flex-col max-lg:rounded-t-[20px]" style={{ background: 'var(--surface)' }}>
       <div className="border-b px-3.5 pt-3 pb-2.5 max-lg:rounded-t-[20px]"
@@ -201,7 +214,7 @@ export function Pane(p: PaneProps) {
                       <span className="flex min-w-0 items-center gap-[7px]">
                         <span aria-hidden className="shrink-0 rounded-[4px] px-[5px] py-px font-mono text-[10px] font-semibold"
                               style={{ background: glyph.bg, color: glyph.fg }}>{glyph.label}</span>
-                        <span className={`truncate ${e.kind === 'file' ? '' : 'font-semibold'}`} style={{ color: 'var(--ink)' }}>{e.name}</span>
+                        <span className={`truncate ${e.kind === 'file' || e.kind === 'archive' ? '' : 'font-semibold'}`} style={{ color: 'var(--ink)' }}>{e.name}</span>
                         {/* "New in vN": the Browse page's mark (file-tree.tsx), from the disk's History. */}
                         {e.addedIn !== undefined && (
                           <span data-testid={`pane-new-${e.name}`} title={`Added in version ${e.addedIn} — see History`}
@@ -212,6 +225,18 @@ export function Pane(p: PaneProps) {
                           <span key={m} className="shrink-0 rounded-full border px-[7px] text-[11px]"
                                 style={{ background: 'var(--surface-2)', borderColor: 'var(--line)', color: 'var(--muted-2)' }}>{m}</span>
                         ))}
+                        {/* An archive opens as a read-only folder (ruling 7): a double-click or Enter, and on a phone,
+                            where a tap picks it, this. Its own click is never the row's. */}
+                        {e.kind === 'archive' && (
+                          <button type="button" data-testid={`pane-open-${e.name}`} aria-label={`Open ${e.name}`}
+                                  onClick={(ev) => { ev.stopPropagation(); p.onRowOpen(i); }} onDoubleClick={(ev) => ev.stopPropagation()}
+                                  className={rowAct} style={{ color: 'var(--accent-blue)' }}>Open</button>
+                        )}
+                        {addable(e) && (
+                          <button type="button" data-testid={`pane-addlib-${e.name}`} aria-label={`Add ${e.name} to the library`}
+                                  onClick={(ev) => { ev.stopPropagation(); p.onAddToLibrary(i); }} onDoubleClick={(ev) => ev.stopPropagation()}
+                                  className={rowAct} style={{ color: 'var(--accent-blue)' }}>Add to library</button>
+                        )}
                       </span>
                       {subLine(e) && (
                         <span data-testid="pane-row-sub" className="block truncate font-mono text-[11px] lg:hidden" style={{ color: 'var(--muted)' }}>
@@ -220,7 +245,7 @@ export function Pane(p: PaneProps) {
                       )}
                     </td>
                     <td className={`${cell} text-right font-mono text-[12px] max-lg:hidden`} style={{ ...cellStyle, color: 'var(--muted)' }}>
-                      {e.kind === 'file' && e.size !== null ? paneSize(e.size) : '—'}
+                      {sized(e) ? paneSize(e.size!) : '—'}
                     </td>
                     <td className={`${cell} font-mono text-[11px] font-semibold max-lg:hidden`} style={cellStyle}>
                       {e.protection ? <span className="flex gap-0.5"><ProtectionCells protection={e.protection} /></span>

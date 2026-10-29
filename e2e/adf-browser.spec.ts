@@ -56,7 +56,7 @@ const enc = (s: string) => new TextEncoder().encode(s);
 const diskPath = (row: { gameId: string; id: string }) => `LIBRARY:/${row.gameId}/${row.id}`;
 
 async function openInFiles(page: Page, row: { gameId: string; id: string }) {
-  const res = await page.goto(`/files?${new URLSearchParams({ left: 'LIBRARY:', right: diskPath(row), active: 'right' })}`);
+  const res = await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: diskPath(row), active: 'right' })}`);
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-testid="files-manager"]');
     return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));

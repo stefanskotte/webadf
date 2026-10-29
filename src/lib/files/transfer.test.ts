@@ -20,6 +20,9 @@ describe('downloadHref', () => {
   it('one file by path', () => {
     expect(downloadHref([e('ReadMe', 'file')], 'Disk 1')).toBe('/api/files/download?path=LIBRARY%3A%2Fg%2Fd%2FReadMe');
   });
+  it('one archive is one file too, never zipped (increment 2)', () => {
+    expect(downloadHref([e('t.zip', 'archive')], 'STASH:')).toBe('/api/files/download?path=LIBRARY%3A%2Fg%2Fd%2Ft.zip');
+  });
   it('several, or a folder, as a zip named after the folder', () => {
     const q = new URLSearchParams(downloadHref([e('A', 'file'), e('S', 'dir')], 'Disk 1').split('?')[1]);
     expect(q.getAll('paths')).toEqual(['LIBRARY:/g/d/A', 'LIBRARY:/g/d/S']);

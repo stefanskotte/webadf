@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -11,8 +12,10 @@ import { nextSort, sortFsEntries, type FilesSort, type FilesSortKey } from '@/li
 import { EMPTY_SELECTION, moveCursor, selectClick, togglePick, type Selection } from '@/lib/files/selection';
 import { commandFor, type FilesCommand } from '@/lib/files/keys';
 import { refusalWords } from '@/lib/files/words';
-import { formatPath, parsePath } from '@/lib/files/path';
+import { DEFAULT_LEFT, DEFAULT_RIGHT, formatPath, PANE_DEVICES, parsePath } from '@/lib/files/path';
 import type { OpItem, OpRequest } from '@/lib/files/ops';
+import type { Added } from '@/lib/files/driver';
+import { addToLibraryReason, holdsFiles, offersUndo, placeOf } from '@/lib/files/pane-rules';
 import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
@@ -42,10 +45,13 @@ import {
  *
  * Selections are indexes into the SORTED rows (pane.tsx), so every index here goes through `rowsOf`.
  *
+ * Each pane shows STASH: or LIBRARY: (increment 2, R1). STASH: keeps no versions, so nothing that changes it offers
+ * Undo, and its delete says it cannot be undone (ruling 8).
+ *
  * Below lg (the C7 phone convention) only the ACTIVE pane is drawn, under a Left | Right switch; the button column is
  * a bar at the bottom with Copy to… · Move to… · Delete · More, and Copy to… / Move to… pick the place in a dialog
  * (copy-to-picker.tsx) since the other pane is out of sight. A tap on a folder row opens it and a tap on a file row
- * picks it. Which layout applies is read from the width at the moment of the tap, never at render, so the server's
+ * picks it (an archive too: its Open opens it). Which layout applies is read from the width at the moment of the tap, never at render, so the server's
  * HTML and the first client render are the same at every width.
  */
 
@@ -66,7 +72,7 @@ export type FilesManagerProps = {
 
 type Dialog =
   | {
-    kind: 'clash'; op: 'copy' | 'move'; sources: string[]; dest: string; where: string; clashes: Clash[]; at: number;
+    kind: 'clash'; op: 'copy' | 'move'; sources: string[]; dest: string; where: string; undo: boolean; clashes: Clash[]; at: number;
     choices: Record<string, ClashChoice>;
     /** Requests still to send once these clashes are answered, and the outcomes (and versions) of those already sent. */
     rest: TransferGroup[]; done: OpItem[]; versions: OpVersion[];
@@ -86,10 +92,10 @@ type Dialog =
 const GONE = 'This place no longer exists.';
 const NO_MARKS: ReadonlyMap<string, number> = new Map();
 const DRAG_TYPE = 'application/x-webfloppy-files';
-const DEFAULT_PATH = 'LIBRARY:';
 const KNOWN_CODES: ReadonlySet<string> = new Set<RefusalCode>([
   'not_found', 'read_only', 'mounted', 'disk_full', 'name_exists', 'bad_name', 'comment_too_long', 'cycle',
   'no_filesystem', 'hfe_read_only', 'conflict', 'unsupported', 'blob_unavailable', 'failed',
+  'stash_full', 'too_large', 'archive_unreadable', 'not_a_disk_image',
 ]);
 /** Enter and Space belong to a focused control; the manager must not open or pick a row as well. */
 const CONTROL = 'button, a, [role="button"], [role="checkbox"]';
@@ -100,8 +106,14 @@ const isPhone = () => window.matchMedia('(max-width: 63.98rem)').matches;
 const deviceOf = (path: string): DeviceKey => (path.startsWith('STASH:') ? 'stash' : path.startsWith('NET:') ? 'net' : 'library');
 const baseName = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 const items = (n: number) => (n === 1 ? '1 item' : `${n} items`);
-/** The disk a LIBRARY: path is in (LIBRARY:/<title>/<disk>/...), or null above the disks. */
-const diskIdOf = (path: string | undefined): string | null => (path ? parsePath(path)?.segments[1] ?? null : null);
+const disks = (n: number) => (n === 1 ? '1 disk' : `${n} disks`);
+/** The disk a LIBRARY: path is in (LIBRARY:/<title>/<disk>/...), or null above the disks and anywhere else. */
+function diskIdOf(path: string | undefined): string | null {
+  const p = path ? parsePath(path) : null;
+  return p?.device === 'LIBRARY' ? p.segments[1] ?? null : null;
+}
+/** The root of the device a path is on ("STASH:"), for a pane whose place is gone. */
+const deviceRoot = (path: string) => `${parsePath(path)?.device ?? 'LIBRARY'}:`;
 const byDisk = (list: StripData[] | undefined) => Object.fromEntries((list ?? []).map((d) => [d.diskId, d]));
 
 /** A strip as JSON brings it: the History's dates are strings until revived. */
@@ -123,10 +135,10 @@ function heldChanged(a: Listing, b: Listing): boolean {
   return a.writable !== b.writable || a.readOnlyReason !== b.readOnlyReason || a.disk?.holder !== b.disk?.holder;
 }
 
-/** A query value as a pane path, as the page reads it (page.tsx): canonical, or the default. */
-function pathParam(raw: string | null): string {
+/** A query value as a pane path, as the page reads it (page.tsx): canonical on a pane's device, or `fallback`. */
+function pathParam(raw: string | null, fallback: string): string {
   const p = raw === null ? null : parsePath(raw);
-  return p && p.device === 'LIBRARY' ? formatPath(p) : DEFAULT_PATH;
+  return p && PANE_DEVICES.includes(p.device) ? formatPath(p) : fallback;
 }
 
 function urlOf(left: string, right: string, active: Side): string {
@@ -139,13 +151,14 @@ function wordsFor(code: unknown, detail: unknown): string {
   return typeof code === 'string' && KNOWN_CODES.has(code) ? refusalWords(code as RefusalCode, d) : refusalWords('failed');
 }
 
-async function fetchListing(path: string): Promise<{ listing: Listing } | { gone: true } | { error: string }> {
+/** `code`: the refusal's own code, for a caller that answers one differently (an archive that does not open). */
+async function fetchListing(path: string): Promise<{ listing: Listing } | { gone: true } | { error: string; code?: unknown }> {
   try {
     const res = await fetch(`/api/files/list?path=${encodeURIComponent(path)}`, { cache: 'no-store' });
     if (res.ok) return { listing: (await res.json()) as Listing };
     if (res.status === 404 || res.status === 400) return { gone: true };
-    const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
-    return { error: wordsFor(body?.error, undefined) };
+    const body = (await res.json().catch(() => null)) as { error?: unknown; detail?: unknown } | null;
+    return { error: wordsFor(body?.error, body?.detail), code: body?.error };
   } catch {
     return { error: refusalWords('failed') };
   }
@@ -211,6 +224,7 @@ function PhoneButton({ id, label, reason, busy, onClick, primary = false }: {
 }
 
 export function FilesManager({ initial, prefs }: FilesManagerProps) {
+  const router = useRouter();
   const [panes, setPanes] = useState<Record<Side, PaneState>>(() => ({
     left: firstState(initial.leftPath, initial.left, initial.leftError),
     right: firstState(initial.rightPath, initial.right, initial.rightError),
@@ -260,18 +274,28 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   // ---- loading and the URL ------------------------------------------------------------------------------------
 
-  /** List `path` into a side. A new place keeps the old rows on screen (busy) until it lands; then nothing is picked. */
-  async function load(side: Side, path: string) {
+  /**
+   * List `path` into a side. A new place keeps the old rows on screen (busy) until it lands; then nothing is picked.
+   * A refusal with the code `stayOn` leaves the pane where it was and says so in a toast (an archive that does not
+   * open: the person is still in its folder, and can download it). Resolves true when the place was listed.
+   */
+  async function load(side: Side, path: string, stayOn?: RefusalCode): Promise<boolean> {
     const n = ++seq.current[side];
-    setPanes((ps) => ({ ...ps, [side]: { ...ps[side], path, loading: true } }));
+    setPanes((ps) => ({ ...ps, [side]: { ...ps[side], path: stayOn ? ps[side].path : path, loading: true } }));
     const r = await fetchListing(path);
-    if (n !== seq.current[side]) return;
+    if (n !== seq.current[side]) return false;
+    if (stayOn && 'code' in r && r.code === stayOn) {
+      toast.error(r.error);
+      setPanes((ps) => ({ ...ps, [side]: { ...ps[side], loading: false } }));
+      return false;
+    }
     setPanes((ps) => ({
       ...ps,
       [side]: 'listing' in r
         ? { path, listing: r.listing, loading: false, error: null, gone: false, selection: EMPTY_SELECTION }
         : { path, listing: null, loading: false, error: 'gone' in r ? GONE : r.error, gone: 'gone' in r, selection: EMPTY_SELECTION },
     }));
+    return 'listing' in r;
   }
 
   /**
@@ -292,6 +316,19 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     window.history.pushState(null, '', urlOf(left, right, side));
   }
 
+  /**
+   * An archive opens as a read-only folder (ruling 7). One that does not open (422 archive_unreadable) is a toast and
+   * the pane stays; the URL moves only once it has opened.
+   */
+  function openArchive(side: Side, path: string) {
+    if (active !== side) setActive(side);
+    void load(side, path, 'archive_unreadable').then((ok) => {
+      if (!ok) return;
+      const { panes: cur } = latest.current;
+      window.history.pushState(null, '', urlOf(side === 'left' ? path : cur.left.path, side === 'right' ? path : cur.right.path, side));
+    });
+  }
+
   /** Idempotent: the panes call this on every mousedown and focus inside them. */
   function activate(side: Side) {
     if (active === side) return;
@@ -302,7 +339,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   useEffect(() => {
     function onPop() {
       const q = new URLSearchParams(window.location.search);
-      const want = { left: pathParam(q.get('left')), right: pathParam(q.get('right')) };
+      const want = { left: pathParam(q.get('left'), DEFAULT_LEFT), right: pathParam(q.get('right'), DEFAULT_RIGHT) };
       const { panes: cur } = latest.current;
       for (const s of ['left', 'right'] as const) if (cur[s].path !== want[s]) void load(s, want[s]);
       setActive(q.get('active') === 'right' ? 'right' : 'left');
@@ -400,12 +437,15 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     saver.save({ files: { sort } }).catch(() => toast.error("Couldn't remember this sort order for next time."));
   }
 
-  /** A row tapped on a phone: a folder (title, disk) opens, a file is picked or let go. Desktop clicks select. */
+  /**
+   * A row tapped on a phone: a folder (title, disk) opens, a file or an archive is picked or let go (an archive opens
+   * by its Open, or a double-tap). Desktop clicks select.
+   */
   function rowClick(side: Side, index: number, mods: { shift: boolean; toggle: boolean }) {
     activate(side);
     const e = rowsOf(side)[index];
     if (e && !mods.shift && !mods.toggle && isPhone()) {
-      if (e.kind === 'file') setSelection(side, (s) => togglePick({ ...s, cursor: index }, index));
+      if (e.kind === 'file' || e.kind === 'archive') setSelection(side, (s) => togglePick({ ...s, cursor: index }, index));
       else navigate(side, e.path);
       return;
     }
@@ -416,6 +456,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     const e = rowsOf(side)[index];
     if (!e) return;
     if (e.kind === 'file') setDialog({ kind: 'info', side, entry: e });
+    else if (e.kind === 'archive') openArchive(side, e.path);
     else navigate(side, e.path);
   }
 
@@ -427,17 +468,18 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   const folderName = src?.crumbs[src.crumbs.length - 1]?.label ?? 'Files';
   const readOnly = (l: Listing) => refusalWords('read_only', l.readOnlyReason ?? undefined);
 
+  // Only a place that holds files (inside a disk, or STASH:) has rows to act on and room to take them (ruling 8).
   function sourceReason(writable: boolean): string | null {
     if (picked.length === 0) return 'Select something first';
-    if (!src?.disk) return 'Only files and folders on a disk can be changed here — open a disk first';
-    if (writable && !src.writable) return readOnly(src);
+    if (!holdsFiles(src)) return 'Only files and folders on a disk or in STASH: can be changed here — open one first';
+    if (writable && !src!.writable) return readOnly(src!);
     return null;
   }
   function transferReason(op: 'copy' | 'move'): string | null {
     const r = sourceReason(op === 'move');
     if (r) return r;
-    if (!dst?.disk) return 'Open a disk on the other side';
-    if (!dst.writable) return readOnly(dst);
+    if (!holdsFiles(dst)) return 'Open a disk or STASH: on the other side';
+    if (!dst!.writable) return readOnly(dst!);
     return null;
   }
   const one = (r: string | null, what: string) => r ?? (picked.length !== 1 ? `Select one item to ${what}` : null);
@@ -446,7 +488,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     move: transferReason('move'),
     delete: sourceReason(true),
     rename: one(sourceReason(true), 'rename it'),
-    makedir: !src?.disk ? 'Open a disk to make a folder in it' : !src.writable ? readOnly(src) : null,
+    makedir: !holdsFiles(src) ? 'Open a disk or STASH: to make a folder in it' : !src!.writable ? readOnly(src!) : null,
     protect: sourceReason(true),
     info: one(sourceReason(false), 'see its details'),
     // One file by path; several, or a folder, as a .zip (spec §3.3).
@@ -455,11 +497,15 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     // The phone's Copy to… / Move to…: the place is picked afterwards, so only the source is checked here.
     copyTo: sourceReason(false),
     moveTo: sourceReason(true),
+    // Disk images in STASH: into the library (R8).
+    addlib: addToLibraryReason(src, picked),
   };
+  /** Add to library is offered only while the active pane is in STASH: (R8). */
+  const inStash = !!src && deviceOf(src.path) === 'stash';
 
   // ---- running an operation -----------------------------------------------------------------------------------
 
-  type Outcome = { kind: 'done'; items: OpItem[]; versions: OpVersion[] } | { kind: 'clashes'; clashes: Clash[] } | { kind: 'refused' };
+  type Outcome = { kind: 'done'; items: OpItem[]; versions: OpVersion[]; added: Added[] } | { kind: 'clashes'; clashes: Clash[] } | { kind: 'refused' };
 
   async function post(req: OpRequest, label: string): Promise<Outcome> {
     setBusy(label);
@@ -468,7 +514,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req),
       });
       const body = (await res.json().catch(() => null)) as {
-        items?: OpItem[]; versions?: OpVersion[]; error?: unknown; detail?: unknown; clashes?: Clash[];
+        items?: OpItem[]; versions?: OpVersion[]; added?: Added[]; error?: unknown; detail?: unknown; clashes?: Clash[];
       } | null;
       if (res.status === 409 && body?.error === 'clashes' && body.clashes) return { kind: 'clashes', clashes: body.clashes };
       if (!res.ok || !body?.items) {
@@ -476,7 +522,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
         if (reloadsBoth(body?.error)) reloadBoth();
         return { kind: 'refused' };
       }
-      return { kind: 'done', items: body.items, versions: body.versions ?? [] };
+      return { kind: 'done', items: body.items, versions: body.versions ?? [], added: body.added ?? [] };
     } catch {
       toast.error(refusalWords('failed'));
       return { kind: 'refused' };
@@ -499,12 +545,17 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     return v ? { action: { label: 'Undo', onClick: () => void undo(v) } } : {};
   }
 
+  type ToastAction = { label: string; onClick(): void };
+
   /**
    * The toast for a finished operation, and fresh listings on both sides (which also clears both selections). With a
    * `target` disk the toast says which version the change was saved as (the op's own, else the disk's fresh head), and
-   * an op that saved one version of one disk offers Undo.
+   * an op that saved one version of one disk offers Undo -- unless `undo` is false (it changed STASH: too, which keeps
+   * no versions) or the toast carries its own `action` instead.
    */
-  async function report(done: OpItem[], success: (n: number) => string, target: string | null, versions: OpVersion[]) {
+  async function report(done: OpItem[], success: (n: number) => string, target: string | null, versions: OpVersion[],
+    opts: { undo?: boolean; action?: ToastAction } = {}) {
+    const offer = (): { action?: ToastAction } => (opts.action ? { action: opts.action } : opts.undo === false ? {} : undoAction(versions));
     const failed = done.filter((i): i is Extract<OpItem, { ok: false }> => !i.ok);
     const ok = done.length - failed.length;
     reloadBoth();
@@ -515,10 +566,10 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     const head = target && ok > 0 ? await refreshStrip(target) : null;
     const seq = versions.filter((v) => v.diskId === target).at(-1)?.seq ?? head;
     const said = (n: number) => (seq === null ? success(n) : `${success(n).replace(/\.$/, '')} — saved as version ${seq}.`);
-    if (failed.length === 0) toast.success(said(done.length), undoAction(versions));
+    if (failed.length === 0) toast.success(said(done.length), offer());
     else {
       toast.error(ok > 0 ? `${said(ok)} ${items(failed.length)} could not be done.` : `Nothing was done.`, {
-        ...(ok > 0 ? undoAction(versions) : {}),
+        ...(ok > 0 ? offer() : {}),
         description: (
           <ul data-testid="files-failures">
             {failed.map((f) => <li key={f.source}>{baseName(f.source)}: {refusalWords(f.refusal.code, f.refusal.detail)}</li>)}
@@ -531,11 +582,12 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   const verbs = { copy: ['Copying', 'Copied'], move: ['Moving', 'Moved'] } as const;
 
   type ClashDialogState = Extract<Dialog, { kind: 'clash' }>;
-  type Run = { op: 'copy' | 'move'; dest: string; where: string };
+  /** `undo`: whether the run may offer Undo (offersUndo: not when it changes STASH:). */
+  type Run = { op: 'copy' | 'move'; dest: string; where: string; undo: boolean };
 
   function transfer(op: 'copy' | 'move', sources: string[], dest: string, where: string) {
     if (busy) return;
-    void runGroups({ op, dest, where }, [{ onClash: 'ask', sources }], [], []);
+    void runGroups({ op, dest, where, undo: offersUndo(op, sources, dest) }, [{ onClash: 'ask', sources }], [], []);
   }
 
   /**
@@ -559,7 +611,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   /** Several requests saved several versions: Undo of the last alone would undo only part of the run, so none. */
   function finishRun(run: Run, done: OpItem[], versions: OpVersion[]) {
-    if (done.length) void report(done, (n) => `${verbs[run.op][1]} ${items(n)} to ${run.where}.`, diskIdOf(run.dest), versions);
+    if (done.length) void report(done, (n) => `${verbs[run.op][1]} ${items(n)} to ${run.where}.`, diskIdOf(run.dest), versions, { undo: run.undo });
     else reloadBoth();
   }
 
@@ -583,7 +635,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     if (d.done.length) finishRun(d, d.done, d.versions);
   }
 
-  const where = (l: Listing | null) => (l?.disk ? l.disk.label : 'the other side');
+  const where = placeOf;
 
   /**
    * Run `go` once every disk it will change has had its TOSEC-identity confirm (the Browse page's D-W-3): asked before
@@ -605,7 +657,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     next();
   }
 
-  function act(cmd: 'copy' | 'move' | 'delete' | 'rename' | 'makedir' | 'protect' | 'info' | 'download' | 'copyTo' | 'moveTo') {
+  function act(cmd: 'copy' | 'move' | 'delete' | 'rename' | 'makedir' | 'protect' | 'info' | 'download' | 'copyTo' | 'moveTo' | 'addlib') {
     if (busy) return;
     const reason = reasons[cmd];
     if (reason) { toast.error(reason); return; }
@@ -622,7 +674,30 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
       case 'copyTo': setDialog({ kind: 'pick', op: 'copy', sources, start: panes[otherSide(side)].path }); return;
       case 'moveTo': setDialog({ kind: 'pick', op: 'move', sources, start: panes[otherSide(side)].path }); return;
       case 'download': void download(downloadHref(picked, folderName)); return;
+      case 'addlib': void addToLibrary(picked); return;
     }
+  }
+
+  /**
+   * Disk images in STASH: into the library (R8): one op, then the toast with Open title (the first disk added); both
+   * panes reload, so the rows gain "in the library". Failures are listed as for any op.
+   */
+  async function addToLibrary(entries: FsEntry[]) {
+    const r = await post({ op: 'add-to-library', sources: entries.map((e) => e.path) }, `Adding ${disks(entries.length)} to the library…`);
+    if (r.kind !== 'done') return;
+    const first = r.added[0];
+    void report(r.items, (n) => `Added ${disks(n)} to the library.`, null, [],
+      first ? { action: { label: 'Open title', onClick: () => router.push(`/games/${first.gameId}`) } } : { undo: false });
+  }
+
+  /** A disk image row's own Add to library (pane.tsx): that row alone, whatever else is picked. */
+  function addRowToLibrary(side: Side, index: number) {
+    activate(side);
+    const e = rowsOf(side)[index];
+    if (!e || busy) return;
+    const reason = addToLibraryReason(panes[side].listing, [e]);
+    if (reason) { toast.error(reason); return; }
+    void addToLibrary([e]);
   }
 
   /**
@@ -658,7 +733,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
       void load(side, l.path);
       window.history.pushState(null, '', urlOf(side === 'left' ? l.path : panes.left.path, side === 'right' ? l.path : panes.right.path, active));
     }
-    guarded([l.disk, d.op === 'move' ? src?.disk : null], () => transfer(d.op, d.sources, l.path, l.disk!.label));
+    guarded([l.disk, d.op === 'move' ? src?.disk : null], () => transfer(d.op, d.sources, l.path, where(l)));
   }
 
   /** A dialog's operation: the dialog stays open (busy) while it runs and closes once it is done. */
@@ -719,7 +794,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     const l = panes[side].listing;
     const rows = rowsOf(side);
     const paths = indexes.map((i) => rows[i]?.path).filter((p): p is string => !!p);
-    if (!l?.disk || paths.length === 0) { e.preventDefault(); return; }   // titles and disks do not move
+    if (!holdsFiles(l) || paths.length === 0) { e.preventDefault(); return; }   // titles and disks do not move
     activate(side);
     e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ from: side, paths }));
     e.dataTransfer.effectAllowed = 'copyMove';
@@ -776,7 +851,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     const blocked = dropBlocked({ busy: busy !== null, dialogOpen: dialog !== null });
     if (blocked) { toast.error(blocked); return; }
     const l = panes[side].listing;
-    if (!l?.disk) { toast.error('Open a disk to drop files into it'); return; }
+    if (!l || !holdsFiles(l)) { toast.error('Open a disk or STASH: to drop files into it'); return; }
     if (!l.writable) { toast.error(readOnly(l)); return; }
     const dest = dropFolder(l, e);
     if (data.paths.includes(dest)) return;                       // a folder dropped on itself
@@ -785,7 +860,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     const from = panes[data.from]?.listing;
     if (op === 'move' && from && !from.writable) { toast.error(readOnly(from)); return; }
     activate(side);
-    const label = l.disk.label;
+    const label = where(l);
     guarded([l.disk, op === 'move' ? from?.disk : null], () => transfer(op, data.paths, dest, label));
   }
 
@@ -794,6 +869,8 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   const arrow = active === 'left';
   const dialogBusy = busy !== null;
   const dialogListing = dialog && 'side' in dialog ? panes[dialog.side].listing : null;
+  // What a delete names: the disk, or STASH: (whose delete cannot be undone: ruling 8).
+  const deleteWhere = dialogListing && deviceOf(dialogListing.path) === 'stash' ? 'STASH:' as const : dialogListing?.disk ?? null;
 
   function pane(side: Side) {
     const p = panes[side];
@@ -805,19 +882,21 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
       // Below lg only the active side is drawn, as tall as its rows: the page scrolls, not a box inside it.
       <div className={`grid min-h-0 min-w-0 lg:grid-rows-[minmax(0,1fr)] ${active === side ? '' : 'max-lg:hidden'}`}>
         <Pane side={side} active={active === side} listing={side === 'left' ? shownLeft : shownRight} loading={p.loading} error={p.error}
-              sort={sortOf(p.listing, p.path)} selection={p.selection} showComment={false}
+              // STASH: files carry comments more often than not (ruling 9): its panes show the column.
+              sort={sortOf(p.listing, p.path)} selection={p.selection} showComment={deviceOf(p.listing?.path ?? p.path) === 'stash'}
               onActivate={() => activate(side)} onNavigate={(path) => navigate(side, path)}
               onSort={(key) => changeSort(side, key)} onSetSort={(next) => applySort(side, next)}
               onRowClick={(i, mods) => rowClick(side, i, mods)}
               onRowOpen={(i) => openRow(side, i)}
               onDragStartRows={(ix, e) => dragStart(side, ix, e)} onDropRows={(e) => drop(side, e)}
+              onAddToLibrary={(i) => addRowToLibrary(side, i)}
               strip={disk && strip ? (
                 <DiskStrip key={`${disk.diskId}:${disk.volumeName}`} side={side} disk={disk} data={strip}
                            onChanged={() => stripChanged(disk.diskId)} />
               ) : undefined}
               errorAction={p.gone ? (
-                <Button variant="outline" size="sm" onClick={() => navigate(side, DEFAULT_PATH)} data-testid={`pane-${side}-home`}>
-                  Go to LIBRARY:
+                <Button variant="outline" size="sm" onClick={() => navigate(side, deviceRoot(p.path))} data-testid={`pane-${side}-home`}>
+                  Go to {deviceRoot(p.path)}
                 </Button>
               ) : undefined} />
       </div>
@@ -863,6 +942,9 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
           <ActionButton busy={busy !== null} id="makedir" label="Makedir" reason={reasons.makedir} onClick={() => act('makedir')} />
           <ActionButton busy={busy !== null} id="protect" label="Protect" reason={reasons.protect} onClick={() => act('protect')} />
           <ActionButton busy={busy !== null} id="info" label="Info" reason={reasons.info} onClick={() => act('info')} />
+          {inStash && (
+            <ActionButton busy={busy !== null} id="addlib" label="Add to library" reason={reasons.addlib} onClick={() => act('addlib')} />
+          )}
           {sep}
           <ActionButton busy={busy !== null} id="download" label="Download" reason={reasons.download} onClick={() => act('download')} />
           <ActionButton busy={busy !== null} id="swap" label="Swap ⇄" reason={null} onClick={swap} />
@@ -880,7 +962,8 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
             <DropdownMenuContent side="top" align="end" data-testid="files-more-menu"
                                  className="w-[min(240px,calc(100vw-32px))] rounded-2xl"
                                  style={{ background: 'var(--surface)', color: 'var(--ink)', border: '1px solid var(--line)', boxShadow: 'var(--shadow-card)' }}>
-              {([['rename', 'Rename…'], ['makedir', 'Makedir…'], ['protect', 'Protect…'], ['info', 'Info'], ['download', 'Download']] as const).map(([id, label]) => (
+              {([['rename', 'Rename…'], ['makedir', 'Makedir…'], ['protect', 'Protect…'], ['info', 'Info'],
+                ...(inStash ? [['addlib', 'Add to library']] as const : []), ['download', 'Download']] as const).map(([id, label]) => (
                 // Not disabled: a tap on one that cannot act now says why.
                 <DropdownMenuItem key={id} data-testid={`files-more-${id}`} aria-disabled={reasons[id] !== null || undefined}
                                   onClick={() => act(id)} className={cn(MENU_ITEM, 'h-11 sm:h-11 font-medium aria-disabled:opacity-50')}>
@@ -901,11 +984,11 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
                      busy={dialogBusy} onChoose={chooseClash} onCancel={cancelClash} />
       )}
       {dialog?.kind === 'delete' && (
-        <ConfirmDeleteDialog entries={dialog.entries} where={dialogListing?.disk ?? null} busy={dialogBusy}
+        <ConfirmDeleteDialog entries={dialog.entries} where={deleteWhere} busy={dialogBusy}
                              onCancel={() => setDialog(null)}
                              onConfirm={() => void runFromDialog({ op: 'delete', sources: dialog.entries.map((e) => e.path) },
                                `Deleting ${items(dialog.entries.length)}…`,
-                               (n) => `Deleted ${items(n)} from ${placeName(dialogListing?.disk ?? null)}.`)} />
+                               (n) => `Deleted ${items(n)} from ${deleteWhere === 'STASH:' ? deleteWhere : placeName(deleteWhere)}.`)} />
       )}
       {(dialog?.kind === 'makedir' || dialog?.kind === 'rename') && (
         <NameDialog mode={dialog.kind} initial={dialog.kind === 'rename' ? dialog.entry.name : ''}
