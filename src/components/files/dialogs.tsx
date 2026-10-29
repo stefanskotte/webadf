@@ -22,6 +22,13 @@ export type { ClashChoice };
 
 export type Clash = { source: string; name: string; dest: string };
 
+/**
+ * Every Files dialog's `finalFocus`: Base UI moves no focus on close. The dialogs unmount as they close, and Base UI's
+ * own return then lands on a stale element; the manager (files-manager.tsx) puts focus back itself, on the opener or
+ * on the manager.
+ */
+export const managerReturnsFocus = () => false;
+
 const foot = 'flex w-full items-center justify-end gap-2.5';
 const body = 'flex flex-col gap-3 px-6 py-5 text-[14px]';
 const ink = { color: 'var(--ink)' } as const;
@@ -42,7 +49,7 @@ export function ClashDialog({ clash, remaining, busy, onChoose, onCancel }: {
   const [forAll, setForAll] = useState(false);
   const id = useId();
   return (
-    <Modal open onOpenChange={(o) => { if (!o) onCancel(); }} width={440} testId="files-clash-dialog"
+    <Modal open finalFocus={managerReturnsFocus} onOpenChange={(o) => { if (!o) onCancel(); }} width={440} testId="files-clash-dialog"
            closeTestId="files-clash-close" title="That name is taken" dismissible={!busy}
            subtitle={remaining > 1 ? `${remaining} items clash` : undefined}
            footer={(
@@ -75,7 +82,7 @@ export function ConfirmDeleteDialog({ entries, where, busy, onConfirm, onCancel 
 }) {
   const what = entries.length === 1 ? `“${entries[0].name}”` : `${entries.length} items`;
   return (
-    <Modal open onOpenChange={(o) => { if (!o) onCancel(); }} width={440} testId="files-delete-dialog"
+    <Modal open finalFocus={managerReturnsFocus} onOpenChange={(o) => { if (!o) onCancel(); }} width={440} testId="files-delete-dialog"
            closeTestId="files-delete-close" title={entries.length === 1 ? 'Delete this item?' : 'Delete these items?'}
            dismissible={!busy}
            footer={(
@@ -112,7 +119,7 @@ export function NameDialog({ mode, initial, taken, busy, onSave, onCancel }: {
   const message = problem ? refusalWords('bad_name', problem) : clashes ? refusalWords('name_exists') : null;
   const ready = !problem && !clashes && !unchanged && !busy;
   return (
-    <Modal open onOpenChange={(o) => { if (!o) onCancel(); }} width={440} testId="files-name-dialog"
+    <Modal open finalFocus={managerReturnsFocus} onOpenChange={(o) => { if (!o) onCancel(); }} width={440} testId="files-name-dialog"
            closeTestId="files-name-close" title={mode === 'makedir' ? 'New folder' : `Rename ${initial}`}
            dismissible={!busy}
            footer={(
@@ -164,7 +171,7 @@ export function ProtectDialog({ entries, busy, onSave, onCancel }: {
   const shown = PROTECTION_FLAGS.map((f, i) => (flags[i] === 'on' ? f.letter : '-')).join('');
   const flip = (i: number) => setFlags((fs) => fs.map((f, j) => (j === i ? (f === 'on' ? 'off' : 'on') : f)));
   return (
-    <Modal open onOpenChange={(o) => { if (!o) onCancel(); }} width={440} testId="files-protect-dialog"
+    <Modal open finalFocus={managerReturnsFocus} onOpenChange={(o) => { if (!o) onCancel(); }} width={440} testId="files-protect-dialog"
            closeTestId="files-protect-close" dismissible={!busy}
            title={entries.length === 1 ? `Protection of ${entries[0].name}` : `Protection of ${entries.length} items`}
            footer={(
@@ -215,7 +222,7 @@ export function InfoDialog({ entry, writable, busy, onSaveComment, onClose }: {
   const row = 'grid grid-cols-[96px_minmax(0,1fr)] gap-2 text-[13px]';
   const label = { color: 'var(--muted)' } as const;
   return (
-    <Modal open onOpenChange={(o) => { if (!o) onClose(); }} width={440} testId="files-info-dialog"
+    <Modal open finalFocus={managerReturnsFocus} onOpenChange={(o) => { if (!o) onClose(); }} width={440} testId="files-info-dialog"
            closeTestId="files-info-close" title={entry.name} dismissible={!busy}
            subtitle={entry.kind === 'dir' ? 'Folder' : 'File'}
            footer={(

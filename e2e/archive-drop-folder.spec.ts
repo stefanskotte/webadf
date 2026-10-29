@@ -15,6 +15,9 @@ import { synthDrop } from './drag-drop-helpers';
  * that folder (operator, 2026-10-17). Before this, only the staging strip
  * below the tree took a drop; a drop on the tree itself was not handled at
  * all, which a browser answers by opening the file.
+ *
+ * Files increment 1 (Task 11): the same, on a folder ROW of a Files pane. The drop opens the drop review (the
+ * Browse page's staging list in a dialog) aimed at that folder; nothing is written until it is confirmed.
  */
 
 test.afterAll(cleanupSeeded);
@@ -37,6 +40,20 @@ async function fetchAdf(page: Page, diskId: string): Promise<Uint8Array> {
   return new Uint8Array(await res.body());
 }
 
+/** The disk open in Files, on the right, hydrated so a synthetic drop reaches React. */
+async function openInFiles(page: Page, disk: { id: string; gameId: string }) {
+  const right = `LIBRARY:/${disk.gameId}/${disk.id}`;
+  await page.goto(`/files?${new URLSearchParams({ left: 'LIBRARY:', right, active: 'right' })}`);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="files-manager"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  });
+}
+
+/** A row of the right pane, as a selector synthDrop can aim at. */
+const rowSel = (name: string) => `[data-testid="pane-right"] [data-testid="pane-row"][data-name="${name}"]`;
+const PANE = '[data-testid="pane-right"]';
+
 function child(entries: AdfEntry[], name: string): AdfEntry | undefined {
   return entries.find((e) => e.name === name);
 }
@@ -58,29 +75,30 @@ test('an .lha dropped on a folder row unpacks into THAT folder, after showing wh
   if (!before.ok) throw new Error('fresh disk unreadable');
   const tools = child(before.root, 'Tools')!;
 
-  await page.goto(`/disks/${disk.id}/files`);
-  await expect(page.getByTestId(`fs-drop-${tools.block}`)).toBeVisible();
+  await openInFiles(page, disk);
+  await expect(page.locator(rowSel('Tools'))).toHaveAttribute('data-kind', 'dir');
 
-  await synthDrop(page, [{ name: 'h1.lha', kind: 'file', bytes: fixture('h1.lha') }],
-    `[data-testid="fs-drop-${tools.block}"]`);
+  await synthDrop(page, [{ name: 'h1.lha', kind: 'file', bytes: fixture('h1.lha') }], rowSel('Tools'));
 
-  // Nothing is written yet: the staging list is the confirmation, aimed at the
+  // Nothing is written yet: the review is the confirmation, aimed at the
   // folder the archive was dropped on.
-  const list = page.getByTestId('drop-staging-list');
+  const review = page.getByTestId('files-drop-review');
+  const list = review.getByTestId('drop-staging-list');
   await expect(list).toBeVisible();
-  await expect(page.getByTestId('drop-destination-select')).toHaveValue(String(tools.block));
-  await expect(page.getByTestId('drop-summary')).toHaveText('4 files and 2 folders · 782 bytes');
+  await expect(review.getByTestId('drop-destination-select')).toHaveValue(String(tools.block));
+  await expect(review.getByTestId('drop-summary')).toHaveText('4 files and 2 folders · 782 bytes');
   await expect(list).toContainText('src/readme.txt');
   await expect(list).toContainText('src/sub/deep.txt');
   const unchanged = readVolume(await fetchAdf(page, disk.id));
   expect(unchanged.ok && child(child(unchanged.root, 'Tools')!.children, 'src')).toBeFalsy();
 
-  await page.getByTestId('drop-commit').click();
-  await expect(page.getByTestId('drop-staging-list')).toHaveCount(0, { timeout: 30_000 });
+  await review.getByTestId('drop-commit').click();
+  await expect(review).toHaveCount(0, { timeout: 30_000 });
 
-  // Listed in Browse, inside Tools.
-  await page.getByTestId(`fs-toggle-${tools.block}`).click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="src"]')).toBeVisible();
+  // Listed in Files, inside Tools (a double-click opens the folder).
+  await page.locator(rowSel('Tools')).dblclick();
+  await expect(page.getByTestId('pane-right-crumb-3')).toHaveText('Tools');
+  await expect(page.locator(rowSel('src'))).toBeVisible();
 
   // And on the bytes: Tools/src/readme.txt, decoded exactly.
   const adf = await fetchAdf(page, disk.id);
@@ -112,16 +130,16 @@ test('an -lh1- (LHarc 1.x) .lzh dropped on a folder unpacks byte-exact, not "uns
   if (!vol.ok) throw new Error('fresh disk unreadable');
   const old = child(vol.root, 'Old')!;
 
-  await page.goto(`/disks/${disk.id}/files`);
-  await expect(page.getByTestId(`fs-drop-${old.block}`)).toBeVisible();
-  await synthDrop(page, [{ name: 'lh1.lzh', kind: 'file', bytes: fixture('lh1.lzh') }],
-    `[data-testid="fs-drop-${old.block}"]`);
+  await openInFiles(page, disk);
+  await synthDrop(page, [{ name: 'lh1.lzh', kind: 'file', bytes: fixture('lh1.lzh') }], rowSel('Old'));
 
-  await expect(page.getByTestId('drop-staging-list')).toBeVisible();
-  await expect(page.getByTestId('drop-archive-skipped')).toHaveCount(0);
-  await expect(page.getByTestId('drop-summary')).toContainText('5 files');
-  await page.getByTestId('drop-commit').click();
-  await expect(page.getByTestId('drop-staging-list')).toHaveCount(0, { timeout: 30_000 });
+  const review = page.getByTestId('files-drop-review');
+  await expect(review.getByTestId('drop-staging-list')).toBeVisible();
+  await expect(review.getByTestId('drop-destination-select')).toHaveValue(String(old.block));
+  await expect(review.getByTestId('drop-archive-skipped')).toHaveCount(0);
+  await expect(review.getByTestId('drop-summary')).toContainText('5 files');
+  await review.getByTestId('drop-commit').click();
+  await expect(review).toHaveCount(0, { timeout: 30_000 });
 
   const adf = await fetchAdf(page, disk.id);
   const after = readVolume(adf);
@@ -145,25 +163,26 @@ test('an archive that does not fit, or is not an archive, is refused and writes 
   const disk = await authoredDisk(page, u.orgId);
   const shaBefore = disk.sha256;
 
-  await page.goto(`/disks/${disk.id}/files`);
-  await expect(page.getByTestId('file-tree')).toBeVisible();
+  await openInFiles(page, disk);
 
   // 653 bytes of .lha holding a 1 MiB member: what decides fit is the
   // decoded size, in blocks, and a blank DD disk has 1,756 free.
-  await synthDrop(page, [{ name: 'toobig.lha', kind: 'file', bytes: fixture('toobig.lha') }],
-    '[data-testid="file-tree"]');
-  await expect(page.getByTestId('drop-capacity-warning')).toBeVisible();
-  await expect(page.getByTestId('drop-commit')).toBeDisabled();
-  await page.getByTestId('drop-clear').click();
-  await expect(page.getByTestId('drop-staging-list')).toHaveCount(0);
-  // Clear vanishes with the list: focus goes to the Files heading, never <body>.
-  await expect(page.locator('#files-heading')).toBeFocused();
+  await synthDrop(page, [{ name: 'toobig.lha', kind: 'file', bytes: fixture('toobig.lha') }], PANE);
+  const review = page.getByTestId('files-drop-review');
+  await expect(review.getByTestId('drop-capacity-warning')).toBeVisible();
+  await expect(review.getByTestId('drop-commit')).toBeDisabled();
+  await review.getByTestId('drop-clear').click();
+  await expect(review.getByTestId('drop-staging-list')).toHaveCount(0);
+  // Clear vanishes with the list: focus stays in the review, never on <body>.
+  await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('[data-testid="files-drop-review"]'))).toBe(true);
+  await review.getByTestId('files-drop-review-cancel').click();
+  await expect(review).toHaveCount(0);
 
   // Not an archive at all, despite its name: refused by name, nothing staged.
   const junk = [...new TextEncoder().encode('this is not an LHA archive, only text')];
-  await synthDrop(page, [{ name: 'broken.lzh', kind: 'file', bytes: junk }], '[data-testid="file-tree"]');
+  await synthDrop(page, [{ name: 'broken.lzh', kind: 'file', bytes: junk }], PANE);
   await expect(page.getByText('Could not read that archive')).toBeVisible();
-  await expect(page.getByTestId('drop-staging-list')).toHaveCount(0);
+  await expect(review.getByTestId('drop-staging-list')).toHaveCount(0);
 
   const [row] = await getDb().select().from(disks).where(eq(disks.id, disk.id));
   expect(row.sha256).toBe(shaBefore);
@@ -182,20 +201,20 @@ test('a plain file dropped on a folder row is staged into that folder, as a file
   if (!vol.ok) throw new Error('fresh disk unreadable');
   const docs = child(vol.root, 'Docs')!;
 
-  await page.goto(`/disks/${disk.id}/files`);
-  await synthDrop(page, [{ name: 'notes.txt', kind: 'file', content: 'hello amiga' }],
-    `[data-testid="fs-drop-${docs.block}"]`);
-  await expect(page.getByTestId('drop-destination-select')).toHaveValue(String(docs.block));
-  await expect(page.getByTestId('drop-summary')).toHaveText('1 file and 0 folders · 11 bytes');
-  await page.getByTestId('drop-commit').click();
-  await expect(page.getByTestId('drop-staging-list')).toHaveCount(0, { timeout: 30_000 });
+  await openInFiles(page, disk);
+  await synthDrop(page, [{ name: 'notes.txt', kind: 'file', content: 'hello amiga' }], rowSel('Docs'));
+  const review = page.getByTestId('files-drop-review');
+  await expect(review.getByTestId('drop-destination-select')).toHaveValue(String(docs.block));
+  await expect(review.getByTestId('drop-summary')).toHaveText('1 file and 0 folders · 11 bytes');
+  await review.getByTestId('drop-commit').click();
+  await expect(review).toHaveCount(0, { timeout: 30_000 });
 
   const after = readVolume(await fetchAdf(page, disk.id));
   if (!after.ok) throw new Error('disk unreadable after the write');
   expect(child(child(after.root, 'Docs')!.children, 'notes.txt')).toBeTruthy();
 });
 
-test('a staged batch keeps its folder: a drop on another folder is refused, and changing the destination drops earlier decisions', async ({ page }) => {
+test('a staged batch keeps its folder: changing the destination drops earlier decisions', async ({ page }) => {
   test.setTimeout(60_000);
   const u = await signUpFresh(page);
   await page.goto('/library');
@@ -217,26 +236,22 @@ test('a staged batch keeps its folder: a drop on another folder is refused, and 
     expect(res.ok()).toBe(true);
   }
 
-  await page.goto(`/disks/${disk.id}/files`);
-  await synthDrop(page, [{ name: 'X.TXT', kind: 'file', content: 'new' }], `[data-testid="fs-drop-${a.block}"]`);
-  await expect(page.getByTestId('drop-destination-select')).toHaveValue(String(a.block));
-  await page.getByTestId('stage-replace-0').click();
-  await expect(page.getByTestId('stage-resolution-0')).toHaveText('Will replace existing');
-
-  // A second drop aimed at B: refused, nothing from it staged, batch still /A.
-  await synthDrop(page, [{ name: 'other.txt', kind: 'file', content: 'zzz' }], `[data-testid="fs-drop-${b.block}"]`);
-  await expect(page.getByTestId('drop-destination-refused')).toContainText('This batch goes to /A');
-  await expect(page.getByTestId('drop-destination-select')).toHaveValue(String(a.block));
-  await expect(page.locator('[data-testid^="stage-row-"]')).toHaveCount(1);
-  await expect(page.getByTestId('stage-resolution-0')).toHaveText('Will replace existing');
+  await openInFiles(page, disk);
+  await synthDrop(page, [{ name: 'X.TXT', kind: 'file', content: 'new' }], rowSel('A'));
+  const review = page.getByTestId('files-drop-review');
+  await expect(review.getByTestId('drop-destination-select')).toHaveValue(String(a.block));
+  await review.getByTestId('stage-replace-0').click();
+  await expect(review.getByTestId('stage-resolution-0')).toHaveText('Will replace existing');
+  // (The Browse page also refused a second drop aimed at another folder while a batch was staged. In Files the
+  // review is a modal dialog over the panes, so no other folder can be dropped on while it is open.)
 
   // Retargeting by hand to B: the "replace" was decided for /A/X.TXT, so it
   // must not carry over to /B/X.TXT unreviewed.
-  await page.getByTestId('drop-destination-select').selectOption(String(b.block));
-  await expect(page.getByTestId('stage-resolution-0')).toHaveCount(0);
-  await expect(page.getByTestId('stage-conflict-0')).toBeVisible();
-  await expect(page.getByTestId('drop-commit')).toBeDisabled();
-  await expect(page.getByTestId('drop-destination-refused')).toHaveCount(0);
+  await review.getByTestId('drop-destination-select').selectOption(String(b.block));
+  await expect(review.getByTestId('stage-resolution-0')).toHaveCount(0);
+  await expect(review.getByTestId('stage-conflict-0')).toBeVisible();
+  await expect(review.getByTestId('drop-commit')).toBeDisabled();
+  await expect(review.getByTestId('drop-destination-refused')).toHaveCount(0);
 
   // Nothing was written anywhere.
   const now = readVolume(await fetchAdf(page, disk.id));
@@ -253,21 +268,22 @@ test('a typed rename AmigaDOS cannot hold is flagged on its row and blocks Add',
   const u = await signUpFresh(page);
   await page.goto('/library');
   await createAdf(page);
-  await authoredDisk(page, u.orgId).then((d) => page.goto(`/disks/${d.id}/files`));
+  await openInFiles(page, await authoredDisk(page, u.orgId));
   // Over 30 characters, so the row's name is editable.
-  await synthDrop(page, [{ name: `${'n'.repeat(36)}.txt`, kind: 'file', content: 'x' }], '[data-testid="file-tree"]');
-  await expect(page.getByTestId('drop-commit')).toBeEnabled();
+  await synthDrop(page, [{ name: `${'n'.repeat(36)}.txt`, kind: 'file', content: 'x' }], PANE);
+  const review = page.getByTestId('files-drop-review');
+  await expect(review.getByTestId('drop-commit')).toBeEnabled();
 
-  await page.getByTestId('stage-name-0').fill('Work:Bad');
-  await expect(page.getByTestId('stage-name-error-0')).toHaveText('name AmigaDOS cannot hold');
-  await expect(page.getByTestId('drop-commit')).toBeDisabled();
+  await review.getByTestId('stage-name-0').fill('Work:Bad');
+  await expect(review.getByTestId('stage-name-error-0')).toHaveText('name AmigaDOS cannot hold');
+  await expect(review.getByTestId('drop-commit')).toBeDisabled();
 
-  await page.getByTestId('stage-name-0').fill('Fine.txt');
-  await expect(page.getByTestId('stage-name-error-0')).toHaveCount(0);
-  await expect(page.getByTestId('drop-commit')).toBeEnabled();
+  await review.getByTestId('stage-name-0').fill('Fine.txt');
+  await expect(review.getByTestId('stage-name-error-0')).toHaveCount(0);
+  await expect(review.getByTestId('drop-commit')).toBeEnabled();
 });
 
-test('the tree reports its drop receiver as ready once hydrated, and its list holds only list items', async ({ page }) => {
+test('the pane is a grid whose body holds only rows, folders and files alike', async ({ page }) => {
   test.setTimeout(60_000);
   const u = await signUpFresh(page);
   await page.goto('/library');
@@ -283,13 +299,15 @@ test('the tree reports its drop receiver as ready once hydrated, and its list ho
     });
     expect(up.ok()).toBe(true);
   }
-  await page.goto(`/disks/${disk.id}/files`);
-  // The staging area registers its receiver in an effect, after the tree is already hydrated: until then a
-  // drop on the tree reaches nothing. The tree exposes the moment it can.
-  await expect(page.getByTestId('file-tree')).toHaveAttribute('data-native-drop', 'ready');
-  // Every direct child of the files list is a list item (folders and files alike).
-  await expect(page.getByTestId('file-tree')).toHaveAttribute('role', 'list');
-  const roles = await page.getByTestId('file-tree').evaluate((el) => [...el.children].map((c) => c.getAttribute('role')));
-  expect(roles.length).toBeGreaterThanOrEqual(4);
-  expect(roles.every((r) => r === 'listitem'), `roles: ${JSON.stringify(roles)}`).toBe(true);
+  await openInFiles(page, disk);
+  // (The Browse tree exposed `data-native-drop="ready"` because its staging area registered a receiver after
+  // hydration. A Files pane handles a drop in its own handler, so there is no such gap to report.)
+  // Every row of the grid's body is a row a screen reader can select (folders and files alike).
+  const grid = page.getByTestId('pane-right').getByRole('grid');
+  await expect(grid).toHaveAttribute('aria-multiselectable', 'true');
+  const rows = await grid.locator('tbody').evaluate((el) => [...el.children].map((c) => ({
+    role: c.getAttribute('role') ?? (c.tagName === 'TR' ? 'row' : c.tagName), selected: c.getAttribute('aria-selected'),
+  })));
+  expect(rows.length).toBe(4);
+  expect(rows.every((r) => r.role === 'row' && r.selected === 'false'), `rows: ${JSON.stringify(rows)}`).toBe(true);
 });

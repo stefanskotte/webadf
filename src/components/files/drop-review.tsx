@@ -10,7 +10,7 @@ import { collectDirectories } from '@/components/disks/file-tree';
 import type { DroppedItem } from '@/lib/drop-reader';
 import type { DiskInfo, DropReviewData } from '@/lib/files/types';
 import { refusalWords } from '@/lib/files/words';
-import { placeName } from './dialogs';
+import { managerReturnsFocus, placeName } from './dialogs';
 
 /**
  * Files from the computer dropped on a pane inside a writable disk (Files increment 1, Task 9b): the Browse page's
@@ -54,7 +54,7 @@ export function DropReview({ disk, folder, items, onClose, onWritten }: {
   const incoming = useMemo(() => (destinationBlock === null ? undefined : { items, destinationBlock }), [items, destinationBlock]);
 
   return (
-    <Modal open onOpenChange={(o) => { if (!o) onClose(); }} width={620} testId="files-drop-review"
+    <Modal open finalFocus={managerReturnsFocus} onOpenChange={(o) => { if (!o) onClose(); }} width={620} testId="files-drop-review"
            closeTestId="files-drop-review-close" title={`Add files to ${placeName(disk)}`} dismissible
            subtitle="Check the names before they are written. Every change is saved as a new version."
            footer={(

@@ -5,6 +5,7 @@ import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
 import type { FsEntry, Listing } from '@/lib/files/types';
 import { refusalWords } from '@/lib/files/words';
+import { managerReturnsFocus } from './dialogs';
 
 /**
  * Copy to… / Move to… on a phone (Files increment 1, Task 10): where the desktop copies into the other pane, a phone
@@ -58,7 +59,7 @@ export function CopyToPicker({ op, count, start, busy, list, onPick, onCancel }:
   const tap = 'max-lg:min-h-11 focus-visible:outline-2 focus-visible:outline-(--ring)';
 
   return (
-    <Modal open onOpenChange={(o) => { if (!o) onCancel(); }} width={440} testId="files-copy-to"
+    <Modal open finalFocus={managerReturnsFocus} onOpenChange={(o) => { if (!o) onCancel(); }} width={440} testId="files-copy-to"
            closeTestId="files-copy-to-close" dismissible={!busy}
            title={op === 'copy' ? 'Copy to…' : 'Move to…'} subtitle={`${op === 'copy' ? 'Copy' : 'Move'} ${what} into the folder shown`}
            footer={(

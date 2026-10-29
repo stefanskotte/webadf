@@ -18,6 +18,8 @@ export type ResolvedDisk = { info: DiskInfo; bytes: Uint8Array; root: AdfEntry[]
 const ROOT: Crumb = { label: 'LIBRARY:', path: 'LIBRARY:' };
 const lib = (...segs: string[]) => formatPath({ device: 'LIBRARY', segments: segs });
 const diskName = (d: { label: string | null; diskNo: number }) => d.label ?? `Disk ${d.diskNo}`;
+/** "1 folder", "2 folders": the listing's meta line counts in words. */
+const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** The disk's row exists but its image cannot be read from the store: the one failure the routes call blob_unavailable. */
 export class BlobUnavailableError extends Error {
@@ -85,7 +87,7 @@ export async function listLibrary(ctx: FsCtx, p: FsPath): Promise<Listing | null
     const rows = await db.select({ id: games.id, title: games.title }).from(games)
       .where(and(eq(games.orgId, ctx.orgId), isLocal(games))).orderBy(asc(games.sortTitle), asc(games.id));
     return { path: 'LIBRARY:', crumbs: [ROOT], writable: false, readOnlyReason: null, disk: null,
-      meta: `${rows.length} titles`,
+      meta: count(rows.length, 'title'),
       entries: rows.map((g) => ({ name: g.title, kind: 'title', path: lib(g.id), size: null, date: null, protection: null, comment: null, marks: [] })) };
   }
   const [game] = await db.select({ title: games.title }).from(games)
@@ -104,7 +106,7 @@ export async function listLibrary(ctx: FsCtx, p: FsPath): Promise<Listing | null
         comment: null, marks: holder ? [`in a drive of ${holder.name}`] : [] });
     }
     return { path: lib(gameId), crumbs: [ROOT, titleCrumb], entries, writable: false, readOnlyReason: null, disk: null,
-      meta: `${rows.length} ${rows.length === 1 ? 'disk' : 'disks'}` };
+      meta: count(rows.length, 'disk') };
   }
   const d = await loadDisk(ctx, gameId, diskId);
   if (!d) return null;
@@ -117,7 +119,7 @@ export async function listLibrary(ctx: FsCtx, p: FsPath): Promise<Listing | null
   const crumbs: Crumb[] = [ROOT, titleCrumb, { label: d.info.label, path: lib(gameId, diskId) }];
   names.forEach((_, i) => crumbs.push({ label: resolveInDisk(d, names.slice(0, i + 1))!.entry!.name, path: lib(gameId, diskId, ...names.slice(0, i + 1)) }));
   return { path: formatPath(p), crumbs, entries: children.map((c) => toEntry(base, c)), writable: readOnlyReason === null,
-    readOnlyReason, disk: d.info, meta: `${dirs} folders · ${children.length - dirs} files` };
+    readOnlyReason, disk: d.info, meta: `${count(dirs, 'folder')} · ${count(children.length - dirs, 'file')}` };
 }
 
 export async function readLibraryFile(ctx: FsCtx, p: FsPath) {

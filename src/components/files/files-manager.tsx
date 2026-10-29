@@ -339,6 +339,31 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     void refreshStrip(diskId);
   }
 
+  // A dialog unmounts when it closes, and Base UI's own return of focus then lands on a stale element (the opener of
+  // an EARLIER dialog) or on <body>. So the manager puts it back itself: on the control that opened the dialog when it
+  // was dismissed, or on the manager after the dialog's operation ran -- the buttons go disabled while it runs and the
+  // selection they acted on is gone after, and a disabled button drops focus to <body>. Only the manager's own DOM is
+  // remembered: React bubbles a portalled dialog's focus events through this tree too.
+  const lastFocus = useRef<HTMLElement | null>(null);
+  const hadDialog = useRef(false);
+  const ranOp = useRef(false);
+  useEffect(() => {
+    if (dialog) { hadDialog.current = true; return; }
+    if (!hadDialog.current) return;
+    hadDialog.current = false;
+    const afterOp = ranOp.current;
+    ranOp.current = false;
+    const id = requestAnimationFrame(() => {
+      const now = document.activeElement;
+      // Focus somewhere else on purpose (a toast's Undo, another portal) is left alone.
+      if (now && now !== document.body && now.isConnected && !rootRef.current?.contains(now)) return;
+      const back = lastFocus.current;
+      const usable = !afterOp && back?.isConnected && !(back as HTMLButtonElement).disabled && rootRef.current?.contains(back);
+      (usable ? back : rootRef.current)?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [dialog]);
+
   // Keep the cursor row on screen as the arrow keys move it.
   const cursorKey = `${active}:${panes[active].selection.cursor}`;
   useEffect(() => {
@@ -544,6 +569,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     const upto = forAll ? d.clashes.length : d.at + 1;
     for (let i = d.at; i < upto; i++) choices[d.clashes[i].source] = choice;
     if (upto < d.clashes.length) { setDialog({ ...d, at: upto, choices }); return; }
+    ranOp.current = true;
     setDialog(null);
     void runGroups(d, [...clashGroups(d.sources, d.clashes.map((c) => c.source), choices), ...d.rest], [...d.done], [...d.versions]);
   }
@@ -573,6 +599,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     if (dialog?.kind !== 'identity') return;
     const { disk, next } = dialog;
     confirmedIdentity.current.add(disk.diskId);
+    ranOp.current = true;
     setDialog(null);
     next();
   }
@@ -608,6 +635,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
    * the desktop's does -- the TOSEC confirm, the clash dialog, the versioned toast with Undo.
    */
   function placePicked(d: Extract<Dialog, { kind: 'pick' }>, l: Listing) {
+    ranOp.current = true;
     setDialog(null);
     const side = otherSide(active);
     if (panes[side].path !== l.path) {
@@ -622,7 +650,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     const r = await post(req, label);
     // The disk the operation changed: where it made the folder, else where its first source is.
     const target = diskIdOf('dest' in req ? req.dest : 'source' in req ? req.source : req.sources[0]);
-    if (r.kind === 'done') { setDialog(null); void report(r.items, success, target, r.versions); }
+    if (r.kind === 'done') { ranOp.current = true; setDialog(null); void report(r.items, success, target, r.versions); }
   }
 
   function swap() {
@@ -712,6 +740,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   /** The review wrote its batch: fresh panes and strip, and the versioned toast with Undo. */
   function dropWritten(d: Extract<Dialog, { kind: 'drop' }>, written: { seq: number | null; message: string }) {
     // The review may have been closed while it wrote, and another dialog opened since: only the review itself closes.
+    ranOp.current = true;
     setDialog((cur) => (cur === d ? null : cur));
     reloadBoth();
     void refreshStrip(d.disk.diskId);
@@ -781,6 +810,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   return (
     <div ref={rootRef} tabIndex={0} onKeyDown={onKeyDown} data-testid="files-manager" aria-label="File manager"
+         onFocusCapture={(e) => { if (rootRef.current?.contains(e.target)) lastFocus.current = e.target; }}
          // Files from the computer never open in the tab: a drop the panes did not take is answered here.
          onDragOver={(e) => { if (isFileDrag(e)) e.preventDefault(); }}
          onDrop={(e) => {

@@ -2,14 +2,20 @@ import { test, expect, type Page } from '@playwright/test';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
-import { readVolume, type AdfEntry } from '@/lib/adffs';
-import { signUpFresh, createAdf, openRowMenu, openVersion } from './helpers';
-import { cleanupSeeded, hydrated, pairDevice } from './device-helpers';
+import { signUpFresh, createAdf, openVersion } from './helpers';
+import { cleanupSeeded, pairDevice } from './device-helpers';
 import { synthDrop } from './drag-drop-helpers';
 
 /**
  * Phase C4: the disk page in the ModernDiskFiles layout (spec 2026-10-25-phase-c4-disk-files-design.md). Every disk
  * is made through createAdf (FFS, root 880) and edited through the API, so each test owns its rows on the shared DB.
+ *
+ * Files increment 1 (Task 11): the head of a disk is now Files -- the Disk card is the disk strip above the pane, the
+ * Files card is the pane, the row menus and the selection strip are the button column and its dialogs, and the History
+ * opens over the pane. Only the per-version page (?version=N, R3) is still the Browse layout, and is tested as such.
+ * What had no Files counterpart by design is gone (the name filter, the Hide .info switch -- a Files setting in
+ * increment 4 -- the Add file button, R5 makes a drop the way in, and the History column beside the files); see the
+ * Task 11 report.
  */
 test.describe.configure({ timeout: 90_000 });
 test.afterAll(cleanupSeeded);
@@ -32,35 +38,43 @@ async function freshDisk(page: Page, files: { name: string; dir?: boolean; conte
   return { u, disk };
 }
 
-async function blocks(page: Page, diskId: string): Promise<Record<string, AdfEntry>> {
-  const v = readVolume(new Uint8Array(await (await page.request.get(`/api/disks/${diskId}/adf`)).body()));
-  if (!v.ok) throw new Error('fixture: the disk should read');
-  return Object.fromEntries(v.root.map((e) => [e.name, e]));
+/** The disk open in Files, on the right, hydrated so clicks and keys reach React. */
+async function openInFiles(page: Page, disk: { id: string; gameId: string }) {
+  const right = `LIBRARY:/${disk.gameId}/${disk.id}`;
+  await page.goto(`/files?${new URLSearchParams({ left: 'LIBRARY:', right, active: 'right' })}`);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="files-manager"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  });
 }
 
-test('the Disk card: the breadcrumb, one h1, facts, usage words with a meter, the drive light in words, Download', async ({ page }) => {
+const paneRow = (page: Page, name: string) =>
+  page.getByTestId('pane-right').locator(`[data-testid="pane-row"][data-name="${name}"]`);
+const bodyFocused = (page: Page) => page.evaluate(() => document.activeElement === document.body || document.activeElement === null);
+
+test('the disk strip and the pane header: one h1, the facts, usage words, the drive in words, Download; History over the pane', async ({ page }) => {
   const { disk } = await freshDisk(page);
-  await page.goto(`/disks/${disk.id}/files`);
-  const card = page.getByTestId('disk-card');
-  await expect(card).toBeVisible();
+  await openInFiles(page, disk);
+  const strip = page.getByTestId('disk-strip-right');
+  await expect(strip).toBeVisible();
   await expect(page.locator('h1')).toHaveCount(1);
-  await expect(card.locator('h1')).toBeVisible();
-  await expect(page.getByTestId('breadcrumb').getByRole('listitem')).toHaveCount(3);
-  await expect(page.getByTestId('volume-header')).toContainText('FFS');
-  await expect(page.getByTestId('volume-header')).toContainText('DD · 880 KB');
-  await expect(page.getByTestId('volume-usage-text')).toContainText('KB used of 880 KB');
-  await expect(page.getByTestId('volume-usage-meter')).toHaveAttribute('role', 'meter');
-  await expect(page.getByTestId('drive-light')).toHaveAttribute('data-state', 'none');
-  await expect(page.getByTestId(`holder-${disk.id}`)).toHaveText('Not in a drive');
-  await expect(page.getByTestId(`download-${disk.id}`)).toHaveAttribute('href', `/api/disks/${disk.id}/adf`);
-  // The page is two columns from xl: History sits to the right of the files at 1440.
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  const files = (await page.getByTestId('file-tree').boundingBox())!;
-  const history = (await page.getByTestId('history-panel').boundingBox())!;
-  expect(history.x).toBeGreaterThan(files.x + files.width - 1);
-  await page.setViewportSize({ width: 1100, height: 1000 });
-  const below = (await page.getByTestId('history-panel').boundingBox())!;
-  expect(below.y).toBeGreaterThan((await page.getByTestId('file-tree').boundingBox())!.y);
+  await expect(page.locator('h1')).toHaveText('Files');
+  await expect(page.getByTestId('pane-right-crumb-2')).toHaveText(/Disk 1/);
+  await expect(page.getByTestId('pane-right-meta')).toHaveText(/^\d+ KB free · FFS DD$/);
+  await expect(strip.getByTestId('disk-strip-usage')).toHaveText(/^\d+ of 880 KB · \d+ KB free$/);
+  await expect(strip.getByTestId('disk-strip-drive')).toHaveText('Not in a drive');
+  await expect(strip.getByTestId('disk-strip-adf')).toHaveAttribute('href', `/api/disks/${disk.id}/adf`);
+  // The History opens over its own pane at every width, not in a column beside the files.
+  for (const width of [1440, 1100]) {
+    await page.setViewportSize({ width, height: 1000 });
+    if ((await strip.getByTestId('disk-strip-history-toggle').getAttribute('aria-expanded')) !== 'true') {
+      await strip.getByTestId('disk-strip-history-toggle').click();
+    }
+    const pane = (await page.getByTestId('pane-right').boundingBox())!;
+    const history = (await page.getByTestId('disk-strip-history').boundingBox())!;
+    expect(history.x, `at ${width}`).toBeGreaterThanOrEqual(pane.x - 1);
+    expect(history.x + history.width, `at ${width}`).toBeLessThanOrEqual(pane.x + pane.width + 1);
+  }
 });
 
 test('the version banner: the board words, Back to current returns to the head', async ({ page }) => {
@@ -71,61 +85,51 @@ test('the version banner: the board words, Back to current returns to the head',
   await expect(banner).toContainText('You’re browsing version 0');
   await expect(banner).toContainText('It’s read-only — restore it to make it current.');
   await page.getByTestId('version-banner-back').click();
-  await expect(page).toHaveURL(new RegExp(`/disks/${disk.id}/files$`));
+  // The head of a disk is Files, the disk on the right.
+  await expect(page).toHaveURL(/\/files\?/);
+  await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe(`LIBRARY:/${disk.gameId}/${disk.id}`);
   await expect(page.getByTestId('version-banner')).toHaveCount(0);
+  await expect(paneRow(page, 'FIRST.TXT')).toBeVisible();
 });
 
-test('the Files header: heading, filter, the Hide .info switch, Add file and New folder, and a footer that counts', async ({ page }) => {
+test('the pane: the column heads, Makedir in the button column, and a foot that counts', async ({ page }) => {
   const { disk } = await freshDisk(page, [{ name: 'Tool', content: 'exe' }, { name: 'Tool.info', content: 'icn' },
     { name: 'Docs', dir: true }]);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto(`/disks/${disk.id}/files`);
-  const card = page.getByTestId('files-card');
-  await expect(card.getByRole('heading', { level: 2, name: 'Files' })).toBeVisible();
-  await expect(page.getByTestId('fs-filter')).toHaveAttribute('placeholder', 'Filter by name');
-  const sw = page.getByTestId('fs-hide-info');
-  await expect(sw).toHaveAttribute('role', 'switch');
-  await expect(sw).toHaveText('Hide .info files');
-  await expect(page.getByTestId('upload-trigger')).toHaveText(/Add file/);
-  await expect(page.getByTestId('new-folder-trigger')).toHaveText(/New folder/);
-  await expect(page.getByTestId('file-toolbar')).toBeVisible();
-  await expect(page.getByTestId('fs-columns')).toContainText('Protection');
-  await hydrated(page, 'fs-hide-info');
-  const wasHiding = (await sw.getAttribute('aria-checked')) === 'true';
-  if (wasHiding) await sw.click();                          // a fresh account starts from the default
-  await expect(page.getByTestId('fs-footer')).toHaveText('1 folder · 2 files shown');
-  await sw.click();
-  await expect(sw).toHaveAttribute('aria-checked', 'true');
-  await expect(page.getByTestId('fs-footer')).toHaveText('1 folder · 1 file shown · 1 .info file hidden');
-  await sw.click();                                         // leave the preference as found
+  await openInFiles(page, disk);
+  const heads = page.getByTestId('pane-right').locator('thead th button:visible');
+  await expect(heads).toHaveText(['Name▲', 'Size', 'Protection', 'Date']);
+  await expect(page.getByTestId('pane-right-sort-name')).toHaveAttribute('aria-sort', 'ascending');
+  await expect(page.getByTestId('files-makedir')).toHaveText('Makedir');
+  await expect(page.getByTestId('files-makedir')).toBeEnabled();
+  await expect(page.getByTestId('pane-right-foot')).toHaveText('1 folder · 2 files');
+  await paneRow(page, 'Tool').click();
+  await expect(page.getByTestId('pane-right-foot')).toHaveText('1 of 3 selected · 3 B');
 });
 
-test('Cancel in the selection strip\'s move or delete step returns focus to the button that opened it', async ({ page }) => {
+test('Cancel in the delete or rename dialog returns focus to the button that opened it', async ({ page }) => {
   const { disk } = await freshDisk(page, [{ name: 'A.TXT' }]);
-  const b = await blocks(page, disk.id);
-  await page.goto(`/disks/${disk.id}/files`);
-  await hydrated(page, `fs-select-${b['A.TXT'].block}`, 'onChange');
-  await page.getByTestId(`fs-select-${b['A.TXT'].block}`).check();
-  for (const [opener, step] of [['fs-bulk-move', 'fs-bulk-move-target'], ['fs-bulk-delete', 'fs-bulk-delete-confirm']]) {
+  await openInFiles(page, disk);
+  await paneRow(page, 'A.TXT').click();
+  for (const [opener, dialog] of [['files-delete', 'files-delete-dialog'], ['files-rename', 'files-name-dialog']]) {
     await page.getByTestId(opener).click();
-    await expect(page.getByTestId(step)).toBeVisible();
-    await page.getByTestId('fs-selection-bar').getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByTestId(dialog)).toBeVisible();
+    await page.getByTestId(dialog).getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByTestId(dialog)).toHaveCount(0);
     await expect(page.getByTestId(opener)).toBeFocused();
   }
 });
 
-test('read-only states say why in the header, and the selection strip keeps A5 words', async ({ page }) => {
+test('read-only states say why in the header, and the foot counts the selection', async ({ page }) => {
   const { disk } = await freshDisk(page, [{ name: 'A.TXT' }, { name: 'B.TXT' }]);
-  const b = await blocks(page, disk.id);
-  await page.goto(`/disks/${disk.id}/files`);
-  await hydrated(page, `fs-select-${b['A.TXT'].block}`, 'onChange');
-  await page.getByTestId(`fs-select-${b['A.TXT'].block}`).check();
-  await page.getByTestId(`fs-select-${b['B.TXT'].block}`).check();
-  await expect(page.getByTestId('fs-selection-count')).toHaveText('2 items selected');
-  await expect(page.getByTestId('fs-selection-clear')).toHaveAttribute('aria-label', 'Clear selection');
-  await page.getByTestId('fs-selection-clear').click();
-  await expect(page.getByTestId('fs-selection-bar')).toHaveCount(0);
-  await expect(page.locator('#files-heading')).toBeFocused();
+  await openInFiles(page, disk);
+  await paneRow(page, 'A.TXT').click();
+  await paneRow(page, 'B.TXT').click({ modifiers: ['ControlOrMeta'] });
+  await expect(page.getByTestId('pane-right-foot')).toHaveText('2 of 2 selected · 2 B');
+  await paneRow(page, 'B.TXT').click({ modifiers: ['ControlOrMeta'] });
+  await paneRow(page, 'A.TXT').click({ modifiers: ['ControlOrMeta'] });
+  await expect(page.getByTestId('pane-right-foot')).toHaveText('0 folders · 2 files');
+  // The per-version page is still the Browse layout (R3), read-only and saying so.
   await page.goto(`/disks/${disk.id}/files?version=0`);
   await expect(page.getByTestId('file-edit-disabled')).toContainText('read-only');
   await expect(page.getByTestId('files-card').getByTestId('file-edit-disabled')).toHaveCount(1);
@@ -133,103 +137,98 @@ test('read-only states say why in the header, and the selection strip keeps A5 w
   await expect(page.getByTestId('file-tree')).toContainText("This disk's root directory is empty.");
 });
 
-test('a row menu holds the row actions in the board order; Rename focuses its field, Escape returns to ⋯', async ({ page }) => {
+test('the button column holds the actions in the board order; Rename focuses its field, Escape returns to Rename', async ({ page }) => {
   const { disk } = await freshDisk(page, [{ name: 'NOTES.TXT', content: 'hello' }]);
-  const b = (await blocks(page, disk.id))['NOTES.TXT'].block;
-  await page.goto(`/disks/${disk.id}/files`);
-  await hydrated(page, `fs-more-${b}`, 'onPointerDown');
-  const panel = await openRowMenu(page, b);
-  await expect(panel.getByRole('menuitem')).toHaveText(['Download', 'Rename', 'Move to…', 'Protection bits…', 'Delete']);
-  await expect(page.getByTestId(`fs-download-${b}`)).toHaveAttribute('href', `/api/disks/${disk.id}/files/${b}`);
-  await page.getByTestId(`fs-rename-${b}`).click();
-  await expect(page.getByTestId(`fs-rename-name-${b}`)).toBeFocused();
+  await openInFiles(page, disk);
+  await paneRow(page, 'NOTES.TXT').click();
+  await expect(page.getByTestId('files-actions').locator('button:visible'))
+    .toHaveText(['← Copy', '← Move', 'Delete', 'Rename', 'Makedir', 'Protect', 'Info', 'Download', 'Swap ⇄']);
+  // One file downloads by its path (R4).
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('files-download').click()]);
+  expect(dl.url()).toContain(`/api/files/download?path=${encodeURIComponent(`LIBRARY:/${disk.gameId}/${disk.id}/NOTES.TXT`)}`);
+  await page.getByTestId('files-rename').click();
+  await expect(page.getByTestId('files-name-input')).toBeFocused();
   await page.keyboard.press('Escape');
-  await expect(page.getByTestId(`fs-more-${b}`)).toBeFocused();
+  await expect(page.getByTestId('files-name-dialog')).toHaveCount(0);
+  await expect(page.getByTestId('files-rename')).toBeFocused();
 });
 
-test('a deleted row hands focus to the Files heading, never to the body', async ({ page }) => {
+test('a deleted row hands focus to the manager, never to the body', async ({ page }) => {
   const { disk } = await freshDisk(page, [{ name: 'GONE.TXT' }, { name: 'KEPT.TXT' }]);
-  const b = (await blocks(page, disk.id))['GONE.TXT'].block;
-  await page.goto(`/disks/${disk.id}/files`);
-  await hydrated(page, `fs-more-${b}`, 'onPointerDown');
-  await openRowMenu(page, b);
-  await page.getByTestId(`fs-delete-${b}`).click();
-  await expect(page.getByTestId(`fs-delete-cancel-${b}`)).toBeFocused();
-  await page.getByTestId(`fs-delete-confirm-${b}`).click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="GONE.TXT"]')).toHaveCount(0, AFTER_EDIT);
-  await expect(page.locator('#files-heading')).toBeFocused();
+  await openInFiles(page, disk);
+  await paneRow(page, 'GONE.TXT').click();
+  await page.getByTestId('files-delete').click();
+  await page.getByTestId('files-delete-confirm').click();
+  await expect(paneRow(page, 'GONE.TXT')).toHaveCount(0, AFTER_EDIT);
+  await expect(page.getByTestId('files-delete-dialog')).toHaveCount(0);
+  expect(await bodyFocused(page)).toBe(false);
+  await expect(page.getByTestId('files-manager')).toBeFocused();
 });
 
-test('rows: the grid from md, a two-line card below; glyphs, eight protection chips, the .info badge, names wrap', async ({ page }) => {
+test('rows: one line at lg, a second line below; glyphs, eight protection cells, names that fit', async ({ page }) => {
   const long = 'A_Thirty_Character_Name_Here01';            // 30 = MAX_NAME_LENGTH
   const { disk } = await freshDisk(page, [{ name: 'Prog' }, { name: 'Prog.info' }, { name: long }, { name: 'Sub', dir: true }]);
-  const b = await blocks(page, disk.id);
-  // Hide .info on, so Prog carries the .info badge (restore the preference at the end).
-  await page.goto(`/disks/${disk.id}/files`);
-  const sw = page.getByTestId('fs-hide-info');
-  const was = await sw.getAttribute('aria-checked');
-  if (was !== 'true') await sw.click();
-  await expect(page.getByTestId(`fs-info-${b.Prog.block}`)).toHaveText('.info');
-  await expect(page.getByTestId(`fs-glyph-${b.Prog.block}`)).toHaveText('EXE');
-  await expect(page.getByTestId(`fs-glyph-${b.Sub.block}`)).toHaveText('DIR');
-  await expect(page.getByTestId(`fs-protect-${b.Prog.block}`)).toHaveText('----rwed');
-  await expect(page.getByTestId(`fs-protect-${b.Prog.block}`).locator('span')).toHaveCount(8);
-  for (const width of [1440, 900]) {
+  await openInFiles(page, disk);
+  const glyph = (name: string) => paneRow(page, name).locator('td').nth(1).locator('span[aria-hidden]').first();
+  await expect(glyph('Prog')).toHaveText('EXE');
+  await expect(glyph('Prog.info')).toHaveText('ICN');
+  await expect(glyph('Sub')).toHaveText('DIR');
+  const cells = paneRow(page, 'Prog').locator('td').nth(3);
+  await expect(cells).toHaveText('----rwed');
+  await expect(cells.locator('span > span')).toHaveCount(8);
+  for (const width of [1440, 1100]) {
     await page.setViewportSize({ width, height: 900 });
-    const row = page.locator(`[data-testid="fs-entry"][data-name="Prog"]`);
-    const h = (await row.boundingBox())!.height;
+    const h = (await paneRow(page, 'Prog').boundingBox())!.height;
     expect(h, `one line at ${width}`).toBeLessThan(48);
+    await expect(paneRow(page, 'Prog').getByTestId('pane-row-sub')).toBeHidden();
   }
+  // Below lg one pane, the size and date on a second line under the name; nothing scrolls sideways.
   await page.setViewportSize({ width: 390, height: 844 });
-  const name = page.locator(`[data-testid="fs-entry"][data-name="${long}"]`);
-  const nameBox = (await name.boundingBox())!;
+  await expect(paneRow(page, 'Prog').getByTestId('pane-row-sub')).toBeVisible();
+  const nameBox = (await paneRow(page, long).boundingBox())!;
   expect(nameBox.x + nameBox.width).toBeLessThanOrEqual(390);
-  const more = (await page.getByTestId(`fs-more-${b[long].block}`).boundingBox())!;
-  expect(more.height).toBeGreaterThanOrEqual(44);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
-  if (was !== 'true') await sw.click();
 });
 
-test('the edit guard: a disk a running Amiga holds has its row-menu edit actions and the bulk Move/Delete disabled', async ({ page, request }) => {
+test('the edit guard: a disk a running Amiga holds has every writing button off, reading ones on', async ({ page, request }) => {
   const { disk } = await freshDisk(page, [{ name: 'HELD.TXT' }]);
-  const b = (await blocks(page, disk.id))['HELD.TXT'].block;
   const { deviceId } = await pairDevice(page, request, `Board guard`);
   const mount = await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId: disk.id } });
   expect(mount.ok()).toBe(true);
-  await page.goto(`/disks/${disk.id}/files`);
-  await expect(page.getByTestId('file-edit-disabled')).toContainText('mounted on');
-  await hydrated(page, `fs-more-${b}`, 'onPointerDown');
-  await openRowMenu(page, b);
-  for (const id of ['rename', 'move', 'protect-item', 'delete']) {
-    await expect(page.getByTestId(`fs-${id}-${b}`), id).toHaveAttribute('aria-disabled', 'true');
+  await openInFiles(page, disk);
+  await expect(page.getByTestId('pane-right-readonly')).toContainText('mounted on');
+  await paneRow(page, 'HELD.TXT').click();
+  for (const id of ['rename', 'move', 'protect', 'delete', 'makedir']) {
+    await expect(page.getByTestId(`files-${id}`), id).toBeDisabled();
+    await expect(page.getByTestId(`files-${id}`), id).toHaveAttribute('title', /mounted on/);
   }
-  // Download reads, it does not write: it stays available.
-  await expect(page.getByTestId(`fs-download-${b}`)).not.toHaveAttribute('aria-disabled', 'true');
-  await page.keyboard.press('Escape');
-  await page.getByTestId(`fs-select-${b}`).check();
-  await expect(page.getByTestId('fs-bulk-move')).toBeDisabled();
-  await expect(page.getByTestId('fs-bulk-delete')).toBeDisabled();
+  // Download and Info read, they do not write: they stay available.
+  await expect(page.getByTestId('files-download')).toBeEnabled();
+  await expect(page.getByTestId('files-info')).toBeEnabled();
 });
 
 test('History: the head open, older versions closed, counts as chips, Current in words', async ({ page }) => {
   const { disk } = await freshDisk(page, [{ name: 'ONE.TXT' }, { name: 'TWO.TXT' }]);
-  await page.goto(`/disks/${disk.id}/files`);
-  await expect(page.getByTestId('history-panel').getByRole('heading', { level: 2, name: 'History' })).toBeVisible();
-  await expect(page.getByTestId('version-2')).toHaveAttribute('data-head', 'true');
-  await expect(page.getByTestId('version-toggle-2')).toHaveAttribute('aria-expanded', 'true');
-  await expect(page.getByTestId('version-toggle-1')).toHaveAttribute('aria-expanded', 'false');
-  await expect(page.getByTestId('changes-1')).toHaveCount(0);
-  await expect(page.getByTestId('current-2')).toHaveText('Current');
-  await expect(page.getByTestId('version-counts-2')).toContainText('+1');
-  await expect(page.getByTestId('version-2')).toContainText('Version 2 · Edited in browser');
+  await openInFiles(page, disk);
+  await page.getByTestId('disk-strip-history-toggle').click();
+  const panel = page.getByTestId('disk-strip-history');
+  await expect(panel.getByRole('heading', { level: 2, name: 'History' })).toBeVisible();
+  await expect(panel.getByTestId('version-2')).toHaveAttribute('data-head', 'true');
+  await expect(panel.getByTestId('version-toggle-2')).toHaveAttribute('aria-expanded', 'true');
+  await expect(panel.getByTestId('version-toggle-1')).toHaveAttribute('aria-expanded', 'false');
+  await expect(panel.getByTestId('changes-1')).toHaveCount(0);
+  await expect(panel.getByTestId('current-2')).toHaveText('Current');
+  await expect(panel.getByTestId('version-counts-2')).toContainText('+1');
+  await expect(panel.getByTestId('version-2')).toContainText('Version 2 · Edited in browser');
   await openVersion(page, 1);
-  await expect(page.getByTestId('changes-1')).toContainText('ONE.TXT');
-  await expect(page.getByTestId('restore-1')).toHaveText('Restore…');
+  await expect(panel.getByTestId('changes-1')).toContainText('ONE.TXT');
+  await expect(panel.getByTestId('restore-1')).toHaveText('Restore…');
 });
 
 test('Restore… asks in a dialog that focuses Cancel; Escape cancels and focus returns', async ({ page }) => {
   const { disk } = await freshDisk(page, [{ name: 'ONE.TXT' }, { name: 'TWO.TXT' }]);
-  await page.goto(`/disks/${disk.id}/files`);
+  await openInFiles(page, disk);
+  await page.getByTestId('disk-strip-history-toggle').click();
   await openVersion(page, 1);
   await page.getByTestId('restore-1').click();
   const dialog = page.getByTestId('restore-dialog');
@@ -241,37 +240,43 @@ test('Restore… asks in a dialog that focuses Cancel; Escape cancels and focus 
   await expect(page.getByTestId('restore-1')).toBeFocused();
 });
 
-test('Restore this version from the banner lands on the current version, focus on the h1', async ({ page }) => {
+test('Restore this version from the banner lands on the current version, in Files', async ({ page }) => {
   test.setTimeout(120_000);
   const { disk } = await freshDisk(page, [{ name: 'ONE.TXT' }, { name: 'TWO.TXT' }]);
   await page.goto(`/disks/${disk.id}/files?version=1`);
   await page.getByTestId('version-banner-restore').click();
   await expect(page.getByTestId('restore-dialog')).toContainText('Restore version 1?');
   await page.getByTestId('restore-confirm').click();
-  await expect(page).toHaveURL(new RegExp(`/disks/${disk.id}/files$`), AFTER_EDIT);
+  await expect(page).toHaveURL(/\/files\?/, AFTER_EDIT);
+  await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe(`LIBRARY:/${disk.gameId}/${disk.id}`);
   await expect(page.getByTestId('version-banner')).toHaveCount(0);
-  await expect(page.getByTestId('version-3')).toContainText('Restored to version 1', AFTER_EDIT);
-  await expect(page.locator('[data-testid="fs-entry"][data-name="TWO.TXT"]')).toHaveCount(0);
-  await expect(page.locator('h1')).toBeFocused();
+  await expect(paneRow(page, 'ONE.TXT')).toBeVisible(AFTER_EDIT);
+  await expect(paneRow(page, 'TWO.TXT')).toHaveCount(0);
+  await page.getByTestId('disk-strip-history-toggle').click();
+  await expect(page.getByTestId('disk-strip-history').getByTestId('version-3')).toContainText('Restored to version 1');
+  expect(await bodyFocused(page)).toBe(false);
 });
 
-test('the drop bar: the board words with free space, staged rows under it, and the reason when editing is off', async ({ page }) => {
+test('the drop review: the board words with free space, staged rows, and the reason when editing is off', async ({ page }) => {
   const { disk } = await freshDisk(page, [{ name: 'ONE.TXT' }]);
-  await page.goto(`/disks/${disk.id}/files`);
-  await hydrated(page, 'drop-strip', 'onDrop');
-  const strip = page.getByTestId('drop-strip');
+  await openInFiles(page, disk);
+  await synthDrop(page, [{ name: 'NEW.TXT', kind: 'file', content: 'new' }], '[data-testid="pane-right"]');
+  const review = page.getByTestId('files-drop-review');
+  await expect(review).toContainText('Check the names before they are written. Every change is saved as a new version.');
+  const strip = review.getByTestId('drop-strip');
+  await expect(review.getByTestId('drop-staging')).toHaveAttribute('aria-label', 'Add files to this disk');
+  await expect(strip).toContainText('1 item staged below — drop more to add to the same batch.');
+  await expect(review.getByTestId('drop-staging-list')).toBeVisible();
+  // Cleared, the strip says where files go and how much room there is; a drop on it stages again.
+  await review.getByTestId('drop-clear').click();
   await expect(strip).toContainText('Drop files, folders or an .lha / .lzh / .zip here or on a folder to add them to');
   await expect(strip).toContainText(/\d+ KB free on this disk · every change is saved as a new version/);
-  await expect(page.getByTestId('drop-staging')).toHaveAttribute('aria-label', 'Add files to this disk');
-  // In flow under the Files card (Ruling 19).
-  const files = (await page.getByTestId('files-card').boundingBox())!;
-  expect((await strip.boundingBox())!.y).toBeGreaterThan(files.y + files.height - 1);
-  await synthDrop(page, [{ name: 'NEW.TXT', kind: 'file', content: 'new' }]);
+  await synthDrop(page, [{ name: 'NEW.TXT', kind: 'file', content: 'new' }], '[data-testid="files-drop-review"] [data-testid="drop-strip"]');
   await expect(strip).toContainText('1 item staged below — drop more to add to the same batch.');
-  await expect(page.getByTestId('drop-staging-list')).toBeVisible();
-  await page.getByTestId('drop-commit').click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="NEW.TXT"]')).toBeVisible(AFTER_EDIT);
-  await expect(page.locator('#files-heading')).toBeFocused();
+  await review.getByTestId('drop-commit').click();
+  await expect(review).toHaveCount(0, AFTER_EDIT);
+  await expect(paneRow(page, 'NEW.TXT')).toBeVisible(AFTER_EDIT);
+  expect(await bodyFocused(page)).toBe(false);
   await page.goto(`/disks/${disk.id}/files?version=0`);
   await expect(page.getByTestId('drop-strip').getByTestId('drop-disabled')).toContainText('read-only');
 });
