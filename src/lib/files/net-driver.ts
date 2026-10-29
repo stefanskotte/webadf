@@ -11,7 +11,7 @@ import { cancelTransfer, clearTransfer, listTransfers, queueLoad, queueTransfers
 import { listSendTargets, findSendTarget } from '@/lib/send-targets';
 import { storeSendBytes, toView } from '@/lib/send-http';
 import { receiverRunning, targetState, transferState, type SendTarget } from '@/lib/send-ui';
-import { SEND_FILE_MAX, SEND_QUEUE_MAX_BYTES } from '@/lib/send-limits';
+import { SEND_FILE_MAX, SEND_QUEUE_MAX_BYTES, SEND_QUEUE_MAX_FILES } from '@/lib/send-limits';
 import { uploadBoards } from '@/lib/amiga-uploads';
 import { mapLimit } from '@/lib/pool';
 import { protectionString } from '@/lib/adffs/dir';
@@ -83,8 +83,9 @@ async function boardOf(ctx: FsCtx, id: string): Promise<SendTarget> {
 
 /**
  * A copy into NET:/<board>: every file of every top, by its path relative to the folder copied (NET: has no folders,
- * so an empty folder brings nothing). Refused whole before any byte is stored when a file is empty or over 4 MB;
- * queueTransfers then holds the board's limits in one transaction. NET: never clashes: Transfer saves Foo_2 rather than
+ * so an empty folder brings nothing). Refused whole before any byte is stored when a file is empty or over 4 MB, or
+ * the copy does not fit beside what the board already holds; queueTransfers then holds the board's limits in one
+ * transaction. NET: never clashes: Transfer saves Foo_2 rather than
  * overwrite, so `onClash` does not apply.
  */
 async function write(ctx: OpCtx, dir: FsPath, tops: IncomingTop[]): Promise<Outcome> {
@@ -98,6 +99,11 @@ async function write(ctx: OpCtx, dir: FsPath, tops: IncomingTop[]): Promise<Outc
     if (size > SEND_FILE_MAX) refuse('too_large', 413, `${path} is over 4 MB`);
     if (size === 0) refuse('unsupported', 400, `${path} is empty`);
   }
+  // Over the board's queue (32 files / 16 MB, counting what already waits): refused before a byte is stored.
+  // queueTransfers holds the limit again in its transaction, against a send that lands meanwhile.
+  const load = await queueLoad(getDb(), t.id);
+  const bytes = files.reduce((n, { i }) => n + (i.bytes?.length ?? i.size!), 0);
+  if (load.files + files.length > SEND_QUEUE_MAX_FILES || load.bytes + bytes > SEND_QUEUE_MAX_BYTES) refuse('queue_full', 409);
   // Bytes a copy brings (a disk's files, an archive's members) go into the store, verified (storeSendBytes); a STASH:
   // file is already there under its sha-256.
   const shas = await mapLimit(files, 12, ({ i }) => (i.sha256 ? Promise.resolve(i.sha256) : storeSendBytes(i.bytes!)));

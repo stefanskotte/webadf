@@ -1,7 +1,7 @@
 // src/lib/files/net-driver.db.test.ts
 // NET: (increment 3, Task 1): boards and their queues; a copy into NET:/<board> sends, all or nothing; Delete cancels a
 // waiting row and clears a finished one; nothing is copied or moved out of NET:, and nothing is moved into it.
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Client } from 'pg';
 
 const base = process.env.TEST_DATABASE_URL!;
@@ -13,7 +13,7 @@ async function admin(stmt: string) { const c = new Client({ connectionString: ba
 
 const { getDb, closeDb } = await import('@/db');
 const { migrate } = await import('drizzle-orm/node-postgres/migrator');
-const { and, eq } = await import('drizzle-orm');
+const { and, eq, inArray } = await import('drizzle-orm');
 const { createHash } = await import('node:crypto');
 const { crc32 } = await import('node:zlib');
 const { games, disks, entitlements, blobs } = await import('@/db/schema/catalog');
@@ -75,6 +75,17 @@ beforeAll(async () => {
   await db.insert(entitlements).values({ orgId: 'o1', sha256: s, sourceFilename: 'SysInfo.adf' });
   await db.insert(games).values({ id: 'g1', orgId: 'o1', title: 'SysInfo', sortTitle: 'sysinfo' });
   await db.insert(disks).values({ id: 'd1', gameId: 'g1', orgId: 'o1', diskNo: 1, sha256: s, sizeBytes: adf.length });
+
+  // d2: a disk whose Lots folder holds 40 files, more than any board's queue takes; Few holds 3.
+  let lots = formatVolume({ filesystem: 'FFS', volumeName: 'Lots' });
+  for (const dir of ['Lots', 'Few']) lots = must(makeDirectory(lots, ROOT_BLOCK, dir));
+  const blockOf = (name: string) => (readVolume(lots) as { ok: true; root: { name: string; block: number }[] }).root.find((e) => e.name === name)!.block;
+  for (let i = 0; i < 40; i++) lots = must(addFile(lots, blockOf('Lots'), `L${i}`, enc(`lots ${i}`), 0));
+  for (let i = 0; i < 3; i++) lots = must(addFile(lots, blockOf('Few'), `F${i}`, enc(`few ${i}`), 0));
+  const s2 = await put(lots);
+  await db.insert(blobs).values({ sha256: s2, sizeBytes: lots.length, storageKey: `adf/${s2}` });
+  await db.insert(entitlements).values({ orgId: 'o1', sha256: s2, sourceFilename: 'Lots.adf' });
+  await db.insert(disks).values({ id: 'd2', gameId: 'g1', orgId: 'o1', diskNo: 2, sha256: s2, sizeBytes: lots.length });
 
   const big = new Uint8Array(4 * MB + 1); big[0] = 1;
   await stash('Big.bin', big);
@@ -149,6 +160,28 @@ describe('copy into NET:', () => {
       .toMatchObject({ kind: 'refused', status: 409, refusal: { code: 'queue_full' } });
     expect((await queued()).length).toBe(before);
     expect(await version('b1')).toBe(v);
+  });
+  it('a disk folder of 40 files is refused before a single byte is stored', async () => {
+    const before = (await queued()).length;
+    const spy = vi.spyOn(diskStore, 'put');
+    try {
+      expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d2/Lots'], dest: 'NET:/b1', onClash: 'ask' }))
+        .toMatchObject({ kind: 'refused', status: 409, refusal: { code: 'queue_full' } });
+      expect(spy).not.toHaveBeenCalled();
+    } finally { spy.mockRestore(); }
+    expect((await queued()).length).toBe(before);
+  });
+  it("a copy that fits alone but not beside what the board already holds is refused before a byte is stored", async () => {
+    const before = (await queued()).filter((x) => x.status === 'queued').length;
+    const fill = Array.from({ length: 30 - before }, (_, i) => ({ id: `fill${i}`, orgId: 'o1', deviceId: 'b1', createdByUserId: 'u1', path: `fill${i}`,
+      sizeBytes: 1, crc32: 0, protection: 0, comment: '', blobSha256: 'f'.repeat(64), expiresAt: new Date(Date.now() + 3600_000) }));
+    await getDb().insert(transfers).values(fill);
+    const spy = vi.spyOn(diskStore, 'put');
+    try {
+      expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d2/Few'], dest: 'NET:/b1', onClash: 'ask' }))
+        .toMatchObject({ kind: 'refused', status: 409, refusal: { code: 'queue_full' } });
+      expect(spy).not.toHaveBeenCalled();
+    } finally { spy.mockRestore(); await getDb().delete(transfers).where(inArray(transfers.id, fill.map((f) => f.id))); }
   });
   it('a file over 4 MB refuses the whole copy, naming it', async () => {
     const before = (await queued()).length;
