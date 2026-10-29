@@ -53,6 +53,14 @@ const { GET: GET_DL } = await import('./download/route');
 const { GET: GET_REVIEW } = await import('./drop-review/route');
 const { GET: GET_STRIP } = await import('./disk-strip/route');
 const { ZIP_LIMITS } = await import('@/lib/files/library');
+const { insertStash } = await import('@/lib/stash');
+const { readFileSync } = await import('node:fs');
+async function stash(path: string, bytes: Uint8Array) {
+  const sha = createHash('sha256').update(bytes).digest('hex');
+  await diskStore.put(sha, bytes);
+  const r = await insertStash(getDb(), 'o1', 'browser', [{ path, kind: 'file', sha256: sha, sizeBytes: bytes.length, date: null, protection: 0, comment: '' }]);
+  if (!r.ok) throw new Error(r.code);
+}
 
 const { readVolume } = await import('@/lib/adffs');
 const { unzipSync, strFromU8 } = await import('fflate');
@@ -109,6 +117,14 @@ beforeAll(async () => {
   const hv = readVolume(blankHd); if (!hv.ok) throw new Error('no volume');
   const hd = must(addFile(blankHd, hv.rootBlock, 'Big', big));   // an HD root is block 1760, not ROOT_BLOCK
   for (const n of [5, 6, 7, 8]) await seedDisk(`g${n}`, `Big ${n}`, `d${n}`, hd);
+  await stash('Notes.txt', new TextEncoder().encode('notes'));
+  await stash('t.zip', new Uint8Array(readFileSync('src/lib/archive/fixtures/t.zip')));
+  await stash('bad.lha', new TextEncoder().encode('not an lha at all'));
+  await stash('Mods/a.mod', new TextEncoder().encode('mod a'));
+  await stash('Other/ReadMe', new TextEncoder().encode('stash readme'));
+  await stash('Huge.bin', big);
+  await stash('Huge2.bin', big.map((b) => b ^ 1));
+  await stash('Huge3.bin', big.map((b) => b ^ 2));
 });
 afterAll(async () => { await closeDb(); await admin(`drop database if exists ${DB} with (force)`); });
 
@@ -260,6 +276,52 @@ describe('/api/files', () => {
       volumeName: null, filesystem: null, usedBytes: null, holder: null, tosecName: null });
     // A readable disk's strip carries the same, from the database alone.
     expect((await (await GET_STRIP(req('/api/files/disk-strip?diskId=d1'))).json()).info).toMatchObject({ diskId: 'd1', title: 'SysInfo' });
+  });
+  it('lists STASH: and 422s an unreadable archive, with the refusal\'s detail when it has one', async () => {
+    expect((await GET_LIST(req('/api/files/list?path=STASH:'))).status).toBe(200);
+    const bad = await GET_LIST(req('/api/files/list?path=' + encodeURIComponent('STASH:/bad.lha')));
+    expect([bad.status, (await bad.json()).error]).toEqual([422, 'archive_unreadable']);
+    asOrg('o2');
+    try { expect((await GET_LIST(req('/api/files/list?path=' + encodeURIComponent('STASH:/Notes.txt')))).status).toBe(404); } finally { asOrg('o1'); }
+  });
+  it('downloads a STASH: file as a nosniff, uncached attachment; LIBRARY: files too', async () => {
+    const one = await GET_DL(req('/api/files/download?path=' + encodeURIComponent('STASH:/Notes.txt')));
+    expect([one.status, one.headers.get('x-content-type-options'), one.headers.get('cache-control'), await one.text()])
+      .toEqual([200, 'nosniff', 'private, no-store', 'notes']);
+    expect(one.headers.get('content-disposition')).toContain("attachment; filename*=UTF-8''Notes.txt");
+    const lib = await GET_DL(req('/api/files/download?path=' + encodeURIComponent('LIBRARY:/g1/d1/ReadMe')));
+    expect([lib.headers.get('x-content-type-options'), lib.headers.get('cache-control')]).toEqual(['nosniff', 'private, no-store']);
+    asOrg('o2');
+    try { expect((await GET_DL(req('/api/files/download?path=' + encodeURIComponent('STASH:/Notes.txt')))).status).toBe(404); } finally { asOrg('o1'); }
+  });
+  it('zips STASH: and LIBRARY: together: folders with their contents, archive members, a shared name numbered', async () => {
+    const z = await dlMany('STASH:/Notes.txt', 'LIBRARY:/g1/d1/ReadMe', 'STASH:/Mods', 'LIBRARY:/g2/d2/S', 'STASH:/t.zip/src/tiny.txt');
+    expect([z.status, z.headers.get('content-type'), z.headers.get('x-content-type-options')]).toEqual([200, 'application/zip', 'nosniff']);
+    const files = unzipSync(new Uint8Array(await z.arrayBuffer()));
+    expect(Object.keys(files).sort()).toEqual(['Mods/', 'Mods/a.mod', 'Notes.txt', 'ReadMe', 'S/', 'S/Startup', 'tiny.txt']);
+    expect([strFromU8(files['Notes.txt']), strFromU8(files['ReadMe']), strFromU8(files['Mods/a.mod'])]).toEqual(['notes', 'hello', 'mod a']);
+    const two = await dlMany('LIBRARY:/g1/d1/ReadMe', 'STASH:/Other/ReadMe');
+    const both = unzipSync(new Uint8Array(await two.arrayBuffer()));
+    expect([strFromU8(both['ReadMe']), strFromU8(both['ReadMe (2)'])]).toEqual(['hello', 'stash readme']);
+    // An entry selected twice, or inside a selected folder, is in the zip once.
+    const once = await dlMany('STASH:/Mods', 'STASH:/mods/a.mod', 'STASH:/Notes.txt', 'STASH:/notes.txt');
+    expect(Object.keys(unzipSync(new Uint8Array(await once.arrayBuffer()))).sort()).toEqual(['Mods/', 'Mods/a.mod', 'Notes.txt']);
+  });
+  it('a zip across devices: unknown or foreign 404, archive member it cannot read 422, over the cap 413 before a STASH: blob is read', async () => {
+    expect((await dlMany('STASH:/Notes.txt', 'STASH:/Nothing')).status).toBe(404);
+    expect((await dlMany('STASH:/Notes.txt', 'STASH:')).status).toBe(404);
+    asOrg('o2');
+    try { expect((await dlMany('STASH:/Notes.txt', 'LIBRARY:/g1/d1/ReadMe')).status).toBe(404); } finally { asOrg('o1'); }
+    expect((await dlMany('STASH:/Notes.txt', 'STASH:/bad.lha/x')).status).toBe(422);
+    const read = vi.spyOn(diskStore, 'read');
+    try {
+      const r = await dlMany('STASH:/Huge.bin', 'STASH:/Huge2.bin', 'STASH:/Huge3.bin');
+      expect(r.status).toBe(413);
+      expect(await r.json()).toEqual({ error: 'too_large', detail: expect.stringContaining('4 MB') });
+      expect(read).not.toHaveBeenCalled();
+    } finally { read.mockRestore(); }
+    const gone = await dlMany('STASH:/Notes.txt', 'LIBRARY:/g3/d3/x');
+    expect([gone.status, (await gone.json()).error]).toEqual([503, 'blob_unavailable']);
   });
   it('a database error is not reported as blob_unavailable', async () => {
     holderSeam.fail = true;

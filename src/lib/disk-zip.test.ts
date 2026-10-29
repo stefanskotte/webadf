@@ -4,7 +4,7 @@ import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume } from '@/lib/adffs';
 import { addFile, makeDirectory } from '@/lib/adffs/write';
 import { blockChecksum } from '@/lib/adffs/blocks';
-import { safe, zipEntries } from './disk-zip';
+import { safe, zipEntries, zipIncoming } from './disk-zip';
 
 const ok = <T extends { ok: boolean }>(r: T) => { if (!r.ok) throw new Error('write'); return r as Extract<T, { ok: true }>; };
 const txt = (s: string) => new TextEncoder().encode(s);
@@ -126,5 +126,25 @@ describe('zip-slip', () => {
       expect(n.split('/')).not.toContain('..');
     }
     expect(names).toContain('_abs/.._.._x');
+  });
+});
+
+describe('zipIncoming', () => {
+  const L = { maxEntries: 10, maxBytes: 100 };
+  it('zips tops from any device: folders with their contents, a shared top name numbered, names made safe', () => {
+    const r = zipIncoming([
+      { items: [{ rel: ['Mods'], kind: 'dir' }, { rel: ['Mods', 'a.mod'], kind: 'file', bytes: txt('A') }, { rel: ['Mods', '../x'], kind: 'file', bytes: txt('X') }] },
+      { items: [{ rel: ['ReadMe'], kind: 'file', bytes: txt('one') }] },
+      { items: [{ rel: ['readme'], kind: 'file', bytes: txt('two') }] },
+    ], L);
+    if (!r.ok) throw new Error(r.reason);
+    const files = unzipSync(r.zip);
+    expect(Object.keys(files).sort()).toEqual(['Mods/', 'Mods/.._x', 'Mods/a.mod', 'ReadMe', 'readme (2)']);
+    expect(strFromU8(files['readme (2)'])).toBe('two');
+  });
+  it('refuses over either cap, counting sizes of files not yet read, and a file without its bytes', () => {
+    expect(zipIncoming([{ items: [{ rel: ['big'], kind: 'file', size: 101 }] }], L)).toEqual({ ok: false, reason: 'too_large' });
+    expect(zipIncoming([{ items: Array.from({ length: 11 }, (_, i) => ({ rel: ['d', `f${i}`], kind: 'dir' as const })) }], L)).toEqual({ ok: false, reason: 'too_large' });
+    expect(zipIncoming([{ items: [{ rel: ['d'], kind: 'dir' }, { rel: ['d', 'f'], kind: 'file', size: 3 }] }], L)).toEqual({ ok: false, reason: 'unreadable', name: 'f' });
   });
 });

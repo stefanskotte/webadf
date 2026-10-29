@@ -15,7 +15,7 @@ export async function GET(request: Request) {
   if (!driver) return Response.json({ error: 'not_found' }, { status: 404 });
   let listing: Awaited<ReturnType<typeof driver.list>>;
   try { listing = await driver.list({ orgId, userId }, p); } catch (e) {
-    if (e instanceof Refused) return Response.json({ error: e.refusal.code }, { status: e.status });
+    if (e instanceof Refused) return Response.json({ error: e.refusal.code, ...(e.refusal.detail ? { detail: e.refusal.detail } : {}) }, { status: e.status });
     throw e;
   }
   if (!listing) return Response.json({ error: 'not_found' }, { status: 404 });

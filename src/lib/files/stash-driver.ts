@@ -324,7 +324,10 @@ type Pending = NewStashEntry & { bytes?: Uint8Array };
  * comment come along (and it counts, as empty folders do). A clash is per top-level name: `ask` writes nothing,
  * `keep-both` stores <name>_1, `replace` deletes what held the name in the same transaction.
  */
-export async function writeStash(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], onClash: OnClash, source: 'browser' | 'copy'): Promise<Outcome> {
+/** `placed`: where each written top now is in STASH: (its keep-both name, when it took one). */
+export type StashWriteOutcome = Outcome & { placed?: { source: string; path: string }[] };
+
+export async function writeStash(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], onClash: OnClash, source: 'browser' | 'copy'): Promise<StashWriteOutcome> {
   const s = await loadStash(ctx);
   const folder = folderAt(s, dir);
   const results = new Map<string, OpItem>();
@@ -356,6 +359,7 @@ export async function writeStash(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], o
   const entries: Pending[] = [];
   const replaceIds: string[] = [];
   const written: string[] = [];
+  const placedAt: { source: string; path: string }[] = [];
   for (const p of planned) {
     results.set(p.top.source, itemResult(p.top.source, () => {
       if (p.clash && onClash === 'skip') return;
@@ -367,6 +371,7 @@ export async function writeStash(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], o
           sizeBytes: i.kind === 'file' ? (i.bytes?.length ?? i.size!) : 0, date: i.date, protection: i.protection, comment: i.comment ?? '' });
       }
       written.push(p.top.source);
+      placedAt.push({ source: p.top.source, path: stashPath([...folder.shown, name]) });
     }));
   }
   if (entries.length) {
@@ -375,7 +380,7 @@ export async function writeStash(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], o
     await insertAll(ctx, source, entries.map((e): NewStashEntry => ({ path: e.path, kind: e.kind, sha256: e.sha256, sizeBytes: e.sizeBytes,
       date: e.date, protection: e.protection, comment: e.comment })), replaceIds);
   }
-  return { kind: 'done', items: tops.map((t) => results.get(t.source)!), written };
+  return { kind: 'done', items: tops.map((t) => results.get(t.source)!), written, placed: placedAt };
 }
 
 /** A move inside STASH: rewrites paths; no bytes move and nothing new counts against the limit. */

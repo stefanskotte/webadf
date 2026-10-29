@@ -140,3 +140,36 @@ export function zipTops(
   }
   return { ok: true, zip: zipReadTops(read) };
 }
+
+/** One top as a device's `collect` walks it (src/lib/files/driver.ts IncomingItem): rel[0] is the top's own name. */
+export type ZipIncomingTop = { items: readonly { rel: string[]; kind: 'file' | 'dir'; bytes?: Uint8Array; size?: number }[] };
+
+/** What `tops` put in a zip, counted as tallyTop counts: every entry with the folders, and the files' bytes. Reads nothing. */
+export function tallyIncoming(tops: readonly ZipIncomingTop[]): { entries: number; bytes: number } {
+  let entries = 0; let bytes = 0;
+  for (const t of tops) for (const i of t.items) { entries++; if (i.kind === 'file') bytes += i.bytes?.length ?? i.size ?? 0; }
+  return { entries, bytes };
+}
+
+/**
+ * Entries from any device (each top as its driver's `collect` gave it, with its files' bytes), as one zip by the rules
+ * zipTops follows: each top under its own name, a later one sharing a name numbered, every name through `safe`. Over
+ * either cap is refused before anything is written; a file that came without its bytes is `unreadable`.
+ */
+export function zipIncoming(tops: readonly ZipIncomingTop[], limits: ZipLimits): ZipOutcome | { ok: false; reason: 'too_large' } {
+  const n = tallyIncoming(tops);
+  if (n.entries > limits.maxEntries || n.bytes > limits.maxBytes) return { ok: false, reason: 'too_large' };
+  const read: ReadTop[] = [];
+  for (const t of tops) {
+    if (!t.items.length) return { ok: false, reason: 'not_found' };
+    const files: ReadTop['files'] = [];
+    for (const i of t.items) {
+      const rel = i.rel.slice(1).map((s) => `/${safe(s)}`).join('');
+      if (i.kind === 'dir') { files.push({ rel: `${rel}/`, bytes: null }); continue; }
+      if (!i.bytes) return { ok: false, reason: 'unreadable', name: i.rel[i.rel.length - 1] };
+      files.push({ rel, bytes: i.bytes });
+    }
+    read.push({ name: t.items[0].rel[0], files });
+  }
+  return { ok: true, zip: zipReadTops(read) };
+}
