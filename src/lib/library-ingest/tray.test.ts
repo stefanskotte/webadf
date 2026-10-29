@@ -36,3 +36,13 @@ describe('tray order', () => {
     expect(stampDrops(two, [], dropOf, 3).size).toBe(0);
   });
 });
+
+describe('refused rows', () => {
+  it('keeps two refused files of the same name apart, so the summary counts both', async () => {
+    const { refusedRows } = await import('./tray');
+    const rows = refusedRows([{ name: 'readme.txt', reason: 'not a disk image' }, { name: 'readme.txt', reason: 'not a disk image' }], 4);
+    expect(rows.map((r) => r.key)).toEqual(['lib:bad:4.0:readme.txt', 'lib:bad:4.1:readme.txt']);
+    expect(traySummary(rows)).toBe('2 refused');
+    expect(trayState(rows[0])).toEqual({ word: 'Refused — not a disk image', tone: 'fail' });
+  });
+});

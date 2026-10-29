@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { deflateRawSync } from 'node:zlib';
 import { diskFilesFromDrop } from './drop-files';
+import { MAX_ARCHIVE_BYTES } from '@/lib/archive';
 
 const fx = (n: string) => new File([readFileSync(`src/lib/archive/fixtures/${n}`)], n);
 
@@ -72,5 +73,14 @@ describe('diskFilesFromDrop', () => {
   it("refuses an archive it can't open", async () => {
     const r = await diskFilesFromDrop([{ name: 'bad.lha', kind: 'file', file: new File(['not an archive'], 'bad.lha') }]);
     expect(r).toEqual({ files: [], refused: [{ name: 'bad.lha', reason: "can't open this archive" }], notes: [] });
+  });
+
+  it('refuses an archive over the cap without reading it into the tab', async () => {
+    const file = new File(['x'], 'huge.zip');
+    Object.defineProperty(file, 'size', { value: MAX_ARCHIVE_BYTES + 1 });
+    const read = vi.spyOn(file, 'arrayBuffer').mockRejectedValue(new Error('read a multi-GB archive'));
+    const r = await diskFilesFromDrop([{ name: 'huge.zip', kind: 'file', file }]);
+    expect(r).toEqual({ files: [], refused: [{ name: 'huge.zip', reason: "can't open this archive" }], notes: [] });
+    expect(read).not.toHaveBeenCalled();
   });
 });

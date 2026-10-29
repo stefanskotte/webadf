@@ -2,7 +2,7 @@
 // opened for the images inside, so the extracted pipeline (run.ts) sees image files only -- exactly what the Upload
 // card fed it. Client-safe: the archive readers run in the tab, under their own bomb caps (src/lib/archive).
 
-import { expandArchive, isArchiveName } from '@/lib/archive';
+import { expandArchive, isArchiveName, MAX_ARCHIVE_BYTES } from '@/lib/archive';
 import { DISK_IMAGE_PATTERN } from '@/lib/archive/disk-image';
 
 export type DropFileItem = { name: string; file?: File; kind: 'file' | 'dir' };
@@ -34,6 +34,12 @@ export async function diskFilesFromDrop(items: DropFileItem[]): Promise<{ files:
     }
     if (!isArchiveName(name)) {
       refused.push({ name, reason: 'not a disk image' });
+      continue;
+    }
+    // Refused on its size BEFORE it is read: expandArchive checks the cap too, but only on bytes already in the tab,
+    // and a multi-GB zip would be read into memory first.
+    if (item.file.size > MAX_ARCHIVE_BYTES) {
+      refused.push({ name, reason: "can't open this archive" });
       continue;
     }
     const r = await expandArchive(name, new Uint8Array(await item.file.arrayBuffer()));

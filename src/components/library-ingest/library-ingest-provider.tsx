@@ -3,15 +3,16 @@ import { createContext, useCallback, useContext, useRef, useState, type ReactNod
 import { useLibraryIngest } from './use-library-ingest';
 import { diskFilesFromDrop, type DropFileItem } from '@/lib/library-ingest/drop-files';
 import { newRow, upsertLibRows, type LibRow } from '@/lib/library-ingest/rows';
-import { stampDrops, trayOrder, type TrayPlace } from '@/lib/library-ingest/tray';
+import { refusedRows, stampDrops, trayOrder, type TrayPlace } from '@/lib/library-ingest/tray';
 import type { Suggestion } from '@/lib/disk-set-suggest';
 import type { FetchedRow } from '@/components/ingest/url-fetch';
 
 type LibraryIngest = {
   /** The tray's rows, newest drop first (R9). */
   rows: LibRow[];
-  /** One line per archive whose other files were left out (drop-files.ts). */
-  notes: string[];
+  /** One line per archive whose other files were left out (drop-files.ts), each with its own key: two drops of the
+   *  same archive say the same words. */
+  notes: { key: number; text: string }[];
   /** A drop is being read, opened or added: the overlay takes no drop and Close is disabled. */
   busy: boolean;
   setBusy(b: boolean): void;
@@ -34,7 +35,8 @@ const Ctx = createContext<LibraryIngest | null>(null);
 export function LibraryIngestProvider({ children }: { children: ReactNode }) {
   // The rows with the drop each came from (stampDrops), kept together so one update changes both.
   const [tray, setTray] = useState<{ rows: LibRow[]; dropOf: ReadonlyMap<string, TrayPlace> }>({ rows: [], dropOf: new Map() });
-  const [notes, setNotes] = useState<string[]>([]);
+  const [notes, setNotes] = useState<{ key: number; text: string }[]>([]);
+  const noteSeq = useRef(0);
   const [reading, setReading] = useState(false);
   // Counted up as each drop or URL fetch starts; read inside the updater, never in render.
   const drop = useRef(0);
@@ -54,10 +56,14 @@ export function LibraryIngestProvider({ children }: { children: ReactNode }) {
     try {
       const r = await diskFilesFromDrop(await items);
       files = r.files;
-      if (r.notes.length) setNotes((ns) => [...r.notes, ...ns]);
-      // Named in the tray as failed rows, keyed `bad:<name>` as the pipeline's own refusals are.
+      if (r.notes.length) {
+        const added = r.notes.map((text) => ({ key: ++noteSeq.current, text }));
+        setNotes((ns) => [...added, ...ns]);
+      }
+      // Named in the tray as failed rows, one each: keyed by drop and place, not by name (refusedRows).
       if (r.refused.length) {
-        setRows((rs) => upsertLibRows(rs, r.refused.map((x) => newRow(x.name, 0, `bad:${x.name}`, 'failed', x.reason))));
+        const bad = refusedRows(r.refused, drop.current);
+        setRows((rs) => upsertLibRows(rs, bad));
       }
     } catch {
       setRows((rs) => upsertLibRows(rs, [newRow('Dropped files', 0, 'bad:drop', 'failed', 'could not be read')]));

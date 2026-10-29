@@ -100,7 +100,7 @@ test('a file dragged over the page lights it up, counting the disks; a drag that
   await expect(page.getByTestId('library-drop-overlay')).toHaveCount(0);
 });
 
-test('a dropped folder adds its ADF and names the .txt it refused', async ({ page }) => {
+test('a dropped folder adds its ADF and names each .txt it refused', async ({ page }) => {
   const tag = runTag();
   await signUpFresh(page);
   await page.goto('/library');
@@ -109,13 +109,17 @@ test('a dropped folder adds its ADF and names the .txt it refused', async ({ pag
     name: 'Set', kind: 'dir', children: [
       { name: `LibAdd Folder ${tag} (1990)(X).adf`, kind: 'file', bytes: bytes(a) },
       { name: 'readme.txt', kind: 'file', content: 'hello' },
+      { name: 'Docs', kind: 'dir', children: [{ name: 'readme.txt', kind: 'file', content: 'other' }] },
     ],
   }], TARGET);
 
-  await expect(summary(page)).toHaveText('1 added · 1 refused', { timeout: 30_000 });
+  await expect(summary(page)).toHaveText('1 added · 2 refused', { timeout: 30_000 });
   await expect(rowOf(page, `lib:${sha(a)}`)).toHaveAttribute('data-state', 'done');
-  await expect(rowOf(page, 'lib:bad:readme.txt')).toHaveAttribute('data-state', 'failed');
-  await expect(rowOf(page, 'lib:bad:readme.txt')).toContainText('Refused — not a disk image');
+  // Two readme.txt from two folders are two refusals, not one row.
+  const refused = page.locator('[data-testid="library-tray-row"][data-state="failed"]');
+  await expect(refused).toHaveCount(2);
+  await expect(refused.first()).toContainText('readme.txt');
+  await expect(refused.first()).toContainText('Refused — not a disk image');
   await expect(card(page, `LibAdd Folder ${tag}`)).toHaveCount(1);
 
   await page.getByTestId('library-tray-close').click();

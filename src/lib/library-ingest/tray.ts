@@ -1,6 +1,7 @@
-// The Library page's results tray (Files increment 3, ruling R9), in words. Client-safe, no imports but a type.
+// The Library page's results tray (Files increment 3, ruling R9), in words. Client-safe.
 
-import type { LibRow } from './rows';
+import { newRow, type LibRow } from './rows';
+import type { DropRefusal } from './drop-files';
 
 /** "3 added · 1 already in the library · 1 refused", and "· 2 working" while any row is still hashing or uploading.
  *  A count of nothing is left out; no rows at all is the empty string. */
@@ -55,4 +56,13 @@ export function stampDrops(prev: LibRow[], next: LibRow[], placeOf: ReadonlyMap<
 export function trayOrder(rows: LibRow[], placeOf: ReadonlyMap<string, TrayPlace>): LibRow[] {
   const at = (r: LibRow) => placeOf.get(r.key) ?? { drop: 0, seq: 0 };
   return [...rows].sort((a, b) => at(b).drop - at(a).drop || at(a).seq - at(b).seq);
+}
+
+/**
+ * A drop's refusals as failed tray rows. Each is keyed by its drop and its place in it (`bad:<drop>.<i>:<name>`), not
+ * by its name alone: two readme.txt from different folders are two refusals, and a name key would fold them into one
+ * row and undercount the summary.
+ */
+export function refusedRows(refused: DropRefusal[], drop: number): LibRow[] {
+  return refused.map((x, i) => newRow(x.name, 0, `bad:${drop}.${i}:${x.name}`, 'failed', x.reason));
 }

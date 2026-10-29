@@ -40,7 +40,7 @@ export function LibraryTray() {
         </button>
       </div>
       {notes.map((n) => (
-        <p key={n} data-testid="library-tray-note" className="text-[12px]" style={{ color: 'var(--muted)' }}>{n}</p>
+        <p key={n.key} data-testid="library-tray-note" className="text-[12px]" style={{ color: 'var(--muted)' }}>{n.text}</p>
       ))}
       {rows.length > 0 && (
         <ul className="flex max-h-[32vh] flex-col overflow-y-auto border-t" style={{ borderColor: 'var(--line)' }}>
