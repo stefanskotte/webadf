@@ -16,7 +16,7 @@ import { DEFAULT_LEFT, DEFAULT_RIGHT, formatPath, PANE_DEVICES, parsePath } from
 import type { OpItem, OpRequest } from '@/lib/files/ops';
 import type { Added } from '@/lib/files/driver';
 import {
-  acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, holdsFiles, netBoardOf, netReadOnly, offersUndo, placeOf,
+  acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, offersUndo, placeOf,
 } from '@/lib/files/pane-rules';
 import { netPollMs, NET_MOVE_IN, NET_PICK_BOARD } from '@/lib/files/net-rules';
 import { netDropRefusal, sendToBoard } from '@/lib/files/net-send';
@@ -38,6 +38,7 @@ import { SendDropZone } from './send-drop-zone';
 import type { SendTarget } from '@/lib/send-ui';
 import { useStashUpload, type StashUploadResult } from './use-stash-upload';
 import { sameStashName } from '@/lib/files/stash-paths';
+import { isSignedOutAnswer, SIGNED_OUT_TEXT } from '@/lib/signed-out';
 import {
   ClashDialog, ConfirmDeleteDialog, InfoDialog, NameDialog, ProtectDialog, placeName, type Clash, type ClashChoice,
 } from './dialogs';
@@ -553,7 +554,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   // R5: nothing leaves NET:, said before anything else.
   const outOfNet = copyOutReason(src);
   function transferReason(op: 'copy' | 'move'): string | null {
-    const r = outOfNet ?? sourceReason(op === 'move');
+    // A STASH: file that failed to arrive holds no bytes: a copy would skip it and still say done.
+    const r = outOfNet ?? sourceReason(op === 'move') ?? failedReason(picked);
     if (r) return r;
     if (!acceptsCopies(dst)) return dst && netReadOnly(dst) ? readOnly(dst) : 'Open a disk or STASH: on the other side';
     if (!dst!.writable) return readOnly(dst!);
@@ -570,11 +572,11 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     protect: inNet ? NOT_IN_NET : sourceReason(true),
     info: inNet && !board ? NOT_IN_NET : one(sourceReason(false), 'see its details'),
     // One file by path; several, or a folder, as a .zip (spec §3.3).
-    download: outOfNet ?? sourceReason(false)
+    download: outOfNet ?? sourceReason(false) ?? failedReason(picked)
       ?? (downloadHref(picked, folderName).length > DOWNLOAD_URL_MAX ? 'Too many items to download at once — download their folder instead' : null),
     // The phone's Copy to… / Move to…: the place is picked afterwards, so only the source is checked here.
-    copyTo: outOfNet ?? sourceReason(false),
-    moveTo: outOfNet ?? sourceReason(true),
+    copyTo: outOfNet ?? sourceReason(false) ?? failedReason(picked),
+    moveTo: outOfNet ?? sourceReason(true) ?? failedReason(picked),
     // Disk images in STASH: into the library (R8).
     addlib: addToLibraryReason(src, picked),
   };
@@ -592,6 +594,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       const res = await fetch('/api/files/ops', {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req),
       });
+      // Signed out, the fetch lands on the sign-in page (a 200 that is not JSON): said so, and nothing changes.
+      if (isSignedOutAnswer(res)) { toast.error(SIGNED_OUT_TEXT); return { kind: 'refused' }; }
       const body = (await res.json().catch(() => null)) as {
         items?: OpItem[]; versions?: OpVersion[]; added?: Added[]; queued?: number; error?: unknown; detail?: unknown; clashes?: Clash[];
       } | null;

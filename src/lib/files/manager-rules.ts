@@ -1,5 +1,6 @@
 // The Files manager's small decisions, out of the component so they can be tested (final review of increment 1).
 // CLIENT-SAFE: no database import.
+import { SIGNED_OUT_TEXT } from '@/lib/signed-out';
 import { parsePath } from './path';
 import { ZIP_MAX_BYTES } from './transfer';
 import type { Listing } from './types';
@@ -53,6 +54,8 @@ export type Fetched =
 export async function fetchDownload(href: string, fetchImpl: (href: string) => Promise<Response> = (h) => fetch(h)): Promise<Fetched> {
   let res: Response;
   try { res = await fetchImpl(href); } catch { return { ok: false, code: 'failed', detail: undefined }; }
+  // Signed out, the fetch follows the redirect to the sign-in page: a page, not the file (a download is never HTML).
+  if (res.redirected || (res.ok && (res.headers.get('content-type') ?? '').includes('text/html'))) return { ok: false, words: SIGNED_OUT_TEXT };
   if (res.ok) return { ok: true, blob: await res.blob(), name: nameOf(res.headers.get('content-disposition')) };
   const body = (await res.json().catch(() => null)) as { error?: unknown; detail?: unknown } | null;
   if (res.status === 413 && body?.error === 'too_large') return { ok: false, words: TOO_BIG_WORDS };

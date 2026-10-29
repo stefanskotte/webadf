@@ -45,6 +45,14 @@ export function netReadOnly(l: Listing | null): boolean {
 /** A STASH: row the board or a commit has not finished, or one that failed: not a stored file yet (stash-driver marksOf). */
 const unfinished = (e: FsEntry) => e.marks.some((m) => m.startsWith('arriving') || m.startsWith('failed'));
 
+/** The reason a STASH: file that failed to arrive is not copied, moved or downloaded: it holds no bytes (Delete clears it). */
+export const FAILED_ROW = 'It did not arrive whole — nothing to copy; delete it and send it again';
+
+/** FAILED_ROW when any picked row failed to arrive (its `failed — …` mark), else null. */
+export function failedReason(picked: FsEntry[]): string | null {
+  return picked.some((e) => e.marks.some((m) => m.startsWith('failed'))) ? FAILED_ROW : null;
+}
+
 /** Add to library takes stored disk images in STASH: itself (R8), never members of an archive. */
 export function addToLibraryReason(l: Listing | null, picked: FsEntry[]): string | null {
   if (!l || !inStash(l.path)) return 'Open STASH: to add its disk images to the library';

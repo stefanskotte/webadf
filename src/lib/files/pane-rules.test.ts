@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { holdsFiles, addToLibraryReason, offersUndo, placeOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly } from './pane-rules';
+import { holdsFiles, addToLibraryReason, offersUndo, placeOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly, failedReason, FAILED_ROW } from './pane-rules';
 import type { FsEntry, Listing } from './types';
 
 const L = (path: string, extra: Partial<Listing> = {}): Listing => ({ path, crumbs: [], entries: [], writable: true, readOnlyReason: null, disk: null, meta: '', ...extra });
@@ -14,6 +14,14 @@ describe('holdsFiles', () => {
     expect(holdsFiles(L('LIBRARY:/g1'))).toBe(false);
     expect(holdsFiles(L('LIBRARY:'))).toBe(false);
     expect(holdsFiles(null)).toBe(false);
+  });
+});
+
+describe('failedReason', () => {
+  it('names a picked row that failed to arrive, and nothing else', () => {
+    expect(failedReason([E('a.txt'), E('Bad.adf', 'file', { marks: ['from Bench', 'failed — damaged on the way: send it again'] })])).toBe(FAILED_ROW);
+    expect(failedReason([E('a.txt', 'file', { marks: ['from Bench', 'arriving 40%'] }), E('Dir', 'dir')])).toBeNull();
+    expect(failedReason([])).toBeNull();
   });
 });
 

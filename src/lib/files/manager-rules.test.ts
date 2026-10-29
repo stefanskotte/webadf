@@ -52,6 +52,13 @@ describe('fetchDownload (final review: a refusal is words, never a saved error p
     expect(r).toEqual({ ok: false, words: TOO_BIG_WORDS });
     expect(TOO_BIG_WORDS).toMatch(/select fewer files \(4 MB\)/);
   });
+  it('the sign-in page answered in its place (a 200 page, or a redirect) is words, never a saved file', async () => {
+    expect(await fetchDownload('/x', fake(new Response('<!doctype html><title>Sign in</title>', { headers: { 'content-type': 'text/html; charset=utf-8' } }))))
+      .toEqual({ ok: false, words: 'Signed out — sign in again' });
+    const moved = new Response('x', { headers: { 'content-type': 'application/octet-stream' } });
+    Object.defineProperty(moved, 'redirected', { value: true });
+    expect(await fetchDownload('/x', fake(moved))).toEqual({ ok: false, words: 'Signed out — sign in again' });
+  });
   it('any other refusal is its code (the caller words it); a network failure is failed', async () => {
     expect(await fetchDownload('/x', fake(Response.json({ error: 'blob_unavailable' }, { status: 503 }))))
       .toEqual({ ok: false, code: 'blob_unavailable', detail: undefined });

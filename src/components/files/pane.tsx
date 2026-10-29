@@ -228,8 +228,11 @@ export function Pane(p: PaneProps) {
                                 className="shrink-0 rounded-full px-1.5 py-px text-[10px] font-semibold"
                                 style={{ background: 'var(--success-bg)', color: 'var(--success-fg)' }}>new in v{e.addedIn}</span>
                         )}
+                        {/* Below lg a long mark (a 200-byte "saved as" path) gives way rather than widening the page:
+                            it shrinks to an ellipsis, its whole words in its title. */}
                         {e.marks.map((m) => (
-                          <span key={m} className="shrink-0 rounded-full border px-[7px] text-[11px]"
+                          <span key={m} title={m} data-testid="pane-mark"
+                                className="shrink-0 rounded-full border px-[7px] text-[11px] max-lg:min-w-0 max-lg:shrink max-lg:truncate"
                                 style={{ background: 'var(--surface-2)', borderColor: 'var(--line)', color: 'var(--muted-2)' }}>{m}</span>
                         ))}
                         {/* An archive opens as a read-only folder (ruling 7): a double-click or Enter, and on a phone,
