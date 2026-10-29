@@ -35,8 +35,8 @@ export function formatPath(p: FsPath): string {
   return p.segments.length ? `${p.device}:/${p.segments.join('/')}` : `${p.device}:`;
 }
 
-/** The devices a pane's buttons offer, in order (increment 2, R1; NET: since increment 3). */
-export const PANE_DEVICES: readonly Device[] = ['STASH', 'NET', 'LIBRARY'];
+/** The devices the panes show, in the device column's order (Files 2 R12): STASH:, LIBRARY:, NET:. */
+export const PANE_DEVICES: readonly Device[] = ['STASH', 'LIBRARY', 'NET'];
 /** Where the panes start when the URL names no place (increment 2, R1). */
 export const DEFAULT_LEFT = 'STASH:';
 export const DEFAULT_RIGHT = 'LIBRARY:';

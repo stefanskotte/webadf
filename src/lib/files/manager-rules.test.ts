@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  dropBlocked, fetchDownload, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems, TOO_BIG_WORDS, BUSY_DROP, DIALOG_DROP,
+  createClosesDialog, dropBlocked, fetchDownload, oneAtATime, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems, TOO_BIG_WORDS, BUSY_DROP, DIALOG_DROP,
 } from './manager-rules';
 import type { OpItem } from './driver';
 import type { Listing } from './types';
@@ -107,4 +107,40 @@ describe('stashTitle (final review: a drop into STASH: never counts a skipped to
   it('added and skipped', () => expect(stashTitle(1, 2, 'STASH:', count)).toBe('Added 1 item to STASH:. Skipped 2 (already there).'));
   it('only skipped', () => expect(stashTitle(0, 1, 'STASH:', count)).toBe('Nothing was added. Skipped 1 (already there).'));
   it('nothing', () => expect(stashTitle(0, 0, 'STASH:', count)).toBe('Nothing was added.'));
+});
+
+describe('Create ADF…: the dialog closes only on a made disk (Task 7 review)', () => {
+  const ok: OpItem = { source: 'STASH:/Work.adf', ok: true };
+  it('closes when the item was made (or skipped by the clash setting)', () => {
+    expect(createClosesDialog({ kind: 'done', items: [ok] })).toBe(true);
+    expect(createClosesDialog({ kind: 'done', items: [{ ...ok, skipped: true }] })).toBe(true);
+  });
+  it('stays open, the name in its field, when the item is refused, the op refused or a clash came back', () => {
+    expect(createClosesDialog({ kind: 'done', items: [{ source: 'x', ok: false, refusal: { code: 'disk_full' } }] })).toBe(false);
+    expect(createClosesDialog({ kind: 'done', items: [] })).toBe(false);
+    expect(createClosesDialog({ kind: 'refused' })).toBe(false);
+    expect(createClosesDialog({ kind: 'clashes' })).toBe(false);
+  });
+});
+
+describe('oneAtATime (Enter and a click cannot submit twice)', () => {
+  it('runs one call at a time and refuses the rest until it settles', async () => {
+    let finish!: () => void;
+    let runs = 0;
+    const go = () => { runs++; return new Promise<void>((r) => { finish = r; }); };
+    const once = oneAtATime();
+    expect(once(go)).toBe(true);
+    expect(once(go)).toBe(false);
+    expect(runs).toBe(1);
+    finish();
+    await Promise.resolve(); await Promise.resolve();
+    expect(once(go)).toBe(true);
+    expect(runs).toBe(2);
+  });
+  it('lets go after a failed run too', async () => {
+    const once = oneAtATime();
+    expect(once(() => Promise.reject(new Error('x')))).toBe(true);
+    await Promise.resolve(); await Promise.resolve();
+    expect(once(() => Promise.resolve())).toBe(true);
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY_SELECTION, moveCursor, selectClick, togglePick, type Selection } from './selection';
+import { EMPTY_SELECTION, moveCursor, selectAll, selectClick, togglePick, type Selection } from './selection';
 
 const none = { shift: false, toggle: false };
 const picked = (s: Selection) => [...s.picked].sort((a, b) => a - b);
@@ -69,5 +69,13 @@ describe('togglePick', () => {
     s = togglePick(s, 3);
     expect(picked(s)).toEqual([1, 3]);
     expect(picked(togglePick(s, 1))).toEqual([3]);
+  });
+});
+
+describe('selectAll (Files 2 §2.3, the bank\'s All)', () => {
+  it('selectAll picks every drawn row, none of an empty pane', () => {
+    expect([...selectAll(3).picked]).toEqual([0, 1, 2]);
+    expect(selectAll(3).cursor).toBe(0);
+    expect(selectAll(0)).toEqual(EMPTY_SELECTION);
   });
 });

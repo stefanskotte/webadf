@@ -145,12 +145,12 @@ test('read-only states say why in the header, and the foot counts the selection'
   await expect(page.getByTestId('file-tree')).toContainText("This disk's root directory is empty.");
 });
 
-test('the button column holds the actions in the board order; Rename focuses its field, Escape returns to Rename', async ({ page }) => {
+test('the button bank holds the actions in the spec\'s grid order; Rename focuses its field, Escape returns to Rename', async ({ page }) => {
   const { disk } = await freshDisk(page, [{ name: 'NOTES.TXT', content: 'hello' }]);
   await openInFiles(page, disk);
   await paneRow(page, 'NOTES.TXT').click();
-  await expect(page.getByTestId('files-actions').locator('button:visible'))
-    .toHaveText(['← Copy', '← Move', 'Delete', 'Rename', 'Makedir', 'Create ADF…', 'Protect', 'Info', 'Download', 'Swap ⇄']);
+  await expect(page.getByTestId('files-grid').locator('button'))
+    .toHaveText(['All', 'Copy', 'Makedir', 'Create ADF…', 'Info', 'Download', 'None', 'Move', 'Rename', 'Add to library', 'Protect', 'Filter…', 'Parent', 'Root', 'Swap', 'Show .info', 'Delete']);
   // One file downloads by its path (R4).
   const [dl, res] = await Promise.all([page.waitForEvent('download'),
     page.waitForResponse((r) => r.url().includes('/api/files/download?')), page.getByTestId('files-download').click()]);

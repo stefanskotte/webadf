@@ -31,3 +31,8 @@ export function moveCursor(s: Selection, delta: number, count: number, extend: b
   }
   return { anchor: cursor, cursor, picked: new Set([cursor]) };
 }
+
+/** The bank's All (Files 2 §2.3): every drawn row picked, the cursor on the first; nothing in an empty pane. */
+export function selectAll(count: number): Selection {
+  return count <= 0 ? EMPTY_SELECTION : { anchor: 0, cursor: 0, picked: range(0, count - 1) };
+}

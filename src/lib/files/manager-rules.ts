@@ -97,3 +97,25 @@ export function stashTitle(added: number, skipped: number, dir: string, count: (
   if (!skipped) return head;
   return `${added > 0 ? `${head}.` : head} ${skippedWords(skipped)}`;
 }
+
+/**
+ * Create ADF…: whether the dialog closes. Only a made disk (or one the clash setting skipped) closes it; a refused item,
+ * a refused op or a clash keeps it open with the typed name, to be changed and tried again (Task 7 review).
+ */
+export function createClosesDialog(r: { kind: 'done'; items: OpItem[] } | { kind: 'refused' | 'clashes' }): boolean {
+  return r.kind === 'done' && r.items[0]?.ok === true;
+}
+
+/**
+ * A guard that runs one async call at a time: a call while one is in flight is refused (returns false), so Enter and a
+ * click in the same moment cannot submit twice -- before the busy state has re-rendered the button disabled.
+ */
+export function oneAtATime(): (go: () => Promise<unknown>) => boolean {
+  let running = false;
+  return (go) => {
+    if (running) return false;
+    running = true;
+    go().catch(() => {}).finally(() => { running = false; });
+    return true;
+  };
+}

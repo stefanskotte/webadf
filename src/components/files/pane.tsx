@@ -41,7 +41,7 @@ export type PaneProps = {
   errorAction?: ReactNode;   // under the error, e.g. a way back to LIBRARY: when the place is gone
 };
 
-/** The device buttons (increment 2, R1): STASH:, NET: (increment 3) and LIBRARY:. */
+/** The device chips below lg (increment 2, R1; Files 2 §2.1): STASH:, LIBRARY:, NET:. */
 const DEVICES = PANE_DEVICES.map((d) => `${d}:`);
 
 /** Below lg only Name is a column: the size and date go on a second line under the name (no sideways scroll). */
@@ -124,43 +124,50 @@ export function Pane({ filterRef, ...p }: PaneProps) {
              onDragOver={(e) => { if ((acceptsCopies(listing) && listing!.writable) || shelf) e.preventDefault(); }}
              onDrop={(e) => { e.preventDefault(); p.onDropRows(e); }}
              className="flex min-w-0 flex-col max-lg:rounded-t-[20px]" style={{ background: 'var(--surface)' }}>
-      <div className="border-b px-3.5 pt-3 pb-2.5 max-lg:rounded-t-[20px]"
-           style={{ borderColor: 'var(--line)', background: p.active ? 'var(--viewing-bg)' : undefined }}>
-        <div className="mb-2 flex items-center gap-1.5">
+      {/* The title bar (Files 2 §2.2): the path and the meta, dark on the source pane and the soft tint on the
+          destination -- the one sign of which way Copy and Move go. */}
+      <div data-testid={tid('title')} data-role={p.active ? 'source' : 'destination'}
+           className="flex min-w-0 items-center gap-1.5 px-3.5 py-2 max-lg:rounded-t-[20px]"
+           style={p.active ? { background: 'var(--ink)', color: 'var(--surface)' } : { background: 'var(--viewing-bg)', color: 'var(--ink)' }}>
+        <button type="button" aria-label="Up one level" title="Up one level" data-testid={tid('up')} disabled={!parent}
+                onClick={() => parent && p.onNavigate(parent.path)}
+                className="shrink-0 rounded-[6px] border px-1.5 font-mono text-[13px] max-lg:min-h-11 max-lg:min-w-11 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-(--ring)"
+                style={p.active ? { borderColor: 'var(--on-ink-fill)', color: 'var(--on-ink-2)' } : { borderColor: 'var(--line)', color: 'var(--muted)' }}>↑</button>
+        <nav aria-label="Path" className="flex min-w-0 flex-wrap items-center font-mono text-[13px]">
+          {crumbs.map((c, i) => (
+            <span key={c.path} className="flex items-center">
+              {i > 0 && !crumbs[i - 1].label.endsWith(':') && <span aria-hidden style={{ color: p.active ? 'var(--on-ink-muted)' : 'var(--muted-2)' }}>/</span>}
+              <button type="button" data-testid={tid(`crumb-${i}`)} onClick={() => p.onNavigate(c.path)}
+                      aria-current={i === crumbs.length - 1 ? 'location' : undefined}
+                      className="rounded-[4px] font-medium [overflow-wrap:anywhere] hover:underline max-lg:min-h-11 max-lg:px-1 focus-visible:outline-2 focus-visible:outline-(--ring)"
+                      style={{ color: p.active ? 'var(--surface)' : 'var(--ink)' }}>{c.label}</button>
+            </span>
+          ))}
+        </nav>
+        {listing && (
+          <span data-testid={tid('meta')} className="ml-auto shrink-0 pl-2 text-[12px]" style={{ color: p.active ? 'var(--on-ink-muted)' : 'var(--muted-2)' }}>
+            {metaOf(listing)}
+          </span>
+        )}
+        <HelpTip topic={p.help} className={listing ? '' : 'ml-auto'} />
+      </div>
+      {/* The tools row: the chips (below lg), the filter and Show .info, the read-only line. With no listing only the
+          chips are left, so from lg the row goes. */}
+      <div className={`border-b px-3.5 pt-2 pb-2.5 ${listing ? '' : 'lg:hidden'}`} style={{ borderColor: 'var(--line)' }}>
+        {/* Below lg the device column is these three chips at the top of the shown pane (§2.1); from lg the bank's
+            device column replaces them. */}
+        <div className="mb-2 flex items-center gap-1.5 lg:hidden">
           {DEVICES.map((d) => (
             <button key={d} type="button" aria-pressed={device === d} data-testid={tid(`dev-${d.slice(0, -1)}`)}
                     onClick={() => p.onNavigate(d)}
-                    className="rounded-[7px] px-2 py-1 font-mono text-[12px] max-lg:min-h-11 max-lg:px-3 focus-visible:outline-2 focus-visible:outline-(--ring)"
+                    className="rounded-[7px] px-2 py-1 font-mono text-[12px] max-lg:min-h-11 max-lg:px-3 focus-visible:outline-2 focus-visible:outline-(--ring) lg:hidden"
                     style={device === d ? { background: 'var(--ink)', color: 'var(--surface)' } : { background: 'var(--track)', color: 'var(--muted)' }}>
               {d}
             </button>
           ))}
-          <HelpTip topic={p.help} className="ml-auto" />
-        </div>
-        <div className="flex min-w-0 items-center gap-1.5">
-          <button type="button" aria-label="Up one level" title="Up one level" data-testid={tid('up')} disabled={!parent}
-                  onClick={() => parent && p.onNavigate(parent.path)}
-                  className="shrink-0 rounded-[6px] border px-1.5 font-mono text-[13px] max-lg:min-h-11 max-lg:min-w-11 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-(--ring)"
-                  style={{ borderColor: 'var(--line)', color: 'var(--muted)' }}>↑</button>
-          <nav aria-label="Path" className="flex min-w-0 flex-wrap items-center font-mono text-[13px]">
-            {crumbs.map((c, i) => (
-              <span key={c.path} className="flex items-center">
-                {i > 0 && !crumbs[i - 1].label.endsWith(':') && <span aria-hidden style={{ color: 'var(--muted-2)' }}>/</span>}
-                <button type="button" data-testid={tid(`crumb-${i}`)} onClick={() => p.onNavigate(c.path)}
-                        aria-current={i === crumbs.length - 1 ? 'location' : undefined}
-                        className="rounded-[4px] font-medium [overflow-wrap:anywhere] hover:underline max-lg:min-h-11 max-lg:px-1 focus-visible:outline-2 focus-visible:outline-(--ring)"
-                        style={{ color: 'var(--ink)' }}>{c.label}</button>
-              </span>
-            ))}
-          </nav>
-          {listing && (
-            <span data-testid={tid('meta')} className="ml-auto shrink-0 pl-2 text-[12px]" style={{ color: 'var(--muted-2)' }}>
-              {metaOf(listing)}
-            </span>
-          )}
         </div>
         {listing && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <input ref={filterRef} type="search" data-testid={tid('filter')} aria-label={`Filter the ${sideName} pane by name`}
                    placeholder="Filter names" value={view.filter} onChange={(e) => p.onFilter(e.target.value)}
                    onKeyDown={(e) => { if (e.key === 'Escape' && e.currentTarget.value !== '') { p.onFilter(''); e.preventDefault(); } }}

@@ -108,7 +108,8 @@ test('copy a file between disks makes one version', async ({ page }) => {
   await expect(row(page, 'right', 'ReadMe')).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByTestId('pane-right-foot')).toHaveText('1 of 3 selected · 6 B');
   const copy = page.getByTestId('files-copy');
-  await expect(copy).toHaveText('← Copy');
+  await expect(copy).toHaveText('Copy');
+  await expect(page.getByTestId('pane-right-title')).toHaveAttribute('data-role', 'source');
   await copy.click();
   await expect(toast(page, /^Copied 1 item to .*Disk 1.* — saved as version 1\./)).toBeVisible({ timeout: 15_000 });
   await expect(row(page, 'left', 'ReadMe')).toHaveCount(1);
@@ -265,9 +266,12 @@ test('keyboard: arrows, Space, F5, Tab, Enter, Backspace', async ({ page }) => {
   await manager.focus();
   await page.keyboard.press('Tab');
   await expect(page.getByTestId('pane-left')).toHaveAttribute('data-active', 'true');
+  await expect(page.getByTestId('pane-left-title')).toHaveAttribute('data-role', 'source');
+  await expect(page.getByTestId('pane-right-title')).toHaveAttribute('data-role', 'destination');
   await expect.poll(() => new URL(page.url()).searchParams.get('active')).toBe('left');
   await page.keyboard.press('Tab');
   await expect(page.getByTestId('pane-right')).toHaveAttribute('data-active', 'true');
+  await expect(page.getByTestId('pane-right-title')).toHaveAttribute('data-role', 'source');
 
   // Enter opens the folder under the cursor (C, the first row); Backspace goes back up.
   await expect(row(page, 'right', 'C')).toHaveAttribute('data-cursor', 'true');
@@ -303,7 +307,8 @@ test('a disk in a drive is read-only', async ({ page, request }) => {
   // Into it: refused before anything is sent, the reason on the button.
   await row(page, 'left', 'Other').click();
   const copy = page.getByTestId('files-copy');
-  await expect(copy).toHaveText('Copy →');
+  await expect(copy).toHaveText('Copy');
+  await expect(page.getByTestId('pane-left-title')).toHaveAttribute('data-role', 'source');
   await expect(copy).toBeDisabled();
   await expect(copy).toHaveAttribute('title', reason);
   await expect(page.getByTestId('files-move')).toBeDisabled();
@@ -317,7 +322,8 @@ test('a disk in a drive is read-only', async ({ page, request }) => {
   await expect(page.getByTestId('files-download')).toBeEnabled();
 
   // Out of it: a copy works, and the held disk is unchanged.
-  await expect(copy).toHaveText('← Copy');
+  await expect(copy).toHaveText('Copy');
+  await expect(page.getByTestId('pane-right-title')).toHaveAttribute('data-role', 'source');
   await expect(copy).toBeEnabled();
   await copy.click();
   await expect(toast(page, /^Copied 1 item to .* — saved as version 1\./)).toBeVisible({ timeout: 15_000 });

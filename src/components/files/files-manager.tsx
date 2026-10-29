@@ -9,7 +9,8 @@ import { MENU_ITEM } from '@/components/ui/menu-item-look';
 import { cn } from '@/lib/utils';
 import type { DiskInfo, FsEntry, Listing, RefusalCode, StripData } from '@/lib/files/types';
 import { nextSort, type FilesSort, type FilesSortKey } from '@/lib/files/sort';
-import { EMPTY_SELECTION, moveCursor, selectClick, togglePick, type Selection } from '@/lib/files/selection';
+import { EMPTY_SELECTION, moveCursor, selectAll, selectClick, togglePick, type Selection } from '@/lib/files/selection';
+import type { BankCommand } from '@/lib/files/bank';
 import { commandFor, type FilesCommand } from '@/lib/files/keys';
 import { refusalWords } from '@/lib/files/words';
 import { deleteAsks, paneDefaults, paneHelpTopic, paneRows, remapSelection, showsComment, type PaneView } from '@/lib/files/view';
@@ -27,12 +28,13 @@ import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
 import { diskRelative, identityToConfirm, undoTarget, withAddedIn, type OpVersion } from '@/lib/files/edit-rules';
-import { dropBlocked, fetchDownload, opTitle, reloadsBoth, skippedItems, skippedWords, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
+import { createClosesDialog, dropBlocked, fetchDownload, oneAtATime, opTitle, reloadsBoth, skippedItems, skippedWords, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
 import { addedIn } from '@/lib/disk-history/added-in';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
 import { isFileDrag } from '@/components/disks/native-drop';
 import { IdentityConfirmDialog, requestUndo } from '@/components/disks/file-actions';
 import { Pane } from './pane';
+import { ButtonBank } from './button-bank';
 import { DiskStrip } from './disk-strip';
 import { DropReview } from './drop-review';
 import { CopyToPicker } from './copy-to-picker';
@@ -48,8 +50,10 @@ import {
 import { CreateAdfDialog } from './create-adf-dialog';
 
 /**
- * The Files manager (spec 2026-10-29 §5): two panes with the button column between them. It owns everything the
- * panes only draw -- each side's listing, sort and selection -- and the URL (`?left&right&active`).
+ * The Files manager (spec 2026-10-29 §5; Files 2 §2): two panes side by side and, from lg, the button bank under both
+ * (button-bank.tsx: the device column and the six-by-three grid). The active pane is the SOURCE (its title bar is
+ * dark), the other the destination: every bank command acts on the source, Copy and Move go source → destination. It
+ * owns everything the panes only draw -- each side's listing, sort and selection -- and the URL (`?left&right&active`).
  *
  * Navigation fetches /api/files/list and records the new place with the NATIVE history API, which Next.js keeps in
  * step with its router: `pushState` when a pane moves (so Back walks back through folders), `replaceState` when only
@@ -260,22 +264,6 @@ function shown(l: Listing | null, marks: ReadonlyMap<string, number>, arr: { see
   return entries === l.entries ? l : { ...l, entries };
 }
 
-/** One button of the column. The reason sits on a wrapper too: a disabled button takes no pointer events, so its
- *  own title never shows. */
-function ActionButton({ id, label, reason, busy, onClick, primary = false }: {
-  id: string; label: string; reason: string | null; busy: boolean; onClick(): void; primary?: boolean;
-}) {
-  return (
-    // min-w-0 and a label that may wrap: a button is never wider than the column, so it never runs into the right pane.
-    <span title={reason ?? undefined} className="flex min-w-0 max-lg:hidden">
-      <Button variant={primary ? 'default' : 'outline'} size="sm" className="h-auto min-h-7 w-full py-1 leading-tight whitespace-normal" onClick={onClick}
-              disabled={reason !== null || busy} title={reason ?? undefined} data-testid={`files-${id}`}>
-        {label}
-      </Button>
-    </span>
-  );
-}
-
 /**
  * One button of the phone bar. A finger gets no tooltip, so a button that cannot act now is not `disabled`: it looks
  * dimmed (aria-disabled) and a tap says why (act() toasts the reason).
@@ -331,6 +319,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     });
   }
   const rootRef = useRef<HTMLDivElement>(null);
+  /** Create ADF…'s submit, one at a time: Enter and a click in the same moment make one disk (Task 7 review). */
+  const createOnce = useRef(oneAtATime());
   const filterRefs = { left: useRef<HTMLInputElement>(null), right: useRef<HTMLInputElement>(null) };
   // A pane's newest request wins: a slow listing that lands after a newer one is dropped.
   const seq = useRef<Record<Side, number>>({ left: 0, right: 0 });
@@ -695,6 +685,21 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   /** Add to library is offered only while the active pane is in STASH: (R8). */
   const inStash = !!src && deviceOf(src.path) === 'stash';
 
+  // The bank's grid (Files 2 §2.3): the commands above, plus the ones that pick, move about and show.
+  const crumbsNow = src?.crumbs ?? [];
+  const atTop = crumbsNow.length > 1 ? null : 'Already at the top';
+  const bankReasons: Record<BankCommand, string | null> = {
+    copy: reasons.copy, move: reasons.move, delete: reasons.delete, rename: reasons.rename, makedir: reasons.makedir,
+    protect: reasons.protect, info: reasons.info, download: reasons.download, addlib: reasons.addlib, createadf: reasons.createadf,
+    all: rowsOf(active).length === 0 ? 'Nothing here to select' : null,
+    none: picked.length === 0 ? 'Nothing is selected' : null,
+    parent: atTop,
+    root: atTop,
+    swap: null,
+    filter: src ? null : 'Nothing is listed here',
+    showinfo: holdsFiles(src) ? null : 'Open a disk or STASH: to show or hide .info files',
+  };
+
   // ---- running an operation -----------------------------------------------------------------------------------
 
   /** `queued`: how many files a copy into a board's queue queued (C3), a folder being several. */
@@ -883,7 +888,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     next();
   }
 
-  function act(cmd: 'copy' | 'move' | 'delete' | 'rename' | 'makedir' | 'protect' | 'info' | 'download' | 'copyTo' | 'moveTo' | 'addlib' | 'createadf') {
+  function act(cmd: Exclude<BankCommand, 'all' | 'none' | 'parent' | 'root' | 'swap' | 'filter' | 'showinfo'> | 'copyTo' | 'moveTo') {
     if (busy) return;
     const reason = reasons[cmd];
     if (reason) { toast.error(reason); return; }
@@ -920,16 +925,20 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const r = await post({ op: 'create-adf', dest: l.path, ...v, onClash: prefs.files.onClash }, 'Creating the disk…');
     if (r.kind === 'clashes') { toast.error(refusalWords('name_exists')); return; }   // a race with the dialog's own check
     if (r.kind !== 'done') return;
+    const made = r.items[0];
+    // A refused disk keeps the dialog open with the typed name, to be changed and tried again (Task 7 review).
+    if (!createClosesDialog(r)) {
+      if (made && !made.ok) toast.error(refusalWords(made.refusal.code, made.refusal.detail));
+      return;
+    }
     ranOp.current = true;
     setDialog(null);
-    const made = r.items[0];
     const first = r.added[0];
-    if (!made) return;
-    if (!made.ok) toast.error(refusalWords(made.refusal.code, made.refusal.detail));
-    else if (made.skipped) toast.success(skippedWords(1));
+    if (!made?.ok) return;
+    if (made.skipped) toast.success(skippedWords(1));
     else toast.success(`Made ${first ? v.name : `${v.name}.adf`} in ${placeOf(l)}.`,
       first ? { action: { label: 'Open title', onClick: () => router.push(`/games/${first.gameId}`) } } : {});
-    void load(side, l.path, { select: made.ok && !made.skipped ? made.source : undefined });
+    void load(side, l.path, { select: made.skipped ? undefined : made.source });
     const other = otherSide(side);
     if (latest.current.panes[other].path === l.path) void load(other, l.path);
   }
@@ -1012,6 +1021,20 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const r = await post(req, label, inline?.code);
     if (r.kind === 'done') { ranOp.current = true; setDialog(null); void report(r.items, success, target, r.versions); }
     else if (r.kind === 'refused' && r.words !== undefined) inline?.refused(r.words);
+  }
+
+  /** A bank command, on the source (active) pane. */
+  function bank(cmd: BankCommand) {
+    switch (cmd) {
+      case 'all': setSelection(active, () => selectAll(rowsOf(active).length)); return;
+      case 'none': setSelection(active, () => EMPTY_SELECTION); return;
+      case 'parent': command('parent', false); return;
+      case 'root': navigate(active, deviceRoot(panes[active].path)); return;
+      case 'swap': swap(); return;
+      case 'filter': filterRefs[active].current?.focus(); return;
+      case 'showinfo': showInfo(hideInfo); return;   // hidden now → show
+      default: act(cmd);
+    }
   }
 
   function swap() {
@@ -1329,7 +1352,6 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
 
   // ---- drawing ------------------------------------------------------------------------------------------------
 
-  const arrow = active === 'left';
   const dialogBusy = busy !== null;
   const dialogListing = dialog && 'side' in dialog ? panes[dialog.side].listing : null;
   // The disk a dialog's operation changes, whose version its toast names.
@@ -1377,8 +1399,6 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     );
   }
 
-  const sep = <div aria-hidden className="my-0.5 h-px max-lg:hidden" style={{ background: 'var(--line)' }} />;
-
   return (
     <>
     {/* The top drop zones (R1): Drop files into STASH:, and Send files to the Amiga (R7). */}
@@ -1414,60 +1434,56 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       </div>
       {/* Below lg nothing clips: a clip would cut off the strip's History over a short pane, and `hidden` would make
           this a scroll box the phone bar could not stick out of. The pane's top and the bar round their own corners.
-          From lg the manager fills the window under the header and the drop zone (about 420 px of them): at 1280 x 800
-          the whole button column is on screen without a page scroll, and 440 px keeps it (and the busy line) whole.
-          The column is 128 px: its widest label, Add to library, fits on one line at every width (Task 9). */}
-      <div className="grid rounded-[20px] lg:overflow-hidden max-lg:grid-cols-[minmax(0,1fr)] lg:h-[clamp(440px,calc(100dvh-420px),900px)] lg:grid-cols-[minmax(0,1fr)_128px_minmax(0,1fr)]"
+          From lg (Files 2 §2): the two panes, a 1 px line between them and nothing else, then the bank under both and
+          one status row. The manager fills the window under the header and the drop zones (about 400 px of them): from
+          1440 x 900 up the whole manager is on screen without a page scroll. 500 px is the floor: a pane inside a disk
+          (title bar, filter row, strip, foot) keeps about four rows over the bank (93 px) and the status row. Below
+          1440 x 900 the page scrolls to the bank (at 1280 x 800 by about 70 px). */}
+      <div className="grid rounded-[20px] lg:overflow-hidden max-lg:grid-cols-[minmax(0,1fr)] lg:h-[clamp(500px,calc(100dvh-400px),1000px)] lg:grid-rows-[minmax(0,1fr)_auto_auto]"
            style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
-        {pane('left')}
-        <div data-testid="files-actions" role="group" aria-label="File actions"
-             className="files-bar flex flex-wrap gap-1.5 border-t p-2 max-lg:order-last max-lg:rounded-b-[20px] lg:flex-col lg:gap-[5px] lg:border-x lg:border-t-0 lg:px-2 lg:py-3"
-             style={{ borderColor: 'var(--line)', background: 'var(--surface-2)' }}>
-          <ActionButton busy={busy !== null} id="copy" label={arrow ? 'Copy →' : '← Copy'} reason={reasons.copy} onClick={() => act('copy')}
-                        primary={picked.length > 0} />
-          <ActionButton busy={busy !== null} id="move" label={arrow ? 'Move →' : '← Move'} reason={reasons.move} onClick={() => act('move')} />
-          {sep}
-          <ActionButton busy={busy !== null} id="delete" label="Delete" reason={reasons.delete} onClick={() => act('delete')} />
-          <ActionButton busy={busy !== null} id="rename" label="Rename" reason={reasons.rename} onClick={() => act('rename')} />
-          <ActionButton busy={busy !== null} id="makedir" label="Makedir" reason={reasons.makedir} onClick={() => act('makedir')} />
-          <ActionButton busy={busy !== null} id="createadf" label="Create ADF…" reason={reasons.createadf} onClick={() => act('createadf')} />
-          <ActionButton busy={busy !== null} id="protect" label="Protect" reason={reasons.protect} onClick={() => act('protect')} />
-          <ActionButton busy={busy !== null} id="info" label="Info" reason={reasons.info} onClick={() => act('info')} />
-          {inStash && (
-            <ActionButton busy={busy !== null} id="addlib" label="Add to library" reason={reasons.addlib} onClick={() => act('addlib')} />
-          )}
-          {sep}
-          <ActionButton busy={busy !== null} id="download" label="Download" reason={reasons.download} onClick={() => act('download')} />
-          <ActionButton busy={busy !== null} id="swap" label="Swap ⇄" reason={null} onClick={swap} />
-          {/* The phone bar: one row of four, the rest under More. */}
-          <PhoneButton busy={busy !== null} id="copy" label="Copy to…" reason={reasons.copyTo} onClick={() => act('copyTo')}
-                       primary={picked.length > 0} />
-          <PhoneButton busy={busy !== null} id="move" label="Move to…" reason={reasons.moveTo} onClick={() => act('moveTo')} />
-          <PhoneButton busy={busy !== null} id="delete" label="Delete" reason={reasons.delete} onClick={() => act('delete')} />
-          <DropdownMenu>
-            <DropdownMenuTrigger data-testid="files-more" aria-haspopup="menu"
-                                 className="inline-flex min-h-11 min-w-0 flex-1 items-center justify-center rounded-[10px] border px-1.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-(--ring) lg:hidden"
-                                 style={{ borderColor: 'var(--line)', background: 'var(--surface)', color: 'var(--ink)' }}>
-              More ▾
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" align="end" data-testid="files-more-menu"
-                                 className="w-[min(240px,calc(100vw-32px))] rounded-2xl"
-                                 style={{ background: 'var(--surface)', color: 'var(--ink)', border: '1px solid var(--line)', boxShadow: 'var(--shadow-card)' }}>
-              {([['rename', 'Rename…'], ['makedir', 'Makedir…'], ['createadf', 'Create ADF…'], ['protect', 'Protect…'], ['info', 'Info'],
-                ...(inStash ? [['addlib', 'Add to library']] as const : []), ['download', 'Download']] as const).map(([id, label]) => (
-                // Not disabled: a tap on one that cannot act now says why.
-                <DropdownMenuItem key={id} data-testid={`files-more-${id}`} aria-disabled={reasons[id] !== null || undefined}
-                                  onClick={() => act(id)} className={cn(MENU_ITEM, 'h-11 sm:h-11 font-medium aria-disabled:opacity-50')}>
-                  {label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <p role="status" data-testid="files-busy" className="text-center text-[12px] max-lg:basis-full max-lg:empty:hidden lg:order-first" style={{ color: 'var(--muted)' }}>
-            {busy ?? ''}
-          </p>
+        <div className="grid min-h-0 max-lg:contents lg:grid-cols-[minmax(0,1fr)_1px_minmax(0,1fr)]">
+          {pane('left')}
+          <div aria-hidden data-testid="files-divider" className="max-lg:hidden" style={{ background: 'var(--line)' }} />
+          {pane('right')}
         </div>
-        {pane('right')}
+        <ButtonBank device={parsePath(src?.path ?? panes[active].path)?.device ?? null}
+                    reasons={bankReasons} busy={busy !== null} showInfo={!hideInfo} primaryCopy={picked.length > 0}
+                    onDevice={(d) => navigate(active, `${d}:`)} onCommand={bank} />
+        {/* Below lg the phone bar and the status row stick to the bottom together; from lg the wrapper is not a box
+            (contents), the bar is gone and the status row is the manager's last row, under the bank. */}
+        <div className="files-bar max-lg:rounded-b-[20px] lg:contents" style={{ background: 'var(--surface-2)' }}>
+          <div data-testid="files-actions" role="group" aria-label="File actions"
+               className="flex flex-wrap gap-1.5 border-t p-2 lg:hidden" style={{ borderColor: 'var(--line)' }}>
+            {/* The phone bar: one row of four, the rest under More. */}
+            <PhoneButton busy={busy !== null} id="copy" label="Copy to…" reason={reasons.copyTo} onClick={() => act('copyTo')}
+                         primary={picked.length > 0} />
+            <PhoneButton busy={busy !== null} id="move" label="Move to…" reason={reasons.moveTo} onClick={() => act('moveTo')} />
+            <PhoneButton busy={busy !== null} id="delete" label="Delete" reason={reasons.delete} onClick={() => act('delete')} />
+            <DropdownMenu>
+              <DropdownMenuTrigger data-testid="files-more" aria-haspopup="menu"
+                                   className="inline-flex min-h-11 min-w-0 flex-1 items-center justify-center rounded-[10px] border px-1.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-(--ring) lg:hidden"
+                                   style={{ borderColor: 'var(--line)', background: 'var(--surface)', color: 'var(--ink)' }}>
+                More ▾
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="top" align="end" data-testid="files-more-menu"
+                                   className="w-[min(240px,calc(100vw-32px))] rounded-2xl"
+                                   style={{ background: 'var(--surface)', color: 'var(--ink)', border: '1px solid var(--line)', boxShadow: 'var(--shadow-card)' }}>
+                {([['rename', 'Rename…'], ['makedir', 'Makedir…'], ['createadf', 'Create ADF…'], ['protect', 'Protect…'], ['info', 'Info'],
+                  ...(inStash ? [['addlib', 'Add to library']] as const : []), ['download', 'Download']] as const).map(([id, label]) => (
+                  // Not disabled: a tap on one that cannot act now says why.
+                  <DropdownMenuItem key={id} data-testid={`files-more-${id}`} aria-disabled={reasons[id] !== null || undefined}
+                                    onClick={() => act(id)} className={cn(MENU_ITEM, 'h-11 sm:h-11 font-medium aria-disabled:opacity-50')}>
+                    {label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          {/* The one status row (§2.3): progress such as "Copying 3 of 12…". */}
+          <p role="status" data-testid="files-busy"
+             className="px-3 py-0.5 text-[12px] max-lg:pb-2 max-lg:text-center max-lg:empty:hidden lg:min-h-[22px] lg:border-t"
+             style={{ borderColor: 'var(--line)', color: 'var(--muted)' }}>{busy ?? ''}</p>
+        </div>
       </div>
 
       {(dialog?.kind === 'clash' || dialog?.kind === 'stash-clash') && (
@@ -1503,7 +1519,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
                          busy={dialogBusy}
                          taken={prefs.files.onClash === 'ask' && panes[dialog.side].listing?.path.startsWith('STASH:')
                            ? panes[dialog.side].listing!.entries.map((e) => e.name) : null}
-                         onCancel={() => setDialog(null)} onCreate={(v) => void createDisk(dialog.side, v)} />
+                         onCancel={() => setDialog(null)} onCreate={(v) => { createOnce.current(() => createDisk(dialog.side, v)); }} />
       )}
       {dialog?.kind === 'protect' && (
         <ProtectDialog entries={dialog.entries} busy={dialogBusy} onCancel={() => setDialog(null)}

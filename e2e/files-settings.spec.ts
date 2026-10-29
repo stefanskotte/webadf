@@ -136,8 +136,8 @@ test('the Files card saves each row and survives a reload; /files opens with its
   // R5: the bare /files opens on the chosen panes.
   await page.goto('/files');
   await hydrated(page);
-  await expect(page.getByTestId('pane-left-dev-NET')).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByTestId('pane-right-dev-STASH')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('pane-left-crumb-0')).toHaveText('NET:');
+  await expect(page.getByTestId('pane-right-crumb-0')).toHaveText('STASH:');
 });
 
 test('the panes setting opens /files, also after Back', async ({ page }) => {
@@ -148,23 +148,23 @@ test('the panes setting opens /files, also after Back', async ({ page }) => {
 
   await page.goto('/files');
   await hydrated(page);
-  await expect(page.getByTestId('pane-left-dev-NET')).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByTestId('pane-right-dev-STASH')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('pane-left-crumb-0')).toHaveText('NET:');
+  await expect(page.getByTestId('pane-right-crumb-0')).toHaveText('STASH:');
 
   await row(page, 'right', 'Box').dblclick();
   await expect(page.getByTestId('pane-right-crumb-1')).toHaveText('Box');
   await page.goBack();
   // Back to the bare /files: the setting's panes again, not STASH: | LIBRARY:.
   await expect(page.getByTestId('pane-right-crumb-1')).toHaveCount(0);
-  await expect(page.getByTestId('pane-right-dev-STASH')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('pane-right-crumb-0')).toHaveText('STASH:');
   await expect(row(page, 'right', 'Box')).toBeVisible();
-  await expect(page.getByTestId('pane-left-dev-NET')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('pane-left-crumb-0')).toHaveText('NET:');
 
   // A link naming a pane keeps it; the other comes from the setting.
   await page.goto('/files?left=LIBRARY:');
   await hydrated(page);
-  await expect(page.getByTestId('pane-left-dev-LIBRARY')).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByTestId('pane-right-dev-STASH')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('pane-left-crumb-0')).toHaveText('LIBRARY:');
+  await expect(page.getByTestId('pane-right-crumb-0')).toHaveText('STASH:');
 });
 
 test('a filter that hides a picked file leaves it out of Delete', async ({ page }) => {
@@ -395,7 +395,7 @@ test('Comment column: Always shows it on a disk, Never hides it in STASH:', asyn
   await expect(page.getByTestId('pane-right-col-comment')).toHaveCount(0);
 });
 
-test('at 1280×800 the busy line is on screen', async ({ page }) => {
+test('at 1280×800 the busy line is on screen, under the bank', async ({ page }) => {
   await signUpFresh(page);
   await page.setViewportSize({ width: 1280, height: 800 });
   // Hold the drop's upload so the busy words stay up to be measured.
@@ -406,11 +406,12 @@ test('at 1280×800 the busy line is on screen', async ({ page }) => {
   await page.getByTestId('files-stash-input').setInputFiles([{ name: 'Busy.txt', mimeType: 'text/plain', buffer: Buffer.from('busy') }]);
   const busy = page.getByTestId('files-busy');
   await expect(busy).toHaveText(/Reading 1 of 1…/);
-  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  // The one status row under the bank (Files 2 §2.3): on screen with the manager scrolled to the top of the window.
+  await page.getByTestId('files-manager').evaluate((el) => el.scrollIntoView({ block: 'start' }));
   const box = (await busy.boundingBox())!;
   expect(box.y + box.height).toBeLessThanOrEqual(800);
-  // Above Copy, at the top of the button column.
-  expect(box.y).toBeLessThan((await page.getByTestId('files-copy').boundingBox())!.y);
+  const del = (await page.getByTestId('files-delete').boundingBox())!;
+  expect(box.y).toBeGreaterThanOrEqual(del.y + del.height);
   release();
   await expect(row(page, 'left', 'Busy.txt')).toBeVisible();
 });
@@ -525,11 +526,16 @@ test('the ? on each pane names its device', async ({ page }) => {
   await expect(right.getByTestId('help-tip-stash-net')).toHaveCount(0);
 
   // NET: is STASH: and NET:'s topic too; the LIBRARY: list is Files'.
-  await page.getByTestId('pane-left-dev-NET').click();
-  await expect(page.getByTestId('pane-left-dev-NET')).toHaveAttribute('aria-pressed', 'true');
+  // The device column moves the source pane: the left one, once a click there has made it the source.
+  await page.getByTestId('pane-left-foot').click();
+  await expect(page.getByTestId('pane-left-title')).toHaveAttribute('data-role', 'source');
+  await page.getByTestId('files-dev-NET').click();
+  await expect(page.getByTestId('files-dev-NET')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('pane-left-crumb-0')).toHaveText('NET:');
   await expect(left.getByTestId('help-tip-stash-net')).toBeVisible();
-  await page.getByTestId('pane-left-dev-LIBRARY').click();
-  await expect(page.getByTestId('pane-left-dev-LIBRARY')).toHaveAttribute('aria-pressed', 'true');
+  await page.getByTestId('files-dev-LIBRARY').click();
+  await expect(page.getByTestId('files-dev-LIBRARY')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('pane-left-crumb-0')).toHaveText('LIBRARY:');
   await expect(left.getByTestId('help-tip-files')).toBeVisible();
   await expect(left.getByTestId('help-tip-stash-net')).toHaveCount(0);
 

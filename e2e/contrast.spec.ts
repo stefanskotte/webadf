@@ -646,11 +646,12 @@ test('the Files pairs are legible: pane headers, selected row, buttons, sort hea
   await page.mouse.move(0, 0);
   const sel = '[data-testid="pane-left"] [data-testid="pane-row"][aria-selected="true"]';
   await legible(page, 'files', [
-    ['active header crumb', '[data-testid="pane-left"][data-active="true"] [data-testid="pane-left-crumb-2"]'],
-    ['active header meta', '[data-testid="pane-left-meta"]'],
-    ['inactive header crumb', '[data-testid="pane-right"][data-active="false"] [data-testid="pane-right-crumb-2"]'],
-    ['inactive header meta', '[data-testid="pane-right-meta"]'],
-    ['device button (current)', '[data-testid="pane-left-dev-LIBRARY"]'],
+    ['source title bar crumb', '[data-testid="pane-left-title"][data-role="source"] [data-testid="pane-left-crumb-2"]'],
+    ['source meta', '[data-testid="pane-left-title"] [data-testid="pane-left-meta"]'],
+    ['destination title bar crumb', '[data-testid="pane-right-title"][data-role="destination"] [data-testid="pane-right-crumb-2"]'],
+    ['destination meta', '[data-testid="pane-right-title"] [data-testid="pane-right-meta"]'],
+    ['device button (current)', '[data-testid="files-dev-LIBRARY"]'],
+    ['device (not current)', '[data-testid="files-dev-STASH"]'],
     ['selected row name', `${sel} td:nth-child(2) span.truncate`],
     ['selected row size', `${sel} td:nth-child(3)`],
     ['selected row date', `${sel} td:nth-child(5)`],
@@ -663,7 +664,8 @@ test('the Files pairs are legible: pane headers, selected row, buttons, sort hea
     ['sort head (current)', '[data-testid="pane-left-sort-name"] button'],
     ['sort head', '[data-testid="pane-left-sort-size"] button'],
     ['foot (selection)', '[data-testid="pane-left-foot"]'],
-    ['button (enabled)', '[data-testid="files-delete"]'],
+    ['grid button', '[data-testid="files-info"]'],
+    ['Delete', '[data-testid="files-delete"]'],
     ['button (Swap)', '[data-testid="files-swap"]'],
     ['drive chip', '[data-testid="disk-strip-left"] [data-testid="disk-strip-drive"]'],
     ['drive chip (held)', '[data-testid="disk-strip-right"] [data-testid="disk-strip-drive"]'],
@@ -685,13 +687,13 @@ test('the Files pairs are legible: pane headers, selected row, buttons, sort hea
   await page.getByTestId('pane-left').locator('[data-testid="pane-row"][data-name="Prog"]').hover();
   await legible(page, 'files', [['size on a hovered row', '[data-testid="pane-left"] [data-testid="pane-row"][data-name="Prog"] td:nth-child(3)']]);
 
-  // The right pane active: its read-only line and header on --viewing-bg.
+  // The right pane the source: its crumb on the dark title bar, its read-only line under it on --surface.
   await page.getByTestId('pane-right-foot').click();
   await expect(page.getByTestId('pane-right')).toHaveAttribute('data-active', 'true');
   await page.mouse.move(0, 0);
   await legible(page, 'files', [
     ['read-only line (active pane)', '[data-testid="pane-right-readonly"]'],
-    ['active header crumb (held)', '[data-testid="pane-right-crumb-2"]'],
+    ['source title bar crumb (held)', '[data-testid="pane-right-title"][data-role="source"] [data-testid="pane-right-crumb-2"]'],
   ]);
 
   // The strip's History over the left pane: Current, a version's time, the +N chip, Restore… on a hovered version.
