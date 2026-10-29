@@ -25,7 +25,8 @@ export const HELP_TOPICS = {
   // rail drop only; reorder and card-on-card sets are the grid's), preferences-form.tsx (Library opens in, Titles per
   // page), library-pager.tsx + library-paging.ts (?page=, Per page saves the preference, a new size or sort goes to
   // page 1), library-table.ts (folders on page 1 only). Selecting: select-toggle.tsx, library-selection-bar.tsx, bulk-*-dialog.tsx,
-  // bulk-delete-plan.ts (held titles kept).
+  // bulk-delete-plan.ts (held titles kept). Adding disks: library-ingest/{add-disks-menu,drop-overlay,library-tray}.tsx,
+  // lib/library-ingest/{drop-files,tray}.ts (Files increment 3, R8/R9).
   library: {
     title: 'Library',
     short:
@@ -33,20 +34,22 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
+          <strong>Adding disks.</strong> Drop disk images, folders of them or .zip and .lha files anywhere on the
+          page, or use <em>Add disks</em>. A tray below says what each did.
+        </p>
+        <p>
           <strong>Grid or table.</strong> The grid and table buttons at the top switch views and keep the
-          collection you are in. <em>Library opens in</em> under Preferences in Settings picks the view the library starts in: the
-          grid unless you change it.
+          collection you are in. <em>Library opens in</em> under Preferences in Settings picks the view it starts in: the grid
+          unless you change it.
         </p>
         <p>
           <strong>Folders.</strong> In the table, the library&apos;s first page lists each collection as a folder,
           before the titles that are in no collection. Open a folder to
-          see its titles; <em>↑ Library</em> at the top takes you back. <em>All titles</em> has the same way back.
+          see its titles; <em>↑ Library</em> takes you back. <em>All titles</em> has the same way back.
         </p>
         <p>
-          <strong>Pages.</strong> The grid and the table show your titles a page at a time: 48 unless you change it,
-          with <em>Per page</em> under the list or <em>Titles per page</em> under Preferences in Settings (24, 48, 96,
-          192 or All). Changing it, or the sort, starts again at page 1. Switching between grid and table keeps the
-          page you are on.
+          <strong>Pages.</strong> 48 titles to a page, unless you change <em>Per page</em> (under the list) or{' '}
+          <em>Titles per page</em> (Settings). A new size or sort starts at page 1; switching views keeps it.
         </p>
         <p>
           <strong>Controls.</strong> A card&apos;s or a row&apos;s <em>⋯</em> menu has, in order: mount or eject
@@ -273,7 +276,7 @@ export const HELP_TOPICS = {
   },
 
   // Sources: disk-set-section.tsx:166-175 (header texts), add-disks-dialog.tsx, disk-set-menu.tsx:58-100,
-  // ingest/set-suggestion.tsx, card-mount-button.tsx:211, HANDOFF disk sets (4902-4941), disk-label.ts (the OLED name).
+  // ingest/set-suggestion.tsx (shown in library-ingest/library-tray.tsx), card-mount-button.tsx:211, HANDOFF disk sets (4902-4941), disk-label.ts (the OLED name).
   'disk-sets': {
     title: 'Disk sets',
     short:
@@ -281,8 +284,8 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          <strong>Making a set.</strong> When you upload loose disks that seem to belong together, the upload page
-          suggests <em>These N disks look like one set</em>. You can also use <em>Add disks…</em> on a title, choose{' '}
+          <strong>Making a set.</strong> When you add loose disks that seem to belong together, the tray at the bottom
+          of the Library suggests <em>These N disks look like one set</em>. You can also use <em>Add disks…</em> on a title, choose{' '}
           <em>Add to a disk set…</em> from a single disk&apos;s menu, or drag one library card onto another.
         </p>
         <p>
