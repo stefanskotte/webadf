@@ -21,11 +21,8 @@ export type ServerRow = {
 import { formatSize } from '@/lib/send-ui';
 import { STALL_MS } from '@/lib/from-amiga-ui';
 
-export type LibState = 'hashing' | 'uploading' | 'deduped' | 'done' | 'failed';
-export type LibRow = {
-  source: 'lib'; key: string; kind: 'lib'; name: string; sizeBytes: number; state: LibState;
-  note?: string; title: { gameId: string; title: string } | null; at: number;
-};
+import type { LibRow } from '@/lib/library-ingest/rows';
+export { upsertLibRows, type LibRow, type LibState } from '@/lib/library-ingest/rows';
 export type UpRow = {
   source: 'up'; key: string; kind: 'out'; name: string; sizeBytes: number;
   state: 'uploading' | 'failed'; note?: string; boardName: string; at: number;
@@ -120,16 +117,6 @@ export function stagingView(rows: StagingRowAny[], filter: StagingFilter, stalle
     (v.row.source === 'server' ? clearServer : clearLocal).push(v.key);
   }
   return { shown, counts, clearServer, clearLocal };
-}
-
-/** Same key replaces in place; new keys append. */
-export function upsertLibRows(rows: LibRow[], next: LibRow[]): LibRow[] {
-  const out = [...rows];
-  for (const n of next) {
-    const i = out.findIndex((r) => r.key === n.key);
-    if (i >= 0) out[i] = n; else out.push(n);
-  }
-  return out;
 }
 
 /** Something is still moving: only then is the server list polled fast. */
