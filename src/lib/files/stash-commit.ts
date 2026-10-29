@@ -6,7 +6,7 @@ import { diskStore } from '@/lib/storage';
 import { contentHashes } from '@/lib/content-hashes';
 import { cleanAmigaPath } from '@/lib/transfers';
 import { releaseRefused } from '@/lib/ingest-complete';
-import { STASH_COMMIT_MAX_BYTES, STASH_COMMIT_MAX_ENTRIES } from './stash-paths';
+import { STASH_COMMIT_MAX_BYTES, STASH_COMMIT_MAX_ENTRIES, STASH_FILE_MAX } from './stash-paths';
 import { writeStash } from './stash-driver';
 import { groupBy, refuse, Refused, type IncomingItem, type IncomingTop, type OnClash, type OpCtx, type OpItem } from './driver';
 import type { FsPath } from './path';
@@ -29,14 +29,21 @@ function cleanPath(path: string): string[] | null {
 }
 
 /**
- * Whether the bytes at `sha256` are whole, checked as /api/ingest/complete verifies: they are hashed first, whatever
- * their size. Bytes that do not hash to their key are forged or broken: they are deleted unless something else names
+ * Whether the bytes at `sha256` are whole, checked as /api/ingest/complete verifies: they are hashed before the size
+ * claimed is compared (over 20 MB they are never read). Bytes that do not hash to their key are forged or broken: they are deleted unless something else names
  * that key (ruling 2), so a poisoned adf/<sha> never makes presign skip it for good. Bytes that do hash to it but are
  * not the size claimed are authentic and kept; only the claim is refused. Only a blob the store does not have is "did
  * not arrive"; any other storage error propagates.
  */
 async function arrivedWhole(sha256: string, sizeBytes: number): Promise<boolean> {
-  if (!(await diskStore.stat(sha256))) return false;
+  const stat = await diskStore.stat(sha256);
+  if (!stat) return false;
+  // Never read more than a STASH: file may hold, whatever size was claimed: over it is no browser drop's, and it is
+  // released by the same reference check (a blob something else names is kept).
+  if (stat.sizeBytes > STASH_FILE_MAX) {
+    await releaseRefused([sha256]);
+    return false;
+  }
   const bytes = await diskStore.read(sha256);
   if (contentHashes(bytes).sha256 !== sha256) {
     await releaseRefused([sha256]);

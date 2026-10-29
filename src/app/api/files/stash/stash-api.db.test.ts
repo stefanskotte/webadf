@@ -23,6 +23,7 @@ const { getDb, closeDb } = await import('@/db');
 const { migrate } = await import('drizzle-orm/node-postgres/migrator');
 const { createHash } = await import('node:crypto');
 const { organization } = await import('@/db/schema/auth');
+const { blobs } = await import('@/db/schema/catalog');
 const { diskStore } = await import('@/lib/storage');
 const { listStash } = await import('@/lib/stash');
 const { fetchUrlSafely } = await import('@/lib/url-fetch');
@@ -111,6 +112,23 @@ describe('/api/files/stash', () => {
       await expect(commit([{ path: 'h.txt', kind: 'file', sha256: sha, sizeBytes: bytes.length }])).rejects.toThrow('stat down');
     } finally { stat.mockRestore(); }
     expect(await rowsAt('o1', 'h.txt')).toEqual([]);
+  });
+  it('commit: a blob over 20 MB is refused without being read; released unless something names it', async () => {
+    const huge = new Uint8Array(20 * 1024 * 1024 + 1);
+    const loose = '1'.repeat(64); const named = '2'.repeat(64);
+    await diskStore.put(loose, huge); await diskStore.put(named, huge);
+    await getDb().insert(blobs).values({ sha256: named, sizeBytes: huge.length, storageKey: `adf/${named}` });
+    const read = vi.spyOn(diskStore, 'read');
+    try {
+      for (const key of [loose, named]) {
+        const r = await commit([{ path: 'tiny.txt', kind: 'file', sha256: key, sizeBytes: 4 }]);
+        expect([r.status, (await r.json()).items[0]]).toEqual([200, { source: 'tiny.txt', ok: false, refusal: { code: 'failed', detail: 'upload did not arrive whole' } }]);
+      }
+      expect(read).not.toHaveBeenCalled();
+    } finally { read.mockRestore(); }
+    expect(await diskStore.stat(loose)).toBeNull();
+    expect(await diskStore.stat(named)).not.toBeNull();
+    expect(await rowsAt('o1', 'tiny.txt')).toEqual([]);
   });
   it('commit: an absurd lastModified is a 400, not an Invalid Date', async () => {
     for (const lastModified of [9e15, -1, 1.5]) {
