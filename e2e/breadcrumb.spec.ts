@@ -48,7 +48,10 @@ test('a disk trails Library / its title / which disk, and each crumb goes where 
   const row = (await getDb().select().from(disks).where(eq(disks.sha256, sha256)))[0];
   void u;
 
-  await page.goto(`/disks/${row.id}/files`);
+  // Since Files increment 1 the disk's own page is only its History's view of an earlier version (R3): one edit makes
+  // version 0 the as-uploaded disk.
+  expect((await page.request.post(`/api/disks/${row.id}/files`, { multipart: { parentBlock: '880', name: 'Edited' } })).status()).toBe(200);
+  await page.goto(`/disks/${row.id}/files?version=0`);
   const trail = page.getByTestId('breadcrumb');
   await expect(trail.getByRole('listitem')).toHaveCount(3);
 
@@ -93,7 +96,7 @@ test('the trail leads back to the collection you came from', async ({ page }) =>
   await page.request.delete(`/api/collections/${collectionId}`);
 });
 
-test('the collection survives the step down into a disk', async ({ page }) => {
+test('the collection survives the step down into a title, and Files… leaves the trail for Files', async ({ page }) => {
   const run = runTag();
   const u = await signUpFresh(page);
   const tag = randomUUID().slice(0, 8);
@@ -116,19 +119,17 @@ test('the collection survives the step down into a disk', async ({ page }) => {
 
   await page.goto(`/library?collection=${collectionId}`);
   await page.getByTestId('game-card').first().click();
-  await page.getByRole('link', { name: 'Browse' }).first().click();
-  await expect(page).toHaveURL(/\/files/);
+  await expect(page).toHaveURL(new RegExp(`/games/${row.gameId}`));
 
-  // Four crumbs now: Library / the collection / the title / which disk. The
-  // collection has to survive TWO steps, or the trail forgets it halfway.
+  // The collection is on the title's trail.
   const trail = page.getByTestId('breadcrumb');
-  await expect(trail.getByRole('listitem')).toHaveCount(4);
+  await expect(trail.getByRole('listitem')).toHaveCount(2);
   await expect(trail).toContainText(`Deep ${run}`);
 
-  // Stepping back up to the title keeps it too.
-  await trail.getByRole('link').nth(2).click();
-  await expect(page).toHaveURL(new RegExp(`/games/${row.gameId}`));
-  await expect(page.getByTestId('breadcrumb')).toContainText(`Deep ${run}`);
+  // A disk's files open in Files (increment 1), which has its own path bar rather than the library's trail.
+  await page.getByRole('link', { name: 'Files…' }).first().click();
+  await expect(page).toHaveURL(/\/files\?/);
+  await expect(page.getByTestId('disk-strip-right')).toBeVisible();
 
   await page.request.delete(`/api/collections/${collectionId}`);
 });

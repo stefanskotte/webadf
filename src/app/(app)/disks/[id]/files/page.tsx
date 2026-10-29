@@ -41,6 +41,7 @@ import { listSendTargets } from '@/lib/send-targets';
 import { SendBoardPicker } from '@/components/send/send-button';
 import { getUserPrefs } from '@/lib/user-prefs';
 import { libraryDiskOf } from '@/lib/files/disk-strip-data';
+import { filesHrefForDisk } from '@/lib/files/path';
 
 export const dynamic = 'force-dynamic';
 
@@ -97,7 +98,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
     const found = await libraryDiskOf(orgId, id);
     if (!found) notFound();
     if (found.imageFormat === 'hfe') redirect(`/games/${found.gameId}`);
-    redirect(`/files?left=LIBRARY:&right=${encodeURIComponent(`LIBRARY:/${found.gameId}/${id}`)}&active=right`);
+    redirect(filesHrefForDisk(found.gameId, id));
   }
 
   const from = typeof sp.from === 'string' ? sp.from : undefined;

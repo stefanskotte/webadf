@@ -4,6 +4,8 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { disks, blobs } from '@/db/schema/catalog';
+import { formatVolume } from '@/lib/adffs/format';
+import { diskStore } from '@/lib/storage';
 import { signUpFresh, runTag } from './helpers';
 import { pairDevice, seedDisk, addDisk, cleanupSeeded } from './device-helpers';
 import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
@@ -298,45 +300,56 @@ test("a disk row whose org_id diverges from its game's org_id is never shown (de
   }
 });
 
-// --- Mount / Eject on the disk's own page (/disks/[id]/files), operator 2026-09-29 ---
+// --- Mount / Eject on the disk's own page, operator 2026-09-29; since Files increment 1 the disk strip in Files ---
 
-test('the disk page mounts and ejects the disk, and says where it is in words', async ({ page, request }) => {
+/** A real, stored disk (Files lists its bytes, so a byte-less seed would show only the unreadable-image error). */
+async function seedStoredDisk(orgId: string, title: string) {
+  const adf = formatVolume({ filesystem: 'FFS', volumeName: title.slice(0, 30) });
+  const sha256 = createHash('sha256').update(adf).digest('hex');
+  await diskStore.put(sha256, adf);
+  return { ...(await seedDisk(orgId, { title, diskNo: 1, sha256 })), sha256 };
+}
+
+const filesUrl = (gameId: string, diskId: string) =>
+  `/files?left=LIBRARY:&right=${encodeURIComponent(`LIBRARY:/${gameId}/${diskId}`)}&active=right`;
+
+test('the disk strip mounts and ejects the disk, and says where it is in words', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
   const { deviceId } = await pairDevice(page, request, 'Disk Page Device');
   await setDevice(deviceId, { name: 'Disk Page Device', lastSeenAt: new Date() });
   const tag = runTag();
-  const { gameId, diskId } = await seedDisk(orgId, { title: `DiskPage-${tag}`, diskNo: 1, sha256: sha(tag) });
+  const { gameId, diskId, sha256 } = await seedStoredDisk(orgId, `DiskPage-${tag}`);
 
-  await page.goto(`/disks/${diskId}/files`);
-  await expect(page.getByTestId('disk-mount-bar')).toBeVisible();
-  await expect(page.getByTestId(`holder-${diskId}`)).toHaveText('Not in a drive');
+  await page.goto(filesUrl(gameId, diskId));
+  const drive = page.getByTestId('disk-strip-right').getByTestId('disk-strip-drive');
+  await expect(drive).toHaveText('Not in a drive');
 
   await Promise.all([
     page.waitForResponse((r) => r.url().includes(`/api/devices/${deviceId}/mount`) && r.request().method() === 'POST'),
     page.getByTestId(`mount-${diskId}`).click(),
   ]);
   expect((await deviceRow(deviceId)).desiredDiskId).toBe(diskId);
-  await expect(page.getByTestId(`holder-${diskId}`)).toHaveText(/^Mounting to Disk Page Device/);
+  await expect(drive).toHaveText(/^Mounting to Disk Page Device/);
 
-  // The board reports it holds the disk: the line says so, and the button ejects.
+  // The board reports it holds the disk: the chip names the drive, and Eject to edit takes it out.
   await setDevice(deviceId, {
-    mountedGameId: gameId, mountedDiskId: diskId, mountedSha256: sha(tag), mountedDiskNo: 1, lastSeenAt: new Date(),
+    mountedGameId: gameId, mountedDiskId: diskId, mountedSha256: sha256, mountedDiskNo: 1, lastSeenAt: new Date(),
   });
   await page.reload();
-  await expect(page.getByTestId(`holder-${diskId}`)).toHaveText('In Disk Page Device');
+  await expect(drive).toHaveText('In DF0: of Disk Page Device');
   await Promise.all([
     page.waitForResponse((r) => r.url().includes(`/api/devices/${deviceId}/eject`) && r.request().method() === 'POST'),
-    page.getByTestId(`eject-${diskId}`).click(),
+    page.getByTestId('disk-strip-eject').click(),
   ]);
   expect((await deviceRow(deviceId)).desiredDiskId).toBeNull();
 });
 
-test('with no devices paired, the disk page offers to pair one instead of a Mount button', async ({ page }) => {
+test('with no devices paired, the disk strip offers to pair one instead of a Mount button', async ({ page }) => {
   const { orgId } = await signUpFresh(page);
   const tag = runTag();
-  const { diskId } = await seedDisk(orgId, { title: `DiskPageNone-${tag}`, diskNo: 1, sha256: sha(tag) });
-  await page.goto(`/disks/${diskId}/files`);
-  await expect(page.getByTestId(`holder-${diskId}`)).toHaveText('Not in a drive');
+  const { gameId, diskId } = await seedStoredDisk(orgId, `DiskPageNone-${tag}`);
+  await page.goto(filesUrl(gameId, diskId));
+  await expect(page.getByTestId('disk-strip-right').getByTestId('disk-strip-drive')).toHaveText('Not in a drive');
   await expect(page.getByTestId(`mount-${diskId}-none`)).toHaveText('Pair a device');
 });
 

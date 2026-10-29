@@ -34,6 +34,14 @@ export function formatPath(p: FsPath): string {
   return p.segments.length ? `${p.device}:/${p.segments.join('/')}` : `${p.device}:`;
 }
 
+/**
+ * Files with a library disk open on the right (increment 1, R1): what "Files…" and every link to a disk's files opens.
+ * `#disk-history` (`history`) opens the disk strip's History over the pane.
+ */
+export function filesHrefForDisk(gameId: string, diskId: string, history = false): string {
+  return `/files?left=LIBRARY:&right=${encodeURIComponent(`LIBRARY:/${gameId}/${diskId}`)}&active=right${history ? '#disk-history' : ''}`;
+}
+
 export function parentOf(p: FsPath): FsPath | null {
   return p.segments.length ? { device: p.device, segments: p.segments.slice(0, -1) } : null;
 }

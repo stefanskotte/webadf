@@ -235,7 +235,7 @@ async function uploadHfeThroughUi(page: import('@playwright/test').Page, orgId: 
 }
 
 test.describe('an HFE on the game page', () => {
-  test('shows the tag, the notice and Read-only, offers Extract, and no Browse or write-protect toggle', async ({ page }) => {
+  test('shows the tag, the notice and Read-only, offers Extract, and no Files… or write-protect toggle', async ({ page }) => {
     const { orgId } = await signUpFresh(page);
     await uploadHfeThroughUi(page, orgId, 'HFE Row');
     const [d] = await getDb().select({ id: disks.id, gameId: disks.gameId }).from(disks).where(eq(disks.orgId, orgId));
@@ -244,10 +244,10 @@ test.describe('an HFE on the game page', () => {
     await expect(page.getByTestId(`hfe-notice-${d.id}`)).toContainText("Weak-bit copy protections aren't supported");
     await expect(page.getByTestId(`hfe-readonly-${d.id}`)).toHaveText('Read-only');
     await expect(page.getByTestId(`wp-${d.id}`)).toHaveCount(0);
-    await expect(page.getByTestId(`browse-${d.id}`)).toHaveCount(0);
+    await expect(page.getByTestId(`files-${d.id}`)).toHaveCount(0);
     await expect(page.getByTestId(`extract-${d.id}`)).toBeVisible();
 
-    // The file browser URL, typed by hand, lands back on the game page.
+    // The old file browser URL, typed by hand, lands back on the game page.
     await page.goto(`/disks/${d.id}/files`);
     await expect(page).toHaveURL(new RegExp(`/games/${d.gameId}`));
   });
@@ -266,7 +266,7 @@ test.describe('an HFE on the game page', () => {
 
     const [x] = await getDb().select({ id: disks.id }).from(disks).where(and(eq(disks.orgId, orgId), eq(disks.imageFormat, 'adf')));
     await page.reload();
-    await expect(page.getByTestId(`browse-${x.id}`)).toBeVisible();
+    await expect(page.getByTestId(`files-${x.id}`)).toBeVisible();
     // The HFE is untouched.
     const [again] = await getDb().select({ sha: disks.sha256 }).from(disks).where(eq(disks.id, h.id));
     expect(again.sha).toBe(h.sha256);
@@ -313,7 +313,7 @@ test.describe('an HFE on the game page', () => {
     await page.getByTestId(`extract-${h.id}`).click();
     await expect(page.getByTestId(`extract-edited-${h.id}`)).toContainText('has been edited since');
     await expect(page.getByTestId(`extract-edited-link-${h.id}`))
-      .toHaveAttribute('href', `/disks/${adfId}/files#disk-history`);
+      .toHaveAttribute('href', `/files?left=LIBRARY:&right=${encodeURIComponent(`LIBRARY:/${h.gameId}/${adfId}`)}&active=right#disk-history`);
   });
 
   test('extracting to an ADF whose blob already has a verdict puts it back in front of the sweeper', async ({ browser }) => {

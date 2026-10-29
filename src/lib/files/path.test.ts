@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePath, formatPath, parentOf, childOf, isWithin, amigaNameProblem } from './path';
+import { parsePath, formatPath, parentOf, childOf, isWithin, amigaNameProblem, filesHrefForDisk } from './path';
 
 const ci = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
@@ -76,5 +76,15 @@ describe('amigaNameProblem', () => {
     expect(amigaNameProblem('a\u0080b')).toBe('bad-char');
     expect(amigaNameProblem('a\u009fb')).toBe('bad-char');
     expect(amigaNameProblem('a b')).toBeNull(); // NBSP is printable Latin-1
+  });
+});
+
+describe('filesHrefForDisk (Task 9)', () => {
+  it('opens LIBRARY: on the left and the disk on the right, active; with history, its #disk-history', () => {
+    const href = filesHrefForDisk('g1', 'd1');
+    expect(href).toBe(`/files?left=LIBRARY:&right=${encodeURIComponent('LIBRARY:/g1/d1')}&active=right`);
+    const q = new URL(href, 'http://x').searchParams;
+    expect([q.get('left'), q.get('right'), q.get('active')]).toEqual(['LIBRARY:', 'LIBRARY:/g1/d1', 'right']);
+    expect(filesHrefForDisk('g1', 'd1', true)).toBe(`${href}#disk-history`);
   });
 });

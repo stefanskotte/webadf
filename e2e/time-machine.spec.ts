@@ -45,19 +45,29 @@ function findByName(entries: AdfEntry[], name: string): AdfEntry | null {
   return null;
 }
 
-/** Upload one file through the toolbar and wait for the row to land -- same 15 s bound as disk-files-edit.spec.ts, for the same reason: an edit here is two server round trips (the edit, then the page's router.refresh()) before the tree can change. */
+/** The same 15 s bound as disk-files-edit.spec.ts: a restore is a server round trip and then the pane's reload. */
 const AFTER_EDIT = { timeout: 15_000 };
 
-async function uploadFile(page: Page, name: string, content: string) {
-  // A file set before React has hydrated the input reaches DOM with no onChange: nothing is staged (disk-files-edit.spec.ts does the same).
-  await hydrated(page, 'upload-input', 'onChange');
-  await page.getByTestId('upload-input').setInputFiles({
-    name, mimeType: 'application/octet-stream', buffer: Buffer.from(content),
+/**
+ * Add one file to the disk's root, each a new version. Through the file route rather than a page: since Files
+ * increment 1 the disk's head is edited in Files, and what this file tests is the History, not how a version is made.
+ */
+async function uploadFile(page: Page, diskId: string, name: string, content: string) {
+  const res = await page.request.post(`/api/disks/${diskId}/files`, {
+    multipart: { parentBlock: '880', name, file: { name, mimeType: 'application/octet-stream', buffer: Buffer.from(content) } },
   });
-  await expect(page.getByTestId('upload-name')).toHaveValue(name);
-  await page.getByTestId('upload-submit').click();
-  await expect(page.locator(`[data-testid="fs-entry"][data-name="${name}"]`)).toBeVisible(AFTER_EDIT);
+  expect(res.ok()).toBe(true);
 }
+
+/** Files with the disk on the right, and its strip's History open over the pane. */
+async function openHistory(page: Page, disk: { id: string; gameId: string }) {
+  await page.goto(`/files?left=LIBRARY:&right=${encodeURIComponent(`LIBRARY:/${disk.gameId}/${disk.id}`)}&active=right`);
+  await hydrated(page, 'disk-strip-history-toggle');
+  await page.getByTestId('disk-strip-history-toggle').click();
+  await expect(page.getByTestId('history-panel')).toBeVisible();
+}
+
+const paneRow = (page: Page, name: string) => page.getByTestId('pane-right').locator(`[data-testid="pane-row"][data-name="${name}"]`);
 
 test('history lists what changed, newest first, with version 0 as uploaded', async ({ page }) => {
   test.setTimeout(60_000); // same two uploads as the browsing test below; see its measurement
@@ -66,13 +76,11 @@ test('history lists what changed, newest first, with version 0 as uploaded', asy
   await createAdf(page);
   const disk = await authoredDisk(page, u.orgId);
 
-  await page.goto(`/disks/${disk.id}/files`);
-  await expect(page.getByTestId('file-toolbar')).toBeVisible();
-  await uploadFile(page, 'FIRST.TXT', 'the first file');
-  await uploadFile(page, 'SECOND.TXT', 'the second file');
+  await uploadFile(page, disk.id, 'FIRST.TXT', 'the first file');
+  await uploadFile(page, disk.id, 'SECOND.TXT', 'the second file');
 
+  await openHistory(page, disk);
   const panel = page.getByTestId('history-panel');
-  await expect(panel).toBeVisible();
   const rows = panel.locator('li[data-testid^="version-"]');
   await expect(rows).toHaveCount(3);
 
@@ -103,7 +111,9 @@ test('the library card reaches the history, and the wordmark leads back', async 
   await expect(history).toBeVisible();
   await history.click();
 
-  await expect(page).toHaveURL(new RegExp(`/disks/${disk.id}/files#disk-history$`));
+  // Files with the disk on the right, its History open over the pane.
+  await expect(page).toHaveURL(/\/files\?left=LIBRARY.*#disk-history$/);
+  await expect(page.getByTestId('disk-strip-right')).toBeVisible();
   await expect(page.getByTestId('history-panel')).toBeVisible();
   // The card must not ALSO navigate to the title: the button lives inside the
   // card's own <a href>, and an unstopped click would do both.
@@ -124,9 +134,8 @@ test('browsing an old version shows its tree read-only, with no edit controls', 
   await createAdf(page);
   const disk = await authoredDisk(page, u.orgId);
 
-  await page.goto(`/disks/${disk.id}/files`);
-  await uploadFile(page, 'FIRST.TXT', 'the first file');
-  await uploadFile(page, 'SECOND.TXT', 'the second file');
+  await uploadFile(page, disk.id, 'FIRST.TXT', 'the first file');
+  await uploadFile(page, disk.id, 'SECOND.TXT', 'the second file');
 
   // Version 1: right after the first upload, before the second file existed.
   await page.goto(`/disks/${disk.id}/files?version=1`);
@@ -160,9 +169,9 @@ test('restoring an old version brings its content back as a new version', async 
   await createAdf(page);
   const disk = await authoredDisk(page, u.orgId);
 
-  await page.goto(`/disks/${disk.id}/files`);
-  await uploadFile(page, 'FIRST.TXT', 'the first file');
-  await uploadFile(page, 'SECOND.TXT', 'the second file');
+  await uploadFile(page, disk.id, 'FIRST.TXT', 'the first file');
+  await uploadFile(page, disk.id, 'SECOND.TXT', 'the second file');
+  await openHistory(page, disk);
 
   const beforeRestore = await diskRow(disk.id);
   // Browser edits keep the volume's creation date, so this is also version 1's.
@@ -177,14 +186,14 @@ test('restoring an old version brings its content back as a new version', async 
   await page.getByTestId('restore-confirm').click();
   await expect(page.getByTestId('restore-dialog')).toHaveCount(0, AFTER_EDIT);
 
-  // SECOND.TXT (added in version 2) is gone from the disk; FIRST.TXT remains.
-  await expect(page.locator('[data-testid="fs-entry"][data-name="SECOND.TXT"]')).toHaveCount(0, AFTER_EDIT);
-  await expect(page.locator('[data-testid="fs-entry"][data-name="FIRST.TXT"]')).toBeVisible();
+  // SECOND.TXT (added in version 2) is gone from the disk; FIRST.TXT remains -- the pane reloads after the restore.
+  await expect(paneRow(page, 'SECOND.TXT')).toHaveCount(0, AFTER_EDIT);
+  await expect(paneRow(page, 'FIRST.TXT')).toBeVisible();
 
   // Nothing was deleted from history: four entries now (0, 1, 2, 3), and the
   // disk got a genuinely new digest, not a reuse of version 1's own.
   const panel = page.getByTestId('history-panel');
-  await expect(panel.locator('li[data-testid^="version-"]')).toHaveCount(4);
+  await expect(panel.locator('li[data-testid^="version-"]')).toHaveCount(4, AFTER_EDIT);
   await expect(page.getByTestId('version-3')).toContainText('Restored to version 1');
   await expect(page.getByTestId('version-3')).toHaveAttribute('data-head', 'true');
 
@@ -223,8 +232,7 @@ test('restore is refused while a board holds the disk, and succeeds once ejected
   await createAdf(page);
   const disk = await authoredDisk(page, u.orgId);
 
-  await page.goto(`/disks/${disk.id}/files`);
-  await uploadFile(page, 'ONLY.TXT', 'the only file');
+  await uploadFile(page, disk.id, 'ONLY.TXT', 'the only file');
   const beforeAttempt = await diskRow(disk.id);
 
   // A bare request context, not the page's -- pairDevice registers a device,
@@ -248,7 +256,7 @@ test('restore is refused while a board holds the disk, and succeeds once ejected
   expect(unchanged.id).toBe(disk.id);
 
   // The panel says so too, before anyone even tries.
-  await page.reload();
+  await openHistory(page, disk);
   await expect(page.getByTestId('history-mounted-notice')).toContainText('mounted on');
   await openVersion(page, 0);
   await expect(page.getByTestId('restore-0')).toBeDisabled();
@@ -281,11 +289,10 @@ test('a board mounting the disk during the restore confirm sends focus to the Hi
   await page.goto('/library');
   await createAdf(page);
   const disk = await authoredDisk(page, u.orgId);
-  await page.goto(`/disks/${disk.id}/files`);
-  await uploadFile(page, 'ONLY.TXT', 'the only file');
+  await uploadFile(page, disk.id, 'ONLY.TXT', 'the only file');
   const { deviceId } = await pairDevice(page, request, `Board ${runTag()}`);
 
-  await page.reload();
+  await openHistory(page, disk);
   await openVersion(page, 0);
   await page.getByTestId('restore-0').click();
   await expect(page.getByTestId('restore-dialog')).toBeVisible();
@@ -308,8 +315,7 @@ test('another tenant gets 404 from restore and from browsing history', async ({ 
   await pa.goto('/library');
   await createAdf(pa);
   const disk = await authoredDisk(pa, ua.orgId);
-  await pa.goto(`/disks/${disk.id}/files`);
-  await uploadFile(pa, 'FIRST.TXT', 'the first file');
+  await uploadFile(pa, disk.id, 'FIRST.TXT', 'the first file');
 
   // Same maxRedirects: 0 rationale as disk-files-edit.spec.ts's tenant test:
   // requireOrg() redirects an unscoped session to /sign-in, and Playwright

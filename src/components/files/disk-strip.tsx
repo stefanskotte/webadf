@@ -25,7 +25,7 @@ import { RestoreProvider } from '@/components/disks/restore-dialog';
 export type DiskStripProps = { side: 'left' | 'right'; disk: DiskInfo; data: StripData; onChanged(): void };
 
 const LIGHT = { in: 'var(--online-dot)', moving: 'var(--fetch-dot)', stale: 'var(--fetch-dot)', none: 'var(--dash)' } as const;
-const BTN = 'inline-flex h-[30px] shrink-0 items-center rounded-[8px] border px-2.5 text-[12px] font-semibold disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-(--ring)';
+const BTN = 'inline-flex h-[30px] max-sm:min-h-11 shrink-0 items-center rounded-[8px] border px-2.5 text-[12px] font-semibold disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-(--ring)';
 const BTN_STYLE = { background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' } as const;
 
 const noSubscribe = () => () => {};
@@ -161,7 +161,7 @@ export function DiskStrip({ side, disk, data, onChanged }: DiskStripProps) {
             <button type="button" data-testid="disk-strip-volume-edit" disabled={busy || locked !== null}
                     aria-label="Rename the volume" title={locked ?? 'Rename the volume'}
                     onClick={() => { setName(disk.volumeName ?? ''); setEditing(true); }}
-                    className="rounded-[4px] px-0.5 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-(--ring)">
+                    className="rounded-[4px] px-0.5 max-sm:min-h-11 max-sm:min-w-11 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-(--ring)">
               <span aria-hidden>✎</span>
             </button>
           )}

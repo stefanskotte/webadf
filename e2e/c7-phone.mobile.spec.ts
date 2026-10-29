@@ -399,9 +399,9 @@ test('C7-09a touch targets and no sideways scroll: a title, its disk files, Sett
   await page.goto(title!);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await touchSweep(page, 'title page');
-  const files = await page.locator('[data-testid^="browse-"]').first().getAttribute('href');
+  const files = await page.getByRole('link', { name: 'Files…' }).first().getAttribute('href');
   await page.goto(files!);
-  await expect(page.getByTestId('disk-card')).toBeVisible();
+  await expect(page.getByTestId('disk-strip-right')).toBeVisible();
   await touchSweep(page, 'disk files');
   for (const path of ['/settings', '/settings/library', '/settings/server', '/help']) {
     await page.goto(path);

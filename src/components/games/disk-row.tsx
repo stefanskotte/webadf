@@ -10,6 +10,7 @@ import { WEAK_BIT_NOTICE } from '@/lib/hfe/messages';
 import { holderText, type MountChoice } from '@/lib/mount-choice';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
 import { libraryHref, type TrailView } from '@/lib/trail';
+import { filesHrefForDisk } from '@/lib/files/path';
 import { FobButton, type FobDevice } from '@/components/nfc/fob-button';
 import { HdTag } from '@/components/disks/hd-tag';
 import { isHdAdf } from '@/lib/disk-format';
@@ -173,10 +174,10 @@ export function DiskRow({ disk, gameId, choices, from, view = null, fobDevices =
         </a>
         {/* Link, not <a>: an internal navigation to Files (increment 1, R1): the library on the left, this disk on the right. */}
         {isHfe ? (
-          <ExtractAction diskId={disk.id} extractable={disk.extractable === true} reason={disk.extractReason}
+          <ExtractAction diskId={disk.id} gameId={gameId} extractable={disk.extractable === true} reason={disk.extractReason}
                          help={helpHfe === true} />
         ) : (
-          <Link href={`/files?left=LIBRARY:&right=${encodeURIComponent(`LIBRARY:/${gameId}/${disk.id}`)}&active=right`}
+          <Link href={filesHrefForDisk(gameId, disk.id)}
                 data-testid={`files-${disk.id}`} className={GHOST} style={GHOST_STYLE}>
             Files…
           </Link>

@@ -596,8 +596,10 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   /** Rows dropped on a pane: Copy, or Move with Shift; onto a folder row, into that folder. */
   function drop(side: Side, e: React.DragEvent) {
+    // Files from the computer first: an OS drag never carries the panes' own type.
+    if (isFileDrag(e)) { dropFromComputer(side, e); return; }
     const raw = e.dataTransfer.getData(DRAG_TYPE);
-    if (!raw) { if (isFileDrag(e)) dropFromComputer(side, e); return; }
+    if (!raw) return;
     let data: { from: Side; paths: string[] };
     try { data = JSON.parse(raw); } catch { return; }
     if (busy || !Array.isArray(data.paths) || data.paths.length === 0) return;
