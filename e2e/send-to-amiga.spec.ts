@@ -93,16 +93,21 @@ test('Delete takes a waiting file out of the board\'s queue; a cancel after deli
   expect((await transferOf(deviceId, 'One.bin')).status).toBe('cancelled');
   expect(await boardQueue(request, token)).toBe('NEXT -\nLIST 0\n');
 
-  // Review Focus 2: a cancel that arrives after the board delivered is refused, and the row stays Delivered. (Sent by
-  // request, as the CLI's route: the pane re-reads the queue every few seconds, so a click there is a race.)
+  // Review Focus 2, through Files: a Delete that arrives after the board delivered clears the finished row and never
+  // turns the delivery into a cancel. (Sent by request: the pane re-reads the queue every few seconds, so a click
+  // there is a race.)
   await sendFile(page, 'Two.bin', Buffer.alloc(100, 2));
   await expect(qRow(page, 'Two.bin')).toContainText('Waiting', { timeout: LIVE });
   const two = await transferOf(deviceId, 'Two.bin');
   await boardTakesNext(request, token, { ok: true, savedAs: 'Two.bin' });
-  const late = await page.request.delete(`/api/transfers/${two.id}`);
-  expect(late.status()).toBe(409);
-  expect(await late.json()).toEqual({ error: 'not_waiting' });
   await expect(qRow(page, 'Two.bin')).toContainText('Delivered · saved as Two.bin', { timeout: LIVE });
+  expect((await transferOf(deviceId, 'Two.bin')).status).toBe('delivered');
+  const late = await page.request.post('/api/files/ops', { data: { op: 'delete', sources: [`NET:/${deviceId}/${two.id}`] } });
+  expect(late.status()).toBe(200);
+  expect(await late.json()).toMatchObject({ items: [{ ok: true }] });
+  expect(await transferOf(deviceId, 'Two.bin')).toBeUndefined();
+  expect(await boardQueue(request, token)).toBe('NEXT -\nLIST 0\n');
+  await expect(qRow(page, 'Two.bin')).toHaveCount(0, { timeout: LIVE });
 });
 
 // Was "a failure shows Transfer's reason, and Retry queues the file again". Retry is retired (R4): the person sends
@@ -233,7 +238,9 @@ test('a long queue: the waiting file is first by date, and Delete clears the fin
   // One delivered and one failed through the board's own routes, eleven cancelled, then one left waiting: 14 rows.
   await post('Delivered.bin'); await boardTakesNext(request, token, { ok: true, savedAs: 'Delivered.bin' });
   await post('Failed.bin'); await boardTakesNext(request, token, { ok: false, code: 'space', text: 'disk full' });
-  for (let i = 0; i < 11; i++) expect((await page.request.delete(`/api/transfers/${await post(`C${i}.bin`)}`)).status()).toBe(200);
+  // Cancelled through Files' Delete, as the pane's Delete sends it.
+  const cancel = async (id: string) => (await page.request.post('/api/files/ops', { data: { op: 'delete', sources: [`NET:/${deviceId}/${id}`] } })).status();
+  for (let i = 0; i < 11; i++) expect(await cancel(await post(`C${i}.bin`))).toBe(200);
   const waiting = await post('Waiting.bin');
 
   await openQueue(page, deviceId);

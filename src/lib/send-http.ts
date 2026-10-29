@@ -40,8 +40,8 @@ export async function storeSendBytes(bytes: Uint8Array): Promise<string> {
   return sha256;
 }
 
-/** A row as the browser sees it. A row still waiting or moving past its expiry reads 'expired' at once, as
- *  retryTransfer treats a lapsed queued row: the poll already skips it, and the daily cron only catches up the status. */
+/** A row as the browser sees it. A row still waiting or moving past its expiry reads 'expired' at once: the poll
+ *  already skips it, and the daily cron only catches up the status. */
 export function toView(r: TransferRow, now: number): TransferView {
   const lapsed = (r.status === 'queued' || r.status === 'sending') && r.expiresAt.getTime() <= now;
   return {

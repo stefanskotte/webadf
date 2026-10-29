@@ -17,7 +17,7 @@ const { organization } = await import('@/db/schema/auth');
 const { devices } = await import('@/db/schema/devices');
 const { amigaUploads, amigaUploadChunks } = await import('@/db/schema/amiga-uploads');
 const { insertStash, listStash, deleteStash, moveStash, setStashMeta, STASH_FULL, StashBusy } = await import('./stash');
-const { openUpload, storeChunk, closeUpload, listUploads, clearUploads } = await import('./amiga-uploads');
+const { openUpload, storeChunk, closeUpload } = await import('./amiga-uploads');
 
 const db = () => getDb();
 const file = (path: string, size = 5) => ({ path, kind: 'file' as const, sha256: 'a'.repeat(64), sizeBytes: size, date: new Date(Date.UTC(2020, 0, 2)), protection: 0, comment: '' });
@@ -47,11 +47,10 @@ describe('STASH: store', () => {
     expect(rows[0].date?.toISOString()).toBe('2020-01-02T00:00:00.000Z');
     expect(await listStash(db(), 'o2')).toEqual([]);
   });
-  it('the Upload page lists only files from the Amiga, and its Clear all leaves STASH: rows', async () => {
-    await upload('From/amiga.txt', Buffer.from('hi'), '17000.600.0');
-    expect((await listUploads(db(), 'o1', null)).map((u) => u.path)).toEqual(['From/amiga.txt']);
-    const views = await listUploads(db(), 'o1', null);
-    await clearUploads(db(), 'o1', views[0].cursor);
+  it('a file from the Amiga is a STASH: row of source amiga; deleting it leaves the browser rows', async () => {
+    const up = await upload('From/amiga.txt', Buffer.from('hi'), '17000.600.0');
+    expect((await listStash(db(), 'o1')).find((x) => x.path === 'From/amiga.txt')?.source).toBe('amiga');
+    expect(await deleteStash(db(), 'o1', [up.id])).toBe(1);
     expect((await listStash(db(), 'o1')).map((x) => x.path)).toEqual(['Docs/a.txt', 'Empty']);
   });
   it('a second upload of the same path keeps both: the newcomer is stored as name_1, and the board hears its own name', async () => {

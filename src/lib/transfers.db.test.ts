@@ -218,57 +218,6 @@ describe('transfers', () => {
     expect(await T.listTransfers(getDb(), 'org-b', d)).toEqual([]);
   });
 
-  it('retryTransfer queues a failed or expired row again as a new row, and refuses the rest', async () => {
-    const d = await device();
-    const r = await q(d, await blob(new TextEncoder().encode('again')), { path: 'Again.txt', protection: 0x40, comment: 'c' });
-    const id = (r as { id: string }).id;
-    expect(await T.retryTransfer(getDb(), { orgId: 'org-a', userId: 'u2', id })).toEqual({ ok: false, reason: 'not_finished' });
-    await T.finishTransfer(getDb(), d, id, { ok: false, code: 'space', text: 'full' });
-    const again = await T.retryTransfer(getDb(), { orgId: 'org-a', userId: 'u2', id });
-    expect(again.ok).toBe(true);
-    const n = await row((again as { id: string }).id);
-    expect(n).toMatchObject({ path: 'Again.txt', protection: 0x40, comment: 'c', status: 'queued', createdByUserId: 'u2' });
-    expect(await T.retryTransfer(getDb(), { orgId: 'org-b', userId: 'u2', id })).toEqual({ ok: false, reason: 'not_found' });
-  });
-
-  it('retryTransfer refuses a cancelled row (F3: the UI offers Retry on failed and expired only)', async () => {
-    const d = await device();
-    const r = await q(d, await blob(new TextEncoder().encode('cancel me')));
-    const id = (r as { id: string }).id;
-    await T.cancelTransfer(getDb(), 'org-a', id);
-    expect(await T.retryTransfer(getDb(), { orgId: 'org-a', userId: 'u2', id })).toEqual({ ok: false, reason: 'not_finished' });
-  });
-
-  it('retryTransfer treats a queued row past its expiry as expired (F4): marks it, then queues a new row', async () => {
-    const d = await device();
-    const t0 = new Date(Date.now() - 2 * 24 * 3600_000);
-    const r = await q(d, await blob(new TextEncoder().encode('stale')), { path: 'Stale.txt', now: t0 });
-    const id = (r as { id: string }).id;
-    const v = await version(d);
-    const again = await T.retryTransfer(getDb(), { orgId: 'org-a', userId: 'u2', id });
-    expect(again.ok).toBe(true);
-    expect((await row(id)).status).toBe('expired');
-    expect((await row(id)).finishedAt).not.toBeNull();
-    expect(await row((again as { id: string }).id)).toMatchObject({ path: 'Stale.txt', status: 'queued' });
-    expect(await version(d)).toBe(v + 2);
-  });
-
-  it('retryTransfer treats a sending row past its expiry as expired too: marks it, bumps the version, queues a new row', async () => {
-    const d = await device();
-    const t0 = new Date(Date.now() - 2 * 24 * 3600_000);
-    const r = await q(d, await blob(new TextEncoder().encode('stuck')), { path: 'Stuck.txt', now: t0 });
-    const id = (r as { id: string }).id;
-    await T.recordChunk(getDb(), d, id, 0);
-    expect((await row(id)).status).toBe('sending');
-    const v = await version(d);
-    const again = await T.retryTransfer(getDb(), { orgId: 'org-a', userId: 'u2', id });
-    expect(again.ok).toBe(true);
-    expect((await row(id)).status).toBe('expired');
-    expect((await row(id)).finishedAt).not.toBeNull();
-    expect(await row((again as { id: string }).id)).toMatchObject({ path: 'Stuck.txt', status: 'queued' });
-    expect(await version(d)).toBe(v + 2);
-  });
-
   it('clearFinishedTransfers deletes this board\'s finished and lapsed rows only, and leaves the board\'s queue and cursor alone', async () => {
     const d = await device(); const other = await device();
     const mk = async (dev: string, p: string) => (await q(dev, await blob(new TextEncoder().encode(`clear-${dev}-${p}`)), { path: p }) as { id: string }).id;

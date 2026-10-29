@@ -222,7 +222,7 @@ export async function queueLoad(db: Db, deviceId: string, now = new Date()): Pro
 
 export type TransferRow = typeof transfers.$inferSelect;
 
-/** The board's rows for the Upload page's queue: this org's only, newest first (finished rows live 7 days). */
+/** The board's rows for NET:/<board> (and GET /api/transfers): this org's only, newest first (finished rows live 7 days). */
 export async function listTransfers(db: Db, orgId: string, deviceId: string, limit = 100): Promise<TransferRow[]> {
   return db.select().from(transfers)
     .where(and(eq(transfers.orgId, orgId), eq(transfers.deviceId, deviceId)))
@@ -255,27 +255,6 @@ export async function clearTransfer(db: Db, orgId: string, id: string, now = new
         and(inArray(transfers.status, ACTIVE), lte(transfers.expiresAt, now)))))
     .returning({ id: transfers.id });
   return del.length > 0;
-}
-
-/** Retry (R10): the same file, path, protection and comment, queued again as a new row; the old row stays. */
-export async function retryTransfer(db: Db, a: { orgId: string; userId: string; id: string; now?: Date }):
-  Promise<QueueResult | { ok: false; reason: 'not_found' | 'not_finished' }> {
-  const now = a.now ?? new Date();
-  const [r] = await db.select().from(transfers).where(and(eq(transfers.id, a.id), eq(transfers.orgId, a.orgId)));
-  if (!r) return { ok: false, reason: 'not_found' };
-  // F4: a row still 'queued' or 'sending' past its expiry reads as expired to the page (which offers Retry) until the daily cron
-  // marks it; mark it here, as expireTransfers does, so the retry the page offers does not answer 409.
-  const lapsed = (r.status === 'queued' || r.status === 'sending') && r.expiresAt <= now;
-  if (r.status !== 'failed' && r.status !== 'expired' && !lapsed) return { ok: false, reason: 'not_finished' };   // F3: not 'cancelled'
-  if (lapsed) {
-    await db.transaction(async (tx) => {
-      const ex = await tx.update(transfers).set({ status: 'expired', finishedAt: now })
-        .where(and(eq(transfers.id, r.id), eq(transfers.status, r.status as 'queued' | 'sending'))).returning({ id: transfers.id });
-      if (ex.length) await tx.update(devices).set({ sendVersion: sql`${devices.sendVersion} + 1` }).where(eq(devices.id, r.deviceId));
-    });
-  }
-  return queueTransferFromBlob(db, { orgId: a.orgId, deviceId: r.deviceId, userId: a.userId, path: r.path,
-    sha256: r.blobSha256, protection: r.protection, comment: r.comment, now });
 }
 
 /** Per board, for the card's line (spec §4; R11): what waits or moves, and what finished in the last 24 h. */

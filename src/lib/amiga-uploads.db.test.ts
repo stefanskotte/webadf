@@ -30,6 +30,7 @@ const { amigaUploads, amigaUploadChunks } = await import('@/db/schema/amiga-uplo
 const { diskStore } = await import('@/lib/storage');
 const { recordStatus } = await import('@/lib/mount');
 const U = await import('./amiga-uploads');
+const { deleteStash } = await import('@/lib/stash');
 
 const db = () => getDb();
 let n = 0;
@@ -145,38 +146,14 @@ describe('amiga uploads', () => {
     expect(r).toEqual({ past: true, after: true });
   });
 
-  it('delete takes a receiving row too: the board then hears gone and the next send starts at 0', async () => {
+  it('a STASH: delete takes a receiving row too: the board then hears gone and the next send starts at 0', async () => {
     const d = await device('org-del-recv'); const data = bytes(40000, 5);
     const o = await opened(d, { size: data.byteLength, path: 'Stalled.bin' });
     await U.storeChunk(db(), d.deviceId, o.id, 0, data.subarray(0, 16384));
-    expect(await U.deleteUpload(db(), 'org-del-recv', o.id)).toBe(true);
+    expect(await deleteStash(db(), 'org-del-recv', [o.id])).toBe(1);
     expect(await chunkRows(o.id)).toBe(0);
     expect(await U.closeUpload(db(), d.deviceId, o.id, crc(data))).toEqual({ ok: false, status: 409, code: 'gone' });
     expect((await opened(d, { size: data.byteLength, path: 'Stalled.bin' })).offset).toBe(0);
-  });
-
-  it('stop (only=receiving) takes a receiving row, and keeps one that finished or lapsed meanwhile', async () => {
-    const d = await device('org-stop'); const data = bytes(40000, 6);
-    const recv = await opened(d, { size: data.byteLength, path: 'Moving.bin' });
-    await U.storeChunk(db(), d.deviceId, recv.id, 0, data.subarray(0, 16384));
-    expect(await U.stopUpload(db(), 'org-stop', recv.id)).toBe('stopped');
-    expect((await row(recv.id)).status).toBe('deleted');
-    expect(await chunkRows(recv.id)).toBe(0);
-    // It finished while the confirm was open: Stop must not delete the only copy.
-    const done = await stored(d, bytes(10, 7), 'Done.txt');
-    expect(await U.stopUpload(db(), 'org-stop', done)).toBe('not_receiving');
-    expect((await row(done)).status).toBe('stored');
-    // Past its 24 h a partial reads failed (toUploadView): not receiving either.
-    const lapsed = await opened(d, { size: data.byteLength, path: 'Lapsed.bin' });
-    await db().update(amigaUploads).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(amigaUploads.id, lapsed.id));
-    expect(await U.stopUpload(db(), 'org-stop', lapsed.id)).toBe('not_receiving');
-    expect((await row(lapsed.id)).status).toBe('receiving');
-    // Gone, deleted, or another org's: not found.
-    expect(await U.stopUpload(db(), 'org-stop', recv.id)).toBe('not_found');
-    expect(await U.stopUpload(db(), 'org-stop', 'no-such-id')).toBe('not_found');
-    const other = await opened(d, { size: data.byteLength, path: 'Other.bin' });
-    expect(await U.stopUpload(db(), 'org-not-mine', other.id)).toBe('not_found');
-    expect((await row(other.id)).status).toBe('receiving');
   });
 
   it('a CRC mismatch is final: failed crc, the chunks gone, and the next send starts at 0', async () => {
@@ -246,84 +223,12 @@ describe('amiga uploads', () => {
     expect(ms).toBeLessThan(20_000);
   }, 120_000);
 
-  it('org scoping: another org never sees, deletes or clears a row', async () => {
+  it('org scoping: another org never sees or deletes a row', async () => {
     const d = await device('org-own');
     const id = await stored(d, bytes(10), 'Mine.txt');
     expect(await U.getUpload(db(), 'org-other', id)).toBeNull();
-    expect(await U.deleteUpload(db(), 'org-other', id)).toBe(false);
-    expect(await U.clearUploads(db(), 'org-other', '2999-01-01T00:00:00.000000Z')).toBe(0);
-    expect((await U.listUploads(db(), 'org-other', null)).some((r) => r.id === id)).toBe(false);
+    expect(await deleteStash(db(), 'org-other', [id])).toBe(0);
     expect((await U.getUpload(db(), 'org-own', id))?.status).toBe('stored');
-  });
-
-  it('clear spares a newer row and a receiving row; delete drops a row and its chunks', async () => {
-    const d = await device('org-clear');
-    const s1 = await stored(d, bytes(10, 2), 'One.txt');
-    const recv = await opened(d, { size: 40000, path: 'Moving.bin' });
-    await U.storeChunk(db(), d.deviceId, recv.id, 0, bytes(16384, 3));
-    const seen = (await U.listUploads(db(), 'org-clear', null))[0].cursor;   // the newest row the person saw
-    const s2 = await stored(d, bytes(10, 4), 'Two.txt');          // arrived while the confirm was open
-    expect(await U.clearUploads(db(), 'org-clear', seen)).toBe(1);
-    expect((await row(s1)).status).toBe('deleted');
-    expect((await row(s2)).status).toBe('stored');
-    expect((await row(recv.id)).status).toBe('receiving');
-    expect(await U.deleteUpload(db(), 'org-clear', recv.id)).toBe(true);
-    expect((await row(recv.id)).status).toBe('deleted');
-    expect(await chunkRows(recv.id)).toBe(0);
-    expect((await U.listUploads(db(), 'org-clear', null)).map((r) => r.id)).toEqual([s2]);
-  });
-
-  it('clear keeps a row created microseconds after the newest one the person saw (ruling PF4)', async () => {
-    const d = await device('org-micro');
-    const at = (us: string) => sql`${'2026-10-20 10:00:00.' + us + '+00'}::timestamptz` as unknown as Date;
-    const mk = (id: string, us: string) => ({ id, orgId: 'org-micro', deviceId: d.deviceId, deviceName: 'B', path: id, sizeBytes: 1,
-      amigaDate: '1.1.1', status: 'stored', createdAt: at(us), expiresAt: later() });
-    await db().insert(amigaUploads).values([mk('m-old', '000100'), mk('m-new', '000900')]);
-    // Both are the same millisecond: a Date (ms) could not tell them apart.
-    await db().delete(amigaUploads).where(eq(amigaUploads.id, 'm-new'));
-    const seen = (await U.listUploads(db(), 'org-micro', null))[0].cursor;
-    expect(seen).toBe('2026-10-20T10:00:00.000100Z');
-    await db().insert(amigaUploads).values(mk('m-new', '000900'));
-    expect(await U.clearUploads(db(), 'org-micro', seen)).toBe(1);
-    expect((await row('m-old')).status).toBe('deleted');
-    expect((await row('m-new')).status).toBe('stored');
-    await expect(U.clearUploads(db(), 'org-micro', "x'; drop table amiga_uploads; --")).rejects.toThrow(RangeError);
-  });
-
-  it('clear spares a file that was still arriving when the person looked, even if it is stored by the time they confirm', async () => {
-    const d = await device('org-arrive');
-    const before = await stored(d, bytes(10, 50), 'Before.txt');
-    const o = await opened(d, { size: 20, path: 'Late.bin' });           // created before the cursor, still receiving
-    const seen = (await U.listUploads(db(), 'org-arrive', null))[0].cursor;   // the newest row: Late.bin, arriving
-    await db().update(amigaUploads).set({ status: 'stored', storedAt: new Date(Date.now() + 5) }).where(eq(amigaUploads.id, o.id));
-    expect(await U.clearUploads(db(), 'org-arrive', seen)).toBe(1);
-    expect((await row(before)).status).toBe('deleted');
-    expect((await row(o.id)).status).toBe('stored');                      // stored after the cursor: never seen as finished
-  });
-
-  it('clear with a board clears only that board, up to the cursor the filtered list gave', async () => {
-    const a = await device('org-board'); const b = await device('org-board');
-    const a1 = await stored(a, bytes(10, 40), 'A1.txt');
-    const b1 = await stored(b, bytes(10, 41), 'B1.txt');
-    const a2 = await stored(a, bytes(10, 42), 'A2.txt');
-    const seen = (await U.listUploads(db(), 'org-board', a.deviceId))[0].cursor;   // newest of board a's list: a2
-    const b2 = await stored(b, bytes(10, 43), 'B2.txt');
-    expect(await U.clearUploads(db(), 'org-board', seen, a.deviceId)).toBe(2);
-    expect((await row(a1)).status).toBe('deleted'); expect((await row(a2)).status).toBe('deleted');
-    expect((await row(b1)).status).toBe('stored');   // older than the cursor, but another board
-    expect((await row(b2)).status).toBe('stored');
-  });
-
-  it('a cursor has one exact shape; anything else is rejected before SQL', async () => {
-    expect(U.isUploadCursor('2026-10-20T10:00:00.000100Z')).toBe(true);
-    for (const bad of ['2026-10-20 10:00:00.000100+00', '2026-10-20T10:00:00Z', '2026-10-20T10:00:00.000100+02:00',
-      '2026-13-20T10:00:00.000100Z', '2026-02-30T10:00:00.000100Z', '2026-10-20T24:00:00.000000Z', '', 5, null]) {
-      expect(U.isUploadCursor(bad)).toBe(false);
-    }
-    await expect(U.clearUploads(db(), 'org-micro', '2026-02-30T10:00:00.000100Z')).rejects.toThrow(RangeError);
-    const d = await device('org-shape');
-    await stored(d, bytes(5, 20), 'S.txt');
-    expect(U.isUploadCursor((await U.listUploads(db(), 'org-shape', null))[0].cursor)).toBe(true);
   });
 
   it('the resume lookup is scoped by org as well as board', async () => {
@@ -339,7 +244,7 @@ describe('amiga uploads', () => {
       const id = await upload(d, data, `Race${goodCrc}.bin`);
       const racy = new Proxy(db(), {
         get(t, k) {
-          if (k === 'transaction') return async (fn: never) => { await U.deleteUpload(db(), 'org-race-close', id); return t.transaction(fn); };
+          if (k === 'transaction') return async (fn: never) => { await deleteStash(db(), 'org-race-close', [id]); return t.transaction(fn); };
           const v = Reflect.get(t, k); return typeof v === 'function' ? v.bind(t) : v;
         },
       });
@@ -387,18 +292,6 @@ describe('amiga uploads', () => {
     expect(both).toEqual([{ ok: false, status: 409, code: 'crc' }, { ok: false, status: 409, code: 'crc' }]);
   });
 
-  it('lists newest first, filtered by board, with the board on each row; a lapsed partial reads failed', async () => {
-    const a = await device('org-list', 'Bench'); const b = await device('org-list', 'Den');
-    await stored(a, bytes(5, 5), 'A.txt');
-    const o = await opened(b, { path: 'B.txt' });
-    const all = await U.listUploads(db(), 'org-list', null);
-    expect(all.map((r) => r.path)).toEqual(['B.txt', 'A.txt']);
-    expect(all.map((r) => r.deviceName)).toEqual(['Den', 'Bench']);
-    expect((await U.listUploads(db(), 'org-list', a.deviceId)).map((r) => r.path)).toEqual(['A.txt']);
-    const lapsed = await U.listUploads(db(), 'org-list', b.deviceId, new Date(Date.now() + 25 * 3600_000));
-    expect(lapsed[0]).toMatchObject({ id: o.id, status: 'failed', errorCode: 'expired' });
-  });
-
   it('the boards for the filter, with their key digits and whether they can upload', async () => {
     const a = await device('org-boards', 'Bench', '1.19.0+gabc');
     await device('org-boards', 'Old', '1.18.2+gdef');
@@ -423,7 +316,7 @@ describe('amiga uploads', () => {
     await db().insert(transfers).values({ id: 't-ref', orgId: 'org-refs', deviceId: d.deviceId, createdByUserId: 'u', path: 'x',
       sizeBytes: 1, crc32: 0, blobSha256: 'f'.repeat(64), expiresAt: later() });
     expect((await U.blobRefsElsewhere(db(), [sha, 'f'.repeat(64), 'e'.repeat(64)])).sort()).toEqual([sha, 'f'.repeat(64)].sort());
-    await U.deleteUpload(db(), 'org-refs', id);
+    await deleteStash(db(), 'org-refs', [id]);
     expect(await U.blobRefsElsewhere(db(), [sha])).toEqual([]);
   });
 
@@ -434,7 +327,7 @@ describe('amiga uploads', () => {
     await U.storeChunk(db(), d.deviceId, part.id, 0, bytes(16384, 10));
     const keep = await stored(d, bytes(5, 11), 'Keep.txt');
     const gone = await stored(d, bytes(5, 12), 'Gone.txt');
-    await U.deleteUpload(db(), 'org-cron', gone);
+    await deleteStash(db(), 'org-cron', [gone]);
     const r1 = await U.expireUploads(db(), new Date(Date.now() + 25 * 3600_000));
     expect(r1.failed).toBeGreaterThanOrEqual(1);
     expect(await row(part.id)).toMatchObject({ status: 'failed', errorCode: 'expired' });

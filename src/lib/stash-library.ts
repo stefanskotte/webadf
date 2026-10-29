@@ -1,7 +1,7 @@
 // Add to library (spec 2026-10-18 §4, U6): never automatic. The bytes go through URL ingest's normaliser (ADZ, DMS
 // and DMZ become an ADF; an HFE stays as it is) and then registerUploads -- the one code path a browser upload and a
-// URL fetch take, so dedupe, the TOSEC sweep and history behave the same (plan ruling P6). POST /api/uploads/[id]/library
-// and the Files op 'add-to-library' (Files spec 2026-10-29, R8) both run it. SERVER ONLY.
+// URL fetch take, so dedupe, the TOSEC sweep and history behave the same (plan ruling P6). The Files op
+// 'add-to-library' (Files spec 2026-10-29, R8) runs it. SERVER ONLY.
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks } from '@/db/schema/catalog';

@@ -17,21 +17,17 @@ vi.mock('@/lib/send-targets', () => ({
   findSendTarget: (...a: unknown[]) => findSendTarget(...a), loadSendDisk: (...a: unknown[]) => loadSendDisk(...a),
 }));
 const queueTransferFromBlob = vi.fn();
-const cancelTransfer = vi.fn();
-const retryTransfer = vi.fn();
 const queueLoad = vi.fn();
 const listTransfers = vi.fn();
 const clearFinishedTransfers = vi.fn();
 vi.mock('@/lib/transfers', () => ({
-  queueTransferFromBlob: (...a: unknown[]) => queueTransferFromBlob(...a), cancelTransfer: (...a: unknown[]) => cancelTransfer(...a),
-  retryTransfer: (...a: unknown[]) => retryTransfer(...a), queueLoad: (...a: unknown[]) => queueLoad(...a),
+  queueTransferFromBlob: (...a: unknown[]) => queueTransferFromBlob(...a), queueLoad: (...a: unknown[]) => queueLoad(...a),
   listTransfers: (...a: unknown[]) => listTransfers(...a), clearFinishedTransfers: (...a: unknown[]) => clearFinishedTransfers(...a),
   cleanAmigaPath: (p: string) => realCleanAmigaPath(p),
 }));
 const { cleanAmigaPath: realCleanAmigaPath } = await vi.importActual<typeof import('@/lib/transfers')>('@/lib/transfers');
 
 const TARGET = { id: 'dev-1', name: 'Bench', macAddress: null, defaultName: false, online: true, lastSeenAt: 1, network: true, rx: 'c', rxAt: 1 };
-const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 let n = 0;
 beforeEach(() => {
   vi.clearAllMocks(); store.clear(); n = 0;
@@ -137,32 +133,6 @@ describe('DELETE /api/transfers (Clear finished)', () => {
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: 'no_device' });
     expect(clearFinishedTransfers).not.toHaveBeenCalled();
-  });
-});
-
-describe('DELETE /api/transfers/[id] and retry', () => {
-  it('cancels a waiting or moving row; a finished one is 409 "not_waiting" (Review Focus 2)', async () => {
-    const { DELETE } = await import('./[id]/route');
-    cancelTransfer.mockResolvedValueOnce(true);
-    expect((await DELETE(new Request('http://test', { method: 'DELETE' }), ctx('t1'))).status).toBe(200);
-    expect(cancelTransfer).toHaveBeenCalledWith(expect.anything(), 'org-1', 't1');
-    cancelTransfer.mockResolvedValueOnce(false);
-    const late = await DELETE(new Request('http://test', { method: 'DELETE' }), ctx('t1'));
-    expect(late.status).toBe(409);
-    expect(await late.json()).toEqual({ error: 'not_waiting' });
-  });
-  it('retries into a new row, and says why when it cannot', async () => {
-    const { POST } = await import('./[id]/retry/route');
-    retryTransfer.mockResolvedValueOnce({ ok: true, id: 't9' });
-    const ok = await POST(new Request('http://test', { method: 'POST' }), ctx('t1'));
-    expect(ok.status).toBe(201);
-    expect(await ok.json()).toEqual({ ids: ['t9'] });
-    retryTransfer.mockResolvedValueOnce({ ok: false, reason: 'not_finished' });
-    expect((await POST(new Request('http://test', { method: 'POST' }), ctx('t1'))).status).toBe(409);
-    retryTransfer.mockResolvedValueOnce({ ok: false, reason: 'not_found' });
-    expect((await POST(new Request('http://test', { method: 'POST' }), ctx('t1'))).status).toBe(404);
-    retryTransfer.mockResolvedValueOnce({ ok: false, reason: 'no_blob' });
-    expect((await POST(new Request('http://test', { method: 'POST' }), ctx('t1'))).status).toBe(410);
   });
 });
 

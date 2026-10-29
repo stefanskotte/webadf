@@ -61,9 +61,6 @@ test('a file from the Amiga is in STASH: with its board, downloads as an attachm
   expect(dl.headers()['x-content-type-options']).toBe('nosniff');
   expect(dl.headers()['content-type']).toBe('application/octet-stream');
   expect((await dl.body()).toString()).toBe('hello from the Amiga\n');
-  // The CLI's route (kept, R12) still gives an ASCII fallback before the UTF-8 name.
-  const cli = await page.request.get(`/api/uploads/${id}/file`);
-  expect(cli.headers()['content-disposition']).toBe("attachment; filename=\"Caf_.txt\"; filename*=UTF-8''Caf%C3%A9.txt");
 
   await deleteRow(page, 'Café.txt', 'Delete “Café.txt” from STASH:? This cannot be undone.');
   await expect(f).toHaveCount(0, { timeout: LIVE });
@@ -243,7 +240,6 @@ test('a file that fails its CRC shows as failed, is neither copied, downloaded n
   await expect(toast(page, FAILED_ROW)).toBeVisible();
   await expect(page.getByTestId('pane-right').getByTestId('pane-row')).toHaveCount(0);
   expect((await page.request.get(`/api/files/download?path=${encodeURIComponent('STASH:/Disks/Damaged.adf')}`)).status()).toBe(404);
-  expect((await page.request.get(`/api/uploads/${id}/file`)).status()).toBe(404);
   // A failed file had Clear on the Staging list; in STASH: it is Deleted.
   await deleteRow(page, 'Damaged.adf', 'Delete “Damaged.adf” from STASH:? This cannot be undone.');
   await expect(f).toHaveCount(0, { timeout: LIVE });
