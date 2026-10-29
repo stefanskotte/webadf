@@ -59,6 +59,8 @@ describe('emptyTableNote', () => {
   });
   it('says the library is empty in All titles', () => {
     expect(emptyTableNote({ kind: 'all' }, 0)).toMatch(/no titles yet/i);
+    // The Upload page retired (Files increment 3): the note points at the Library's own Add disks.
+    expect(emptyTableNote({ kind: 'all' }, 0)).toBe('No titles yet. Drop disks anywhere on this page, or use Add disks.');
   });
   it('is null when there are titles, and at the root (folders or the empty-library state speak there)', () => {
     expect(emptyTableNote({ kind: 'collection', id: 'c1' }, 2)).toBeNull();

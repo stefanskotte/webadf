@@ -15,8 +15,8 @@ const browserIo = (): IngestIo => ({ fetch: (...a) => fetch(...a), hash: hashBlo
 
 /**
  * The library ingest pipeline (src/lib/library-ingest/run.ts) for a component: busy, the set suggestion, and the rows.
- * The rows are this hook's own state unless `setRows` is given (the Upload card feeds the Staging list's setter; its
- * `rows` is then always empty). `onSettled` runs once a drop has finished, beside router.refresh().
+ * The rows are this hook's own state unless `setRows` is given (the Library page's provider stamps each row with its
+ * drop; `rows` is then always empty). `onSettled` runs once a drop has finished, beside router.refresh().
  */
 export function useLibraryIngest(opts?: { setRows?: SetRows; onSettled?: () => void | Promise<void> }) {
   const router = useRouter();

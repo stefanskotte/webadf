@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { MountAction } from '@/components/games/mount-action';
 import { useSendBoard } from '@/components/send/use-send-board';
+import { filesHrefForBoard } from '@/lib/files/path';
 import type { MountChoice } from '@/lib/mount-choice';
 import { remoteErrorText } from '@/lib/remote/copy';
 import { sendErrorText, type SendContext } from '@/lib/send-ui';
@@ -52,7 +53,7 @@ function RemoteSend({ where, ctx, label }: { where: Where; ctx: SendContext; lab
       });
       if (!res.ok) { toast.error(`Could not send ${label}`, { description: await errorOf(res, where.host) }); return; }
       toast.success(`Queued for ${name}`, {
-        description: label, action: { label: 'See queue', onClick: () => router.push(`/ingest?board=${encodeURIComponent(board)}`) },
+        description: label, action: { label: 'See queue', onClick: () => router.push(filesHrefForBoard(board, 'right')) },
       });
     } catch {
       toast.error(`Could not send ${label}`, { description: 'Check the connection and try again.' });

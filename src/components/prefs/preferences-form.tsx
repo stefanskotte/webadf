@@ -13,7 +13,7 @@ import {
 } from '@/lib/user-prefs-schema';
 import { pageSizeLabel } from '@/components/library/library-pager';
 
-const START_PAGE_LABELS: Record<StartPage, string> = { library: 'Library', devices: 'Devices', upload: 'Upload' };
+const START_PAGE_LABELS: Record<StartPage, string> = { library: 'Library', devices: 'Devices', upload: 'Files' };
 const LIBRARY_VIEW_LABELS: Record<LibraryViewMode, string> = { grid: 'Grid', table: 'Table' };
 
 /**

@@ -1,5 +1,5 @@
 /**
- * Shared by BOTH upload clients — src/components/ingest/dropzone.tsx (browser)
+ * Shared by BOTH upload clients — src/lib/library-ingest/run.ts (browser)
  * and cli/src/index.ts (Node, which imports this file directly across the
  * package boundary). Deliberately dependency-free and free of any node:/DOM
  * import so both can use it. There is exactly one copy of this rule: getting

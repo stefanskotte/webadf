@@ -6,7 +6,7 @@ describe('isMoreCurrent (C7 spec §2.3)', () => {
     for (const p of ['/remote', '/remote/add', '/remote/l1/titles/t1', '/settings', '/help', '/admin', '/admin/users', '/admin/firmware']) expect(isMoreCurrent(p), p).toBe(true);
   });
   it('is not current on the three other tabs, a title, a disk, or a lookalike path', () => {
-    for (const p of ['/library', '/devices', '/ingest', '/games/g1', '/disks/d1/files', '/helpers', '/administrator', '/remotes']) {
+    for (const p of ['/library', '/devices', '/files', '/games/g1', '/disks/d1/files', '/helpers', '/administrator', '/remotes']) {
       expect(isMoreCurrent(p), p).toBe(false);
     }
   });

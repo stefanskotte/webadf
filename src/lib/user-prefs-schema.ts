@@ -26,8 +26,9 @@ export type StartPage = (typeof START_PAGES)[number];
 const START_PAGE_PATHS: Record<StartPage, string> = {
   library: '/library',
   devices: '/devices',
-  // The Upload page's route is still /ingest (top-nav.tsx explains why).
-  upload: '/ingest',
+  // The stored value stays 'upload' (rows are never rewritten); the Files page replaced the Upload page (Files spec
+  // 2026-10-29 §5.3).
+  upload: '/files',
 };
 
 /** Where the app lands for this choice: after sign-in and on the root URL. */

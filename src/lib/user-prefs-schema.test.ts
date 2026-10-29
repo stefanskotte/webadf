@@ -173,10 +173,10 @@ describe('library.pageSize (titles per page, grid and table alike)', () => {
 });
 
 describe('start page', () => {
-  it('maps each choice to its route (Upload lives at /ingest)', () => {
+  it('maps each choice to its route (the stored value upload means /files)', () => {
     expect(startPagePath('library')).toBe('/library');
     expect(startPagePath('devices')).toBe('/devices');
-    expect(startPagePath('upload')).toBe('/ingest');
+    expect(startPagePath('upload')).toBe('/files');
   });
 });
 

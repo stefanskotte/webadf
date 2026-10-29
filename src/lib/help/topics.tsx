@@ -487,9 +487,9 @@ export const HELP_TOPICS = {
   // Sources: spec docs/superpowers/specs/2026-10-25-phase-c3-upload-design.md §2.2; docs/superpowers/specs/2026-10-16-paulanet-phase4-send-to-amiga-design.md §1 (D4 limits, D8 never
   // overwrite, D9 accepted risk), §4 (the Upload page column, Browse Send, Send .adf), §5 (Receive, now Transfer, and Install);
   // src/lib/send-limits.ts (XFER_FW, limits), src/lib/send-ui.ts (the words), tools/paulanet-disk/Install;
-  // plan 2026-10-17 rulings R1 (1.15.0), R9 (Cancel while sending), R10 (Retry);
-  // spec 2026-10-23-upload-staging-design.md §1-§2 (the one Staging list, its filters, Clear finished, every board's rows),
-  // src/lib/upload-staging.ts (the status words), src/components/ingest/staging-list.tsx.
+  // plan 2026-10-17 ruling R1 (1.15.0); Files spec 2026-10-29 §4.3, §5.1 and increment 3 rulings R1-R7 (the Send drop
+  // zone, NET:/<board> rows, copies into NET:, Delete cancels or clears, no Retry), src/lib/send-ui.ts (transferState).
+  // The Upload page and its Staging list retired with increment 3.
   send: {
     title: 'Sending files to the Amiga',
     short:
@@ -502,19 +502,17 @@ export const HELP_TOPICS = {
           Save. The default folder is RAM:.
         </p>
         <p>
-          <strong>Three ways to send.</strong> On the Upload page, drop files on <em>Send files to the
-          Amiga</em>, or press <em>Choose files</em>; with more than one board, pick the board under it. On a disk&apos;s
-          page, a file&apos;s or folder&apos;s ⋯ menu has <em>Send to Amiga</em>. On a title&apos;s page,
-          press <em>Send .adf to Amiga</em> to send a whole disk as one file. Each shows in the <em>Staging</em> list
-          under <em>To the Amiga</em>, every board&apos;s together: waiting, sending, delivered with its saved name, or
-          failed, and why.
+          <strong>Three ways to send.</strong> On the Files page, drop files or a folder on <em>Send files to the
+          Amiga</em>, or press <em>Choose files</em>; with more than one board, pick the board under it. In the panes,
+          copy files or folders into <em>NET:</em> and the board — from a disk or from <em>STASH:</em>. On a
+          title&apos;s page, press <em>Send .adf to Amiga</em> to send a whole disk as one file. Each waits under{' '}
+          <em>NET:</em> and the board: waiting, sending, delivered with its saved name, or failed, and why.
         </p>
         <GoodToKnow items={[
           'Up to 4 MB a file, and up to 32 files or 16 MB waiting for one board.',
           'A file sent while Transfer is closed waits up to 24 hours, then expires.',
           'Nothing is overwritten: a second Foo.lha arrives as Foo_2.lha.',
-          'Cancel stops a waiting or sending file; Retry sends a failed one again from the start.',
-          'Clear finished drops the delivered, failed, cancelled or expired files the list shows.',
+          'Delete on a waiting or sending file cancels it; on a finished one it clears it. To send a failed file again, copy it into NET: again.',
           'A board whose Amiga was running when a new driver disk came out keeps its older driver disk until the Amiga has been off a while; then it gets the new one.',
           'While Transfer runs, any computer on your network can drop a file into its folder. It cannot overwrite anything or leave the folder, and nothing is run.',
         ]} />
@@ -523,13 +521,13 @@ export const HELP_TOPICS = {
   },
   // Sources: spec docs/superpowers/specs/2026-10-18-amiga-to-web-upload-design.md §1 (U2 the ways to send, U4 resume,
   // U5 limits, U6 the area, U7 trust), §2 (Receive, now Transfer), §4 (Add to library, attachments), §6 (the key digits);
-  // spec 2026-10-23-upload-staging-design.md decision 2 + §2 (the Staging list, Phase C3 spec §4 (header, filter, footer), Clear finished keeps stored files, Stop,
-  // Open title), src/lib/upload-staging.ts (the status words);
+  // Files spec 2026-10-29 §4.2 and increment 3 (STASH: holds the Amiga's files, marked with the board; Delete stops one
+  // still arriving; the key digits on the board's row under NET:, plan-writer ruling 8);
   // src/lib/amiga-upload-limits.ts (UPLOAD_FW, limits), src/lib/from-amiga-ui.ts, tools/receive/amiga/gui.c.
   'from-amiga': {
     title: 'Files from the Amiga',
     short:
-      "Send files from your Amiga to the web app with Transfer. They land in the Upload page's Staging list, under From the Amiga, where you can download them, add disk images to your library or send them on.",
+      'Send files from your Amiga to the web app with Transfer. They land in STASH: on the Files page, marked with the board, where you can download them, add disk images to your library, copy them onto a disk or send them on.',
     body: (
       <>
         <p>
@@ -544,15 +542,14 @@ export const HELP_TOPICS = {
           stops, and <em>Trust this board</em> (or <em>TRUST</em> in the Shell) accepts the new one.
         </p>
         <p>
-          <strong>In the list.</strong> <em>Add to library</em> puts a stored disk image in your library; then{' '}
-          <em>Open title</em> goes to it. <em>Stop</em> ends a file still arriving and deletes what arrived. <em>Show</em> picks which rows the list holds: All,
-          From the Amiga, To the Amiga or To the library.
+          <strong>In STASH:.</strong> <em>Add to library</em> puts a stored disk image in your library; the
+          toast&apos;s <em>Open title</em> goes to it. <em>Delete</em> removes a file, or stops one still arriving and
+          deletes what arrived.
         </p>
         <GoodToKnow items={[
           'Up to 4 MB a file. The area holds up to 500 files or 256 MB for your organization, and keeps each file 30 days.',
-          'A file cut off by a reset or a lost connection continues where it stopped when you send it again within 24 hours. A stopped file can be sent again in that time, or ended with Stop.',
+          'A file cut off by a reset or a lost connection continues where it stopped when you send it again within 24 hours. A stopped file can be sent again in that time, or deleted in STASH:.',
           'Add to library is offered for ADF, DSK, ADZ, DMS, DMZ and HFE files; nothing is added on its own.',
-          'Clear finished never removes a stored file; only Delete does.',
           'Download always saves the file; a web page is never opened in the browser.',
         ]} />
       </>
@@ -718,7 +715,7 @@ export const HELP_TOPICS = {
       <>
         <p>
           <strong>Start page.</strong> Where you land after signing in, and when you open the site&apos;s address:
-          Library, Devices or Upload. Library unless you change it.
+          Library, Devices or Files. Library unless you change it.
         </p>
         <p>
           <strong>Library opens in.</strong> Grid or Table: how the library shows when you open it. The grid and

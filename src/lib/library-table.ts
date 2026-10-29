@@ -44,7 +44,7 @@ export function emptyTableNote(view: LibraryView, titleCount: number): string | 
   if (titleCount > 0 || view.kind === 'uncategorized') return null;
   return view.kind === 'collection'
     ? 'No titles in this collection yet. Drag one onto it in the list of collections.'
-    : 'No titles yet. Add disks on the Upload page.';
+    : 'No titles yet. Drop disks anywhere on this page, or use Add disks.';
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePath, formatPath, parentOf, childOf, isWithin, amigaNameProblem, filesHrefForDisk, PANE_DEVICES, DEFAULT_LEFT, DEFAULT_RIGHT } from './path';
+import { parsePath, formatPath, parentOf, childOf, isWithin, amigaNameProblem, filesHrefForDisk, filesHrefForBoard, PANE_DEVICES, DEFAULT_LEFT, DEFAULT_RIGHT } from './path';
 
 const ci = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
@@ -93,5 +93,15 @@ describe('the panes\' devices (increment 2 R1, increment 3)', () => {
   it('STASH:, NET: and LIBRARY:, STASH: on the left and LIBRARY: on the right by default', () => {
     expect(PANE_DEVICES).toEqual(['STASH', 'NET', 'LIBRARY']);
     expect([DEFAULT_LEFT, DEFAULT_RIGHT]).toEqual(['STASH:', 'LIBRARY:']);
+  });
+});
+
+describe('filesHrefForBoard (increment 3, R10/R11)', () => {
+  it('opens STASH: on the left and the board under NET: on the right, with the pane asked for active', () => {
+    const href = filesHrefForBoard('dev 1', 'right');
+    expect(href).toBe('/files?left=STASH:&right=NET%3A%2Fdev%201&active=right');
+    const q = new URL(href, 'http://x').searchParams;
+    expect([q.get('left'), q.get('right'), q.get('active')]).toEqual(['STASH:', 'NET:/dev 1', 'right']);
+    expect(filesHrefForBoard('b2', 'left')).toBe('/files?left=STASH:&right=NET%3A%2Fb2&active=left');
   });
 });

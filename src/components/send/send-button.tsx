@@ -3,12 +3,13 @@ import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { orderTargets, sendErrorText, targetState, type SendContext } from '@/lib/send-ui';
+import { filesHrefForBoard } from '@/lib/files/path';
 import { useSendBoard } from './use-send-board';
 
 type FromDisk = { diskId: string; blocks?: number[]; whole?: true };
 
 /**
- * Send from a disk page to the board chosen on the Upload page (spec §4 "Shortcuts on the disk pages"), confirmed
+ * Send from a disk page to the board chosen on the Files page's Send drop zone (spec §4 "Shortcuts on the disk pages"), confirmed
  * "Queued for <board> · See queue". Null when this org has no board that can take files: no button is drawn.
  */
 export function useSendAction(ctx: SendContext | null) {
@@ -18,7 +19,7 @@ export function useSendAction(ctx: SendContext | null) {
   const send = useCallback(async (body: FromDisk, what: string) => {
     if (!ctx || !board) return;
     const name = ctx.targets.find((t) => t.id === board)?.name ?? 'the board';
-    const seeQueue = { label: 'See queue', onClick: () => router.push(`/ingest?board=${encodeURIComponent(board)}`) };
+    const seeQueue = { label: 'See queue', onClick: () => router.push(filesHrefForBoard(board, 'right')) };
     setBusy(true);
     try {
       const res = await fetch('/api/transfers/from-disk', {

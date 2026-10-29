@@ -49,6 +49,15 @@ export function filesHrefForDisk(gameId: string, diskId: string, history = false
   return `/files?left=${DEFAULT_LEFT}&right=${encodeURIComponent(`LIBRARY:/${gameId}/${diskId}`)}&active=right${history ? '#disk-history' : ''}`;
 }
 
+/**
+ * Files with STASH: on the left and a board's NET: queue on the right (increment 3, R10/R11): where the old Upload
+ * page's board links go. `active` picks the pane the keys start in: the queue (`right`) for a send, STASH: (`left`)
+ * for files from the Amiga.
+ */
+export function filesHrefForBoard(deviceId: string, active: 'left' | 'right'): string {
+  return `/files?left=${DEFAULT_LEFT}&right=${encodeURIComponent(`NET:/${deviceId}`)}&active=${active}`;
+}
+
 export function parentOf(p: FsPath): FsPath | null {
   return p.segments.length ? { device: p.device, segments: p.segments.slice(0, -1) } : null;
 }

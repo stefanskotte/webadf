@@ -14,13 +14,15 @@ const ACCEPT = '.adf,.dsk,.adz,.dms,.dmz,.hfe,.zip,.lha,.lzh';
  * "＋ Add disks ▾" in the Library header (Files increment 3, mock-up part 3): Browse files… (the file picker, which
  * is how a phone adds disks: it has no OS drag), Paste a URL… (/api/ingest/url in a dialog; the server opens a .zip
  * or .lha itself) and a hint that the whole page takes a drop. What each disk did shows in the tray at the bottom.
- * `/library#add-disks` opens it (the empty library's Add disks button, R11).
+ * `/library#add-disks` opens it on page load; the empty library's Add disks button opens it through the provider (R11).
  */
 export function AddDisksMenu() {
   const ingest = useLibraryIngestContext();
   const input = useRef<HTMLInputElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
-  const [open, setOpen] = useState(false);
+  // In the provider, not here: the empty library's Add disks button opens it too (a hash link would not, after a
+  // soft navigation to the same page).
+  const { menuOpen: open, setMenuOpen: setOpen } = ingest;
   const [urlOpen, setUrlOpen] = useState(false);
 
   useEffect(() => {
@@ -33,7 +35,8 @@ export function AddDisksMenu() {
     fromHash();
     window.addEventListener('hashchange', fromHash);
     return () => window.removeEventListener('hashchange', fromHash);
-  }, []);
+    // setOpen is the provider's useState setter: stable, so this still runs once.
+  }, [setOpen]);
 
   function picked(files: FileList | null) {
     if (!files?.length) return;

@@ -26,7 +26,8 @@ export const TILE = {
 export const TILE_LOOK = 'max-sm:h-24 max-sm:w-full max-sm:flex-col max-sm:justify-end max-sm:rounded-[14px] max-sm:border-[1.5px] max-sm:border-dashed max-sm:border-(--dash) max-sm:bg-(--surface) max-sm:px-2 max-sm:pb-3 max-sm:text-[13px] max-sm:text-(--ink) max-sm:before:content-[attr(data-tile)] max-sm:group-data-[over=true]:border-(--ink) max-sm:group-data-[over=true]:bg-(--surface-2)';
 
 /**
- * The Upload page's drop card (C3 spec §2): the whole dashed card takes a drop; its controls open the picker. Below sm
+ * The Files page's drop cards (C3 spec §2; the Upload page's until Files increment 3): the whole dashed card takes a
+ * drop; its controls open the picker. Below sm
  * (C7 Plan ruling, Task 7) the section is display:contents, so its children are items of the page's two-column grid:
  * the file label is the tile, the 34 px disk sits on it, the hint and the controls go under both tiles.
  */

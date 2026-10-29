@@ -12,7 +12,9 @@ test.afterAll(cleanupSeeded);
 test('a brand-new library shows the empty state, not an error', async ({ page }) => {
   await signUpFresh(page);
   await expect(page.getByText('No disks yet')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Add disks' })).toBeVisible();
+  // The empty state's Add disks opens the header's Add disks ▾ menu in place (Files increment 3, R11).
+  await page.getByTestId('empty-add-disks').click();
+  await expect(page.getByTestId('library-add-disks-panel')).toBeVisible();
 });
 
 // Same presign -> PUT -> complete round trip as e2e/ingest-api.spec.ts,

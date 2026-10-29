@@ -101,15 +101,15 @@ test('the bottom bar reaches every route through four tabs and More, and there i
   // Actually at the bottom of the 844px viewport, not merely styled for it.
   expect(box.y + box.height).toBeGreaterThan(760);
 
-  // C7 (spec §2.3): Library, Devices, Upload and More, each a finger's height.
+  // C7 (spec §2.3): Library, Devices, Files and More, each a finger's height (Files replaced Upload, increment 3).
   const tabs = bar.locator(':scope > a, :scope > button').filter({ visible: true });
-  await expect(tabs).toHaveText(['Library', 'Devices', 'Upload', 'More']);
+  await expect(tabs).toHaveText(['Library', 'Devices', 'Files', 'More']);
   for (const t of await tabs.all()) expect((await t.boundingBox())!.height).toBeGreaterThanOrEqual(44);
 
   await page.getByRole('link', { name: 'Devices' }).tap();
   await expect(page).toHaveURL(/\/devices$/);
-  await page.getByRole('link', { name: 'Upload' }).tap();
-  await expect(page).toHaveURL(/\/ingest$/);
+  await page.getByRole('link', { name: 'Files' }).tap();
+  await expect(page).toHaveURL(/\/files$/);
   await page.getByRole('link', { name: 'Library' }).tap();
   await expect(page).toHaveURL(/\/library/);
   // Help lives in More now.

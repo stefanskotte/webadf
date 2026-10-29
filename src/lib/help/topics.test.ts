@@ -51,13 +51,22 @@ describe('help topics say what the app really does', () => {
   it('from-amiga names the firmware, the three ways to send, the key digits and the limits (spec 2026-10-18)', () => {
     const b = HELP_TOPICS['from-amiga'].short + bodyText('from-amiga');
     for (const w of ['1.19.0', 'Install', 'Send…', 'Transfer SEND', 'Trusted board AB12', 'Trust this board', 'TRUST',
-      '4 MB', '500 files', '256 MB', '30 days', '24 hours', 'Clear finished', 'Add to library', 'Open title', 'Stop',
-      'Staging']) expect(b).toContain(w);
-    expect(b).not.toContain('Clear all');   // gone with the one list (spec 2026-10-23 decision 2)
+      '4 MB', '500 files', '256 MB', '30 days', '24 hours', 'Add to library', 'Open title', 'Delete', 'STASH:',
+      'Files page']) expect(b).toContain(w);
+    // The Staging list's controls retired with the Upload page (Files increment 3).
+    for (const w of ['Clear all', 'Clear finished', 'Stop']) expect(b).not.toContain(w);
   });
-  it('send describes the one Staging list and every board\'s files (spec 2026-10-23)', () => {
-    const b = bodyText('send');
-    for (const w of ['Staging', 'To the Amiga', 'Clear finished', 'every board']) expect(b).toContain(w);
+  it('send describes the Files page: the Send drop zone, copies into NET:, the board\'s rows, Delete (increment 3)', () => {
+    const b = bodyText('send').replace(/\s+/g, ' ');
+    for (const w of ['Files page', 'Send files to the Amiga', 'Choose files', 'NET:', 'STASH:', 'Send .adf to Amiga',
+      'Delete on a waiting or sending file cancels it', 'copy it into NET: again']) expect(b).toContain(w);
+    for (const w of ['Retry', 'Clear finished', 'To the Amiga']) expect(b).not.toContain(w);
+  });
+  it('no topic names the retired Upload page or its Staging list (Files increment 3)', () => {
+    for (const id of IDS) {
+      const b = HELP_TOPICS[id].short + bodyText(id);
+      expect(b, id).not.toMatch(/Upload page|Staging/);
+    }
   });
   it('from-amiga lists every extension the library takes', () => {
     expect(bodyText('from-amiga')).toMatch(/ADF, DSK, ADZ, DMS, DMZ and HFE/);
@@ -86,7 +95,8 @@ describe('help topics say what the app really does', () => {
   });
   it('preferences names the three start pages, says they follow the person, and that a collection keeps its order', () => {
     const b = bodyText('preferences');
-    for (const w of ['Library', 'Devices', 'Upload']) expect(b).toContain(w);
+    for (const w of ['Library', 'Devices', 'Files']) expect(b).toContain(w);
+    expect(b).not.toContain('Upload');
     expect(b).toMatch(/every browser/);
     expect(b).toMatch(/collection keeps its own order/);
   });

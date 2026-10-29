@@ -1,6 +1,6 @@
 // The library ingest pipeline (client-safe): hash in the browser, then check -> presign -> PUT -> complete, and a set
-// suggestion for what landed. Moved verbatim in behaviour out of src/components/ingest/dropzone.tsx so the Upload
-// card and the Library page run the same code; every bit of I/O comes in through `io`, every row change goes out
+// suggestion for what landed. Moved verbatim in behaviour out of the Upload page's card (retired in Files increment 3)
+// so the Library page runs the same code; every bit of I/O comes in through `io`, every row change goes out
 // through `emit`, so it runs (and is tested) without React.
 import { DISK_IMAGE_PATTERN, type toAdf } from '@/lib/archive/disk-image';
 import { mapLimit } from '@/lib/pool';

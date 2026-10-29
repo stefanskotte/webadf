@@ -78,7 +78,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   //
   // `collections.length > 0` is load-bearing: with no collections either, the
   // library is simply EMPTY, and the grid already has a proper empty state
-  // for that ("No disks yet", with a link to Ingest). A second empty state
+  // for that ("No disks yet", with an Add disks button). A second empty state
   // here would be a worse copy of it that only appears on brand-new accounts
   // -- which is exactly what it did on its first e2e run.
   //

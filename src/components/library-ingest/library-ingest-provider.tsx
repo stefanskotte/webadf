@@ -23,6 +23,9 @@ type LibraryIngest = {
   addFetched(rows: FetchedRow[], since: string): Promise<void>;
   /** Empties the tray (only when nothing is running). */
   close(): void;
+  /** The header's Add disks ▾ menu is open; held here so the empty library's Add disks button can open it (R11). */
+  menuOpen: boolean;
+  setMenuOpen(open: boolean): void;
 };
 
 const Ctx = createContext<LibraryIngest | null>(null);
@@ -38,6 +41,7 @@ export function LibraryIngestProvider({ children }: { children: ReactNode }) {
   const [notes, setNotes] = useState<{ key: number; text: string }[]>([]);
   const noteSeq = useRef(0);
   const [reading, setReading] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   // Counted up as each drop or URL fetch starts; read inside the updater, never in render.
   const drop = useRef(0);
 
@@ -94,8 +98,15 @@ export function LibraryIngestProvider({ children }: { children: ReactNode }) {
       setNotes([]);
       ingest.clearSuggestion();
     },
+    menuOpen,
+    setMenuOpen,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+/** The provider's state, or null outside the Library page (a view rendered without it). */
+export function useOptionalLibraryIngest(): LibraryIngest | null {
+  return useContext(Ctx);
 }
 
 export function useLibraryIngestContext(): LibraryIngest {

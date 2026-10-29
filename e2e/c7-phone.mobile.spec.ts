@@ -65,10 +65,10 @@ test('C7-01b at 360 px with a board, the header row and the four tabs fit and no
 test('C7-02 bottom bar: four tabs at least 44 x 70, the current one per route, More current on Help and Settings', async ({ page }) => {
   await signUpFresh(page);
   for (const [path, current] of [
-    ['/library', 'Library'], ['/devices', 'Devices'], ['/ingest', 'Upload'], ['/help', 'More'], ['/settings', 'More'],
+    ['/library', 'Library'], ['/devices', 'Devices'], ['/files', 'Files'], ['/help', 'More'], ['/settings', 'More'],
   ] as const) {
     await page.goto(path);
-    await expect(tabs(page)).toHaveText(['Library', 'Devices', 'Upload', 'More']);
+    await expect(tabs(page)).toHaveText(['Library', 'Devices', 'Files', 'More']);
     for (const t of await tabs(page).all()) {
       const b = (await t.boundingBox())!;
       expect(b.height, path).toBeGreaterThanOrEqual(44);
@@ -142,7 +142,7 @@ test('C7-02c the admin bar: four tabs that fit on every admin page, More current
   await signInAsSuperAdmin(page);
   for (const path of ADMIN_PAGES) {
     await page.goto(path);
-    await expect(tabs(page)).toHaveText(['Library', 'Devices', 'Upload', 'More']);
+    await expect(tabs(page)).toHaveText(['Library', 'Devices', 'Files', 'More']);
     await expect(tabs(page).and(page.locator('[aria-current="page"]'))).toHaveText(['More']);
     expect(await page.getByRole('navigation', { name: 'Main' }).evaluate((n) => n.scrollWidth <= n.clientWidth), path).toBe(true);
     await noSideways(page);

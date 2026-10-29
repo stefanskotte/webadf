@@ -1,8 +1,8 @@
 'use client';
 
-// The upload-page suggestion panel (disk-sets spec §3, Task 9): shown in the
-// Add disks to the library card once a drop's own singles (its library rows in
-// the Staging list) look like one set. Purely a
+// The library drop's suggestion panel (disk-sets spec §3, Task 9): shown in the
+// Library page's tray once a drop's own singles (its rows in the tray) look
+// like one set. Purely a
 // view over the suggestion the server already built (suggestSet, in
 // disk-set-suggest.ts) -- this component only lets the operator rename the
 // set, tick/untick which disks join it, reorder the rows, and confirm.

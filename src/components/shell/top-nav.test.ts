@@ -25,15 +25,22 @@ describe('TopNav (C7 spec §2.3, Rulings 4, 5, 8)', () => {
     expect(html.match(/<nav /g)?.length).toBe(1);
     expect(html).toContain('<nav aria-label="Main" class="seg nav-tabs lg:w-max">');
   });
-  it('is Library, Remote, Devices, Upload, Help (+ Admin); Remote, Help and Admin are in More below lg', () => {
+  it('is Library, Remote, Devices, Files, Help (+ Admin); Remote, Help and Admin are in More below lg', () => {
     const member = links(render('/library'));
-    expect(member.map((l) => l.text)).toEqual(['Library', 'Remote', 'Devices', 'Upload', 'Help']);
+    expect(member.map((l) => l.text)).toEqual(['Library', 'Remote', 'Devices', 'Files', 'Help']);
     for (const i of [1, 4]) expect(member[i].attrs).toContain('max-lg:hidden');
     for (const i of [0, 2, 3]) expect(member[i].attrs).not.toContain('max-lg:hidden');
     expect(member[1].attrs).toContain('href="/remote"');
+    expect(member[3].attrs).toContain('href="/files"');
+    expect(render('/library')).not.toContain('/ingest');
     const admin = links(render('/library', true));
-    expect(admin.map((l) => l.text)).toEqual(['Library', 'Remote', 'Devices', 'Upload', 'Help', 'Admin']);
+    expect(admin.map((l) => l.text)).toEqual(['Library', 'Remote', 'Devices', 'Files', 'Help', 'Admin']);
     expect(admin[5].attrs).toContain('max-lg:hidden');
+  });
+  it('Files is current on /files and the panes it opens', () => {
+    for (const p of ['/files']) {
+      expect(links(render(p)).find((l) => l.text === 'Files')!.attrs, p).toContain('aria-current="page"');
+    }
   });
   it('Remote is current on /remote and the pages under it; More is current there too below lg', () => {
     const html = render('/remote/lib1/titles/t1');
