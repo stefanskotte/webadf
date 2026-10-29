@@ -17,7 +17,7 @@ import { mapLimit } from '@/lib/pool';
 import { protectionString } from '@/lib/adffs/dir';
 import { formatPath, parsePath, type FsPath } from './path';
 import { refuse, type FsCtx, type IncomingTop, type OpCtx, type OpItem, type Outcome, type VolumeDriver } from './driver';
-import { NET_COPY_OUT, NET_PICK_BOARD } from './net-rules';
+import { NET_COPY_OUT, NET_PICK_BOARD, netEmpty } from './net-rules';
 import type { Crumb, FsEntry, Listing } from './types';
 
 const ROOT: Crumb = { label: 'NET:', path: 'NET:' };
@@ -97,7 +97,7 @@ async function write(ctx: OpCtx, dir: FsPath, tops: IncomingTop[]): Promise<Outc
     const size = i.bytes?.length ?? i.size;
     if (size === undefined || (!i.bytes && !i.sha256)) refuse('failed', 500, `${path} came without its bytes`);
     if (size > SEND_FILE_MAX) refuse('too_large', 413, `${path} is over 4 MB`);
-    if (size === 0) refuse('unsupported', 400, `${path} is empty`);
+    if (size === 0) refuse('unsupported', 400, netEmpty(path));
   }
   // Over the board's queue (32 files / 16 MB, counting what already waits): refused before a byte is stored.
   // queueTransfers holds the limit again in its transaction, against a send that lands meanwhile.
@@ -114,7 +114,7 @@ async function write(ctx: OpCtx, dir: FsPath, tops: IncomingTop[]): Promise<Outc
     switch (r.reason) {
       case 'bad_name': return refuse('bad_name', 400, r.path);
       case 'too_large': return refuse('too_large', 413, `${r.path} is over 4 MB`);
-      case 'empty': return refuse('unsupported', 400, `${r.path} is empty`);
+      case 'empty': return refuse('unsupported', 400, netEmpty(r.path ?? 'A file'));
       case 'queue_full': return refuse('queue_full', 409);
       case 'no_device': return refuse('not_found', 404);
       case 'no_blob': return refuse('failed', 409, `${r.path} is no longer stored`);

@@ -37,6 +37,11 @@ describe('addToLibraryReason', () => {
     expect(addToLibraryReason(L('STASH:'), [E('Game.adf', 'file', { marks: ['arriving 45%'] })])).toMatch(/Select disk images/);
     expect(addToLibraryReason(L('STASH:'), [E('Game.adf', 'file', { marks: ['failed — damaged on the way'] })])).toMatch(/Select disk images/);
   });
+  it('a disk image already in the library is not added again', () => {
+    expect(addToLibraryReason(L('STASH:'), [E('Old.adf', 'file', { marks: ['in the library'] })])).toBe('Already in the library');
+    expect(addToLibraryReason(L('STASH:'), [E('Game.adf'), E('Old.adf', 'file', { marks: ['in the library'] })])).toBe('Already in the library');
+    expect(addToLibraryReason(L('STASH:'), [E('New.adf')])).toBeNull();
+  });
   it('only in STASH:', () => {
     expect(addToLibraryReason(L('LIBRARY:/g1/d1', { disk }), [E('Game.adf')])).toBe('Open STASH: to add its disk images to the library');
     expect(addToLibraryReason(null, [E('Game.adf')])).toBe('Open STASH: to add its disk images to the library');

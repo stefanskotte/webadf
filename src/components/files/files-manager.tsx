@@ -595,9 +595,11 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     setSelection(side, (s) => selectClick(s, index, mods));
   }
 
-  function openRow(side: Side, index: number) {
+  /** Enter, a desktop double-click, a row's Open. A phone double tap on a file only picks it (Info is under More). */
+  function openRow(side: Side, index: number, how: 'dblclick' | 'key' = 'key') {
     const e = rowsOf(side)[index];
     if (!e) return;
+    if (how === 'dblclick' && isPhone() && e.kind === 'file') return;
     if (e.kind === 'file') setDialog({ kind: 'info', side, entry: e });
     else if (e.kind === 'archive') openArchive(side, e.path);
     else navigate(side, e.path);
@@ -1091,7 +1093,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
 
   /**
    * Dropped items into the STASH: folder `dir`. Their top names are compared with what the folder holds (case does not
-   * matter): any clash opens the Clash dialog first; none, and they go up asking (the server still answers a race).
+   * matter): any clash opens the Clash dialog first (or takes the Files setting's answer); none, and they go up with
+   * that answer, so a clash the server finds (a race) follows the setting too.
    */
   async function storeDrop(dir: string, reading: Promise<DroppedItem[]>) {
     stash.setBusy('Reading the drop…');
@@ -1119,7 +1122,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       setDialog({ kind: 'stash-clash', dir, items: dropped, clashes, at: 0, choices: {}, later: [], done: noneDone(), skipped: new Set() });
       return;
     }
-    void runStash(dir, [{ onClash: 'ask', items: dropped }], noneDone(), new Set());
+    // No clash seen up front: the answer still goes with the drop, so a clash the server finds (a race) follows it.
+    void runStash(dir, [{ onClash: answer, items: dropped }], noneDone(), new Set());
   }
 
   /** Each group up in turn; a clash the server found (a race) asks again, with the groups not yet sent waiting. */
@@ -1247,7 +1251,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
               onActivate={() => activate(side)} onNavigate={(path) => navigate(side, path)}
               onSort={(key) => changeSort(side, key)} onSetSort={(next) => applySort(side, next)}
               onRowClick={(i, mods) => rowClick(side, i, mods)}
-              onRowOpen={(i) => openRow(side, i)}
+              onRowOpen={(i, how) => openRow(side, i, how)}
               onDragStartRows={(ix, e) => dragStart(side, ix, e)} onDropRows={(e) => drop(side, e)}
               onAddToLibrary={(i) => addRowToLibrary(side, i)}
               strip={disk && strip ? (
@@ -1348,7 +1352,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
-          <p role="status" data-testid="files-busy" className="text-center text-[12px] max-lg:basis-full max-lg:empty:hidden lg:mt-auto" style={{ color: 'var(--muted)' }}>
+          <p role="status" data-testid="files-busy" className="text-center text-[12px] max-lg:basis-full max-lg:empty:hidden lg:order-first" style={{ color: 'var(--muted)' }}>
             {busy ?? ''}
           </p>
         </div>

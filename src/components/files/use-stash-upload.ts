@@ -77,7 +77,7 @@ const NOT_SENT = 'not sent — the drop stopped';
  * `items` into the STASH: folder `dir` (a path, "STASH:" or "STASH:/Mods"). With `onClash: 'ask'` a clash the server
  * finds stops the drop before that batch: the result carries `clashes` and the items not yet written (`rest`), to be
  * sent again with the chosen answer. A refusal that stops the drop lists every top it left unwritten. `progress` hears
- * "Uploading 3 of 12…" as files go up. The hook's work, apart from React so it can be tested with a mocked fetch.
+ * "Reading 3 of 12…" as files are hashed, then "Uploading 3 of 12…" as they go up. The hook's work, apart from React so it can be tested with a mocked fetch.
  */
 export async function uploadToStash(dir: string, items: DroppedItem[], onClash: OnClash, progress: (words: string) => void = () => {})
   : Promise<StashUploadResult> {
@@ -85,14 +85,18 @@ export async function uploadToStash(dir: string, items: DroppedItem[], onClash: 
   const plan = planStashBatches(items);
   out.refused.push(...plan.refused.map((r) => ({ path: r.path, why: PLAN_WORDS[r.why] })));
   const total = plan.batches.flat().filter((i) => i.kind === 'file' && i.sizeBytes > 0).length;
-  let moved = 0;
+  let moved = 0, read = 0;
   const tick = () => progress(`Uploading ${Math.min(moved, total)} of ${total}…`);
   const sha = new Map<DroppedItem, string>();
 
   /** Hash, presign and PUT the non-empty files of `batch`; the tops whose bytes did not go up. */
   async function send(batch: DroppedItem[], counted: boolean): Promise<Set<string>> {
     const files = batch.filter((i): i is DroppedItem & { file: File } => i.kind === 'file' && i.sizeBytes > 0 && !!i.file);
-    await mapLimit(files, HASH_CONCURRENCY, async (i) => { if (!sha.has(i)) sha.set(i, await hashBlob(i.file)); });
+    await mapLimit(files, HASH_CONCURRENCY, async (i) => {
+      if (sha.has(i)) return;
+      sha.set(i, await hashBlob(i.file));
+      if (counted) progress(`Reading ${Math.min(++read, total)} of ${total}…`);
+    });
     const urls = await presign(files.map((i) => ({ sha256: sha.get(i)!, sizeBytes: i.sizeBytes })));
     const failed = new Set<string>();
     const sent = new Map<string, Promise<boolean>>();   // one PUT per sha-256, however many files share it
@@ -120,7 +124,8 @@ export async function uploadToStash(dir: string, items: DroppedItem[], onClash: 
     });
   }
 
-  tick();
+  // Hashing reads each file whole first: "Reading k of N" until the PUTs start, never "Uploading 0 of N" meanwhile.
+  progress(`Reading 0 of ${total}…`);
   // The items of the batch in hand that have no answer yet, and the index of the next batch: what a stop leaves unwritten.
   let pending: DroppedItem[] = [];
   let next = 0;

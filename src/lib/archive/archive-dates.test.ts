@@ -18,6 +18,11 @@ describe('dosDateTime', () => {
     expect(iso(dosDateTime((((2026 - 1980) << 9 | 9 << 5 | 11) << 16) | (16 << 11 | 47 << 5 | 24)))).toBe('2026-09-11T16:47:48.000Z');
     expect(dosDateTime(0)).toBeNull();
   });
+  it('refuses an impossible day instead of rolling it into the next month; keeps a real Feb 29', () => {
+    expect(dosDateTime(((1994 - 1980) << 9 | 2 << 5 | 30) << 16)).toBeNull();
+    expect(iso(dosDateTime((16 << 9 | 2 << 5 | 29) << 16))).toBe('1996-02-29T00:00:00.000Z');
+    expect(dosDateTime(((1995 - 1980) << 9 | 2 << 5 | 29) << 16)).toBeNull();
+  });
 });
 
 describe('LHA dates (comments are dropped on purpose, see lha.ts)', () => {

@@ -32,7 +32,7 @@ export type PaneProps = {
   onActivate(): void; onNavigate(path: string): void; onSort(key: FilesSortKey): void;
   /** Below lg: the one sort button's next order (phoneSortAfter). */
   onSetSort(sort: FilesSort): void;
-  onRowClick(index: number, mods: { shift: boolean; toggle: boolean }): void; onRowOpen(index: number): void;
+  onRowClick(index: number, mods: { shift: boolean; toggle: boolean }): void; onRowOpen(index: number, how?: 'dblclick' | 'key'): void;
   onDragStartRows(indexes: number[], e: React.DragEvent): void; onDropRows(e: React.DragEvent): void;
   /** A disk image's own Add to library on its STASH: row (R8): that one row, whatever is picked. */
   onAddToLibrary(index: number): void;
@@ -235,7 +235,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
                       draggable={drags}
                       onDragStart={(ev) => p.onDragStartRows(sel ? picked : [i], ev)}
                       onClick={(ev) => p.onRowClick(i, { shift: ev.shiftKey, toggle: ev.metaKey || ev.ctrlKey })}
-                      onDoubleClick={() => p.onRowOpen(i)}
+                      onDoubleClick={() => p.onRowOpen(i, 'dblclick')}
                       className="cursor-default select-none hover:bg-[var(--surface-2)] data-[cursor=true]:outline data-[cursor=true]:outline-1 data-[cursor=true]:-outline-offset-1 data-[cursor=true]:outline-(--line-strong)"
                       style={sel ? { background: 'var(--warning-bg)' } : undefined}>
                     <td className={`${cell} max-lg:p-0`} style={cellStyle}>

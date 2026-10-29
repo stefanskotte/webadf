@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RefusalCode } from './types';
 import { refusalWords } from './words';
+import { netEmpty } from './net-rules';
 
 // The type system forces this to list every RefusalCode.
 const ALL: Record<RefusalCode, true> = {
@@ -26,6 +27,7 @@ describe('refusalWords', () => {
     expect(refusalWords('not_a_disk_image', 'notes.txt')).toBe('Not a disk image the library takes — notes.txt.');
     expect(refusalWords('read_only', 'archive')).toBe('Archives are read-only — copy files out of them.');
     expect(refusalWords('unsupported', 'still arriving from the Amiga')).toBe('That is still arriving from the Amiga.');
+    expect(refusalWords('unsupported', netEmpty('mods/a.txt'))).toBe('mods/a.txt is empty — nothing was sent.');
   });
   it('says the specific things', () => {
     expect(refusalWords('disk_full', 'needs 10 KB, 4 KB free')).toBe('Not enough room on the disk — needs 10 KB, 4 KB free');

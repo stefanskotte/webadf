@@ -127,4 +127,15 @@ describe('uploadToStash', () => {
     expect(log.commit[0].find((e) => e.path === 'README')).toEqual({ path: 'README', kind: 'file', sizeBytes: 0, lastModified: expect.any(Number) });
     expect(r.items.map((i) => i.source)).toEqual(['README', 'Empty', 'a', 'b']);
   });
+
+  it('says Reading while it hashes, and Uploading only as PUTs settle — never Uploading 0 of N', async () => {
+    const seen: string[] = [];
+    server();
+    await uploadToStash('STASH:', [file('a', 'x'), file('b', 'y')], 'ask', (w) => seen.push(w));
+    expect(seen[0]).toBe('Reading 0 of 2…');
+    expect(seen).toContain('Reading 2 of 2…');
+    expect(seen).toContain('Uploading 2 of 2…');
+    expect(seen).not.toContain('Uploading 0 of 2…');
+    expect(seen.indexOf('Reading 2 of 2…')).toBeLessThan(seen.indexOf('Uploading 1 of 2…'));
+  });
 });

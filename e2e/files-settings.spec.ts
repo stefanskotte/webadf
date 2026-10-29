@@ -251,6 +251,30 @@ test('with Replace set, a STASH: drop onto a clash replaces without asking', asy
   expect(Object.keys(await stashRows(orgId))).toEqual(['ReadMe']);
 });
 
+test('with Replace set, a clash only the server sees (a race) follows the setting too', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  await setPrefs(page, { files: { onClash: 'replace' } });
+  // No pane shows STASH:, so the manager reads it afresh for each drop -- through the route below.
+  await openFiles(page, 'LIBRARY:', 'LIBRARY:', 'left');
+  const input = page.getByTestId('files-stash-input');
+  await input.setInputFiles([{ name: 'ReadMe', mimeType: 'text/plain', buffer: Buffer.from('first') }]);
+  await expect.poll(async () => (await stashRows(orgId))['ReadMe']?.sha).toBe(sha('first'));
+  await expect(toast(page, /Added/)).toBeVisible();
+  // STASH: reads as empty, so the manager sees no clash up front; only the server's commit finds ReadMe.
+  const stashList = (u: URL) => u.pathname === '/api/files/list' && (u.searchParams.get('path') ?? '').startsWith('STASH:');
+  await page.route(stashList, async (route) => {
+    const res = await route.fetch();
+    await route.fulfill({ response: res, json: { ...(await res.json()), entries: [] } });
+  });
+  const sent: unknown[] = [];
+  page.on('request', (r) => { if (r.url().endsWith('/api/files/stash/commit')) sent.push(r.postDataJSON()?.onClash); });
+  await input.setInputFiles([{ name: 'ReadMe', mimeType: 'text/plain', buffer: Buffer.from('second one') }]);
+  await expect.poll(async () => (await stashRows(orgId))['ReadMe']?.sha).toBe(sha('second one'));
+  expect(sent).toEqual(['replace']);
+  await expect(page.getByTestId('files-clash-dialog')).toHaveCount(0);
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 test('Comment column: Always shows it on a disk, Never hides it in STASH:', async ({ page }) => {
   const { orgId } = await signUpFresh(page);
   const a = await seedTitle(orgId, `Com-${runTag()}`, [{ op: 'add', parentPath: '', name: 'ReadMe', bytes: enc('hello\n') }]);
@@ -269,4 +293,24 @@ test('Comment column: Always shows it on a disk, Never hides it in STASH:', asyn
   await hydrated(page);
   await expect(page.getByTestId('pane-left-col-comment')).toHaveCount(0);
   await expect(page.getByTestId('pane-right-col-comment')).toHaveCount(0);
+});
+
+test('at 1280×800 the busy line is on screen', async ({ page }) => {
+  await signUpFresh(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  // Hold the drop's upload so the busy words stay up to be measured.
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  await page.route('**/api/files/stash/presign', async (route) => { await held; await route.continue(); });
+  await openFiles(page, 'STASH:', 'LIBRARY:', 'left');
+  await page.getByTestId('files-stash-input').setInputFiles([{ name: 'Busy.txt', mimeType: 'text/plain', buffer: Buffer.from('busy') }]);
+  const busy = page.getByTestId('files-busy');
+  await expect(busy).toHaveText(/Reading 1 of 1…/);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  const box = (await busy.boundingBox())!;
+  expect(box.y + box.height).toBeLessThanOrEqual(800);
+  // Above Copy, at the top of the button column.
+  expect(box.y).toBeLessThan((await page.getByTestId('files-copy').boundingBox())!.y);
+  release();
+  await expect(row(page, 'left', 'Busy.txt')).toBeVisible();
 });

@@ -283,6 +283,22 @@ test('at 390: a row shows its name, and More → Download downloads it', async (
   await noSideways(page);
 });
 
+test('at 390 a double tap on a file opens no Info: each tap picks or lets go, Info is under More', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  await openPhoneDisk(page, orgId, `PhoneDbl-${runTag()}`);
+  const readme = row(page, 'right', 'README');
+  await readme.dblclick();
+  await expect(page.getByTestId('files-info-dialog')).toHaveCount(0);
+  // Two taps: picked, then let go. One more picks it, and More → Info opens it.
+  await expect(readme).toHaveAttribute('aria-selected', 'false');
+  await readme.tap();
+  await expect(readme).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('files-info-dialog')).toHaveCount(0);
+  await page.getByTestId('files-more').tap();
+  await page.getByTestId('files-more-info').tap();
+  await expect(page.getByTestId('files-info-dialog')).toBeVisible();
+});
+
 test('at 390: Makedir, Rename and Delete dialogs fit a phone, and their edits land on the disk', async ({ page }) => {
   test.setTimeout(90_000);
   const { orgId } = await signUpFresh(page);

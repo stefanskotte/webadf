@@ -13,6 +13,8 @@ export const NET_REFRESH_IDLE_MS = 10_000;
 export const NET_COPY_OUT = 'Files waiting for the Amiga cannot be copied out';
 /** C16: a move into NET: would delete the original once queued; only Copy sends. */
 export const NET_MOVE_IN = 'Files sent to the Amiga stay where they are — use Copy';
+/** The engine's `unsupported` detail for an empty file; words.ts adds "— nothing was sent". */
+export const netEmpty = (path: string) => `${path} is empty`;
 /** NET: itself lists boards and takes nothing: its `readOnlyReason`. */
 export const NET_PICK_BOARD = 'Open a board to send files to it';
 

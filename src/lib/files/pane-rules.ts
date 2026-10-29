@@ -58,6 +58,7 @@ export function addToLibraryReason(l: Listing | null, picked: FsEntry[]): string
   if (!l || !inStash(l.path)) return 'Open STASH: to add its disk images to the library';
   if (picked.length === 0) return 'Select something first';
   if (l.readOnlyReason === 'archive') return 'Copy it out of the archive first';
+  if (picked.some((e) => e.marks.includes('in the library'))) return 'Already in the library';
   const image = (e: FsEntry) => (e.kind === 'file' || e.kind === 'archive') && !unfinished(e) && libraryEligible(e.name, e.size ?? 0);
   return picked.every(image) ? null : 'Select disk images (ADF, ADZ, DMS, DMZ, HFE) to add them';
 }
