@@ -314,6 +314,29 @@ export async function runLibraryIngest(files: File[], io: IngestIo, emit: Emit):
 }
 
 /**
+ * One drop's outcome over the chunks it goes up in (a drop of many archives is added 50 disks at a time, drop-files.ts):
+ * each chunk's runLibraryIngest outcome is added, and the whole is taken once after the last, so the drop gets one
+ * suggestion for everything it landed. The drop's start is its first chunk's. `started` is false until a chunk is in:
+ * a new drop clears the earlier panel on its first chunk only.
+ */
+export class DropOutcome {
+  private o: IngestOutcome | null = null;
+  get started(): boolean { return this.o !== null; }
+  add(o: IngestOutcome): void {
+    if (!this.o) { this.o = { shas: [...o.shas], paths: new Map(o.paths), final: new Map(o.final), since: o.since }; return; }
+    this.o.shas.push(...o.shas);
+    for (const [k, v] of o.paths) this.o.paths.set(k, v);
+    for (const [k, v] of o.final) this.o.final.set(k, v);
+  }
+  /** The drop's outcome (null when no chunk came in), and a fresh start for the next drop. */
+  take(): IngestOutcome | null {
+    const o = this.o;
+    this.o = null;
+    return o;
+  }
+}
+
+/**
  * suggestFor of the old dropzone: a set suggestion for what one drop (or one URL fetch) just landed -- shared so a
  * .zip fetched from a URL gets the same "these look like one set" panel a dropped folder does. `final` (not the rows
  * -- see IngestOutcome) says which of the drop's own sha256s actually landed; null is "no panel".

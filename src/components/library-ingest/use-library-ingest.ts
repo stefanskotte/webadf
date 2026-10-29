@@ -5,7 +5,7 @@ import { toAdf } from '@/lib/archive/disk-image';
 import { hashBlob } from '@/lib/browser-hash';
 import { inspectHfe } from '@/lib/hfe/inspect';
 import type { Suggestion } from '@/lib/disk-set-suggest';
-import { runLibraryIngest, suggestSet, type IngestIo, type IngestOutcome } from '@/lib/library-ingest/run';
+import { DropOutcome, runLibraryIngest, suggestSet, type IngestIo, type IngestOutcome } from '@/lib/library-ingest/run';
 import { newRow, upsertLibRows, type LibRow, type LibState } from '@/lib/library-ingest/rows';
 import type { FetchedRow } from '@/components/ingest/url-fetch';
 
@@ -34,11 +34,18 @@ export function useLibraryIngest(opts?: { setRows?: SetRows; onSettled?: () => v
     if (s) setSuggestion(s);
   }
 
-  async function addFiles(files: File[]) {
+  // The drop being added, over its chunks: suggested once, after the last (endDrop).
+  const drop = useRef(new DropOutcome());
+
+  /**
+   * One drop's files, or with `more` one chunk of a drop that goes on (the Library page's provider adds a drop of
+   * many archives a chunk at a time): the set suggestion waits for endDrop, so the drop gets one for all it landed.
+   */
+  async function addFiles(files: File[], part?: { more?: boolean }) {
     setBusy(true);
-    // A new drop clears any earlier panel at once, whether or not this one
-    // ends up suggesting anything of its own.
-    setSuggestion(null);
+    // A new drop clears any earlier panel at once (on its first chunk), whether
+    // or not this one ends up suggesting anything of its own.
+    if (!drop.current.started) setSuggestion(null);
     let out: IngestOutcome | null = null;
     try {
       out = await runLibraryIngest(files, browserIo(), setRows);
@@ -53,9 +60,16 @@ export function useLibraryIngest(opts?: { setRows?: SetRows; onSettled?: () => v
       // still uploading.
       if (out) {
         for (const [sha, st] of out.final) finalState.current.set(sha, st);
-        await suggestFor(out);
+        drop.current.add(out);
       }
+      if (!part?.more) await endDrop();
     }
+  }
+
+  /** The drop is all in: its one suggestion, for every chunk it went up in. */
+  async function endDrop() {
+    const o = drop.current.take();
+    if (o) await suggestFor(o);
   }
 
   // Rows from /api/ingest/url, merged into the rows exactly like a drop's:
@@ -76,6 +90,6 @@ export function useLibraryIngest(opts?: { setRows?: SetRows; onSettled?: () => v
 
   return {
     rows: ownRows, busy, setBusy, suggestion, clearSuggestion: () => setSuggestion(null),
-    addFiles, addFetched, setRows,
+    addFiles, endDrop, addFetched, setRows,
   };
 }

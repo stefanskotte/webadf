@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { runLibraryIngest, suggestSet, type IngestIo, type IngestOutcome } from './run';
+import { DropOutcome, runLibraryIngest, suggestSet, type IngestIo, type IngestOutcome } from './run';
 import type { LibRow, LibState } from './rows';
 
 const file = (name: string, size = 901_120) => new File([new Uint8Array(size)], name);
@@ -94,5 +94,58 @@ describe('suggestSet', () => {
     expect(body.sha256s).toHaveLength(32);
     const thrown = vi.fn(async () => { throw new Error('offline'); }) as unknown as typeof fetch;
     expect(await suggestSet(outcome(many), { fetch: thrown })).toBeNull();
+  });
+});
+
+describe('DropOutcome: one drop, one suggestion, however many chunks it went up in', () => {
+  const okServer = () => {
+    const suggest: unknown[] = [];
+    const s = server({ missing: [] });
+    const f = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/disk-sets/suggest') { suggest.push(JSON.parse(init!.body as string)); return Response.json({ suggestion: { name: 'Set', disks: [] } }); }
+      return (s.fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>)(url, init);
+    });
+    return { fetch: f as unknown as typeof fetch, suggest };
+  };
+  const names = (from: number, n: number) => Array.from({ length: n }, (_, i) => file(`D${from + i}.adf`, 4));
+
+  it('a 120-image drop in chunks of 50, 50 and 20 asks once, with the hashes of every chunk (32 at most, as before)', async () => {
+    const s = okServer();
+    const drop = new DropOutcome();
+    expect(drop.started).toBe(false);
+    for (const [from, n] of [[0, 50], [50, 50], [100, 20]]) {
+      drop.add(await runLibraryIngest(names(from, n), io(s.fetch), collect().emit));
+      expect(drop.started).toBe(true);
+    }
+    const o = drop.take()!;
+    expect(drop.started).toBe(false);
+    expect(o.shas).toHaveLength(120);
+    expect(o.shas[0]).toBe('hD0.adf');
+    expect(o.shas[119]).toBe('hD119.adf');
+    expect(o.final.get('hD110.adf')).toBe('deduped');
+    expect(await suggestSet(o, { fetch: s.fetch })).toEqual({ name: 'Set', disks: [] });
+    expect(s.suggest).toHaveLength(1);
+    expect((s.suggest[0] as { sha256s: string[] }).sha256s).toEqual(Array.from({ length: 32 }, (_, i) => `hD${i}.adf`));
+  });
+
+  it('a drop in one chunk is suggested exactly as its own outcome was', async () => {
+    const s = okServer();
+    const out = await runLibraryIngest(names(0, 3), io(s.fetch), collect().emit);
+    const drop = new DropOutcome();
+    drop.add(out);
+    const o = drop.take()!;
+    expect(o).toEqual(out);
+    await suggestSet(o, { fetch: s.fetch });
+    await suggestSet(out, { fetch: s.fetch });
+    expect(s.suggest[0]).toEqual(s.suggest[1]);
+    expect(drop.take()).toBeNull();
+  });
+
+  it('keeps the first chunk\'s start and every chunk\'s paths', () => {
+    const drop = new DropOutcome();
+    drop.add({ shas: ['a'], paths: new Map([['a', 'S/a.adf']]), final: new Map([['a', 'done']]), since: '2026-10-29T00:00:00.000Z' });
+    drop.add({ shas: ['b'], paths: new Map([['b', 'S/b.adf']]), final: new Map([['b', 'done']]), since: '2026-10-29T00:01:00.000Z' });
+    expect(drop.take()).toEqual({ shas: ['a', 'b'], paths: new Map([['a', 'S/a.adf'], ['b', 'S/b.adf']]),
+      final: new Map([['a', 'done'], ['b', 'done']]), since: '2026-10-29T00:00:00.000Z' });
   });
 });
