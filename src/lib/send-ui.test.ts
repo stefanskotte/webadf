@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   adfSendName, canCancel, canRetry, cardSendLine, clearableCount, orderQueue, failureText, formatSize, longOffline, offlineFor, orderTargets,
-  pickTarget, receiverLine, targetLabel, receiverRunning, sendErrorText, stateChip, targetState, transferState,
+  pickTarget, receiverLine, targetLabel, receiverRunning, sendErrorText, stateChip, targetState, transferState, isActiveTransferText,
   type SendTarget, type TransferView,
 } from './send-ui';
 
@@ -44,6 +44,11 @@ describe('transfer states, each in words', () => {
       .toBe('Failed · not enough space on the Amiga');
     expect(transferState(row({ status: 'cancelled' })).text).toBe('Cancelled');
     expect(transferState(row({ status: 'expired' })).text).toBe('Expired · the Amiga did not take it within 24 h');
+  });
+  it('tells a waiting or moving row\'s words from a finished one\'s, whatever the percentage (Files increment 3, C6)', () => {
+    const all = ['queued', 'sending', 'delivered', 'failed', 'cancelled', 'expired'] as const;
+    expect(all.map((status) => isActiveTransferText(transferState(row({ status, bytesSent: 400 })).text)))
+      .toEqual([true, true, false, false, false, false]);
   });
   it('falls back to Transfer\'s own text for a code it does not know', () => {
     expect(failureText('odd', 'something broke')).toBe('something broke');

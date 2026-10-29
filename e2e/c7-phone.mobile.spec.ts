@@ -1,12 +1,13 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
-import { signUpFresh, runTag, createAdf, stagingReady, mintInviteCode } from './helpers';
+import { signUpFresh, runTag, createAdf, libraryAddReady, mintInviteCode } from './helpers';
 import { revokeInvite } from '@/lib/invites';
 import { signInAsSuperAdmin } from './admin-helpers';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { authHeader, cleanupSeeded, hydrated, pairDevice, seedDisk } from './device-helpers';
+import { synthDrop } from './drag-drop-helpers';
 
 /**
  * Phase C7 (spec 2026-10-26-phase-c7-phone-about-design.md §14): the phone pass, measured rather than read off
@@ -65,10 +66,10 @@ test('C7-01b at 360 px with a board, the header row and the four tabs fit and no
 test('C7-02 bottom bar: four tabs at least 44 x 70, the current one per route, More current on Help and Settings', async ({ page }) => {
   await signUpFresh(page);
   for (const [path, current] of [
-    ['/library', 'Library'], ['/devices', 'Devices'], ['/ingest', 'Upload'], ['/help', 'More'], ['/settings', 'More'],
+    ['/library', 'Library'], ['/devices', 'Devices'], ['/files', 'Files'], ['/help', 'More'], ['/settings', 'More'],
   ] as const) {
     await page.goto(path);
-    await expect(tabs(page)).toHaveText(['Library', 'Devices', 'Upload', 'More']);
+    await expect(tabs(page)).toHaveText(['Library', 'Devices', 'Files', 'More']);
     for (const t of await tabs(page).all()) {
       const b = (await t.boundingBox())!;
       expect(b.height, path).toBeGreaterThanOrEqual(44);
@@ -142,7 +143,7 @@ test('C7-02c the admin bar: four tabs that fit on every admin page, More current
   await signInAsSuperAdmin(page);
   for (const path of ADMIN_PAGES) {
     await page.goto(path);
-    await expect(tabs(page)).toHaveText(['Library', 'Devices', 'Upload', 'More']);
+    await expect(tabs(page)).toHaveText(['Library', 'Devices', 'Files', 'More']);
     await expect(tabs(page).and(page.locator('[aria-current="page"]'))).toHaveText(['More']);
     expect(await page.getByRole('navigation', { name: 'Main' }).evaluate((n) => n.scrollWidth <= n.clientWidth), path).toBe(true);
     await noSideways(page);
@@ -399,9 +400,9 @@ test('C7-09a touch targets and no sideways scroll: a title, its disk files, Sett
   await page.goto(title!);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await touchSweep(page, 'title page');
-  const files = await page.locator('[data-testid^="browse-"]').first().getAttribute('href');
+  const files = await page.getByRole('link', { name: 'Files…' }).first().getAttribute('href');
   await page.goto(files!);
-  await expect(page.getByTestId('disk-card')).toBeVisible();
+  await expect(page.getByTestId('disk-strip-right')).toBeVisible();
   await touchSweep(page, 'disk files');
   for (const path of ['/settings', '/settings/library', '/settings/server', '/help']) {
     await page.goto(path);
@@ -419,7 +420,7 @@ test('C7-09a touch targets and no sideways scroll: a title, its disk files, Sett
 test('C7-11 Help at 390: a /help#topic load leaves the topic at the top after the Topics list closes', async ({ page }) => {
   await signUpFresh(page);
   await page.goto('/help#second-drive');
-  await expect(page.getByTestId('help-nav-toggle')).toHaveText('Topics · 19');
+  await expect(page.getByTestId('help-nav-toggle')).toHaveText('Topics · 21');
   await expect(page.locator('details:has([data-testid="help-nav-toggle"])')).not.toHaveAttribute('open');
   await expect.poll(async () => Math.round((await page.locator('#second-drive').boundingBox())!.y)).toBeLessThan(200);
   await expect(page.locator('#second-drive')).toBeInViewport();
@@ -663,106 +664,111 @@ test('C7-09c touch targets and no sideways scroll: Devices with a board holding 
   await touchSweep(page, 'devices');
 });
 
-// ---- Upload (spec §7, Ruling 19) ---------------------------------------------------------------------------
+// ---- Upload (spec §7, Ruling 19) -> Files and the Library (Files increment 3) -------------------------------------
+// The Upload page retired: its Send card is Files' "Send files to the Amiga" zone beside "Drop files into STASH:", and
+// disks are added from the Library's Add disks ▾. Below lg the two zones stack, so each tile spans its row (spec §5.4).
 
 async function sendBoard(page: Page, request: Parameters<typeof pairDevice>[1]) {
-  const { token } = await pairDevice(page, request, 'C7 Upload');
+  const { deviceId, token } = await pairDevice(page, request, 'C7 Upload');
   await request.post('/api/device/status', { headers: authHeader(token),
     data: { mountedSha256: null, firmwareVersion: '1.21.1+gabc1234', secondDrive: 'net', driveVersion: 0 } });
   await request.get('/api/device/poll?since=999999&xferAck=0&rx=c', { headers: authHeader(token) });
+  return deviceId;
+}
+async function openFiles(page: Page) {
+  await page.goto('/files');
+  await hydrated(page, 'files-stash-input', 'onChange');
 }
 
-test('C7-06 Upload at 390: two 96 px tiles side by side; a tap opens its chooser; Staging starts on the first screen', async ({ page, request }) => {
+test('C7-06 Files at 390: the STASH: and Send tiles are 96 px and full width, stacked, a tap opens each one\'s chooser; the Library\'s Add disks opens its own', async ({ page, request }) => {
   await signUpFresh(page);
   await sendBoard(page, request);
-  await page.goto('/ingest');
-  await stagingReady(page);
-  const add = page.getByTestId('add-browse');
-  const send = page.getByTestId('send-browse');
-  const a = (await add.boundingBox())!;
+  await openFiles(page);
+  const stash = page.getByTestId('files-stash-browse');
+  const send = page.getByTestId('files-send-browse');
+  const a = (await stash.boundingBox())!;
   const s = (await send.boundingBox())!;
-  expect(Math.abs(a.y - s.y)).toBeLessThan(1);
-  expect(s.x).toBeGreaterThan(a.x + a.width - 1);
+  expect(s.y).toBeGreaterThan(a.y + a.height - 1);   // stacked: the Send zone under the STASH: one
   for (const t of [a, s]) {
     expect(t.height).toBeGreaterThanOrEqual(96);
     expect(t.x).toBeGreaterThanOrEqual(0);
     expect(t.x + t.width).toBeLessThanOrEqual(390);
+    expect(t.width).toBeGreaterThan(300);
   }
-  await hydrated(page, 'file-input', 'onChange');
-  for (const [tile, input] of [[add, 'file-input'], [send, 'send-file-input']] as const) {
+  for (const [tile, input] of [[stash, 'files-stash-input'], [send, 'files-send-input']] as const) {
     const chooser = page.waitForEvent('filechooser');
     await tile.tap();
     expect(await (await chooser).element().getAttribute('data-testid')).toBe(input);
   }
-  expect((await page.locator('#staging-heading').boundingBox())!.y).toBeLessThan(844);
   await noSideways(page);
+
+  // Disks for the library: Add disks ▾ → Browse files… opens the Library's picker.
+  await page.goto('/library');
+  await libraryAddReady(page);
+  await page.getByTestId('library-add-disks').tap();
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByTestId('library-add-browse').tap();
+  expect(await (await chooser).element().getAttribute('data-testid')).toBe('file-input');
 });
 
-test('C7-06b Upload at 390 with no board: the Send tile says Pair a board first, opens no chooser, and the hint says why (Review Focus 3)', async ({ page }) => {
+test('C7-06b Files at 390 with no board: the Send tile says Pair a board first, opens no chooser, and the hint says why (Review Focus 3)', async ({ page }) => {
   await signUpFresh(page);
-  await page.goto('/ingest');
-  await stagingReady(page);
+  await openFiles(page);
   const tile = page.locator('[data-tile="Pair a board first"]');
   await expect(tile).toBeVisible();
-  const a = (await page.getByTestId('add-browse').boundingBox())!;
   const t = (await tile.boundingBox())!;
-  expect(Math.abs(a.y - t.y)).toBeLessThan(1);
   expect(t.height).toBeGreaterThanOrEqual(96);
+  expect(t.x + t.width).toBeLessThanOrEqual(390);
   expect(await tile.evaluate((el) => getComputedStyle(el, '::before').content)).toBe('"Pair a board first"');
   let opened = false;
   page.on('filechooser', () => { opened = true; });
   await tile.tap();
   await page.waitForTimeout(300);
   expect(opened).toBe(false);
-  await expect(page.getByTestId('send-no-board')).toBeVisible();
+  await expect(page.getByTestId('files-send-no-board')).toBeVisible();
 });
 
 // Task 7 review carry: below sm the tiles' visible text is hidden and the name came only from ::before content.
-test('C7-06d Upload at 390: each file input has an always-present name, and the disabled Send tile is hidden from assistive tech', async ({ page, request }) => {
+test('C7-06d Files at 390: each file input has an always-present name, and the Library\'s picker keeps its own', async ({ page, request }) => {
   await signUpFresh(page);
   await sendBoard(page, request);
-  await page.goto('/ingest');
-  await stagingReady(page);
-  await expect(page.getByLabel('Browse files')).toHaveAttribute('data-testid', 'file-input');
-  await expect(page.getByLabel('Choose files')).toHaveAttribute('data-testid', 'send-file-input');
+  await openFiles(page);
   // The computed name, not a text match: the visible words are display:none here and drop out of it.
+  await expect(page.getByTestId('files-stash-input')).toHaveAccessibleName('Browse files');
+  await expect(page.getByTestId('files-send-input')).toHaveAccessibleName('Choose files to send');
+  await page.goto('/library');
   await expect(page.getByTestId('file-input')).toHaveAccessibleName('Browse files');
-  await expect(page.getByTestId('send-file-input')).toHaveAccessibleName('Choose files');
 });
 
-test('C7-06e Upload at 390 with no board: the Pair a board first tile is aria-hidden', async ({ page }) => {
+test('C7-06e Files at 390 with no board: the Pair a board first tile is aria-hidden', async ({ page }) => {
   await signUpFresh(page);
-  await page.goto('/ingest');
-  await stagingReady(page);
+  await openFiles(page);
   await expect(page.locator('[data-tile="Pair a board first"]')).toHaveAttribute('aria-hidden', 'true');
-  await expect(page.getByLabel('Browse files')).toHaveAttribute('data-testid', 'file-input');
+  await expect(page.getByTestId('files-stash-input')).toHaveAccessibleName('Browse files');
 });
 
-test('C7-09d touch targets and no sideways scroll: Upload with a board', async ({ page, request }) => {
+test('C7-09d touch targets and no sideways scroll: Files with a board', async ({ page, request }) => {
   test.setTimeout(90_000);
   await signUpFresh(page);
   await sendBoard(page, request);
-  await page.goto('/ingest');
-  await stagingReady(page);
-  await touchSweep(page, 'upload');
+  await openFiles(page);
+  await touchSweep(page, 'files');
 });
 
 // Pre-flight ruling: the section is display:contents below sm; its region must stay in the accessibility tree and a
 // drop must still reach it.
-test('C7-06c Upload at 390: each card stays a named region and still takes a drop', async ({ page, request }) => {
+test('C7-06c Files at 390: each zone stays a named region, and the Send zone still takes a drop', async ({ page, request }) => {
   await signUpFresh(page);
-  await sendBoard(page, request);
-  await page.goto('/ingest');
-  await stagingReady(page);
-  await expect(page.getByRole('region', { name: 'Add disks to the library' })).toHaveCount(1);
+  const deviceId = await sendBoard(page, request);
+  await openFiles(page);
+  await expect(page.getByRole('region', { name: 'Drop files into STASH:' })).toHaveCount(1);
   await expect(page.getByRole('region', { name: 'Send files to the Amiga' })).toHaveCount(1);
-  await hydrated(page, 'send-dropzone', 'onDrop');
-  await page.getByTestId('send-dropzone').evaluate((el) => {
-    const dt = new DataTransfer();
-    dt.items.add(new File(['x'], 'c7-drop.txt', { type: 'text/plain' }));
-    el.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
-  });
-  await expect(page.locator('[data-testid="staging-row"]', { hasText: 'c7-drop.txt' })).toHaveCount(1, { timeout: 15_000 });
+  await hydrated(page, 'files-drop-send', 'onDrop');
+  // The zone reads a drop's entries (folders too), so the drop carries them as a browser's does.
+  await synthDrop(page, [{ name: 'c7-drop.txt', kind: 'file', content: 'x' }], '[data-testid="files-drop-send"]');
+  await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'Queued 1 file for C7 Upload' })).toBeVisible({ timeout: 15_000 });
+  const listed = await page.request.get(`/api/files/list?path=${encodeURIComponent(`NET:/${deviceId}`)}`);
+  expect(((await listed.json()) as { entries: { name: string }[] }).entries.map((e) => e.name)).toEqual(['c7-drop.txt']);
 });
 
 // ---- Admin (spec §11, Rulings 8-10) ------------------------------------------------------------------------

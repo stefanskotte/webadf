@@ -200,8 +200,11 @@ test('two orgs: share, claim, browse, download, mount, write (D2), unshare, revo
   await expect(rob.getByTestId('title-copied-from')).toHaveText(/^Your copy of .+'s library$/);
   const ownerLibName = (await getDb().select().from(remoteLibraries).where(eq(remoteLibraries.id, libId)))[0].name;
   await expect(rob.getByTestId('title-copied-from')).toHaveText(`Your copy of ${ownerLibName}'s library`);
+  // The disk's files are the Files manager now: the notice is in the disk strip above the pane.
   await rob.goto(`/disks/${held.diskId}/files`);
-  await expect(rob.getByTestId('disk-copied-from')).toHaveText(`Your copy of ${ownerLibName}'s library`);
+  await expect(rob).toHaveURL(/\/files\?/);
+  await expect(rob.getByTestId('disk-strip-right').getByTestId('disk-copied-from'))
+    .toHaveText(`Your copy of ${ownerLibName}'s library`);
   // The board follows the disk into Rob's own title.
   const [afterWrite] = await getDb().select().from(devices).where(eq(devices.id, deviceId));
   expect(afterWrite.desiredGameId).toBe(local.gameId);

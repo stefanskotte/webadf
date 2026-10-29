@@ -5,7 +5,7 @@ import { gunzipSync } from 'node:zlib';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { blobs, disks, entitlements } from '@/db/schema/catalog';
-import { signUpFresh, libRows, stagingReady } from './helpers';
+import { signUpFresh, trayRows, browseDisks } from './helpers';
 import { seedDisk, cleanupSeeded, pairDevice, authHeader } from './device-helpers';
 import { parseLikeFirmware } from '@/lib/adfmfm/firmware-parser';
 import { diskStore } from '@/lib/storage';
@@ -65,13 +65,12 @@ test.describe('uploading HFE', () => {
     for (let i = 0; i < 2; i++) {
       const page = await (await browser.newContext()).newPage();
       const { orgId } = await signUpFresh(page);
-      await page.goto('/ingest');
-      await stagingReady(page);
-      await page.getByTestId('file-input').setInputFiles({
+      await page.goto('/library');
+      await browseDisks(page, {
         name: `HFE Test ${i} (1993)(Webadf).hfe`, mimeType: 'application/octet-stream', buffer: hfeFixture('clean'),
       });
-      const row = libRows(page).first();
-      await expect(row.getByTestId('ingest-note')).toContainText("Weak-bit copy protections aren't supported");
+      const row = trayRows(page).first();
+      await expect(row.getByTestId('library-tray-state')).toContainText("Weak-bit copy protections aren't supported");
       // Polled, not read once: a row shows "deduped" (the fixture is fixed, so
       // every run after the first dedupes) BEFORE /complete has written it.
       await expect.poll(() => getDb().select({ f: disks.imageFormat, wp: disks.writeProtected, x: disks.extractable })
@@ -83,13 +82,12 @@ test.describe('uploading HFE', () => {
 
   test('v3 and PC HFE files are refused on the row, with the reason, and never uploaded', async ({ page }) => {
     const { orgId } = await signUpFresh(page);
-    await page.goto('/ingest');
-    await stagingReady(page);
-    await page.getByTestId('file-input').setInputFiles([
+    await page.goto('/library');
+    await browseDisks(page, [
       { name: 'V3 Disk.hfe', mimeType: 'application/octet-stream', buffer: hfeFixture('v3') },
       { name: 'PC Disk.hfe', mimeType: 'application/octet-stream', buffer: hfeFixture('pc') },
     ]);
-    await expect(libRows(page)).toHaveCount(2);
+    await expect(trayRows(page)).toHaveCount(2);
     await expect(page.getByText("HFE v3 isn't supported yet")).toBeVisible();
     await expect(page.getByText('Not an Amiga disk: track 0 has no Amiga boot sectors.')).toBeVisible();
     expect(await getDb().select().from(disks).where(eq(disks.orgId, orgId))).toHaveLength(0);
@@ -122,7 +120,7 @@ test.describe('uploading HFE', () => {
 
   test('a server-side refusal reaches the row, even when the browser check is bypassed and the whole batch is refused', async ({ page }) => {
     await signUpFresh(page);
-    await page.goto('/ingest');
+    await page.goto('/library');
     const bytes = hfeFixture('clean');
     const sha256 = createHash('sha256').update(bytes).digest('hex');
 
@@ -149,15 +147,13 @@ test.describe('uploading HFE', () => {
       }),
     );
 
-    await stagingReady(page);
-
-    await page.getByTestId('file-input').setInputFiles({
+    await browseDisks(page, {
       name: 'Server Refusal Test.hfe', mimeType: 'application/octet-stream', buffer: bytes,
     });
 
-    const row = libRows(page).first();
+    const row = trayRows(page).first();
     await expect(row).toHaveAttribute('data-state', 'failed', { timeout: 15_000 });
-    await expect(row.getByTestId('ingest-note')).toHaveText(reason);
+    await expect(row.getByTestId('library-tray-state')).toHaveText(`Refused — ${reason}`);
   });
 });
 
@@ -193,19 +189,18 @@ test.describe('HFE batch and size limits', () => {
 
   test('an oversize file fails on its row with the size and the limit', async ({ page }) => {
     await signUpFresh(page);
-    await page.goto('/ingest');
-    await stagingReady(page);
-    await page.getByTestId('file-input').setInputFiles({
+    await page.goto('/library');
+    await browseDisks(page, {
       name: 'Too Big.adf', mimeType: 'application/octet-stream', buffer: Buffer.alloc(2_831_155, 1),
     });
-    await expect(libRows(page).first().getByTestId('ingest-note'))
-      .toHaveText('Too Big.adf is 2.7 MB; the limit is 2.5 MB');
+    await expect(trayRows(page).first().getByTestId('library-tray-state'))
+      .toHaveText('Refused — Too Big.adf is 2.7 MB; the limit is 2.5 MB');
   });
 
-  test('the dropzone splits a drop of 51 HFEs so every one lands', async ({ page }) => {
+  test('the Library\'s pipeline splits a pick of 51 HFEs so every one lands', async ({ page }) => {
     test.setTimeout(120_000); // 51 browser-side inspections of ~2 MB each
     const { orgId } = await signUpFresh(page);
-    await page.goto('/ingest');
+    await page.goto('/library');
     // Same bytes, 51 names, 51 games: one call carrying all of them would be
     // refused as too_many_hfe and not one disk would land.
     // Written to disk: Playwright refuses more than 50 MB of in-memory buffers.
@@ -216,17 +211,15 @@ test.describe('HFE batch and size limits', () => {
       writeFileSync(p, buffer);
       return p;
     });
-    await stagingReady(page);
-    await page.getByTestId('file-input').setInputFiles(paths);
+    await browseDisks(page, paths);
     await expect.poll(async () => (await getDb().select({ id: disks.id }).from(disks)
       .where(eq(disks.orgId, orgId))).length, { timeout: 90_000 }).toBe(51);
   });
 });
 
 async function uploadHfeThroughUi(page: import('@playwright/test').Page, orgId: string, title: string) {
-  await page.goto('/ingest');
-  await stagingReady(page);
-  await page.getByTestId('file-input').setInputFiles({
+  await page.goto('/library');
+  await browseDisks(page, {
     name: `${title} (1993)(Webadf).hfe`, mimeType: 'application/octet-stream', buffer: hfeFixture('clean'),
   });
   // Not the row state: "deduped" shows before /complete runs.
@@ -235,7 +228,7 @@ async function uploadHfeThroughUi(page: import('@playwright/test').Page, orgId: 
 }
 
 test.describe('an HFE on the game page', () => {
-  test('shows the tag, the notice and Read-only, offers Extract, and no Browse or write-protect toggle', async ({ page }) => {
+  test('shows the tag, the notice and Read-only, offers Extract, and no Files… or write-protect toggle', async ({ page }) => {
     const { orgId } = await signUpFresh(page);
     await uploadHfeThroughUi(page, orgId, 'HFE Row');
     const [d] = await getDb().select({ id: disks.id, gameId: disks.gameId }).from(disks).where(eq(disks.orgId, orgId));
@@ -244,10 +237,10 @@ test.describe('an HFE on the game page', () => {
     await expect(page.getByTestId(`hfe-notice-${d.id}`)).toContainText("Weak-bit copy protections aren't supported");
     await expect(page.getByTestId(`hfe-readonly-${d.id}`)).toHaveText('Read-only');
     await expect(page.getByTestId(`wp-${d.id}`)).toHaveCount(0);
-    await expect(page.getByTestId(`browse-${d.id}`)).toHaveCount(0);
+    await expect(page.getByTestId(`files-${d.id}`)).toHaveCount(0);
     await expect(page.getByTestId(`extract-${d.id}`)).toBeVisible();
 
-    // The file browser URL, typed by hand, lands back on the game page.
+    // The old file browser URL, typed by hand, lands back on the game page.
     await page.goto(`/disks/${d.id}/files`);
     await expect(page).toHaveURL(new RegExp(`/games/${d.gameId}`));
   });
@@ -266,7 +259,7 @@ test.describe('an HFE on the game page', () => {
 
     const [x] = await getDb().select({ id: disks.id }).from(disks).where(and(eq(disks.orgId, orgId), eq(disks.imageFormat, 'adf')));
     await page.reload();
-    await expect(page.getByTestId(`browse-${x.id}`)).toBeVisible();
+    await expect(page.getByTestId(`files-${x.id}`)).toBeVisible();
     // The HFE is untouched.
     const [again] = await getDb().select({ sha: disks.sha256 }).from(disks).where(eq(disks.id, h.id));
     expect(again.sha).toBe(h.sha256);
@@ -313,7 +306,7 @@ test.describe('an HFE on the game page', () => {
     await page.getByTestId(`extract-${h.id}`).click();
     await expect(page.getByTestId(`extract-edited-${h.id}`)).toContainText('has been edited since');
     await expect(page.getByTestId(`extract-edited-link-${h.id}`))
-      .toHaveAttribute('href', `/disks/${adfId}/files#disk-history`);
+      .toHaveAttribute('href', `/files?left=STASH:&right=${encodeURIComponent(`LIBRARY:/${h.gameId}/${adfId}`)}&active=right#disk-history`);
   });
 
   test('extracting to an ADF whose blob already has a verdict puts it back in front of the sweeper', async ({ browser }) => {

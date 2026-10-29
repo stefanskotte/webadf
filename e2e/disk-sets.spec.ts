@@ -7,7 +7,7 @@ import { devices } from '@/db/schema/devices';
 import { collectionGames } from '@/db/schema/collections';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { ARM_DELAY_MS, EDGE_REST_MS, zoneOf } from '@/lib/set-folder';
-import { signUpFresh, runTag, libRows, stagingReady } from './helpers';
+import { signUpFresh, runTag, trayRows, browseDisks } from './helpers';
 import { pairDevice, seedDisk, addDisk, authHeader, cleanupSeeded } from './device-helpers';
 
 /**
@@ -138,7 +138,7 @@ async function dragOnto(page: Page, source: Locator, target: Locator) {
 
 
 /**
- * Drop the five 3.1.4-style files on /ingest and wait for the panel. Each
+ * Pick the five 3.1.4-style files on the Library page (Add disks ▾ → Browse files…) and wait for the tray's panel. Each
  * image's volume name is its filename without the extension, so labels and
  * the suggested name come out the same whether suggestSet reads the volume or
  * falls back to the filename. Dropped in a deliberately wrong order
@@ -147,12 +147,11 @@ async function dragOnto(page: Page, source: Locator, target: Locator) {
 async function dropRelease(page: Page, orgId: string) {
   const order = ['Workbench3_1_4', 'Extras3_1_4', 'Install3_1_4', 'Fonts', 'Locale'];
   const files = order.map((v) => ({ name: `${v}.adf`, mimeType: 'application/octet-stream', buffer: adfBytes(v) }));
-  await page.goto('/ingest');
-  await stagingReady(page);
-  await page.getByTestId('file-input').setInputFiles(files);
-  await expect(libRows(page)).toHaveCount(5);
+  await page.goto('/library');
+  await browseDisks(page, files);
+  await expect(trayRows(page)).toHaveCount(5);
   for (let i = 0; i < 5; i++) {
-    await expect(libRows(page).nth(i)).toHaveAttribute('data-state', 'done', { timeout: 60_000 });
+    await expect(trayRows(page).nth(i)).toHaveAttribute('data-state', 'done', { timeout: 60_000 });
   }
   await expect(page.getByTestId('set-suggestion')).toBeVisible({ timeout: 30_000 });
 
@@ -241,15 +240,14 @@ test('upload: a reordered, partly ticked suggestion makes exactly that set; re-u
   // id, which was minted from its ORIGINAL title. Re-uploading the same file
   // must not bring that title back, empty or with a duplicate disk.
   const wb = files.find((f) => f.name === 'Workbench3_1_4.adf')!;
-  await page.goto('/ingest');
-  await stagingReady(page);
+  await page.goto('/library');
   // Waited on /complete itself, not the row: a deduped row turns blue as soon
   // as /check answers, BEFORE /complete has run (and re-created, then
   // removed, the original title).
   const completed = page.waitForResponse((r) => r.url().includes('/api/ingest/complete'), { timeout: 30_000 });
-  await page.getByTestId('file-input').setInputFiles(wb);
+  await browseDisks(page, wb);
   expect((await completed).status()).toBe(200);
-  await expect(libRows(page).first()).toHaveAttribute('data-state', 'deduped');
+  await expect(trayRows(page).first()).toHaveAttribute('data-state', 'deduped');
 
   const after = (await orgGames(orgId)).map((g) => g.id).sort();
   expect(after).toEqual(before);
@@ -1283,7 +1281,11 @@ test('in a collection: a drop in an empty cell after the last card moves the car
   // pointer parked in its lower half sits inside dnd-kit's auto-scroll zone (the bottom 20% of the viewport): the
   // page scrolls under the held card, the row slides up, and the pointer ends BELOW the grid -- where a drop rightly
   // does nothing. 60 px of top margin keeps the whole walk (card A's centre to the empty cell) clear of both zones.
+  // The cards stream in hidden (see box()): measured before A is revealed, its top is 0 and the scroll does nothing,
+  // so wait for it first, and for the page to have actually moved.
+  await box(card(page, title('A')));
   await card(page, title('A')).evaluate((el) => window.scrollBy(0, el.getBoundingClientRect().top - 60));
+  await expect.poll(() => page.evaluate(() => window.scrollY), 'the grid came up the page').toBeGreaterThan(0);
 
   // Five across at 1280: F and G make a partial second row. The empty cell
   // after G is in G's row, two columns right of it, under D.

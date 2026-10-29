@@ -3,6 +3,7 @@ import { and, asc, desc, eq, gt, inArray, lt, lte, or, sql } from 'drizzle-orm';
 import { devices } from '@/db/schema/devices';
 import { transfers } from '@/db/schema/transfers';
 import { diskStore } from '@/lib/storage';
+import { mapLimit } from '@/lib/pool';
 import type { Db } from '@/db';
 import type { SendSummary } from '@/lib/send-ui';
 import { XFER_FW, SEND_FILE_MAX, SEND_QUEUE_MAX_FILES, SEND_QUEUE_MAX_BYTES } from '@/lib/send-limits';
@@ -56,6 +57,9 @@ export function formatQueue(next: QueueRow | null, rows: QueueRow[]): string {
 
 export type QueueResult = { ok: true; id: string } | { ok: false; reason: 'bad_name' | 'too_large' | 'queue_full' | 'no_device' | 'no_blob' };
 
+/** A comment as Transfer can show it: Latin-1 printable, at most 79 characters. */
+const cleanComment = (c: string) => c.replace(/[^\x20-\x7e\xa0-\xff]/g, '').slice(0, 79);
+
 export async function queueTransferFromBlob(db: Db, a: { orgId: string; deviceId: string; userId: string; path: string;
   sha256: string; protection?: number; comment?: string; bytes?: Uint8Array; now?: Date }): Promise<QueueResult> {
   const path = cleanAmigaPath(a.path);
@@ -69,7 +73,7 @@ export async function queueTransferFromBlob(db: Db, a: { orgId: string; deviceId
   const bytes = a.bytes && a.bytes.byteLength === st.sizeBytes ? a.bytes : await diskStore.read(a.sha256);
   const crc = crc32(bytes) >>> 0;
   const now = a.now ?? new Date();
-  const comment = (a.comment ?? '').replace(/[^\x20-\x7e\xa0-\xff]/g, '').slice(0, 79);
+  const comment = cleanComment(a.comment ?? '');
   return db.transaction(async (tx) => {
     const [load] = await tx.select({ n: sql<number>`count(*)::int`, b: sql<number>`coalesce(sum(${transfers.sizeBytes}),0)::bigint` })
       .from(transfers).where(and(eq(transfers.deviceId, a.deviceId), inArray(transfers.status, ACTIVE), gt(transfers.expiresAt, now)));
@@ -81,6 +85,55 @@ export async function queueTransferFromBlob(db: Db, a: { orgId: string; deviceId
       expiresAt: new Date(now.getTime() + SEND_EXPIRE_MS) });
     await tx.update(devices).set({ sendVersion: sql`${devices.sendVersion} + 1` }).where(eq(devices.id, a.deviceId));
     return { ok: true as const, id };
+  });
+}
+
+export type QueueFile = { path: string; sha256: string; sizeBytes: number; protection: number; comment: string; bytes?: Uint8Array };
+export type QueueManyResult =
+  | { ok: true; ids: string[] }
+  | { ok: false; reason: 'bad_name' | 'too_large' | 'queue_full' | 'no_device' | 'no_blob' | 'empty'; path?: string };
+
+/**
+ * A copy into NET:/<board> (Files increment 3, R3): every file or none. Each is checked first (a path that cleans,
+ * bytes in the store, 1 byte to 4 MB each, sizes from the store, not the caller), then ONE transaction counts the
+ * board's load as queueTransferFromBlob does, refuses `queue_full` past 32 files / 16 MB, inserts every row and bumps
+ * the board's cursor once. Rows are a millisecond apart in the order given, which is the order the board takes them.
+ */
+export async function queueTransfers(db: Db, a: { orgId: string; deviceId: string; userId: string; files: QueueFile[]; now?: Date }):
+  Promise<QueueManyResult> {
+  const [dev] = await db.select({ id: devices.id }).from(devices).where(and(eq(devices.id, a.deviceId), eq(devices.orgId, a.orgId)));
+  if (!dev) return { ok: false, reason: 'no_device' };
+  if (a.files.length === 0) return { ok: true, ids: [] };
+  // More files than any board's queue holds: refused before a single store call.
+  if (a.files.length > SEND_QUEUE_MAX_FILES) return { ok: false, reason: 'queue_full' };
+  const paths = a.files.map((f) => cleanAmigaPath(f.path));
+  const bad = paths.findIndex((p) => !p);
+  if (bad >= 0) return { ok: false, reason: 'bad_name', path: a.files[bad].path };
+  const stats = await mapLimit(a.files, 12, (f) => diskStore.stat(f.sha256));
+  const checked: { path: string; size: number; f: QueueFile }[] = [];
+  for (const [k, f] of a.files.entries()) {
+    const st = stats[k];
+    if (!st) return { ok: false, reason: 'no_blob', path: f.path };
+    if (st.sizeBytes > SEND_FILE_MAX) return { ok: false, reason: 'too_large', path: f.path };
+    if (st.sizeBytes === 0) return { ok: false, reason: 'empty', path: f.path };
+    checked.push({ path: paths[k]!, size: st.sizeBytes, f });
+  }
+  // Read before the transaction: up to 16 MB of store reads must not hold it open.
+  const crcs = await mapLimit(checked, 12, async (c) =>
+    crc32(c.f.bytes && c.f.bytes.byteLength === c.size ? c.f.bytes : await diskStore.read(c.f.sha256)) >>> 0);
+  const now = a.now ?? new Date();
+  const bytes = checked.reduce((n, c) => n + c.size, 0);
+  return db.transaction(async (tx) => {
+    const [load] = await tx.select({ n: sql<number>`count(*)::int`, b: sql<number>`coalesce(sum(${transfers.sizeBytes}),0)::bigint` })
+      .from(transfers).where(and(eq(transfers.deviceId, a.deviceId), inArray(transfers.status, ACTIVE), gt(transfers.expiresAt, now)));
+    if (load.n + checked.length > SEND_QUEUE_MAX_FILES || Number(load.b) + bytes > SEND_QUEUE_MAX_BYTES)
+      return { ok: false as const, reason: 'queue_full' as const };
+    const rows = checked.map((c, k) => ({ id: crypto.randomUUID(), orgId: a.orgId, deviceId: a.deviceId, createdByUserId: a.userId,
+      path: c.path, sizeBytes: c.size, crc32: crcs[k], protection: c.f.protection >>> 0, comment: cleanComment(c.f.comment),
+      blobSha256: c.f.sha256, createdAt: new Date(now.getTime() + k), expiresAt: new Date(now.getTime() + SEND_EXPIRE_MS) }));
+    await tx.insert(transfers).values(rows);
+    await tx.update(devices).set({ sendVersion: sql`${devices.sendVersion} + 1` }).where(eq(devices.id, a.deviceId));
+    return { ok: true as const, ids: rows.map((r) => r.id) };
   });
 }
 
@@ -169,7 +222,7 @@ export async function queueLoad(db: Db, deviceId: string, now = new Date()): Pro
 
 export type TransferRow = typeof transfers.$inferSelect;
 
-/** The board's rows for the Upload page's queue: this org's only, newest first (finished rows live 7 days). */
+/** The board's rows for NET:/<board> (and GET /api/transfers): this org's only, newest first (finished rows live 7 days). */
 export async function listTransfers(db: Db, orgId: string, deviceId: string, limit = 100): Promise<TransferRow[]> {
   return db.select().from(transfers)
     .where(and(eq(transfers.orgId, orgId), eq(transfers.deviceId, deviceId)))
@@ -191,25 +244,17 @@ export async function clearFinishedTransfers(db: Db, orgId: string, deviceId: st
   return del.length;
 }
 
-/** Retry (R10): the same file, path, protection and comment, queued again as a new row; the old row stays. */
-export async function retryTransfer(db: Db, a: { orgId: string; userId: string; id: string; now?: Date }):
-  Promise<QueueResult | { ok: false; reason: 'not_found' | 'not_finished' }> {
-  const now = a.now ?? new Date();
-  const [r] = await db.select().from(transfers).where(and(eq(transfers.id, a.id), eq(transfers.orgId, a.orgId)));
-  if (!r) return { ok: false, reason: 'not_found' };
-  // F4: a row still 'queued' or 'sending' past its expiry reads as expired to the page (which offers Retry) until the daily cron
-  // marks it; mark it here, as expireTransfers does, so the retry the page offers does not answer 409.
-  const lapsed = (r.status === 'queued' || r.status === 'sending') && r.expiresAt <= now;
-  if (r.status !== 'failed' && r.status !== 'expired' && !lapsed) return { ok: false, reason: 'not_finished' };   // F3: not 'cancelled'
-  if (lapsed) {
-    await db.transaction(async (tx) => {
-      const ex = await tx.update(transfers).set({ status: 'expired', finishedAt: now })
-        .where(and(eq(transfers.id, r.id), eq(transfers.status, r.status as 'queued' | 'sending'))).returning({ id: transfers.id });
-      if (ex.length) await tx.update(devices).set({ sendVersion: sql`${devices.sendVersion} + 1` }).where(eq(devices.id, r.deviceId));
-    });
-  }
-  return queueTransferFromBlob(db, { orgId: a.orgId, deviceId: r.deviceId, userId: a.userId, path: r.path,
-    sha256: r.blobSha256, protection: r.protection, comment: r.comment, now });
+/**
+ * Delete in NET: (Files increment 3, R4) on one finished row: the WHERE of clearFinishedTransfers for one row of the
+ * org. False when it is waiting or sending (not past its expiry), missing, or another org's. No cursor bump, as there.
+ */
+export async function clearTransfer(db: Db, orgId: string, id: string, now = new Date()): Promise<boolean> {
+  const del = await db.delete(transfers)
+    .where(and(eq(transfers.id, id), eq(transfers.orgId, orgId),
+      or(inArray(transfers.status, ['delivered', 'failed', 'cancelled', 'expired']),
+        and(inArray(transfers.status, ACTIVE), lte(transfers.expiresAt, now)))))
+    .returning({ id: transfers.id });
+  return del.length > 0;
 }
 
 /** Per board, for the card's line (spec §4; R11): what waits or moves, and what finished in the last 24 h. */

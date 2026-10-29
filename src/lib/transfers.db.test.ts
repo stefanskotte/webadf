@@ -218,57 +218,6 @@ describe('transfers', () => {
     expect(await T.listTransfers(getDb(), 'org-b', d)).toEqual([]);
   });
 
-  it('retryTransfer queues a failed or expired row again as a new row, and refuses the rest', async () => {
-    const d = await device();
-    const r = await q(d, await blob(new TextEncoder().encode('again')), { path: 'Again.txt', protection: 0x40, comment: 'c' });
-    const id = (r as { id: string }).id;
-    expect(await T.retryTransfer(getDb(), { orgId: 'org-a', userId: 'u2', id })).toEqual({ ok: false, reason: 'not_finished' });
-    await T.finishTransfer(getDb(), d, id, { ok: false, code: 'space', text: 'full' });
-    const again = await T.retryTransfer(getDb(), { orgId: 'org-a', userId: 'u2', id });
-    expect(again.ok).toBe(true);
-    const n = await row((again as { id: string }).id);
-    expect(n).toMatchObject({ path: 'Again.txt', protection: 0x40, comment: 'c', status: 'queued', createdByUserId: 'u2' });
-    expect(await T.retryTransfer(getDb(), { orgId: 'org-b', userId: 'u2', id })).toEqual({ ok: false, reason: 'not_found' });
-  });
-
-  it('retryTransfer refuses a cancelled row (F3: the UI offers Retry on failed and expired only)', async () => {
-    const d = await device();
-    const r = await q(d, await blob(new TextEncoder().encode('cancel me')));
-    const id = (r as { id: string }).id;
-    await T.cancelTransfer(getDb(), 'org-a', id);
-    expect(await T.retryTransfer(getDb(), { orgId: 'org-a', userId: 'u2', id })).toEqual({ ok: false, reason: 'not_finished' });
-  });
-
-  it('retryTransfer treats a queued row past its expiry as expired (F4): marks it, then queues a new row', async () => {
-    const d = await device();
-    const t0 = new Date(Date.now() - 2 * 24 * 3600_000);
-    const r = await q(d, await blob(new TextEncoder().encode('stale')), { path: 'Stale.txt', now: t0 });
-    const id = (r as { id: string }).id;
-    const v = await version(d);
-    const again = await T.retryTransfer(getDb(), { orgId: 'org-a', userId: 'u2', id });
-    expect(again.ok).toBe(true);
-    expect((await row(id)).status).toBe('expired');
-    expect((await row(id)).finishedAt).not.toBeNull();
-    expect(await row((again as { id: string }).id)).toMatchObject({ path: 'Stale.txt', status: 'queued' });
-    expect(await version(d)).toBe(v + 2);
-  });
-
-  it('retryTransfer treats a sending row past its expiry as expired too: marks it, bumps the version, queues a new row', async () => {
-    const d = await device();
-    const t0 = new Date(Date.now() - 2 * 24 * 3600_000);
-    const r = await q(d, await blob(new TextEncoder().encode('stuck')), { path: 'Stuck.txt', now: t0 });
-    const id = (r as { id: string }).id;
-    await T.recordChunk(getDb(), d, id, 0);
-    expect((await row(id)).status).toBe('sending');
-    const v = await version(d);
-    const again = await T.retryTransfer(getDb(), { orgId: 'org-a', userId: 'u2', id });
-    expect(again.ok).toBe(true);
-    expect((await row(id)).status).toBe('expired');
-    expect((await row(id)).finishedAt).not.toBeNull();
-    expect(await row((again as { id: string }).id)).toMatchObject({ path: 'Stuck.txt', status: 'queued' });
-    expect(await version(d)).toBe(v + 2);
-  });
-
   it('clearFinishedTransfers deletes this board\'s finished and lapsed rows only, and leaves the board\'s queue and cursor alone', async () => {
     const d = await device(); const other = await device();
     const mk = async (dev: string, p: string) => (await q(dev, await blob(new TextEncoder().encode(`clear-${dev}-${p}`)), { path: p }) as { id: string }).id;
@@ -317,5 +266,83 @@ describe('transfers', () => {
     await T.recordChunk(getDb(), d, s, 0);
     await getDb().update(transfers).set({ expiresAt: new Date(Date.now() - 60_000) }).where(inArray(transfers.id, [q, s]));
     expect((await T.sendSummaries(getDb(), 'org-lapse'))[d]).toEqual({ waiting: 1, sending: 0, delivered: 0, failed: 2 });
+  });
+
+  // queueTransfers (Files increment 3, R3): a copy into NET:/<board> queues every file or none.
+  const file = async (path: string, body: string, extra: Partial<Parameters<typeof T.queueTransfers>[1]['files'][number]> = {}) => {
+    const b = new TextEncoder().encode(body);
+    return { path, sha256: await blob(b), sizeBytes: b.length, protection: 0, comment: '', ...extra };
+  };
+  const qs = (deviceId: string, files: Parameters<typeof T.queueTransfers>[1]['files'], orgId = 'org-a') =>
+    T.queueTransfers(getDb(), { orgId, deviceId, userId: 'u1', files });
+
+  it('queueTransfers queues every file with its cleaned path, CRC, bits and comment, and bumps the cursor once', async () => {
+    const d = await device();
+    const r = await qs(d, [await file('../a/One.txt', 'one', { protection: 5, comment: 'c1' }), await file('Two:x.txt', 'two-two')]);
+    expect(r.ok).toBe(true);
+    const ids = (r as { ids: string[] }).ids;
+    expect(ids).toHaveLength(2);
+    const rows = await Promise.all(ids.map(row));
+    expect(rows.map((x) => [x.path, x.sizeBytes, x.crc32, x.protection, x.comment, x.status, x.createdByUserId])).toEqual([
+      ['a/One.txt', 3, crc32(new TextEncoder().encode('one')) >>> 0, 5, 'c1', 'queued', 'u1'],
+      ['Two_x.txt', 7, crc32(new TextEncoder().encode('two-two')) >>> 0, 0, '', 'queued', 'u1'],
+    ]);
+    expect(await version(d)).toBe(1);
+    // The board is handed them in the order given.
+    expect((await T.sendQueueText(getDb(), d)).split('\n')[0]).toContain(`NEXT ${ids[0]} `);
+  });
+
+  it('queueTransfers queues nothing when one file cannot go, and says which', async () => {
+    const d = await device();
+    const good = await file('Good.txt', 'good');
+    const none = async () => (await getDb().select().from(transfers).where(eq(transfers.deviceId, d))).length;
+    expect(await qs(d, [good, await file('../..', 'x')])).toEqual({ ok: false, reason: 'bad_name', path: '../..' });
+    expect(await qs(d, [good, await file('Big.bin', '', { sha256: await blob(new Uint8Array(T.SEND_FILE_MAX + 1)), sizeBytes: T.SEND_FILE_MAX + 1 })]))
+      .toEqual({ ok: false, reason: 'too_large', path: 'Big.bin' });
+    expect(await qs(d, [good, { path: 'Gone.txt', sha256: 'e'.repeat(64), sizeBytes: 3, protection: 0, comment: '' }]))
+      .toEqual({ ok: false, reason: 'no_blob', path: 'Gone.txt' });
+    expect(await qs(d, [good, await file('Empty.txt', '')])).toEqual({ ok: false, reason: 'empty', path: 'Empty.txt' });
+    expect(await qs(d, [good], 'org-b')).toEqual({ ok: false, reason: 'no_device' });
+    expect(await none()).toBe(0);
+    expect(await version(d)).toBe(0);
+  });
+
+  it('queueTransfers holds a board to 32 files and 16 MB counting what already waits, all or nothing', async () => {
+    const d = await device();
+    for (let i = 0; i < 30; i++) expect((await q(d, await blob(new Uint8Array([20, i])))).ok).toBe(true);
+    expect(await qs(d, [await file('a', 'qa'), await file('b', 'qb'), await file('c', 'qc')])).toEqual({ ok: false, reason: 'queue_full' });
+    expect(await T.queueLoad(getDb(), d)).toEqual({ files: 30, bytes: 60 });
+    expect((await qs(d, [await file('a', 'qa'), await file('b', 'qb')])).ok).toBe(true);
+    const d2 = await device();
+    const files = await Promise.all([1, 2, 3, 4, 5].map(async (n) => ({ path: `big${n}`, protection: 0, comment: '',
+      sha256: await blob(new Uint8Array(T.SEND_FILE_MAX).fill(30 + n)), sizeBytes: T.SEND_FILE_MAX })));
+    expect(await qs(d2, files)).toEqual({ ok: false, reason: 'queue_full' });
+    expect((await qs(d2, files.slice(0, 4))).ok).toBe(true);
+  });
+
+  it('queueTransfers with no files queues nothing and leaves the cursor', async () => {
+    const d = await device();
+    expect(await qs(d, [])).toEqual({ ok: true, ids: [] });
+    expect(await version(d)).toBe(0);
+  });
+
+  it('clearTransfer deletes one finished or lapsed row of the org, never a waiting or sending one', async () => {
+    const d = await device();
+    const mk = async (p: string) => (await q(d, await blob(new TextEncoder().encode(`one-clear-${d}-${p}`)), { path: p }) as { id: string }).id;
+    const waitingId = await mk('w'); const sendingId = await mk('s'); const delivered = await mk('d'); const lapsed = await mk('l');
+    await T.recordChunk(getDb(), d, sendingId, 0);
+    await T.finishTransfer(getDb(), d, delivered, { ok: true, savedAs: 'd' });
+    await getDb().update(transfers).set({ expiresAt: new Date(Date.now() - 60_000) }).where(eq(transfers.id, lapsed));
+    const v = await version(d);
+    expect(await T.clearTransfer(getDb(), 'org-a', waitingId)).toBe(false);
+    expect(await T.clearTransfer(getDb(), 'org-a', sendingId)).toBe(false);
+    expect(await T.clearTransfer(getDb(), 'org-b', delivered)).toBe(false);
+    expect(await T.clearTransfer(getDb(), 'org-a', 'no-such-row')).toBe(false);
+    expect(await T.clearTransfer(getDb(), 'org-a', delivered)).toBe(true);
+    expect(await T.clearTransfer(getDb(), 'org-a', lapsed)).toBe(true);
+    expect(await T.clearTransfer(getDb(), 'org-a', delivered)).toBe(false);
+    const left = await getDb().select({ id: transfers.id }).from(transfers).where(inArray(transfers.id, [waitingId, sendingId, delivered, lapsed]));
+    expect(left.map((x) => x.id).sort()).toEqual([waitingId, sendingId].sort());
+    expect(await version(d)).toBe(v);
   });
 });

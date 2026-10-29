@@ -25,6 +25,7 @@
 
 import { sameName } from './adffs/write';
 import { MAX_DEPTH } from './adffs/constants';
+import type { AdfEntry } from './adffs';
 
 /**
  * True when a name holds a character AmigaDOS cannot address: ':' (it ends a
@@ -301,4 +302,36 @@ export function stageDrop(
       existingKind,
     };
   });
+}
+
+/**
+ * Every directory already on this disk, keyed by its root-relative path
+ * ('' for the root itself) to the entries it already holds -- what
+ * `stageDrop` (Task 3) calls `existingNamesByDir`, and what the staging
+ * area re-derives live as a person edits a name (drop-staging.tsx). Built
+ * once, from the same `AdfEntry[]` the tree already renders, rather than a
+ * second read of the volume -- by the Browse page and by the Files drop
+ * review (api/files/drop-review) alike.
+ *
+ * Carries each entry's `kind` alongside its `name` (fix round 1, Finding
+ * 2) -- a name-only map cannot tell a same-named FILE from a same-named
+ * DIRECTORY apart, and that distinction is exactly what decides whether
+ * "replace" is even a sound offer for a colliding row (`replaceFile`
+ * requires `ST_FILE`; the batch route refuses a mismatched replace
+ * correctly, but only after the whole batch has already been attempted).
+ */
+export function existingNamesByDir(
+  entries: AdfEntry[],
+  prefix = '',
+): Record<string, { name: string; kind: 'file' | 'dir' }[]> {
+  const out: Record<string, { name: string; kind: 'file' | 'dir' }[]> = {
+    [prefix]: entries.map((e) => ({ name: e.name, kind: e.kind })),
+  };
+  for (const entry of entries) {
+    if (entry.kind === 'dir') {
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      Object.assign(out, existingNamesByDir(entry.children, path));
+    }
+  }
+  return out;
 }

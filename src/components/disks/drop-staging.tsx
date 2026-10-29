@@ -51,7 +51,7 @@ interface LiveRow {
 }
 
 export function DropStaging({
-  filesystem, intl, existingNamesByDir, freeBlocks, entries, freeBytes, volumeName,
+  filesystem, intl, existingNamesByDir, freeBlocks, entries, freeBytes, volumeName, incoming,
 }: {
   filesystem: Filesystem;
   intl: boolean;
@@ -77,6 +77,12 @@ export function DropStaging({
   freeBytes: number | null;
   /** The volume's name, shown in the bar's mono run. */
   volumeName: string;
+  /**
+   * Files dropped on a Files pane (Files increment 1, Task 9b), staged once as this review opens: the pane began
+   * reading them inside its own drop handler (the one moment the browser allows), and `destinationBlock` is the folder
+   * the pane shows or the folder row they landed on.
+   */
+  incoming?: { items: Promise<DroppedItem[]>; destinationBlock: number };
 }) {
   const { diskId, disabled, busy, runEdit, rootBlock } = useFileEdit();
 
@@ -121,7 +127,7 @@ export function DropStaging({
     () => [{ block: rootBlock, label: '/' }, ...collectDirectories(entries)],
     [entries, rootBlock],
   );
-  const [destinationBlock, setDestinationBlock] = useState<number>(rootBlock);
+  const [destinationBlock, setDestinationBlock] = useState<number>(incoming?.destinationBlock ?? rootBlock);
   /**
    * The ONLY way the destination changes. Every skip/replace and typed rename
    * was decided against the folder chosen at the time -- a "replace" for
@@ -305,7 +311,12 @@ export function DropStaging({
     // inside the live drop handler; the browser neuters `dataTransfer` the
     // instant the handler returns control. Get this wrong and a dropped
     // folder arrives as nothing, silently: no vitest suite can catch it.
-    readDroppedItems(items).then(async (read) => {
+    stage(readDroppedItems(items), destination);
+  }
+
+  /** Stage what a drop is being read into, aimed at `destination` (null: the batch's own). */
+  function stage(reading: Promise<DroppedItem[]>, destination: number | null) {
+    reading.then(async (read) => {
       // Archives expand HERE, after the synchronous read above, into exactly
       // the DroppedItem shape a folder produces (archive-drop.ts) -- which is
       // what lets staging, the destination, collision handling and the
@@ -332,6 +343,14 @@ export function DropStaging({
     if (disabled) return;
     ingest(e.dataTransfer.items, null);
   }
+
+  // A Files pane's drop (`incoming`), staged once; the ref survives StrictMode's second effect run.
+  const tookIncoming = useRef<typeof incoming>(undefined);
+  useEffect(() => {
+    if (!incoming || tookIncoming.current === incoming) return;
+    tookIncoming.current = incoming;
+    stage(incoming.items, incoming.destinationBlock);
+  });
 
   // The Browse tree forwards drops on its rows here (native-drop.tsx). The
   // receiver is re-registered every render so it never closes over stale

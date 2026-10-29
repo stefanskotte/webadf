@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from '@/components/shell/link';
+import { filesHrefForBoard } from '@/lib/files/path';
 
 /**
  * The Transfer box (spec §7): whether Transfer runs on the Amiga, and the board's two ingest lines. `transfer` is
@@ -14,7 +15,7 @@ export function TransferBox({ deviceId, transfer, sendLine, uploadLine, classNam
   let upload: ReactNode = null;
   if (uploadLine) {
     upload = uploadLine.href ? (
-      <Link href={`/ingest?from=${encodeURIComponent(deviceId)}#from-amiga`} data-testid={`device-upload-${deviceId}`}
+      <Link href={filesHrefForBoard(deviceId, 'left')} data-testid={`device-upload-${deviceId}`}
             className="w-fit text-[12px] underline underline-offset-2" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>
         {uploadLine.text}
       </Link>
@@ -38,7 +39,7 @@ export function TransferBox({ deviceId, transfer, sendLine, uploadLine, classNam
         </span>
       )}
       {sendLine && (
-        <Link href={`/ingest?board=${encodeURIComponent(deviceId)}`} data-testid={`device-send-${deviceId}`}
+        <Link href={filesHrefForBoard(deviceId, 'right')} data-testid={`device-send-${deviceId}`}
               className="w-fit text-[12px] underline underline-offset-2" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>
           {sendLine}
         </Link>

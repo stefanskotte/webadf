@@ -17,7 +17,8 @@ import { DeleteDialog } from './delete-disk-dialog';
 import { CardMountDialog, useCardMount, type DriveContext } from './card-mount-button';
 import { MoveToCollectionDialog } from './move-to-collection';
 import { holdAction, holdLabel } from '@/lib/drive-holds';
-import { fromQuery, type TrailView } from '@/lib/trail';
+import type { TrailView } from '@/lib/trail';
+import { filesHrefForDisk } from '@/lib/files/path';
 import type { GameListItem } from '@/lib/queries';
 
 /**
@@ -77,9 +78,12 @@ const Glyph = {
  * is picked, so a dialog owned by the item would vanish with it. `which` says which one is open; closing it puts
  * focus back on the ⋯ trigger.
  */
-export function TitleMenu({ game: g, collectionId, fob, drives, view = null }: {
+export function TitleMenu({ game: g, collectionId, fob, drives }: {
   game: GameListItem; collectionId?: string; fob: FobContext; drives: DriveContext;
-  /** The library view to carry into the history link when it is not the person's default (trail.ts). */
+  /**
+   * The library view the history link once carried (trail.ts). Unused since the history opens in Files (increment 1),
+   * which has no library trail; still accepted so TitleControls' callers need not change.
+   */
   view?: TrailView;
 }) {
   const router = useRouter();
@@ -99,9 +103,9 @@ export function TitleMenu({ game: g, collectionId, fob, drives, view = null }: {
     ? (g.diskCount === 1 && g.diskId ? [{ id: g.diskId, diskNo: 1 }] : fob.disksByGame[g.id] ?? [])
     : [];
   const showFob = fob !== null && fobDisks.length > 0;
-  // "Which disk's history?" has no answer on a set; the title page lists each disk with its own Browse.
+  // "Which disk's history?" has no answer on a set; the title page lists each disk with its own Files….
   const historyHref = g.diskCount === 1 && g.diskId
-    ? `/disks/${g.diskId}/files${fromQuery(collectionId, view)}#disk-history`
+    ? filesHrefForDisk(g.id, g.diskId, true)
     : null;
 
   // One click mounts when there is nothing to choose: one disk, one board, and that board's DF1 Off (DF1 On always

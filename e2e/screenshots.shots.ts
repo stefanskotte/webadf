@@ -10,7 +10,7 @@ import { demozooImport } from '@/db/schema/demozoo';
 import { deleteUserCascade } from '@/lib/admin-delete';
 import { listReleases } from '@/lib/firmware-releases';
 import { sweep } from '@/lib/tosec-sweep';
-import { mintInviteCode, signedUpOrgIds, libRows, stagingReady } from './helpers';
+import { mintInviteCode, signedUpOrgIds, trayRows, browseDisks } from './helpers';
 import { pairDevice, cleanupSeeded, hydrated } from './device-helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
 
@@ -216,12 +216,11 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   demoUserId = await userIdByEmail(DEMO_EMAIL);
   console.log(`screenshots: demo user ${demoUserId}, org ${orgId}`);
 
-  // --- upload through the real ingest page ----------------------------------
-  await page.goto('/ingest');
-  await stagingReady(page);
-  await page.getByTestId('file-input').setInputFiles(UPLOADS.map((f) => path.join(ARCHIVE, f)));
-  await expect(libRows(page)).toHaveCount(UPLOADS.length, { timeout: 30_000 });
-  await expect(page.locator('[data-testid="staging-row"][data-kind="lib"][data-state="done"], [data-testid="staging-row"][data-kind="lib"][data-state="deduped"]'))
+  // --- upload through the Library's Add disks ▾ (Files increment 3) ------------
+  await page.goto('/library');
+  await browseDisks(page, UPLOADS.map((f) => path.join(ARCHIVE, f)));
+  await expect(trayRows(page)).toHaveCount(UPLOADS.length, { timeout: 30_000 });
+  await expect(page.locator('[data-testid="library-tray-row"][data-state="done"], [data-testid="library-tray-row"][data-state="deduped"]'))
     .toHaveCount(UPLOADS.length, { timeout: 120_000 });
   // A two-disk demo is offered as a set; take it, the way a person would.
   const setAccept = page.getByTestId('set-suggestion-accept');
@@ -229,7 +228,7 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
     await setAccept.click();
     await expect(page.getByTestId('set-suggestion')).toHaveCount(0, { timeout: 15_000 });
   }
-  // The Upload page itself, at the width the C3 design was drawn for.
+  // Adding disks (the Upload page's shot until Files increment 3): the Library and its tray, at the C3 width.
   const beforeUpload = page.viewportSize();
   await page.setViewportSize({ width: 1440, height: 1100 });
   await shoot(page, 'upload');
@@ -330,9 +329,13 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   await page.goto(`/games/${fingers}`);
   await shoot(page, 'game');
 
-  await page.goto(`/disks/${sysInfo.id}/files`);
-  await expect(page.getByTestId('history-panel')).toBeVisible();
-  await expect(page.getByTestId('disk-card')).toBeVisible();
+  // Files (increment 1): LIBRARY: on the left, the disk on the right with its strip and its History open over it.
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: `LIBRARY:/${sysInfoGame}/${sysInfo.id}`, active: 'right' })}`);
+  await hydrated(page, 'disk-strip-history-toggle');
+  await expect(page.getByTestId('pane-right').locator('[data-testid="pane-row"][data-name="ReadMe"]')).toBeVisible();
+  await page.getByTestId('disk-strip-history-toggle').click();
+  await expect(page.getByTestId('disk-strip-history')).toBeVisible();
+  await page.mouse.move(0, 0);
   await shoot(page, 'disk-files', { tall: true });
 
   await report();

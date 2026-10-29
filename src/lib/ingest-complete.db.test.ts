@@ -29,6 +29,8 @@ async function admin(stmt: string) {
 const { getDb, closeDb } = await import('@/db');
 const { migrate } = await import('drizzle-orm/node-postgres/migrator');
 const { games } = await import('@/db/schema/catalog');
+const { devices } = await import('@/db/schema/devices');
+const { transfers } = await import('@/db/schema/transfers');
 const { diskStore } = await import('@/lib/storage');
 const { registerUploads } = await import('./ingest-complete');
 
@@ -91,5 +93,31 @@ describe('registerUploads names the title of each disk', () => {
     expect(res.rejected).toEqual([missing.sha256]);
     expect(res.titles![ok.sha256].title).toBe('Zool');
     expect(res.titles![missing.sha256]).toBeUndefined();
+  });
+
+  // Carry (b) from Files increment 2: bytes that fail their digest are deleted only while nothing names their key. A Send
+  // or a STASH: file may name it: storeSendBytes overwrites a planted key with the real bytes, and a verify that read the
+  // planted ones just before must not then delete the real ones.
+  describe('registerUploads releases a key that fails its digest only when nothing names it', () => {
+    const planted = async (seed: string) => {
+      const key = createHash('sha256').update(`key-${seed}`).digest('hex');
+      const bytes = new TextEncoder().encode(`not the bytes of ${seed}`);
+      await diskStore.put(key, bytes);
+      return { filename: `${seed}.adf`, sha256: key, sizeBytes: bytes.byteLength };
+    };
+
+    it('deletes planted bytes nothing names', async () => {
+      const f = await planted('lonely');
+      expect((await send([f])).rejected).toEqual([f.sha256]);
+      expect(await diskStore.stat(f.sha256)).toBeNull();
+    });
+    it('keeps the bytes at a key a queued transfer names', async () => {
+      const f = await planted('sent');
+      await getDb().insert(devices).values({ id: 'dev-release', orgId: ORG, name: 'b', tokenHash: 'h-release' });
+      await getDb().insert(transfers).values({ id: 't-release', orgId: ORG, deviceId: 'dev-release', createdByUserId: 'u', path: 'x',
+        sizeBytes: f.sizeBytes, crc32: 0, blobSha256: f.sha256, expiresAt: new Date(Date.now() + 3600_000) });
+      expect((await send([f])).rejected).toEqual([f.sha256]);
+      expect(await diskStore.stat(f.sha256)).not.toBeNull();
+    });
   });
 });

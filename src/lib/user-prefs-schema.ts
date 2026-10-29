@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { FilesSort } from './files/sort';
 
 /**
  * Per-USER web app preferences (HANDOFF §4 "Per-user web app settings",
@@ -25,8 +26,9 @@ export type StartPage = (typeof START_PAGES)[number];
 const START_PAGE_PATHS: Record<StartPage, string> = {
   library: '/library',
   devices: '/devices',
-  // The Upload page's route is still /ingest (top-nav.tsx explains why).
-  upload: '/ingest',
+  // The stored value stays 'upload' (rows are never rewritten); the Files page replaced the Upload page (Files spec
+  // 2026-10-29 §5.3).
+  upload: '/files',
 };
 
 /** Where the app lands for this choice: after sign-in and on the root URL. */
@@ -87,7 +89,27 @@ export type UserPrefs = {
    * Turning it OFF is free. A failed read is the default, false: fail safe.
    */
   firmware: { skipPassword: boolean };
+  /**
+   * The Files manager (spec section 6, rulings R2-R5): its sort, remembered
+   * per device (library, stash, net); the device each pane opens on at a bare
+   * /files; the Comment column; whether Delete asks on a disk; the answer
+   * given to a name clash up front ('ask' keeps the dialog).
+   */
+  files: {
+    sort: { library: FilesSort; stash: FilesSort; net: FilesSort };
+    panes: { left: FilesPaneDevice; right: FilesPaneDevice };
+    comments: FilesCommentMode;
+    confirmDelete: boolean;
+    onClash: FilesOnClash;
+  };
 };
+
+export const FILES_PANE_DEVICES = ['STASH', 'NET', 'LIBRARY'] as const;
+export type FilesPaneDevice = (typeof FILES_PANE_DEVICES)[number];
+export const FILES_COMMENT_MODES = ['auto', 'always', 'never'] as const;
+export type FilesCommentMode = (typeof FILES_COMMENT_MODES)[number];
+export const FILES_ON_CLASH = ['ask', 'keep-both', 'replace', 'skip'] as const;
+export type FilesOnClash = (typeof FILES_ON_CLASH)[number];
 
 /** Fresh objects every call: a caller may mutate what it gets back. */
 function defaults(): UserPrefs {
@@ -96,12 +118,25 @@ function defaults(): UserPrefs {
     library: { sort: { key: 'added', dir: 'desc' }, view: 'grid', pageSize: 48 },
     browse: { sort: { key: 'name', dir: 'asc' }, hideInfo: false },
     firmware: { skipPassword: false },
+    files: {
+      sort: {
+        library: { key: 'name', dir: 'asc' },
+        stash: { key: 'date', dir: 'desc' },
+        net: { key: 'date', dir: 'desc' },
+      },
+      panes: { left: 'STASH', right: 'LIBRARY' },
+      comments: 'auto',
+      confirmDelete: true,
+      onClash: 'ask',
+    },
   };
 }
 
 export const DEFAULT_PREFS: Readonly<UserPrefs> = Object.freeze(defaults());
 
 const librarySortSchema = z.object({ key: z.enum(LIBRARY_SORT_KEYS), dir: z.enum(SORT_DIRS) });
+const FILES_SORT_KEYS = ['name', 'size', 'protection', 'date'] as const;
+const filesSortSchema = z.object({ key: z.enum(FILES_SORT_KEYS), dir: z.enum(SORT_DIRS) });
 const browseSortSchema = z.object({ key: z.enum(BROWSE_SORT_KEYS), dir: z.enum(SORT_DIRS) });
 
 /**
@@ -124,6 +159,21 @@ const prefsSchema = z.object({
   firmware: z.object({
     skipPassword: z.boolean().catch(false),
   }).catch(() => defaults().firmware),
+  files: z.object({
+    sort: z.object({
+      library: filesSortSchema.catch(() => defaults().files.sort.library),
+      stash: filesSortSchema.catch(() => defaults().files.sort.stash),
+      net: filesSortSchema.catch(() => defaults().files.sort.net),
+    }).catch(() => defaults().files.sort),
+    panes: z.object({
+      left: z.enum(FILES_PANE_DEVICES).catch(() => defaults().files.panes.left),
+      right: z.enum(FILES_PANE_DEVICES).catch(() => defaults().files.panes.right),
+    }).catch(() => defaults().files.panes),
+    comments: z.enum(FILES_COMMENT_MODES).catch(() => defaults().files.comments),
+    // Fail safe: only a real `false` stops the confirm.
+    confirmDelete: z.boolean().catch(true),
+    onClash: z.enum(FILES_ON_CLASH).catch(() => defaults().files.onClash),
+  }).catch(() => defaults().files),
 });
 
 export function parsePrefs(raw: unknown): UserPrefs {
@@ -147,6 +197,20 @@ const prefsPatchSchema = z.strictObject({
   // Valid here either way; PATCH /api/me/prefs refuses `true` itself (see
   // UserPrefs.firmware), so the password-checked endpoint can share setUserPrefs.
   firmware: z.strictObject({ skipPassword: z.boolean().optional() }).optional(),
+  files: z.strictObject({
+    sort: z.strictObject({
+      library: filesSortSchema.strict().optional(),
+      stash: filesSortSchema.strict().optional(),
+      net: filesSortSchema.strict().optional(),
+    }).optional(),
+    panes: z.strictObject({
+      left: z.enum(FILES_PANE_DEVICES).optional(),
+      right: z.enum(FILES_PANE_DEVICES).optional(),
+    }).optional(),
+    comments: z.enum(FILES_COMMENT_MODES).optional(),
+    confirmDelete: z.boolean().optional(),
+    onClash: z.enum(FILES_ON_CLASH).optional(),
+  }).optional(),
 });
 
 export type PrefsPatch = z.infer<typeof prefsPatchSchema>;
@@ -170,6 +234,20 @@ export function applyPrefsPatch(cur: UserPrefs, patch: PrefsPatch): UserPrefs {
       hideInfo: patch.browse?.hideInfo ?? cur.browse.hideInfo,
     },
     firmware: { skipPassword: patch.firmware?.skipPassword ?? cur.firmware.skipPassword },
+    files: {
+      sort: {
+        library: { ...(patch.files?.sort?.library ?? cur.files.sort.library) },
+        stash: { ...(patch.files?.sort?.stash ?? cur.files.sort.stash) },
+        net: { ...(patch.files?.sort?.net ?? cur.files.sort.net) },
+      },
+      panes: {
+        left: patch.files?.panes?.left ?? cur.files.panes.left,
+        right: patch.files?.panes?.right ?? cur.files.panes.right,
+      },
+      comments: patch.files?.comments ?? cur.files.comments,
+      confirmDelete: patch.files?.confirmDelete ?? cur.files.confirmDelete,
+      onClash: patch.files?.onClash ?? cur.files.onClash,
+    },
   };
 }
 
@@ -189,6 +267,19 @@ export function prefsDiff(from: UserPrefs, to: UserPrefs): PrefsPatch {
   if (from.library.pageSize !== to.library.pageSize) patch.library = { ...patch.library, pageSize: to.library.pageSize };
   if (!sameSort(from.browse.sort, to.browse.sort)) patch.browse = { sort: { ...to.browse.sort } };
   if (from.browse.hideInfo !== to.browse.hideInfo) patch.browse = { ...patch.browse, hideInfo: to.browse.hideInfo };
+  for (const d of ['library', 'stash', 'net'] as const) {
+    if (!sameSort(from.files.sort[d], to.files.sort[d])) {
+      patch.files = { sort: { ...patch.files?.sort, [d]: { ...to.files.sort[d] } } };
+    }
+  }
+  for (const side of ['left', 'right'] as const) {
+    if (from.files.panes[side] !== to.files.panes[side]) {
+      patch.files = { ...patch.files, panes: { ...patch.files?.panes, [side]: to.files.panes[side] } };
+    }
+  }
+  if (from.files.comments !== to.files.comments) patch.files = { ...patch.files, comments: to.files.comments };
+  if (from.files.confirmDelete !== to.files.confirmDelete) patch.files = { ...patch.files, confirmDelete: to.files.confirmDelete };
+  if (from.files.onClash !== to.files.onClash) patch.files = { ...patch.files, onClash: to.files.onClash };
   // `firmware` deliberately never: it has its own controls on Settings
   // (firmware-password-setting.tsx), and turning it on needs the password.
   return patch;

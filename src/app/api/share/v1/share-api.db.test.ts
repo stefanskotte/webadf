@@ -238,8 +238,9 @@ describe('share API v1', () => {
     expect(Object.keys(byName).sort()).toEqual(['ReadMe', 'S']);
     expect(byName.ReadMe).toMatchObject({ kind: 'file', sizeBytes: 12 });
     expect(byName.ReadMe.children).toBeUndefined();
-    // addFile stamps no date (only makeDirectory does): an undated entry stays null, never the epoch.
-    expect(byName.ReadMe.modifiedAt).toBeNull();
+    // addFile stamps a header date, so a file lists an ISO date too.
+    expect(byName.ReadMe.modifiedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(new Date(byName.ReadMe.modifiedAt).toISOString()).toBe(byName.ReadMe.modifiedAt);
     expect(byName.S.kind).toBe('dir');
     expect(new Date(byName.S.modifiedAt).toISOString()).toBe(byName.S.modifiedAt);
     expect(byName.S.children).toEqual([expect.objectContaining({ name: 'Startup-Sequence', kind: 'file', sizeBytes: 8 })]);

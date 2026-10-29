@@ -25,7 +25,8 @@ export const HELP_TOPICS = {
   // rail drop only; reorder and card-on-card sets are the grid's), preferences-form.tsx (Library opens in, Titles per
   // page), library-pager.tsx + library-paging.ts (?page=, Per page saves the preference, a new size or sort goes to
   // page 1), library-table.ts (folders on page 1 only). Selecting: select-toggle.tsx, library-selection-bar.tsx, bulk-*-dialog.tsx,
-  // bulk-delete-plan.ts (held titles kept).
+  // bulk-delete-plan.ts (held titles kept). Adding disks: library-ingest/{add-disks-menu,drop-overlay,library-tray}.tsx,
+  // lib/library-ingest/{drop-files,tray}.ts (Files increment 3, R8/R9).
   library: {
     title: 'Library',
     short:
@@ -33,20 +34,22 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
+          <strong>Adding disks.</strong> Drop disk images, folders of them or .zip and .lha files anywhere on the
+          page, or use <em>Add disks</em>, which also takes a URL. A tray below says what each did.
+        </p>
+        <p>
           <strong>Grid or table.</strong> The grid and table buttons at the top switch views and keep the
-          collection you are in. <em>Library opens in</em> under Preferences in Settings picks the view the library starts in: the
-          grid unless you change it.
+          collection you are in. <em>Library opens in</em> under Preferences in Settings picks the view it starts in: the grid
+          unless you change it.
         </p>
         <p>
           <strong>Folders.</strong> In the table, the library&apos;s first page lists each collection as a folder,
           before the titles that are in no collection. Open a folder to
-          see its titles; <em>↑ Library</em> at the top takes you back. <em>All titles</em> has the same way back.
+          see its titles; <em>↑ Library</em> takes you back. <em>All titles</em> has the same way back.
         </p>
         <p>
-          <strong>Pages.</strong> The grid and the table show your titles a page at a time: 48 unless you change it,
-          with <em>Per page</em> under the list or <em>Titles per page</em> under Preferences in Settings (24, 48, 96,
-          192 or All). Changing it, or the sort, starts again at page 1. Switching between grid and table keeps the
-          page you are on.
+          <strong>Pages.</strong> 48 titles to a page, unless you change <em>Per page</em> or{' '}
+          <em>Titles per page</em> (Settings). A new size or sort starts at page 1.
         </p>
         <p>
           <strong>Controls.</strong> A card&apos;s or a row&apos;s <em>⋯</em> menu has, in order: mount or eject
@@ -63,6 +66,53 @@ export const HELP_TOPICS = {
           <strong>Selecting.</strong> <em>Select titles</em> ticks titles to move or delete; nothing changes until you
           confirm. Titles in a drive are kept.
         </p>
+      </>
+    ),
+  },
+
+  // Sources: Files spec 2026-10-29 §4-§7; increments 1-4 rulings (inc. 4 R2 delete confirm on disks only, R4 clash
+  // answer, R6 the filter, R7 Show .info, R9 this topic); pane.tsx (device buttons, filter box "Filter names", Show .info
+  // switch), files-manager.tsx (the button column Copy/Move/Delete/Rename/Makedir/Protect/Info/Download/Swap, the
+  // phone's Left/Right and Copy to…/Move to…, a drag copies and Shift at the drop moves -- Chromium reads Shift only once
+  // the drag has begun, increment-1 ledger Task 11), disk-strip.tsx (drive chip, Mount or Eject to edit, History, ⬇ ADF),
+  // dialogs.tsx (Replace, Skip, Keep both), keys.ts (the keys), view.ts (filter, Show .info, folders copied whole).
+  files: {
+    title: 'Files',
+    short: 'Two panes for every file that is not a whole disk: STASH:, NET: and the disks in LIBRARY:. Pick files on one side and copy or move them to the other.',
+    body: (
+      <>
+        <p>
+          <strong>Three places.</strong> <em>STASH:</em> holds loose files: what you drop on the page and what your
+          Amiga sends. <em>NET:</em> lists your boards; copying into one sends the files to its Amiga.{' '}
+          <em>LIBRARY:</em> opens a title, then a disk, then its folders.
+        </p>
+        <p>
+          <strong>Copy and move.</strong> Pick files in a pane (Shift-click for a range,
+          Ctrl- or ⌘-click for one more), then press <em>Copy</em> or <em>Move</em> in the middle column. Dragging rows
+          onto the other pane copies them; to move them instead, hold Shift after the drag has started, until you drop.
+          When a name is already there, choose Replace, Skip or Keep both.
+        </p>
+        <p>
+          <strong>Inside a disk.</strong> The strip above the files shows which drive holds the disk, the free space,{' '}
+          <em>Mount</em>, <em>History</em> and <em>⬇ ADF</em>. Each change saves one new version, with
+          Undo. A disk in a drive cannot be changed until you eject it with <em>Eject to edit</em>.{' '}
+          <em>Protect</em> sets protection bits; <em>Info</em> shows a file&apos;s details and comment.
+        </p>
+        <p>
+          <strong>Finding files.</strong> Type in a pane&apos;s filter box to see only names that contain it;{' '}
+          <em>Show .info</em> hides or shows icon files. Copying or deleting a folder still takes everything in it.
+        </p>
+        <p>
+          <strong>Keys.</strong> ↑ and ↓ move, Space picks, Enter opens, Backspace goes up, Tab switches pane, / filters,
+          F5 copies, F6 moves, F7 makes a folder, F2 renames, Delete deletes.
+        </p>
+        <p>
+          <strong>On a phone.</strong> One pane at a time: <em>Left</em> and <em>Right</em> at the top switch.{' '}
+          <em>Copy to…</em> and <em>Move to…</em> ask where.
+        </p>
+        <GoodToKnow items={[
+          'Settings › Account › Files sets the panes Files opens with, .info files, the Comment column, whether Delete asks first, and the answer when a name is already there.',
+        ]} />
       </>
     ),
   },
@@ -230,8 +280,9 @@ export const HELP_TOPICS = {
           restore forward again. A disk that is mounted on a board can&apos;t be restored — eject it there first.
         </p>
         <p>
-          <strong>Undo</strong> after adding, moving or deleting files in the browser is a restore of the version
-          before. It is refused once anything else has changed the disk, such as an Amiga save; use the History then.
+          <strong>Undo</strong> after changing a disk&apos;s files in the browser is a restore of the version before.
+          A move between two disks has no Undo. Undo is refused once anything else has changed the disk, such as an
+          Amiga save, or while it is in a drive; use the History then.
         </p>
         <p>
           <strong>Why a restored disk gets a new date.</strong> The Amiga recognises a disk by its creation date and
@@ -272,7 +323,7 @@ export const HELP_TOPICS = {
   },
 
   // Sources: disk-set-section.tsx:166-175 (header texts), add-disks-dialog.tsx, disk-set-menu.tsx:58-100,
-  // ingest/set-suggestion.tsx, card-mount-button.tsx:211, HANDOFF disk sets (4902-4941), disk-label.ts (the OLED name).
+  // ingest/set-suggestion.tsx (shown in library-ingest/library-tray.tsx), card-mount-button.tsx:211, HANDOFF disk sets (4902-4941), disk-label.ts (the OLED name).
   'disk-sets': {
     title: 'Disk sets',
     short:
@@ -280,8 +331,8 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          <strong>Making a set.</strong> When you upload loose disks that seem to belong together, the upload page
-          suggests <em>These N disks look like one set</em>. You can also use <em>Add disks…</em> on a title, choose{' '}
+          <strong>Making a set.</strong> When you add loose disks that seem to belong together, the tray at the bottom
+          of the Library suggests <em>These N disks look like one set</em>. You can also use <em>Add disks…</em> on a title, choose{' '}
           <em>Add to a disk set…</em> from a single disk&apos;s menu, or drag one library card onto another.
         </p>
         <p>
@@ -480,12 +531,51 @@ export const HELP_TOPICS = {
     ),
   },
 
+  // Sources: Files spec 2026-10-29 §4.2-§4.3, §5; increment 2 rulings (STASH: keeps no versions, archives stay one file
+  // and open read-only), increment 3 rulings R1-R8 (NET: rows, Delete cancels or clears, no move into NET:, the key on
+  // the board's row), increment 4 R8 (the "dropped" mark); stash-drop-zone.tsx (the zone's title, Paste a URL),
+  // stash-driver.ts (marks: from <board>, dropped; "kept 30 days"), net-driver.ts (boards on XFER_FW, `key ABCD`),
+  // amiga-upload-limits.ts (500 files, 256 MB, 30 days, 4 MB), stash-paths.ts (20 MB), send-limits.ts (4 MB, 32, 16 MB);
+  // net-driver.ts remove (Delete cancels a waiting or sending row), stash url/route.ts (a pasted URL is source 'browser').
+  'stash-net': {
+    title: 'STASH: and NET:',
+    short: 'STASH: keeps loose files for 30 days: what you drop on the Files page and what your Amiga sends. NET: holds what waits to go to each board’s Amiga.',
+    body: (
+      <>
+        <p>
+          <strong>STASH:</strong> Drop files, folders, .lha or .zip on <em>Drop files into STASH:</em>, or paste a URL.
+          Files your Amiga sends with Transfer land here too, marked with the board; files you dropped or fetched from a
+          pasted URL are marked <em>dropped</em>. Make folders, rename, protect and comment as on a disk.
+        </p>
+        <p>
+          <strong>Archives.</strong> An .lha or .zip stays one file. <em>Open</em> shows what is inside, read-only; copy
+          files out to use them.
+        </p>
+        <p>
+          <strong>Disk images.</strong> <em>Add to library</em> makes an ADF, DSK, ADZ, DMS, DMZ or HFE file a library disk.
+        </p>
+        <p>
+          <strong>NET:</strong> lists your boards on firmware 1.15.0 or newer. Copy files or folders into a board to send
+          them to its Amiga: each waits there until Transfer takes it, marked waiting, sending, delivered or failed.
+          Delete cancels a file still waiting or sending, or clears a finished one. On firmware 1.19.0 or newer a board&apos;s row shows
+          four digits of its key (<em>key AB12</em>), the digits Transfer shows.
+        </p>
+        <GoodToKnow items={[
+          'STASH: holds up to 500 files or 256 MB for your organization, and keeps each file 30 days. A file can be 20 MB from your computer, 4 MB from the Amiga.',
+          'Up to 4 MB a file, and 32 files or 16 MB waiting for one board.',
+          'Nothing is copied out of NET:, and a copy into it leaves the original where it was.',
+          'STASH: keeps no versions: a delete there cannot be undone.',
+        ]} />
+      </>
+    ),
+  },
+
   // Sources: spec docs/superpowers/specs/2026-10-25-phase-c3-upload-design.md §2.2; docs/superpowers/specs/2026-10-16-paulanet-phase4-send-to-amiga-design.md §1 (D4 limits, D8 never
   // overwrite, D9 accepted risk), §4 (the Upload page column, Browse Send, Send .adf), §5 (Receive, now Transfer, and Install);
   // src/lib/send-limits.ts (XFER_FW, limits), src/lib/send-ui.ts (the words), tools/paulanet-disk/Install;
-  // plan 2026-10-17 rulings R1 (1.15.0), R9 (Cancel while sending), R10 (Retry);
-  // spec 2026-10-23-upload-staging-design.md §1-§2 (the one Staging list, its filters, Clear finished, every board's rows),
-  // src/lib/upload-staging.ts (the status words), src/components/ingest/staging-list.tsx.
+  // plan 2026-10-17 ruling R1 (1.15.0); Files spec 2026-10-29 §4.3, §5.1 and increment 3 rulings R1-R7 (the Send drop
+  // zone, NET:/<board> rows, copies into NET:, Delete cancels or clears, no Retry), src/lib/send-ui.ts (transferState).
+  // The Upload page and its Staging list retired with increment 3.
   send: {
     title: 'Sending files to the Amiga',
     short:
@@ -498,19 +588,17 @@ export const HELP_TOPICS = {
           Save. The default folder is RAM:.
         </p>
         <p>
-          <strong>Three ways to send.</strong> On the Upload page, drop files on <em>Send files to the
-          Amiga</em>, or press <em>Choose files</em>; with more than one board, pick the board under it. On a disk&apos;s
-          page, a file&apos;s or folder&apos;s ⋯ menu has <em>Send to Amiga</em>. On a title&apos;s page,
-          press <em>Send .adf to Amiga</em> to send a whole disk as one file. Each shows in the <em>Staging</em> list
-          under <em>To the Amiga</em>, every board&apos;s together: waiting, sending, delivered with its saved name, or
-          failed, and why.
+          <strong>Three ways to send.</strong> On the Files page, drop files or a folder on <em>Send files to the
+          Amiga</em>, or press <em>Choose files</em>; with more than one board, pick the board under it. In the panes,
+          copy files or folders into <em>NET:</em> and the board — from a disk or from <em>STASH:</em>. On a
+          title&apos;s page, press <em>Send .adf to Amiga</em> to send a whole disk as one file. Each waits under{' '}
+          <em>NET:</em> and the board: waiting, sending, delivered with its saved name, or failed, and why.
         </p>
         <GoodToKnow items={[
           'Up to 4 MB a file, and up to 32 files or 16 MB waiting for one board.',
           'A file sent while Transfer is closed waits up to 24 hours, then expires.',
           'Nothing is overwritten: a second Foo.lha arrives as Foo_2.lha.',
-          'Cancel stops a waiting or sending file; Retry sends a failed one again from the start.',
-          'Clear finished drops the delivered, failed, cancelled or expired files the list shows.',
+          'Delete on a waiting or sending file cancels it; on a finished one it clears it. To send a failed file again, copy it into NET: again.',
           'A board whose Amiga was running when a new driver disk came out keeps its older driver disk until the Amiga has been off a while; then it gets the new one.',
           'While Transfer runs, any computer on your network can drop a file into its folder. It cannot overwrite anything or leave the folder, and nothing is run.',
         ]} />
@@ -519,13 +607,14 @@ export const HELP_TOPICS = {
   },
   // Sources: spec docs/superpowers/specs/2026-10-18-amiga-to-web-upload-design.md §1 (U2 the ways to send, U4 resume,
   // U5 limits, U6 the area, U7 trust), §2 (Receive, now Transfer), §4 (Add to library, attachments), §6 (the key digits);
-  // spec 2026-10-23-upload-staging-design.md decision 2 + §2 (the Staging list, Phase C3 spec §4 (header, filter, footer), Clear finished keeps stored files, Stop,
-  // Open title), src/lib/upload-staging.ts (the status words);
+  // Files spec 2026-10-29 §4.2 and increment 3 (STASH: holds the Amiga's files, marked with the board; Delete stops one
+  // still arriving; the key digits on the board's row under NET:, plan-writer ruling 8); src/lib/files/arriving.ts
+  // (a pane re-reads an arriving row; STALL_MS two minutes, the stopped words);
   // src/lib/amiga-upload-limits.ts (UPLOAD_FW, limits), src/lib/from-amiga-ui.ts, tools/receive/amiga/gui.c.
   'from-amiga': {
     title: 'Files from the Amiga',
     short:
-      "Send files from your Amiga to the web app with Transfer. They land in the Upload page's Staging list, under From the Amiga, where you can download them, add disk images to your library or send them on.",
+      'Send files from your Amiga to the web app with Transfer. They land in STASH: on the Files page, marked with the board, where you can download them, add disk images to your library, copy them onto a disk or send them on.',
     body: (
       <>
         <p>
@@ -536,19 +625,19 @@ export const HELP_TOPICS = {
         <p>
           <strong>Your board, and only yours.</strong> Transfer trusts the first board it meets: it saves that
           board&apos;s key and shows four of its digits, such as <em>Trusted board AB12</em>. The same four digits appear
-          under the Staging list on the Upload page, so check they match your board. Transfer sends only to that board; if another one connects it
+          on your board&apos;s row under NET: in Files (<em>key AB12</em>), so check they match your board. Transfer sends only to that board; if another one connects it
           stops, and <em>Trust this board</em> (or <em>TRUST</em> in the Shell) accepts the new one.
         </p>
         <p>
-          <strong>In the list.</strong> <em>Add to library</em> puts a stored disk image in your library; then{' '}
-          <em>Open title</em> goes to it. <em>Stop</em> ends a file still arriving and deletes what arrived. <em>Show</em> picks which rows the list holds: All,
-          From the Amiga, To the Amiga or To the library.
+          <strong>In STASH:.</strong> A file arriving that has not moved for two minutes reads <em>Stopped at N %</em>:
+          send it again from the Amiga. <em>Add to library</em> puts a stored disk image in your library; the
+          toast&apos;s <em>Open title</em> goes to it. <em>Delete</em> removes a file, or stops one still arriving and
+          deletes what arrived.
         </p>
         <GoodToKnow items={[
           'Up to 4 MB a file. The area holds up to 500 files or 256 MB for your organization, and keeps each file 30 days.',
-          'A file cut off by a reset or a lost connection continues where it stopped when you send it again within 24 hours. A stopped file can be sent again in that time, or ended with Stop.',
+          'A file cut off by a reset or a lost connection continues where it stopped when you send it again within 24 hours. A stopped file can be sent again in that time, or deleted in STASH:.',
           'Add to library is offered for ADF, DSK, ADZ, DMS, DMZ and HFE files; nothing is added on its own.',
-          'Clear finished never removes a stored file; only Delete does.',
           'Download always saves the file; a web page is never opened in the browser.',
         ]} />
       </>
@@ -714,7 +803,7 @@ export const HELP_TOPICS = {
       <>
         <p>
           <strong>Start page.</strong> Where you land after signing in, and when you open the site&apos;s address:
-          Library, Devices or Upload. Library unless you change it.
+          Library, Devices or Files. Library unless you change it.
         </p>
         <p>
           <strong>Library opens in.</strong> Grid or Table: how the library shows when you open it. The grid and
@@ -733,6 +822,10 @@ export const HELP_TOPICS = {
         <p>
           <strong>Changing them.</strong> Settings (the gear at the top; More, then Settings, on a phone) lists every preference under Account, and
           each change there is kept as soon as you make it.
+        </p>
+        <p>
+          <strong>Files.</strong> Its own section sets the panes Files opens with, .info files, the Comment column,
+          whether Delete asks and what happens when a name exists.
         </p>
         <p>
           <strong>Firmware updates.</strong> Settings can stop <em>Update</em> on Devices asking for your password.
@@ -760,8 +853,8 @@ export type HelpGroup = { id: HelpGroupId; name: string; topics: readonly HelpTo
  */
 export const HELP_GROUPS: readonly HelpGroup[] = [
   { id: 'drives', name: 'Drives', topics: ['boards', 'display', 'second-drive', 'next-disk', 'nfc', 'write-protect'] },
-  { id: 'disks', name: 'Library and disks', topics: ['library', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image'] },
-  { id: 'network', name: 'Amiga networking', topics: ['network', 'send', 'from-amiga'] },
+  { id: 'disks', name: 'Library and disks', topics: ['library', 'files', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image'] },
+  { id: 'network', name: 'Amiga networking', topics: ['network', 'stash-net', 'send', 'from-amiga'] },
   { id: 'server', name: 'This server', topics: ['preferences', 'sharing', 'remote', 'own-server', 'about'] },
 ];
 

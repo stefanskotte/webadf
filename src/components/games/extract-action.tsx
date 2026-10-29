@@ -5,14 +5,16 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Link } from '@/components/shell/link';
 import { NOT_EXTRACTABLE } from '@/lib/hfe/messages';
+import { filesHrefForDisk } from '@/lib/files/path';
 import { HelpTip } from '@/components/help/help-tip';
 
 /**
  * Extract as ADF, or -- when the HFE is not a clean AmigaDOS disk -- the one
  * line saying why not (show-both-values: never a silently absent button).
  */
-export function ExtractAction({ diskId, extractable, reason, help = true }: {
-  diskId: string; extractable: boolean; reason: string | null;
+export function ExtractAction({ diskId, gameId, extractable, reason, help = true }: {
+  /** The HFE, and its title: the extracted ADF is a disk of the same title. */
+  diskId: string; gameId: string; extractable: boolean; reason: string | null;
   /** Draw the HFE "?" -- one per page, chosen by the parent (DiskRow's helpHfe). */
   help?: boolean;
 }) {
@@ -91,7 +93,7 @@ export function ExtractAction({ diskId, extractable, reason, help = true }: {
         <span className="break-words text-[11.5px]" style={{ color: 'var(--amber-text)' }}
               role="status" data-testid={`extract-edited-${diskId}`}>
           Already extracted, and that ADF has been edited since.{' '}
-          <Link href={`/disks/${editedId}/files#disk-history`} className="font-semibold underline underline-offset-2"
+          <Link href={filesHrefForDisk(gameId, editedId, true)} className="font-semibold underline underline-offset-2"
                 data-testid={`extract-edited-link-${diskId}`}>
             Open it
           </Link>

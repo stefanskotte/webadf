@@ -113,7 +113,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
             shared list of targets cannot express it. devices x disks is a
             handful of rows either way.
           */
-          <DiskRow key={disk.id} disk={disk} from={from} view={view} fobDevices={readers} send={send}
+          <DiskRow key={disk.id} disk={disk} gameId={game.id} from={from} view={view} fobDevices={readers} send={send}
                    // One "?" per feature per page: NFC on the first row, write
                    // protection on the first row that has the toggle (not HFE),
                    // HFE on the first HFE row.

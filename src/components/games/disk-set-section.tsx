@@ -222,7 +222,7 @@ export function DiskSetSection({ gameId, title, entries, from, view = null, fobD
           const { disk, choices } = byId.get(id)!;
           return (
             <DiskRow
-              key={disk.id} disk={disk} from={from} view={view} fobDevices={fobDevices} send={send} choices={choices}
+              key={disk.id} disk={disk} gameId={gameId} from={from} view={view} fobDevices={fobDevices} send={send} choices={choices}
               kind={kind} authored={authored}
               helpNfc={i === 0}
               helpProtect={id === shown.find((sid) => byId.get(sid)!.disk.imageFormat !== 'hfe')}

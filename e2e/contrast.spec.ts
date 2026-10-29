@@ -22,27 +22,25 @@ import { test, expect, type Page } from '@playwright/test';
  * this repo names. Assert the composited pixels.
  */
 import { randomUUID } from 'node:crypto';
-import { signUpFresh, runTag, createAdf, openRowMenu, openVersion, mintInviteCode } from './helpers';
+import { signUpFresh, runTag, openVersion, mintInviteCode } from './helpers';
 import { cleanupSeeded, seedDisk, pairDevice, authHeader, openBoardSettings, hydrated, seedDevices, publishTestRelease, cleanupTestReleases } from './device-helpers';
 import { readCurrentRelease } from '@/lib/firmware-releases';
 import { revokeInvite } from '@/lib/invites';
 import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
 import { getDb } from '@/db';
-import { blobs, games, disks } from '@/db/schema/catalog';
-import { readVolume } from '@/lib/adffs';
+import { blobs, disks } from '@/db/schema/catalog';
+import { formatVolume } from '@/lib/adffs/format';
+import { diskStore } from '@/lib/storage';
 import { devices } from '@/db/schema/devices';
-import { amigaUploads } from '@/db/schema/amiga-uploads';
-import { transfers } from '@/db/schema/transfers';
-import { and, eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { signInAsSuperAdmin, SUPERADMIN_EMAIL, gotoAdminUserRow } from './admin-helpers';
+import { boardSays, boardOpens, boardSendsChunks, boardTakesNext, boardUploads } from './amiga-board';
+import { zipSync } from 'fflate';
 
-// Upload test rows: all belong to that test's own fresh org; amiga_uploads are removed by id here (the org's other
-// rows go with its teardown), transfers cascade with the paired device in cleanupSeeded().
-const uploadIdsToDelete: string[] = [];
+// Transfers and Amiga uploads made here belong to a fresh org: cleanupSeeded() removes its boards and the org.
 test.afterAll(async () => {
   await cleanupTestReleases();
-  if (uploadIdsToDelete.length) await getDb().delete(amigaUploads).where(inArray(amigaUploads.id, uploadIdsToDelete)).catch(() => undefined);
   await cleanupTosec(); await cleanupSeeded();
 });
 
@@ -462,145 +460,434 @@ test('the Devices pairs are legible: drive box, tile caption, offline strip, pil
   }
 });
 
-// Phase C3 (spec §8): the Upload pairs, measured on the real elements of a seeded org -- a stored, a receiving and a
-// failed Amiga file, a queued send, and one library row from a real drop. Every row belongs to this test's own org.
-test('the Upload pairs are legible: pills, statuses, where on a hovered row, counts, footnote, receiver, Delete, Browse, hint', async ({ page, request }) => {
-  const u = await signUpFresh(page);
-  const { deviceId, token } = await pairDevice(page, request, `Up ${runTag().slice(0, 6)}`);
-  expect((await request.post('/api/device/status', { headers: authHeader(token),
-    data: { mountedSha256: null, firmwareVersion: '1.19.0+gabc1234', secondDrive: 'net', driveVersion: 0, upKey: 'ab12' } })).status()).toBe(204);
-  const now = Date.now();
-  const ids = { stored: randomUUID(), moving: randomUUID(), failed: randomUUID(), queued: randomUUID() };
-  await getDb().insert(amigaUploads).values([
-    { id: ids.stored, orgId: u.orgId, deviceId, deviceName: 'Up', path: 'Keep.txt', sizeBytes: 11, amigaDate: '17000.600.0',
-      status: 'stored', receivedBytes: 11, blobSha256: '0'.repeat(64), createdAt: new Date(now), storedAt: new Date(now), expiresAt: new Date(now + 30 * 86_400_000) },
-    { id: ids.moving, orgId: u.orgId, deviceId, deviceName: 'Up', path: 'Moving.bin', sizeBytes: 20_000, amigaDate: '17000.600.0',
-      status: 'receiving', receivedBytes: 16_384, createdAt: new Date(now - 1000), expiresAt: new Date(now + 86_400_000) },
-    { id: ids.failed, orgId: u.orgId, deviceId, deviceName: 'Up', path: 'Bad.txt', sizeBytes: 11, amigaDate: '17000.600.0',
-      status: 'failed', receivedBytes: 11, errorCode: 'crc', createdAt: new Date(now - 2000), expiresAt: new Date(now + 86_400_000) },
-  ]);
-  uploadIdsToDelete.push(ids.stored, ids.moving, ids.failed);
-  await getDb().insert(transfers).values([
-    { id: ids.queued, orgId: u.orgId, deviceId, createdByUserId: 'e2e-contrast', path: 'Wait.bin', sizeBytes: 11, crc32: 0,
-      blobSha256: '0'.repeat(64), status: 'queued', createdAt: new Date(now - 3000), expiresAt: new Date(now + 7 * 86_400_000) },
-  ]);
-  await page.setViewportSize({ width: 1440, height: 1100 });
-  await page.goto('/ingest');
-  const k = (p: string, id: string) => `[data-testid="${p}-${id}"]`;
-  await expect(page.locator(k('staging-status', `amiga:${ids.moving}`))).toContainText('Arriving', { timeout: 15_000 });
+// Files increment 3 (Task 7): the Upload page retired into Files (NET:, the Send drop zone) and the Library (Add disks
+// ▾, the drop overlay, the tray), so its pairs are measured there now. NET: at 1280 x 900: the Send zone (title, hint,
+// board line, receiver line), a board row's marks and a queue row's state marks (Waiting, Delivered · saved as …,
+// Failed · …), one style each, each measured. Every row belongs to this test's own org.
 
-  // A library row from a real drop into this org (a fake ADF whose first bytes are unique to this run).
-  const adf = Buffer.alloc(901_120);
-  adf.write(`DOS\0contrast-${runTag()}`, 0);
-  const libSha = createHash('sha256').update(adf).digest('hex');
-  await page.getByTestId('file-input').setInputFiles({ name: 'contrast.adf', mimeType: 'application/octet-stream', buffer: adf });
-  await expect(page.locator(`[data-testid="staging-row"][data-key="lib:${libSha}"]`)).toHaveAttribute('data-state', 'done', { timeout: 30_000 });
+/** Marks a pane row's mark span reading `text` for probe(): the marks share one class list, so they are told by text. */
+async function tagMark(page: Page, side: 'left' | 'right', name: string, text: string, tag: string) {
+  await page.evaluate(({ side, name, text, tag }) => {
+    const row = document.querySelector(`[data-testid="pane-${side}"] [data-testid="pane-row"][data-name="${name}"]`);
+    const m = [...(row?.querySelectorAll('span.rounded-full.border') ?? [])].find((s) => s.textContent === text);
+    m?.setAttribute('data-probe', tag);
+  }, { side, name, text, tag });
+  return `[data-probe="${tag}"]`;
+}
 
-  const pairs: [string, string][] = [
-    ['From Amiga pill', k('staging-dir', `amiga:${ids.stored}`)],
-    ['To Amiga pill', k('staging-dir', `send:${ids.queued}`)],
-    ['To library pill', k('staging-dir', `lib:${libSha}`)],
-    ['done status', k('staging-status', `amiga:${ids.stored}`)],
-    ['moving status', k('staging-status', `amiga:${ids.moving}`)],
-    ['waiting status', k('staging-status', `send:${ids.queued}`)],
-    ['failed status', k('staging-status', `amiga:${ids.failed}`)],
-    ['size', k('staging-size', `amiga:${ids.stored}`)],
-    ['unchecked filter count', '[data-testid="staging-filter-in"] > span'],
-    ['footnote', '#from-amiga footer > span:first-child'],
-    ['receiver line', '[data-testid="send-receiver"]'],
-    ['Delete', k('staging-delete', `amiga:${ids.stored}`)],
-    ['Browse files', '[data-testid="add-browse"]'],
-    ['drop-card hint', '[data-testid="dropzone-hint"]'],
-  ];
-  for (const [what, sel] of pairs) {
-    const p = await probe(page, sel);
-    expect(p, `${what}: ${sel} not found`).toBeTruthy();
-    const r = ratio(p!.fg, p!.bg);
-    console.log(`upload    ${what.padEnd(24)} ${r.toFixed(2)}:1  "${p!.text.slice(0, 24)}"`);
-    expect(r, what).toBeGreaterThan(4.5);
+test('the Files NET: pairs are legible: Send zone title, hint, board and receiver lines; board marks; queue state marks', async ({ page, request }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  for (const name of ['Wait.txt', 'Done.txt', 'Full.txt']) {
+    expect((await page.request.post(`/api/transfers?deviceId=${deviceId}&name=${name}`, { data: Buffer.from(name),
+      headers: { 'content-type': 'application/octet-stream' } })).status()).toBe(201);
   }
-  // A hovered row sits on --modal-foot; its where line is --muted-2.
-  await page.locator(`[data-testid="staging-row"][data-key="amiga:${ids.stored}"]`).hover();
-  const where = await probe(page, k('staging-where', `amiga:${ids.stored}`));
-  expect(where, 'where line not found').toBeTruthy();
-  const rw = ratio(where!.fg, where!.bg);
-  console.log(`upload    where on a hovered row   ${rw.toFixed(2)}:1`);
-  expect(rw, 'where on a hovered row').toBeGreaterThan(4.5);
-  await page.screenshot({ path: 'test-results/zz-upload.png', fullPage: true });
+  // The oldest two taken: Wait.txt was queued first, so it is delivered; Done.txt fails; Full.txt waits.
+  await boardTakesNext(request, token, { ok: true, savedAs: 'Wait_2.txt' });
+  await boardTakesNext(request, token, { ok: false, code: 'space', text: 'disk full' });
+  await page.goto(`/files?${new URLSearchParams({ left: 'NET:', right: `NET:/${deviceId}`, active: 'right' })}`);
+  await hydrated(page, 'files-manager', 'onKeyDown');
+  await expect(page.getByTestId('files-send-receiver')).toBeVisible();
+  await expect(page.locator('[data-testid="pane-right"] [data-testid="pane-row"][data-name="Wait.txt"]')).toContainText('Delivered', { timeout: 15_000 });
+  await page.mouse.move(0, 0);
+  await legible(page, 'net', [
+    ['Send zone title', '#files-drop-send-heading'],
+    ['Send zone hint', '[data-testid="files-drop-send-hint"]'],
+    ['board line', '[data-testid="files-send-board"]'],
+    ['receiver line', '[data-testid="files-send-receiver"]'],
+    ['board "key AB12" mark', await tagMark(page, 'left', 'Bench', 'key AB12', 'key')],
+    ['board "1 waiting" mark', await tagMark(page, 'left', 'Bench', '1 waiting', 'waiting')],
+    ['"Waiting" mark', await tagMark(page, 'right', 'Full.txt', 'Waiting', 'w')],
+    ['"Delivered · saved as" mark', await tagMark(page, 'right', 'Wait.txt', 'Delivered · saved as Wait_2.txt', 'd')],
+    ['"Failed · …" mark', await tagMark(page, 'right', 'Done.txt', 'Failed · not enough space on the Amiga', 'f')],
+  ]);
+  await page.screenshot({ path: 'test-results/zz-files-net.png', fullPage: true });
 });
 
-// Phase C4 (spec §11): the Disk files pairs, measured on the real elements of a fresh org's own disk.
-test('the Disk files pairs are legible: banner, rows, glyphs, chips, column heads, footer, History, menu, bar', async ({ page }) => {
-  test.setTimeout(90_000);   // a sign-up, a disk, four uploads and a dozen probes: over Playwright's 30 s default
-  const u = await signUpFresh(page);
+// Task 7 review carry: the old Upload test also measured the From the Amiga side -- a failed status, the size column,
+// the Delete button and a hovered row's line. Those are STASH: rows in Files now, measured here at 1280 x 900 on this
+// test's own org. (The "from" and "arriving" marks and the STASH: zone are the STASH: block's, below.)
+test('the Files STASH: row pairs are legible: the failed mark, size, Delete, a hovered row', async ({ page, request }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  await boardUploads(request, token, 'Keep.txt', Buffer.from('kept bytes!'));
+  const moving = await boardOpens(request, token, 'Moving.bin', 20_000);
+  await boardSendsChunks(request, token, moving.id, Buffer.alloc(20_000, 1), 0, 1);
+  const bad = Buffer.from('broken');
+  const failed = await boardOpens(request, token, 'Bad.txt', bad.length);
+  await boardSendsChunks(request, token, failed.id, bad);
+  expect((await request.post(`/api/device/upload/${failed.id}/close`, { headers: authHeader(token), data: { crc32: 1 } })).status()).toBe(409);
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: 'LIBRARY:', active: 'left' })}`);
+  await hydrated(page, 'files-manager', 'onKeyDown');
+  const row = (name: string) => `[data-testid="pane-left"] [data-testid="pane-row"][data-name="${name}"]`;
+  await expect(page.locator(row('Moving.bin'))).toContainText('arriving 81%', { timeout: 15_000 });
+  await page.locator(row('Keep.txt')).click();
+  await expect(page.getByTestId('files-delete')).toBeEnabled();
+  await page.mouse.move(0, 0);
+  await legible(page, 'stash', [
+    ['"failed — …" mark', await tagMark(page, 'left', 'Bad.txt', 'failed — damaged on the way: send it again', 'fail')],
+    ['size', `${row('Moving.bin')} td:nth-child(3)`],
+    ['size on the selected row', `${row('Keep.txt')} td:nth-child(3)`],
+    ['Delete', '[data-testid="files-delete"]'],
+  ]);
+  // A hovered row sits on --surface-2: its size, date and marks still read.
+  await page.locator(row('Moving.bin')).hover();
+  await legible(page, 'stash', [
+    ['size on a hovered row', `${row('Moving.bin')} td:nth-child(3)`],
+    ['date on a hovered row', `${row('Moving.bin')} td:nth-child(5)`],
+    ['mark on a hovered row', await tagMark(page, 'left', 'Moving.bin', 'arriving 81%', 'arr')],
+  ]);
+  await page.screenshot({ path: 'test-results/zz-files-stash.png', fullPage: true });
+});
+
+// The Library's own way in (Files increment 3, R8/R9): Add disks ▾ and its menu, the drop overlay's words over the
+// scrim, and the tray (summary, Added, Already in the library, Refused — why, Open title) at 1280 x 900.
+test('the Library add pairs are legible: Add disks, its menu, the drop overlay, the tray summary and row states', async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await signUpFresh(page);
   await page.goto('/library');
-  await createAdf(page);
-  await expect(page.getByTestId('game-card')).toHaveCount(1, { timeout: 15_000 });
-  const [game] = await getDb().select().from(games).where(and(eq(games.orgId, u.orgId), eq(games.authored, true)));
-  const [disk] = await getDb().select().from(disks).where(eq(disks.gameId, game.id));
+  await hydrated(page, 'library-add-disks', 'onClick');
+  await legible(page, 'library', [['Add disks', '[data-testid="library-add-disks"]']]);
+  await page.getByTestId('library-add-disks').click();
+  await expect(page.getByTestId('library-add-disks-panel')).toBeVisible();
+  await legible(page, 'library', [
+    ['menu Browse files…', '[data-testid="library-add-browse"]'],
+    ['menu Paste a URL…', '[data-testid="library-add-url"]'],
+  ]);
+  await page.keyboard.press('Escape');
+
+  // The overlay, raised by a drag over the page.
+  await page.waitForFunction(() => document.querySelector('[data-testid="library-drop-target"]')?.getAttribute('data-native-drop') === 'ready');
+  await page.evaluate(() => {
+    const e = new Event('dragenter', { bubbles: true, cancelable: true });
+    (e as unknown as { dataTransfer: unknown }).dataTransfer = { types: ['Files'], items: [{ kind: 'file' }], dropEffect: 'none' };
+    document.body.dispatchEvent(e);
+  });
+  await expect(page.getByTestId('library-drop-overlay')).toBeVisible();
+  await legible(page, 'library', [
+    ['overlay title', '[data-testid="library-drop-overlay"] h3'],
+    ['overlay kinds line', '[data-testid="library-drop-overlay"] p'],
+  ]);
+  await page.evaluate(() => {
+    const e = new Event('dragleave', { bubbles: true, cancelable: true });
+    (e as unknown as { dataTransfer: unknown }).dataTransfer = { types: ['Files'], items: [{ kind: 'file' }], dropEffect: 'none' };
+    document.body.dispatchEvent(e);
+  });
+  await expect(page.getByTestId('library-drop-overlay')).toHaveCount(0);
+
+  // The tray: one added, then the same again (already in the library) beside a refused text file.
+  const adf = Buffer.alloc(901_120);
+  adf.write(`DOS\0contrast-${runTag()}`, 0);
+  const sha = createHash('sha256').update(adf).digest('hex');
+  const pick = (files: { name: string; buffer: Buffer }[]) => page.getByTestId('file-input')
+    .setInputFiles(files.map((f) => ({ ...f, mimeType: 'application/octet-stream' })));
+  await pick([{ name: 'Contrast (1990)(X).adf', buffer: adf }]);
+  await expect(page.getByTestId('library-tray-summary')).toHaveText('1 added', { timeout: 30_000 });
+  await legible(page, 'library', [
+    ['tray "Added"', `[data-key="lib:${sha}"] [data-testid="library-tray-state"]`],
+    ['tray Open title', `[data-testid="library-tray-open-${sha}"]`],
+  ]);
+  await pick([{ name: 'Contrast (1990)(X).adf', buffer: adf }, { name: 'notes.txt', buffer: Buffer.from('not a disk') }]);
+  await expect(page.getByTestId('library-tray-summary')).toHaveText(/already in the library/, { timeout: 30_000 });
+  await page.mouse.move(0, 0);
+  await legible(page, 'library', [
+    ['tray summary', '[data-testid="library-tray-summary"]'],
+    ['tray "Already in the library"', '[data-testid="library-tray-row"][data-state="deduped"] [data-testid="library-tray-state"]'],
+    ['tray "Refused — why"', '[data-testid="library-tray-row"][data-state="failed"] [data-testid="library-tray-state"]'],
+  ]);
+  await page.screenshot({ path: 'test-results/zz-library-add.png', fullPage: true });
+});
+
+// Files increment 1 (Task 11): the Files pairs at 1280 x 900, on a fresh org's own disks -- the active and inactive
+// pane headers, a selected row, the button column, the current sort head, the strip's drive chip, the read-only line,
+// the "new in vN" mark, and the strip's History. Replaces the Browse page's Disk files block (C4): its head page now
+// redirects here. The per-version page (?version=N) is still the Browse page, so its banner is measured as before.
+test('the Files pairs are legible: pane headers, selected row, buttons, sort head, drive chip, read-only line, History', async ({ page, request }) => {
+  test.setTimeout(90_000);   // a sign-up, two stored disks, four edits and a few dozen probes
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const u = await signUpFresh(page);
+  const run = runTag();
+  const stored = async (title: string) => {
+    const adf = formatVolume({ filesystem: 'FFS', volumeName: title.slice(0, 20) });
+    const sha256 = createHash('sha256').update(adf).digest('hex');
+    await diskStore.put(sha256, adf);
+    return { sha256, ...(await seedDisk(u.orgId, { title, diskNo: 1, sha256, writeProtected: false })) };
+  };
+  // Distinct bytes per title: the volume name is in them.
+  const own = await stored(`Contrast W ${run.slice(-6)}`);
+  const held = await stored(`Contrast H ${run.slice(-6)}`);
   for (const name of ['Prog', 'Prog.info', 'Notes.txt']) {
-    expect((await page.request.post(`/api/disks/${disk.id}/files`, { multipart: { parentBlock: '880', name,
+    expect((await page.request.post(`/api/disks/${own.diskId}/files`, { multipart: { parentBlock: '880', name,
       file: { name, mimeType: 'application/octet-stream', buffer: Buffer.from(name) } } })).status()).toBe(200);
   }
-  expect((await page.request.post(`/api/disks/${disk.id}/files`, { multipart: { parentBlock: '880', name: 'Docs' } })).status()).toBe(200);
-  const v = readVolume(new Uint8Array(await (await page.request.get(`/api/disks/${disk.id}/adf`)).body()));
-  if (!v.ok) throw new Error('fixture');
-  const blk = Object.fromEntries(v.root.map((e) => [e.name, e.block]));
-  await page.setViewportSize({ width: 1440, height: 1100 });
-  await page.goto(`/disks/${disk.id}/files`);
-  const sw = page.getByTestId('fs-hide-info');
-  const was = await sw.getAttribute('aria-checked');
-  if (was !== 'true') await sw.click();                       // .info badge on Prog
-  await page.getByTestId(`fs-select-${blk['Notes.txt']}`).check();   // a selected row and the ink strip
-  const pairs: [string, string][] = [
-    ['size', `[data-testid="fs-entry"][data-name="Prog"] .font-mono > span:first-child`],
-    ['selected row date', `[data-testid="fs-entry"][data-name="Notes.txt"] .font-mono > span:last-child`],
-    ['column head', '[data-testid="fs-columns"] > span:nth-child(3)'],
-    ['footer', '[data-testid="fs-footer"]'],
-    ['.info badge', `[data-testid="fs-info-${blk.Prog}"]`],
-    ['DIR glyph', `[data-testid="fs-glyph-${blk.Docs}"]`],
-    ['EXE glyph', `[data-testid="fs-glyph-${blk.Prog}"]`],
-    ['set protection bit', `[data-testid="fs-protect-${blk.Prog}"] > span:nth-child(5)`],
-    ['clear protection bit', `[data-testid="fs-protect-${blk.Prog}"] > span:nth-child(1)`],
-    ['new in vN', `[data-testid="fs-new-${blk.Prog}"]`],
-    ['selection button', '[data-testid="fs-bulk-move"]'],
-    ['Current', '[data-testid^="current-"]'],
-    ['version time', '[data-testid^="version-toggle-"] .font-mono'],
-    ['+N chip', '[data-testid^="version-counts-"] > span:first-child'],
-    ['drop bar sub line', '[data-testid="drop-strip"] .text-\\[12px\\]'],
-    ['holder words', `[data-testid="holder-${disk.id}"]`],
-  ];
-  for (const [what, sel] of pairs) {
-    const p = await probe(page, sel);
-    expect(p, `${what}: ${sel} not found`).toBeTruthy();
-    const r = ratio(p!.fg, p!.bg);
-    console.log(`disk-files ${what.padEnd(24)} ${r.toFixed(2)}:1  "${p!.text.slice(0, 24)}"`);
-    expect(r, what).toBeGreaterThan(4.5);
-  }
-  // A hovered row (surface-2) and a hovered older version: Restore... in --amber-text.
-  await page.locator(`[data-testid="fs-entry"][data-name="Prog"]`).hover();
-  const hovered = await probe(page, `[data-testid="fs-entry"][data-name="Prog"] .font-mono > span:first-child`);
-  expect(ratio(hovered!.fg, hovered!.bg), 'size on a hovered row').toBeGreaterThan(4.5);
+  expect((await page.request.post(`/api/disks/${own.diskId}/files`, { multipart: { parentBlock: '880', name: 'Docs' } })).status()).toBe(200);
+  const [h] = await getDb().select({ sha256: disks.sha256 }).from(disks).where(eq(disks.id, held.diskId));
+  const { deviceId } = await pairDevice(page, request, `Contrast ${run.slice(-6)}`);
+  await getDb().update(devices).set({
+    lastSeenAt: new Date(), desiredGameId: held.gameId, desiredDiskId: held.diskId, desiredSha256: h.sha256, desiredDiskNo: 1,
+    mountedGameId: held.gameId, mountedDiskId: held.diskId, mountedSha256: h.sha256, mountedDiskNo: 1,
+  }).where(eq(devices.id, deviceId));
+
+  // Left: the writable disk, active, Notes.txt selected. Right: the held disk, read-only.
+  const left = `LIBRARY:/${own.gameId}/${own.diskId}`;
+  const right = `LIBRARY:/${held.gameId}/${held.diskId}`;
+  await page.goto(`/files?${new URLSearchParams({ left, right, active: 'left' })}`);
+  await hydrated(page, 'files-manager', 'onKeyDown');
+  await page.getByTestId('pane-left').locator('[data-testid="pane-row"][data-name="Notes.txt"]').click();
+  await expect(page.getByTestId('files-delete')).toBeEnabled();
+  await expect(page.getByTestId('files-copy')).toBeDisabled();   // the other side is read-only
+  await page.mouse.move(0, 0);
+  const sel = '[data-testid="pane-left"] [data-testid="pane-row"][aria-selected="true"]';
+  await legible(page, 'files', [
+    ['active header crumb', '[data-testid="pane-left"][data-active="true"] [data-testid="pane-left-crumb-2"]'],
+    ['active header meta', '[data-testid="pane-left-meta"]'],
+    ['inactive header crumb', '[data-testid="pane-right"][data-active="false"] [data-testid="pane-right-crumb-2"]'],
+    ['inactive header meta', '[data-testid="pane-right-meta"]'],
+    ['device button (current)', '[data-testid="pane-left-dev-LIBRARY"]'],
+    ['selected row name', `${sel} td:nth-child(2) span.truncate`],
+    ['selected row size', `${sel} td:nth-child(3)`],
+    ['selected row date', `${sel} td:nth-child(5)`],
+    ['row size', '[data-testid="pane-left"] [data-testid="pane-row"][data-name="Prog"] td:nth-child(3)'],
+    ['set protection bit', '[data-testid="pane-left"] [data-testid="pane-row"][data-name="Prog"] td:nth-child(4) span > span:nth-child(5)'],
+    ['clear protection bit', '[data-testid="pane-left"] [data-testid="pane-row"][data-name="Prog"] td:nth-child(4) span > span:nth-child(1)'],
+    ['DIR glyph', '[data-testid="pane-left"] [data-testid="pane-row"][data-name="Docs"] td:nth-child(2) span[aria-hidden]'],
+    ['EXE glyph', '[data-testid="pane-left"] [data-testid="pane-row"][data-name="Prog"] td:nth-child(2) span[aria-hidden]'],
+    ['new in vN', '[data-testid="pane-new-Prog"]'],
+    ['sort head (current)', '[data-testid="pane-left-sort-name"] button'],
+    ['sort head', '[data-testid="pane-left-sort-size"] button'],
+    ['foot (selection)', '[data-testid="pane-left-foot"]'],
+    ['button (enabled)', '[data-testid="files-delete"]'],
+    ['button (Swap)', '[data-testid="files-swap"]'],
+    ['drive chip', '[data-testid="disk-strip-left"] [data-testid="disk-strip-drive"]'],
+    ['drive chip (held)', '[data-testid="disk-strip-right"] [data-testid="disk-strip-drive"]'],
+    ['strip usage', '[data-testid="disk-strip-left"] [data-testid="disk-strip-usage"]'],
+    ['read-only line (inactive pane)', '[data-testid="pane-right-readonly"]'],
+  ]);
+  // A disabled button is exempt (WCAG 1.4.3, inactive controls) and drawn at half opacity: measured with that
+  // opacity, logged, and required to say why it is off.
+  const off = await page.evaluate(() => {
+    let a = 1;
+    for (let n: Element | null = document.querySelector('[data-testid="files-copy"]'); n; n = n.parentElement) a *= Number(getComputedStyle(n).opacity);
+    return a;
+  });
+  const copy = await probe(page, '[data-testid="files-copy"]');
+  const blend = copy!.fg.slice(0, 3).map((v, i) => v * off + copy!.bg[i] * (1 - off));
+  console.log(`files     ${'button (disabled, exempt)'.padEnd(36)} ${ratio(blend, copy!.bg).toFixed(2)}:1  at opacity ${off}`);
+  await expect(page.getByTestId('files-copy')).toHaveAttribute('title', /in a drive/);
+  // A hovered row (surface-2).
+  await page.getByTestId('pane-left').locator('[data-testid="pane-row"][data-name="Prog"]').hover();
+  await legible(page, 'files', [['size on a hovered row', '[data-testid="pane-left"] [data-testid="pane-row"][data-name="Prog"] td:nth-child(3)']]);
+
+  // The right pane active: its read-only line and header on --viewing-bg.
+  await page.getByTestId('pane-right-foot').click();
+  await expect(page.getByTestId('pane-right')).toHaveAttribute('data-active', 'true');
+  await page.mouse.move(0, 0);
+  await legible(page, 'files', [
+    ['read-only line (active pane)', '[data-testid="pane-right-readonly"]'],
+    ['active header crumb (held)', '[data-testid="pane-right-crumb-2"]'],
+  ]);
+
+  // The strip's History over the left pane: Current, a version's time, the +N chip, Restore… on a hovered version.
+  await page.getByTestId('disk-strip-left').getByTestId('disk-strip-history-toggle').click();
+  const hist = page.getByTestId('disk-strip-history');
+  await expect(hist).toBeVisible();
+  await legible(page, 'history', [
+    ['Current', '[data-testid="disk-strip-history"] [data-testid^="current-"]'],
+    ['version time', '[data-testid="disk-strip-history"] [data-testid^="version-toggle-"] .font-mono'],
+    ['+N chip', '[data-testid="disk-strip-history"] [data-testid^="version-counts-"] > span:first-child'],
+  ]);
   await openVersion(page, 1);
-  await page.getByTestId('version-1').hover();
-  const restore = await probe(page, '[data-testid="restore-1"]');
-  expect(ratio(restore!.fg, restore!.bg), 'Restore... on a hovered version').toBeGreaterThan(4.5);
-  // The menu's Delete.
-  await openRowMenu(page, blk.Prog);
-  const del = await probe(page, `[data-testid="fs-delete-${blk.Prog}"]`);
-  expect(ratio(del!.fg, del!.bg), 'menu Delete').toBeGreaterThan(4.5);
-  await page.keyboard.press('Escape');
-  // The banner and the version on screen (--viewing-bg).
-  await page.goto(`/disks/${disk.id}/files?version=1`);
-  for (const [what, sel] of [['banner text', '[data-testid="version-banner"] > span'],
-    ['viewed version time', '[data-testid="version-toggle-1"] .font-mono']] as const) {
-    const p = await probe(page, sel);
-    expect(p, `${what}: ${sel} not found`).toBeTruthy();
-    expect(ratio(p!.fg, p!.bg), what).toBeGreaterThan(4.5);
+  await hist.getByTestId('version-1').hover();
+  await legible(page, 'history', [['Restore… on a hovered version', '[data-testid="restore-1"]']]);
+  await page.screenshot({ path: 'test-results/zz-files.png', fullPage: true });
+
+  // The per-version page (R3): the banner and the version on screen (--viewing-bg).
+  await page.goto(`/disks/${own.diskId}/files?version=1`);
+  await legible(page, 'version', [
+    ['banner text', '[data-testid="version-banner"] > span'],
+    ['viewed version time', '[data-testid="version-toggle-1"] .font-mono'],
+  ]);
+});
+
+// Files increment 2 (Task 9): the STASH: pairs at 1280 x 900 -- the drop zone (title, hint, Browse files, the URL
+// field), the row marks ("from <board>", "arriving N%", "can't open — …": one style, each measured), the row buttons
+// Open and Add to library (--accent-blue at 11.5 px), the column's Add to library enabled and disabled, and an
+// archive's read-only line. Every row belongs to this test's own org (its teardown removes them).
+test('the Files STASH: pairs are legible: drop zone, marks, row buttons, Add to library, archive read-only line', async ({ page, request }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  await boardUploads(request, token, 'Hi.txt', Buffer.from('hi'));
+  const { id: moving } = await boardOpens(request, token, 'Moving.bin', 20_000);
+  await boardSendsChunks(request, token, moving, Buffer.alloc(20_000, 1), 0, 1);   // 16 KB of 20: arriving 81%
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: 'LIBRARY:', active: 'left' })}`);
+  await hydrated(page, 'files-manager', 'onKeyDown');
+  // A disk image (Add to library on its row) and a zip with one member whose name cannot be a STASH: name.
+  const zip = zipSync({ 'ok.txt': new TextEncoder().encode('ok'), 'bad\u0001name.txt': new TextEncoder().encode('x') });
+  await page.getByTestId('files-stash-input').setInputFiles([
+    { name: 'Game.adf', mimeType: 'application/octet-stream', buffer: Buffer.from(formatVolume({ filesystem: 'FFS', volumeName: `C${runTag().slice(-8)}` })) },
+    { name: 'w.zip', mimeType: 'application/zip', buffer: Buffer.from(zip) },
+  ]);
+  const r = (name: string) => `[data-testid="pane-left"] [data-testid="pane-row"][data-name="${name}"]`;
+  await expect(page.locator(r('w.zip'))).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(r('Moving.bin'))).toContainText('arriving 81%');
+  await page.getByTestId('files-stash-url-input').fill('https://example.org/demo.lha');   // typed, never fetched
+  await page.locator(r('Game.adf')).click();
+  await expect(page.getByTestId('files-addlib')).toBeEnabled();
+  await page.mouse.move(0, 0);
+  // The marks are the row's last spans: Moving.bin's "from Bench" then "arriving 81%".
+  const mark = (name: string, n: number) => `${r(name)} td:nth-child(2) > span > span.rounded-full.border:nth-of-type(${n})`;
+  await expect(page.locator(mark('Hi.txt', 3))).toHaveText('from Bench');
+  await expect(page.locator(mark('Moving.bin', 4))).toHaveText('arriving 81%');
+  await expect(page.locator(mark('w.zip', 3))).toHaveText('dropped');
+  await legible(page, 'stash', [
+    ['zone title', '#files-drop-stash-heading'],
+    ['zone hint', '[data-testid="files-drop-stash-hint"]'],
+    ['Browse files', '[data-testid="files-stash-browse"] > span'],
+    ['URL field (typed)', '[data-testid="files-stash-url-input"]'],
+    ['Fetch', '[data-testid="files-stash-url-fetch"]'],
+    ['"from <board>" mark', mark('Hi.txt', 3)],
+    ['"arriving N%" mark', mark('Moving.bin', 4)],
+    ['"dropped" mark', mark('w.zip', 3)],
+    ['row Open (archive)', '[data-testid="pane-open-w.zip"]'],
+    ['row Add to library', '[data-testid="pane-addlib-Game.adf"]'],
+    ['Add to library (enabled)', '[data-testid="files-addlib"]'],
+  ]);
+  // The row buttons on a hovered row (surface-2).
+  await page.locator(r('w.zip')).hover();
+  await legible(page, 'stash', [['row Open on a hovered row', '[data-testid="pane-open-w.zip"]']]);
+
+  // Add to library off (a text file picked): exempt, as every disabled button here, and says why.
+  await page.locator(r('Hi.txt')).click();
+  await expect(page.getByTestId('files-addlib')).toBeDisabled();
+  await page.mouse.move(0, 0);
+  // Polled: the button fades to its disabled opacity (transition-all), and mid-fade it reads lighter than it lands.
+  const opacity = () => page.evaluate(() => {
+    let a = 1;
+    for (let n: Element | null = document.querySelector('[data-testid="files-addlib"]'); n; n = n.parentElement) a *= Number(getComputedStyle(n).opacity);
+    return a;
+  });
+  await expect.poll(opacity).toBeLessThanOrEqual(0.5);
+  const off = await opacity();
+  const lib = await probe(page, '[data-testid="files-addlib"]');
+  const blend = lib!.fg.slice(0, 3).map((v, i) => v * off + lib!.bg[i] * (1 - off));
+  console.log(`stash     ${'Add to library (disabled, exempt)'.padEnd(36)} ${ratio(blend, lib!.bg).toFixed(2)}:1  at opacity ${off}`);
+  await expect(page.getByTestId('files-addlib')).toHaveAttribute('title', /disk image/);
+
+  // Inside the archive: the read-only line in the active pane, and a member it cannot open.
+  await page.locator(r('w.zip')).dblclick();
+  await expect(page.getByTestId('pane-left-readonly')).toHaveText('Archives are read-only — copy files out of them.');
+  await expect(page.locator(r('bad_name.txt'))).toContainText("can't open — bad name");
+  await page.mouse.move(0, 0);
+  await legible(page, 'stash', [
+    ['archive read-only line (active)', '[data-testid="pane-left-readonly"]'],
+    ['"can\'t open — …" mark', `${r('bad_name.txt')} td:nth-child(2) span.rounded-full.border`],
+  ]);
+  await page.screenshot({ path: 'test-results/zz-files-stash.png', fullPage: true });
+});
+
+// Files increment 4 (Task 9): the filter box (typed text and its placeholder, which no selector reaches: its colour is
+// read from ::placeholder and rasterised as probe() does), the Show .info label and its Shown / Hidden words, the foot's
+// "N of M shown", and the Files settings card -- row labels, hints, and both switches' state words on and off.
+// (The STASH: "dropped" mark is measured in the STASH: block above.)
+test('the Files filter and Files settings pairs are legible: filter and placeholder, Show .info, N of M shown, the card', async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const u = await signUpFresh(page);
+  const adf = formatVolume({ filesystem: 'FFS', volumeName: `Flt ${runTag().slice(-8)}` });
+  const sha256 = createHash('sha256').update(adf).digest('hex');
+  await diskStore.put(sha256, adf);
+  const d = await seedDisk(u.orgId, { title: `Contrast F ${runTag().slice(-6)}`, diskNo: 1, sha256, writeProtected: false });
+  for (const name of ['Prog', 'Prog.info', 'Notes.txt']) {
+    expect((await page.request.post(`/api/disks/${d.diskId}/files`, { multipart: { parentBlock: '880', name,
+      file: { name, mimeType: 'application/octet-stream', buffer: Buffer.from(name) } } })).status()).toBe(200);
   }
-  await page.goto(`/disks/${disk.id}/files`);
-  if (was !== 'true') await page.getByTestId('fs-hide-info').click();
-  await page.screenshot({ path: 'test-results/zz-disk-files.png', fullPage: true });
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: `LIBRARY:/${d.gameId}/${d.diskId}`, active: 'right' })}`);
+  await hydrated(page, 'files-manager', 'onKeyDown');
+  await page.mouse.move(0, 0);
+
+  // The placeholder, on the empty box.
+  const ph = await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="pane-right-filter"]') as HTMLInputElement;
+    const ctx = document.createElement('canvas').getContext('2d')!;
+    ctx.fillStyle = getComputedStyle(el, '::placeholder').color;
+    ctx.fillRect(0, 0, 1, 1);
+    const p = ctx.getImageData(0, 0, 1, 1).data;
+    return { fg: [p[0], p[1], p[2], p[3] / 255], text: el.placeholder };
+  });
+  const box = await probe(page, '[data-testid="pane-right-filter"]');
+  expect(box, 'filter box not found or transparent').toBeTruthy();
+  const phr = ratio(ph.fg, box!.bg);
+  console.log(`filter    ${'placeholder'.padEnd(36)} ${phr.toFixed(2)}:1  "${ph.text}"`);
+  expect(phr, 'filter: placeholder').toBeGreaterThan(4.5);
+
+  const infoWords = '[data-testid="pane-right-show-info"] + span';
+  await expect(page.locator(infoWords)).toHaveText('Shown');
+  await page.getByTestId('pane-right-filter').fill('n');
+  await expect(page.getByTestId('pane-right-foot')).toHaveText('2 of 3 shown');
+  await page.mouse.move(0, 0);
+  await legible(page, 'filter', [
+    ['filter text (typed)', '[data-testid="pane-right-filter"]'],
+    ['Show .info label', '#pane-right-show-info-label'],
+    ['Show .info "Shown"', infoWords],
+    ['foot "N of M shown"', '[data-testid="pane-right-foot"]'],
+  ]);
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'),
+    page.getByTestId('pane-right-show-info').click(),
+  ]);
+  await expect(page.locator(infoWords)).toHaveText('Hidden');
+  await page.mouse.move(0, 0);
+  await legible(page, 'filter', [
+    ['Show .info "Hidden"', infoWords],
+    ['foot "N of M shown · .info hidden"', '[data-testid="pane-right-foot"]'],
+  ]);
+
+  // The Files settings card: Show .info now off, Ask before deleting on; then each the other way.
+  await page.goto('/settings');
+  await hydrated(page, 'pref-files-left', 'onKeyDown');
+  await page.getByTestId('files-settings').scrollIntoViewIfNeeded();
+  await page.mouse.move(0, 0);
+  const labelOf = async (id: string) => `[id="${await page.getByTestId(id).getAttribute('aria-labelledby')}"]`;
+  const hintOf = async (id: string) => `[id="${(await page.getByTestId(id).getAttribute('aria-describedby'))!.split(' ').pop()}"]`;
+  await expect(page.getByTestId('pref-files-show-info-state')).toHaveText('Hidden');
+  await expect(page.getByTestId('pref-files-confirm-delete-state')).toHaveText('Asks');
+  await legible(page, 'files set', [
+    ['heading', '#files-heading'],
+    ['intro', '[data-testid="files-settings"] > p'],
+    ['save line', '[data-testid="files-prefs-state"]'],
+    ['row label', await labelOf('pref-files-left')],
+    ['row hint', await hintOf('pref-files-left')],
+    ['switch row label', await labelOf('pref-files-confirm-delete')],
+    ['switch row hint', await hintOf('pref-files-confirm-delete')],
+    ['checked radio', '[data-testid="pref-files-left-STASH"]'],
+    ['unchecked radio', '[data-testid="pref-files-left-NET"]'],
+    ['switch words (off) "Hidden"', '[data-testid="pref-files-show-info-state"]'],
+    ['switch words (on) "Asks"', '[data-testid="pref-files-confirm-delete-state"]'],
+  ]);
+  for (const id of ['pref-files-show-info', 'pref-files-confirm-delete']) {
+    await Promise.all([
+      page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'),
+      page.getByTestId(id).click(),
+    ]);
+  }
+  await expect(page.getByTestId('pref-files-show-info-state')).toHaveText('Shown');
+  await expect(page.getByTestId('pref-files-confirm-delete-state')).toHaveText("Doesn't ask");
+  await page.mouse.move(0, 0);
+  await legible(page, 'files set', [
+    ['switch words (on) "Shown"', '[data-testid="pref-files-show-info-state"]'],
+    ['switch words (off) "Doesn\'t ask"', '[data-testid="pref-files-confirm-delete-state"]'],
+  ]);
+  await page.screenshot({ path: 'test-results/zz-files-settings.png', fullPage: true });
 });
 
 // Phase C5 spec §11: the "?" and its open popover (the ink card).

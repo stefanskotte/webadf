@@ -18,16 +18,30 @@ export function queueResponse(r: QueueResult): Response {
   return Response.json({ error: refusalCode(r.reason) }, { status });
 }
 
-/** Store bytes in the disk store under their own sha-256 (R2) and return that sha-256, which is what the queue
- *  is given: the queue's `bytes` option checks only the length, so the hash must come from the same bytes. */
+const sha256Of = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
+
+/**
+ * Store bytes the SERVER holds (a Send, a board's close, a STASH: write or URL fetch) in the disk store under their own
+ * sha-256 (R2) and return that sha-256, which is what the queue is given: the queue's `bytes` option checks only the
+ * length, so the hash must come from the same bytes. A blob already at the key is reused only when it is these bytes,
+ * by size and by hash: anyone may presign a key and PUT other bytes there without committing, and a row must never name
+ * bytes that are not its own. Anything else there is overwritten with the real bytes, which every row naming the key
+ * is owed; a read that fails is no proof either way, so the bytes are put then too.
+ */
 export async function storeSendBytes(bytes: Uint8Array): Promise<string> {
-  const sha256 = createHash('sha256').update(bytes).digest('hex');
-  if (!(await diskStore.stat(sha256))) await diskStore.put(sha256, bytes);
+  const sha256 = sha256Of(bytes);
+  const held = await diskStore.stat(sha256);
+  if (held && held.sizeBytes === bytes.byteLength) {
+    const back = await diskStore.read(sha256).catch(() => null);
+    if (back && sha256Of(back) === sha256) return sha256;
+  }
+  // Overwrite even when absent: a PUT planted between the stat and this put must not win by "already exists".
+  await diskStore.put(sha256, bytes, { overwrite: true });
   return sha256;
 }
 
-/** A row as the browser sees it. A row still waiting or moving past its expiry reads 'expired' at once, as
- *  retryTransfer treats a lapsed queued row: the poll already skips it, and the daily cron only catches up the status. */
+/** A row as the browser sees it. A row still waiting or moving past its expiry reads 'expired' at once: the poll
+ *  already skips it, and the daily cron only catches up the status. */
 export function toView(r: TransferRow, now: number): TransferView {
   const lapsed = (r.status === 'queued' || r.status === 'sending') && r.expiresAt.getTime() <= now;
   return {

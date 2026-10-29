@@ -20,6 +20,11 @@ export interface ArchiveMember {
    *  NOT defaulted to 0 here: "said nothing" and "said rwed" are different
    *  claims and only the first may be replaced downstream. */
   protection: number | null;
+  /** The date the archive records (Unix time if it has one, else the DOS stamp
+   *  as a wall clock), or null when it records none. */
+  date: Date | null;
+  /** Always null: comments are out of scope for both readers. */
+  comment: string | null;
 }
 
 export interface ArchiveResult {
@@ -47,6 +52,9 @@ export const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 export const MAX_ZIP_MEMBER_BYTES = MAX_COMPRESSED_IMAGE_BYTES;
 /** What a whole zip or LHA may inflate to: the URL path's worst case, 20 images of 4 MiB. */
 export const MAX_ZIP_TOTAL_BYTES = 20 * MAX_COMPRESSED_IMAGE_BYTES;
+/** Most members a STASH: archive may hold (counted as the reader walks the headers, before inflating): an archive of
+ *  65,535 empty members costs a listing more than a function's 60 s, whatever the byte caps say. */
+export const MAX_ARCHIVE_MEMBERS = 4096;
 
 export function isArchiveName(name: string): boolean {
   return /\.(lha|lzh|zip)$/i.test(name);
@@ -78,7 +86,7 @@ export async function expandArchive(
       if (entries.length === 0 && skipped.length > 0 && skipped[0].reason === 'not a zip') {
         return { error: 'unreadable' };
       }
-      return { format: 'zip', members: entries, skipped };
+      return { format: 'zip', members: entries.map((e) => ({ ...e, comment: null })), skipped };
     }
     // The same caps as a zip: an LHA header states each member's size and the
     // decoder allocates what it says, so without them a crafted header asks
@@ -89,7 +97,7 @@ export async function expandArchive(
     // answer is "could not read it" rather than an empty list that looks like
     // an empty archive.
     if (entries.length === 0 && skipped.length === 0) return { error: 'unreadable' };
-    return { format: 'lha', members: entries, skipped };
+    return { format: 'lha', members: entries.map((e) => ({ ...e, comment: null })), skipped };
   } catch {
     // Neither reader is supposed to throw, but this is a drop target: an
     // exception escaping here is a dead UI, so the guarantee is enforced at

@@ -26,6 +26,10 @@ import { LibrarySelectionBar } from '@/components/library/library-selection-bar'
 import { LibrarySelectionProvider, SelectionScope } from '@/components/library/selection-provider';
 import { SelectToggle } from '@/components/library/select-toggle';
 import { viewKeyOf } from '@/lib/library-selection';
+import { LibraryIngestProvider } from '@/components/library-ingest/library-ingest-provider';
+import { LibraryDropOverlay } from '@/components/library-ingest/drop-overlay';
+import { AddDisksMenu } from '@/components/library-ingest/add-disks-menu';
+import { LibraryTray } from '@/components/library-ingest/library-tray';
 
 export default async function LibraryPage(props: PageProps<'/library'>) {
   const { orgId, userId } = await requireOrg();
@@ -74,7 +78,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   //
   // `collections.length > 0` is load-bearing: with no collections either, the
   // library is simply EMPTY, and the grid already has a proper empty state
-  // for that ("No disks yet", with a link to Ingest). A second empty state
+  // for that ("No disks yet", with an Add disks button). A second empty state
   // here would be a worse copy of it that only appears on brand-new accounts
   // -- which is exactly what it did on its first e2e run.
   //
@@ -150,6 +154,10 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           design — kept invisible on screen but present in the DOM. */}
       <span data-testid="active-org" className="sr-only">{orgId}</span>
       <LibrarySelectionProvider viewKey={viewKeyOf(view)} pageTitles={pageTitles} canSelect={canSelect}>
+      {/* The page adds disks itself (Files increment 3, R8/R9): Add disks ▾ in the header, a drop anywhere, the tray at
+          the bottom of the content column. One provider over the header and the body, so all three share its rows;
+          the overlay listens for OS file drags only, so the collection drags below never meet it. */}
+      <LibraryIngestProvider>
       <PageHeader
         size="lg"
         eyebrow={eyebrow}
@@ -162,6 +170,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           <div className="flex flex-wrap items-center gap-3">
             <DemozooBadge count={reviewQueueCount} />
             {view.kind !== 'collection' && !emptyInbox && <LibrarySortPicker sort={sort} />}
+            <AddDisksMenu />
             <CreateAdf />
             {canSelect && <SelectToggle />}
             <ViewToggle mode={viewMode} view={view} page={paging.page} />
@@ -176,6 +185,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         view={view}
         uncategorizedCount={uncategorizedCount}
       >
+        <LibraryDropOverlay />
         {/* Two columns from `md` up, which is what it has always been; below
             that the rail stacks above the grid, because a 224px rail beside a
             390px screen leaves the grid about 66px of it. `items-start` is
@@ -208,9 +218,11 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
             {!showOverview && (
               <LibraryPager page={paging.page} pages={paging.pages} pageSize={prefs.library.pageSize} total={totals.titles} />
             )}
+            <LibraryTray />
           </SelectionScope>
         </div>
       </CollectionsProvider>
+      </LibraryIngestProvider>
       </LibrarySelectionProvider>
     </>
   );

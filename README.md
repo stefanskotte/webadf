@@ -5,7 +5,7 @@ project's first name, `webadf`.)
 
 Two halves that work together:
 
-- **A web app** for keeping Amiga disk images. Upload them, have them identified
+- **A web app** for keeping Amiga disk images. Add them, have them identified
   against TOSEC, OpenRetro and Demozoo, organise them into collections, browse and
   edit the files inside a disk, rewind a disk to any earlier version, and send files to
   and from the Amiga.
@@ -110,9 +110,10 @@ protection, step to the next disk or eject.*
 
 *A title page: facts and screenshots from Demozoo, then each disk with its actions.*
 
-![The file browser for the SysInfo disk: volume details and free space, the file list with Notes and ReadMe marked new, and a history panel with three versions](docs/screenshots/disk-files.png)
+![The Files page: STASH: in the left pane, the SysInfo disk in the right pane with its files, the button column between them, and the disk's History open](docs/screenshots/disk-files.png)
 
-*Inside a disk. Each edit made here is a new version in the history panel.*
+*Files: two panes, as in a Workbench file manager, over STASH:, NET: and LIBRARY:. Each edit to a disk is a new
+version in its History.*
 
 ![The Devices page: the A500 board online and up to date, its drive drawing with the OLED showing 9 Fingers, the disk in the drive, and the Second drive (DF1) choices](docs/screenshots/devices.png)
 
@@ -122,19 +123,24 @@ protection, step to the next disk or eject.*
 
 *The display editor: choose the panel, then which elements the OLED draws and where.*
 
-![The Upload page: Add disks to the library and Send files to the Amiga side by side, and a Staging list of eight disks added to the library](docs/screenshots/upload.png)
+![The Library after adding eight disks: the Add disks button in the header, and the tray at the bottom listing each disk as Added or Already in the library](docs/screenshots/upload.png)
 
-*Upload: disks into the library, and files to and from the Amiga, through one staging list.*
+*Adding disks: drop them anywhere on the Library page, or use Add disks (Browse files, Paste a URL). The tray says
+what each one did.*
 
 ![Help, open at Boards: topics in four groups on the left, the Boards topic on pairing, online and offline, and firmware updates](docs/screenshots/help.png)
 
 *Help explains the parts that are not obvious.*
 
-![Settings: Preferences, Sign-in and password with the address masked, Firmware updates, About this server and Delete account](docs/screenshots/settings.png)
+![Settings, Account tab: Preferences, the Files settings (which device each pane opens on, .info files, the comment column, asking before deleting, what to do when a name already exists), Sign-in and password with the address masked, Firmware updates and Delete account](docs/screenshots/settings.png)
 
-*Settings, About this server included.*
+*Settings has three tabs: Account (yours alone), Library (sharing) and Server.*
 
-<img src="docs/screenshots/library-phone.png" width="260" alt="The library on a phone: the board's chip at the top, two columns of cards, and a bottom tab bar with Library, Devices, Upload and More"> <img src="docs/screenshots/phone-more.png" width="260" alt="The same phone with More open: Help, Settings, About this server and Sign out">
+![Settings, Server tab: About this server, with the web app's commit, hosting, platform, board firmware and the library's size](docs/screenshots/settings-server.png)
+
+*About this server, on the Server tab.*
+
+<img src="docs/screenshots/library-phone.png" width="260" alt="The library on a phone: the board's chip at the top, two columns of cards, and a bottom tab bar with Library, Devices, Files and More"> <img src="docs/screenshots/phone-more.png" width="260" alt="The same phone with More open: Remote, Help, Settings, About this server and Sign out">
 
 *On a phone or a tablet (below 1024 px wide), the pages move to a tab bar at the bottom; More holds the rest.*
 
@@ -146,11 +152,12 @@ protection, step to the next disk or eject.*
 
 ### Library
 
-- Upload `.adf`, `.adz`, `.dms`, `.dmz` and `.hfe`, or paste a URL to one (or to a `.zip` or `.lha`
+- Add `.adf`, `.adz`, `.dms`, `.dmz` and `.hfe` by dropping them anywhere on the Library page (folders and
+  `.zip` / `.lha` of them too) or through Add disks: Browse files, or Paste a URL to one (or to a `.zip` or `.lha`
   of them, up to 20 MB). Drop `.lha`, `.lzh` and `.zip` archives onto a disk to pick files out of them.
 - HD (1.76 MB) ADFs are recognised and tagged HD, and are disks like any other: browsed
   and edited in the browser, with full history.
-- Each unique disk is stored once, however many times it is uploaded.
+- Each unique disk is stored once, however many times it is added.
 - Disks are identified against TOSEC, OpenRetro and Demozoo, and grouped into titles
   with cover art, screenshots, publisher, year and type.
 - A grid of cards or a condensed table, a page at a time; collections (folders in the table),
@@ -159,8 +166,11 @@ protection, step to the next disk or eject.*
 - Download any disk as an ADF.
 - Works on a phone: below 1024 px the pages move to a tab bar at the bottom.
 
-### Inside a disk
+### Files
 
+- The Files page: two panes over three places. LIBRARY: holds your titles and their disks; STASH: keeps loose
+  files for 30 days (what you drop there, and what your Amiga sends); NET: holds what waits to go to each board's
+  Amiga. Copy and move between the panes, or drag.
 - Browse the AmigaDOS filesystem in the browser: files, folders, free space.
 - Add, rename, move and delete files and folders; drop a folder from your computer
   onto a disk; drag entries between folders.
@@ -198,8 +208,8 @@ protection, step to the next disk or eject.*
 - The board can put the Amiga on your network as DF1, with Rob Smith's PaulaNET driver
   (used with his permission) and a TCP/IP stack such as AmiTCP_NG or Roadshow. The driver disk
   comes from the board itself.
-- Send files from your computer, or from a disk in your library, to a folder on the Amiga;
-  send files from the Amiga back to the web app. Both go through the Upload page's staging list.
+- Send files from your computer, or from a disk in your library, to a folder on the Amiga: on the Files page,
+  drop them on Send files to the Amiga, or copy them into a board under NET:. Files the Amiga sends back land in STASH:.
 
 ### NFC tags
 
@@ -245,7 +255,7 @@ deltas.
 | | |
 |---|---|
 | Web app: library, collections, identification, search | live |
-| Upload `.adf` `.adz` `.dms` `.hfe`; `.lha`/`.lzh`/`.zip` onto a disk | live |
+| Add `.adf` `.adz` `.dms` `.hfe` to the library; `.lha`/`.lzh`/`.zip` onto a disk | live |
 | File editing inside a disk, blank disks, drag and drop | live |
 | Disk history: browse and restore any version | live, restore verified on hardware |
 | Device: setup portal, WiFi, TLS, pairing | verified on hardware |

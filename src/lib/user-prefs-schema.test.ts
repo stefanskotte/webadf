@@ -12,6 +12,10 @@ describe('user prefs defaults', () => {
       library: { sort: { key: 'added', dir: 'desc' }, view: 'grid', pageSize: 48 },
       browse: { sort: { key: 'name', dir: 'asc' }, hideInfo: false },
       firmware: { skipPassword: false },
+      files: {
+        sort: { library: { key: 'name', dir: 'asc' }, stash: { key: 'date', dir: 'desc' }, net: { key: 'date', dir: 'desc' } },
+        panes: { left: 'STASH', right: 'LIBRARY' }, comments: 'auto', confirmDelete: true, onClash: 'ask',
+      },
     });
   });
 
@@ -34,6 +38,10 @@ describe('user prefs defaults', () => {
       library: { sort: { key: 'added', dir: 'desc' }, view: 'grid', pageSize: 48 },
       browse: { sort: { key: 'size', dir: 'desc' }, hideInfo: false },
       firmware: { skipPassword: false },
+      files: {
+        sort: { library: { key: 'name', dir: 'asc' }, stash: { key: 'date', dir: 'desc' }, net: { key: 'date', dir: 'desc' } },
+        panes: { left: 'STASH', right: 'LIBRARY' }, comments: 'auto', confirmDelete: true, onClash: 'ask',
+      },
     });
     expect(parsePrefs({ startPage: 'nowhere' }).startPage).toBe('library');
   });
@@ -96,6 +104,10 @@ describe('user prefs patch', () => {
       library: { sort: { key: 'year', dir: 'asc' }, view: 'grid', pageSize: 48 },
       browse: { sort: { key: 'size', dir: 'desc' }, hideInfo: false },
       firmware: { skipPassword: false },
+      files: {
+        sort: { library: { key: 'name', dir: 'asc' }, stash: { key: 'date', dir: 'desc' }, net: { key: 'date', dir: 'desc' } },
+        panes: { left: 'STASH', right: 'LIBRARY' }, comments: 'auto', confirmDelete: true, onClash: 'ask',
+      },
     });
     // The input is untouched.
     expect(cur.library.sort).toEqual({ key: 'added', dir: 'desc' });
@@ -170,10 +182,10 @@ describe('library.pageSize (titles per page, grid and table alike)', () => {
 });
 
 describe('start page', () => {
-  it('maps each choice to its route (Upload lives at /ingest)', () => {
+  it('maps each choice to its route (the stored value upload means /files)', () => {
     expect(startPagePath('library')).toBe('/library');
     expect(startPagePath('devices')).toBe('/devices');
-    expect(startPagePath('upload')).toBe('/ingest');
+    expect(startPagePath('upload')).toBe('/files');
   });
 });
 
@@ -215,5 +227,100 @@ describe('browse.hideInfo (A5)', () => {
     if (!r.ok) throw new Error(r.error);
     const next = applyPrefsPatch(parsePrefs({ browse: { sort: { key: 'size', dir: 'desc' } } }), r.patch);
     expect(next.browse).toEqual({ sort: { key: 'size', dir: 'desc' }, hideInfo: true });
+  });
+});
+
+describe('files.sort (Files manager)', () => {
+  const FILES_DEFAULT = {
+    sort: {
+      library: { key: 'name', dir: 'asc' },
+      stash: { key: 'date', dir: 'desc' },
+      net: { key: 'date', dir: 'desc' },
+    },
+    panes: { left: 'STASH', right: 'LIBRARY' },
+    comments: 'auto',
+    confirmDelete: true,
+    onClash: 'ask',
+  };
+  it('defaults are present', () => {
+    expect(DEFAULT_PREFS.files).toEqual(FILES_DEFAULT);
+    expect(parsePrefs(null).files).toEqual(FILES_DEFAULT);
+  });
+  it('stored prefs from before this change have no files key and read the defaults', () => {
+    const old = { startPage: 'devices', library: { sort: { key: 'title', dir: 'asc' } }, browse: { hideInfo: true } };
+    const p = parsePrefs(old);
+    expect(p.files).toEqual(FILES_DEFAULT);
+    expect(p.startPage).toBe('devices');
+  });
+  it('a bad stored sort falls back for that device only', () => {
+    const p = parsePrefs({ files: { sort: { library: { key: 'nope', dir: 'asc' }, stash: { key: 'size', dir: 'asc' } } } });
+    expect(p.files.sort.library).toEqual({ key: 'name', dir: 'asc' });
+    expect(p.files.sort.stash).toEqual({ key: 'size', dir: 'asc' });
+  });
+  it('a patch setting files.sort.library round-trips', () => {
+    const r = parsePrefsPatch({ files: { sort: { library: { key: 'size', dir: 'desc' } } } });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const next = applyPrefsPatch(parsePrefs({}), r.patch);
+    expect(next.files.sort.library).toEqual({ key: 'size', dir: 'desc' });
+    expect(next.files.sort.stash).toEqual({ key: 'date', dir: 'desc' });
+    expect(parsePrefs(JSON.parse(JSON.stringify(next))).files).toEqual(next.files);
+  });
+  it('protection is a valid key', () => {
+    expect(parsePrefsPatch({ files: { sort: { net: { key: 'protection', dir: 'asc' } } } }).ok).toBe(true);
+  });
+  it('unknown keys are refused', () => {
+    expect(parsePrefsPatch({ files: { colour: 1 } }).ok).toBe(false);
+    expect(parsePrefsPatch({ files: { sort: { elsewhere: { key: 'name', dir: 'asc' } } } }).ok).toBe(false);
+    expect(parsePrefsPatch({ files: { sort: { library: { key: 'name', dir: 'asc', x: 1 } } } }).ok).toBe(false);
+    expect(parsePrefsPatch({ files: { sort: { library: { key: 'added', dir: 'asc' } } } }).ok).toBe(false);
+  });
+  it('prefsDiff names only a changed files sort', () => {
+    const saved = parsePrefs({});
+    const to = { ...saved, files: { ...saved.files, sort: { ...saved.files.sort, stash: { key: 'name' as const, dir: 'asc' as const } } } };
+    expect(prefsDiff(saved, to)).toEqual({ files: { sort: { stash: { key: 'name', dir: 'asc' } } } });
+    expect(prefsDiff(saved, saved)).toEqual({});
+  });
+});
+
+describe('Files settings (increment 4)', () => {
+  it('default to today: STASH: | LIBRARY:, comments in STASH:, Delete asks, a clash asks', () => {
+    expect(DEFAULT_PREFS.files.panes).toEqual({ left: 'STASH', right: 'LIBRARY' });
+    expect(DEFAULT_PREFS.files.comments).toBe('auto');
+    expect(DEFAULT_PREFS.files.confirmDelete).toBe(true);
+    expect(DEFAULT_PREFS.files.onClash).toBe('ask');
+  });
+  it('old rows read the new defaults and keep their sort', () => {
+    const p = parsePrefs({ files: { sort: { library: { key: 'size', dir: 'desc' } } } });
+    expect(p.files.sort.library).toEqual({ key: 'size', dir: 'desc' });
+    expect(p.files.panes).toEqual({ left: 'STASH', right: 'LIBRARY' });
+    expect(p.files.onClash).toBe('ask');
+    expect(p.files.confirmDelete).toBe(true);
+  });
+  it('a bad new field falls back alone', () => {
+    const p = parsePrefs({ files: { onClash: 'overwrite', confirmDelete: 'no', comments: 'always', panes: { left: 'NET', right: 'DH0' } } });
+    expect(p.files.onClash).toBe('ask');
+    expect(p.files.confirmDelete).toBe(true);     // only a real false turns the confirm off
+    expect(p.files.comments).toBe('always');
+    expect(p.files.panes).toEqual({ left: 'NET', right: 'LIBRARY' });
+  });
+  it('a patch is strict', () => {
+    expect(parsePrefsPatch({ files: { onClash: 'replace' } }).ok).toBe(true);
+    expect(parsePrefsPatch({ files: { panes: { left: 'NET' } } }).ok).toBe(true);
+    expect(parsePrefsPatch({ files: { onClash: 'overwrite' } }).ok).toBe(false);
+    expect(parsePrefsPatch({ files: { confirmDelete: 'no' } }).ok).toBe(false);
+    expect(parsePrefsPatch({ files: { panes: { middle: 'NET' } } }).ok).toBe(false);
+  });
+  it('apply merges one field, keeping the sort and the other pane', () => {
+    const p = applyPrefsPatch(parsePrefs({}), { files: { panes: { right: 'NET' }, confirmDelete: false } });
+    expect(p.files.panes).toEqual({ left: 'STASH', right: 'NET' });
+    expect(p.files.confirmDelete).toBe(false);
+    expect(p.files.sort).toEqual(DEFAULT_PREFS.files.sort);
+  });
+  it('prefsDiff names only the Files fields that changed', () => {
+    const from = parsePrefs({});
+    const to = applyPrefsPatch(from, { files: { onClash: 'skip', panes: { left: 'LIBRARY' } } });
+    expect(prefsDiff(from, to)).toEqual({ files: { onClash: 'skip', panes: { left: 'LIBRARY' } } });
+    expect(prefsDiff(to, to)).toEqual({});
   });
 });

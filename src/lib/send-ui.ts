@@ -54,6 +54,14 @@ export function transferState(t: TransferView): { text: string; tone: Tone } {
   }
 }
 
+/**
+ * Whether transferState's text is a row still waiting or moving (Files NET: panes poll faster then). The sending text
+ * carries its percentage, so this reads the words transferState writes, not one exact string (increment 3, C6).
+ */
+export function isActiveTransferText(text: string): boolean {
+  return text === 'Waiting' || text.startsWith('Sending ');
+}
+
 /** A queue row's state as the Upload page draws it: a coloured chip, then the detail as secondary text. */
 export type ChipKind = 'amber' | 'blue' | 'green' | 'red' | 'neutral';
 export type StateChip = { kind: ChipKind; label: string; note: string | null; path: string | null };

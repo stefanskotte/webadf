@@ -19,6 +19,7 @@ import type { TrailView } from '@/lib/trail';
 import { ejectMessage, isMountedReason, mountedReason } from '@/lib/mount-wording';
 import type { GameListItem } from '@/lib/queries';
 import { type PendingHide, SET_DROP_RETURN_MS } from '@/components/collections/collection-provider';
+import { useOptionalLibraryIngest } from '@/components/library-ingest/library-ingest-provider';
 
 /**
  * The library with nothing in it (spec §8, board InfStates). `testId` is the view's own (game-grid or game-table), so
@@ -28,16 +29,19 @@ import { type PendingHide, SET_DROP_RETURN_MS } from '@/components/collections/c
 const EMPTY_TEXT = {
   library: {
     set: 'Your library', title: 'Empty', heading: 'No disks yet',
-    body: 'Drop ADFs on the Upload page, or fetch one from a URL.', action: 'Add disks',
+    body: 'Drop disks anywhere on this page, or use Add disks.', action: 'Add disks',
   },
   collection: {
     set: 'Empty', title: 'New box', heading: 'Nothing in this collection yet',
-    body: 'Drag titles here, or move them from a title\u2019s \u22EF menu.', action: 'Upload disks',
+    body: 'Drag titles here, or move them from a title\u2019s \u22EF menu.', action: 'Add disks',
   },
 } as const;
 
 export function EmptyLibrary({ testId, variant = 'library' }: { testId: string; variant?: 'library' | 'collection' }) {
   const t = EMPTY_TEXT[variant];
+  // On the Library page the button opens the header's Add disks ▾ menu (R11); anywhere else it links there.
+  const ingest = useOptionalLibraryIngest();
+  const BUTTON = 'btn-like inline-flex h-10 items-center rounded-[10px] px-4 text-[14px] font-semibold text-white';
   return (
     <div className="mx-4 flex flex-col items-center gap-3.5 px-8 py-16 text-center sm:mx-7" data-testid={testId}
          data-empty={variant}
@@ -46,9 +50,13 @@ export function EmptyLibrary({ testId, variant = 'library' }: { testId: string; 
       <p className="text-[22px] font-bold leading-tight"
          style={{ color: 'var(--ink)', fontFamily: 'var(--font-display)' }}>{t.heading}</p>
       <p className="text-[14px]" style={{ color: 'var(--muted)' }}>{t.body}</p>
-      <Link href="/ingest"
-            className="btn-like inline-flex h-10 items-center rounded-[10px] px-4 text-[14px] font-semibold text-white"
-            style={{ background: 'var(--primary-action)' }}>{t.action}</Link>
+      {ingest ? (
+        <button type="button" data-testid="empty-add-disks" onClick={() => ingest.setMenuOpen(true)}
+                className={BUTTON} style={{ background: 'var(--primary-action)' }}>{t.action}</button>
+      ) : (
+        <Link href="/library#add-disks" data-testid="empty-add-disks"
+              className={BUTTON} style={{ background: 'var(--primary-action)' }}>{t.action}</Link>
+      )}
     </div>
   );
 }

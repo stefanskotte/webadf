@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { createHash, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
@@ -7,7 +7,8 @@ import { BLOCK_BYTES, ROOT_BLOCK } from '@/lib/adffs/constants';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { formatVolume } from '@/lib/adffs/format';
 import { recheck } from '@/lib/adffs/write-blocks';
-import { signUpFresh, openRowMenu } from './helpers';
+import { readVolume } from '@/lib/adffs';
+import { signUpFresh } from './helpers';
 import { cleanupSeeded } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
@@ -47,6 +48,25 @@ async function ingestDisk(page: import('@playwright/test').Page, adf: Uint8Array
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
+/**
+ * Files increment 1 (Task 11): the head of a disk is the Files manager, so these read the disk through it -- the right
+ * pane lists the tree, its header and the disk strip say what the Browse page's Disk card said, and Files' own routes
+ * (`/api/files/list`, `/api/files/download`) are what another tenant must get 404 from.
+ */
+const diskPath = (row: { gameId: string; id: string }) => `LIBRARY:/${row.gameId}/${row.id}`;
+
+async function openInFiles(page: Page, row: { gameId: string; id: string }) {
+  const res = await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: diskPath(row), active: 'right' })}`);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="files-manager"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  });
+  return res;
+}
+
+const paneRow = (page: Page, name: string) =>
+  page.getByTestId('pane-right').locator(`[data-testid="pane-row"][data-name="${name}"]`);
+
 test('the page renders a real tree, from a real FFS volume', async ({ page }) => {
   await signUpFresh(page);
   const tag = randomUUID();
@@ -61,51 +81,35 @@ test('the page renders a real tree, from a real FFS volume', async ({ page }) =>
   });
   const row = await ingestDisk(page, adf, `disk-${tag}.adf`);
 
-  const res = await page.goto(`/disks/${row.id}/files`);
+  const res = await openInFiles(page, row);
   expect(res?.status()).toBe(200);
 
-  const header = page.getByTestId('volume-header');
-  await expect(header).toContainText('FFS');
-  await expect(header).toContainText(volumeName);
+  await expect(page.getByTestId('pane-right-meta')).toContainText('FFS');
+  await expect(page.getByTestId('disk-strip-right').getByTestId('disk-strip-volume')).toHaveText(volumeName);
 
-  await expect(page.getByTestId('file-tree')).toBeVisible();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="C"]')).toBeVisible();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="README"]')).toBeVisible();
+  await expect(paneRow(page, 'C')).toHaveAttribute('data-kind', 'dir');
+  await expect(paneRow(page, 'README')).toHaveAttribute('data-kind', 'file');
 
-  // Expand the directory to prove this is a real nested traversal of the
+  // Open the directory to prove this is a real nested traversal of the
   // image, not just a listing of the root block.
-  //
-  // Targeted by the toggle's own `fs-toggle-` testid, not a bare
-  // getByRole('button') scoped to the row: task 11 gave every row real
-  // Rename and Delete buttons too, so "the button" is no longer unique --
-  // a role-only locator would now be strict-mode ambiguous, or worse,
-  // silently click the wrong control if the row's button order ever
-  // changes. See file-tree.tsx's comment on the toggle for the full story.
-  await page.locator('[data-testid="fs-entry"][data-name="C"]')
-    .locator('[data-testid^="fs-toggle-"]')
-    .click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="SetPatch"]')).toBeVisible();
+  await paneRow(page, 'C').dblclick();
+  await expect(paneRow(page, 'SetPatch')).toBeVisible();
+  await expect(page.getByTestId('pane-right-crumb-3')).toHaveText('C');
 
-  // The way back is the BREADCRUMB's middle crumb as of 2026-09-03; it was a
-  // hand-written "← ..." link in the header's actions slot until then. The
-  // affordance moved, but every guarantee it carried is asserted here still,
-  // because the reason for them did not change:
-  //
-  //   - there is a way back to the entry's own page,
-  //   - it is named for that DESTINATION rather than typed as "Game" -- the
-  //     `games` table's vocabulary leaking into the UI, and simply wrong on a
-  //     Workbench or utility disk, which is most of what this browser is for,
-  //   - it navigates there, and that page's heading is the title.
-  const trail = page.getByTestId('breadcrumb');
-  const back = trail.getByRole('link').nth(1);
-  await expect(back).not.toHaveText(/^Game$/);
-  await expect(back).toHaveText(`disk-${tag}`);
-  await back.click();
-  await expect(page).toHaveURL(new RegExp(`/games/${row.gameId}$`));
-  await expect(page.locator('h1').first()).toHaveText(`disk-${tag}`);
+  // The way back up the path names each place for what it IS -- the title is
+  // named for itself, never typed as "Game" (the `games` table's vocabulary,
+  // and simply wrong on a Workbench or utility disk, which is most of what
+  // this browser is for) -- and takes the pane there: the title's disks.
+  const title = page.getByTestId('pane-right-crumb-1');
+  await expect(title).not.toHaveText(/^Game$/);
+  await expect(title).toHaveText(`disk-${tag}`);
+  await title.click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe(`LIBRARY:/${row.gameId}`);
+  await expect(page.getByTestId('pane-right').getByTestId('pane-row')).toHaveCount(1);
+  await expect(page.getByTestId('pane-right').getByTestId('pane-row')).toHaveAttribute('data-kind', 'disk');
 });
 
-test('the browse page shows how much of the disk is used', async ({ page }) => {
+test('Files shows how much of the disk is used', async ({ page }) => {
   await signUpFresh(page);
   const tag = randomUUID();
   // formatVolume, NOT syntheticVolume. The fixture generator writes correct
@@ -116,18 +120,18 @@ test('the browse page shows how much of the disk is used', async ({ page }) => {
   const adf = formatVolume({ filesystem: 'FFS', volumeName: `Space-${tag.slice(0, 8)}` });
   const row = await ingestDisk(page, adf, `space-${tag}.adf`);
 
-  await page.goto(`/disks/${row.id}/files`);
-  const usage = page.getByTestId('volume-usage-text');
+  await openInFiles(page, row);
+  const usage = page.getByTestId('disk-strip-right').getByTestId('disk-strip-usage');
   await expect(usage).toBeVisible();
 
   // Four blocks on a freshly formatted disk -- two boot blocks, the root and
   // the bitmap -- which is 2 KB, and the same figure xdftool reports for its
   // own format. 880 KB is the number printed on the physical disk.
-  await expect(usage).toContainText('2 KB used of 880 KB');
-  await expect(usage).toContainText('878 KB free');
+  await expect(usage).toHaveText('2 of 880 KB · 878 KB free');
+  await expect(page.getByTestId('pane-right-meta')).toHaveText('878 KB free · FFS DD');
 
   const text = (await usage.textContent()) ?? '';
-  const [used, total, free] = [...text.matchAll(/(\d+) KB/g)].map((m) => Number(m[1]));
+  const [used, total, free] = [...text.matchAll(/(\d+)(?: of| KB)/g)].map((m) => Number(m[1]));
   expect(used + free).toBe(total);
 });
 
@@ -170,11 +174,11 @@ test('a disk whose bitmap cannot be trusted says so instead of guessing', async 
   recheck(adf, ROOT_BLOCK);
   const row = await ingestDisk(page, adf, `untrusted-${tag}.adf`);
 
-  await page.goto(`/disks/${row.id}/files`);
+  await openInFiles(page, row);
   // The disk still READS -- the reader ignores bitmaps by design.
-  await expect(page.locator('[data-testid="fs-entry"][data-name="README"]')).toBeVisible();
-  await expect(page.getByTestId('volume-usage-unknown')).toBeVisible();
-  await expect(page.getByTestId('volume-usage-text')).toHaveCount(0);
+  await expect(paneRow(page, 'README')).toBeVisible();
+  await expect(page.getByTestId('disk-strip-right').getByTestId('disk-strip-usage')).toHaveText('Free space unknown');
+  await expect(page.getByTestId('pane-right-meta')).toHaveText('FFS DD');   // no free space claimed
 });
 
 test('a disk with no filesystem explains itself', async ({ page }) => {
@@ -186,10 +190,12 @@ test('a disk with no filesystem explains itself', async ({ page }) => {
   const adf = syntheticVolume({ volumeName: `Cracked-${tag.slice(0, 8)}`, breakRootChecksum: true });
   const row = await ingestDisk(page, adf, `cracked-${tag}.adf`);
 
-  const res = await page.goto(`/disks/${row.id}/files`);
+  const res = await openInFiles(page, row);
   expect(res?.status()).toBe(200);
-  await expect(page.getByTestId('no-filesystem')).toBeVisible();
-  await expect(page.getByTestId('file-tree')).toHaveCount(0);
+  await expect(page.getByTestId('pane-right-readonly')).toHaveText('This disk has no AmigaDOS filesystem.');
+  await expect(page.getByTestId('pane-right-meta')).toHaveText('No filesystem DD');
+  await expect(page.getByTestId('pane-right').getByTestId('pane-row')).toHaveCount(0);
+  await expect(page.getByTestId('pane-right')).toContainText('Nothing here.');
 });
 
 test('a single file downloads with the right bytes', async ({ page }) => {
@@ -203,21 +209,24 @@ test('a single file downloads with the right bytes', async ({ page }) => {
   });
   const row = await ingestDisk(page, adf, `data-${tag}.adf`);
 
-  await page.goto(`/disks/${row.id}/files`);
-  await openRowMenu(page, 'DATA.BIN');
-  const link = page.locator('a[data-testid^="fs-download-"]');
-  const href = await link.getAttribute('href');
-  expect(href).toBeTruthy();
+  await openInFiles(page, row);
+  await paneRow(page, 'DATA.BIN').click();
+  // The manager fetches the download (so a refusal is words, not a saved error page) and saves it from memory.
+  const [download, res] = await Promise.all([page.waitForEvent('download'),
+    page.waitForResponse((r) => r.url().includes('/api/files/download?')), page.getByTestId('files-download').click()]);
+  const href = res.url();
+  expect(href).toContain(`/api/files/download?path=${encodeURIComponent(`${diskPath(row)}/DATA.BIN`)}`);
+  expect(download.suggestedFilename()).toBe('DATA.BIN');
 
-  const dl = await page.request.get(href!);
+  const dl = await page.request.get(href);
   expect(dl.status()).toBe(200);
-  expect(dl.headers()['content-disposition']).toContain('filename="DATA.BIN"');
+  expect(dl.headers()['content-disposition']).toContain("filename*=UTF-8''DATA.BIN");   // RFC 6266, any name
 
   const body = await dl.body();
   expect(Buffer.compare(body, Buffer.from(fileBytes))).toBe(0);
 });
 
-test('another tenant gets 404 from both the file route and the page, not the owner', async ({ browser }) => {
+test('another tenant gets 404 from the file routes and the Files page, not the owner', async ({ browser }) => {
   // The boundary. A 403, or bytes, would confirm the disk exists; only 404
   // reveals nothing about another organization's library.
   const a = await browser.newContext();
@@ -237,24 +246,35 @@ test('another tenant gets 404 from both the file route and the page, not the own
     // Proven reachable by its owner FIRST -- both the page and the file
     // route -- so the 404s below cannot pass for the trivial reason that the
     // id is wrong or the fixture never mounted.
-    const ownRes = await pageA.goto(`/disks/${row.id}/files`);
+    const ownRes = await openInFiles(pageA, row);
     expect(ownRes?.status()).toBe(200);
-    await expect(pageA.getByTestId('volume-header')).toBeVisible();
-
-    await openRowMenu(pageA, 'SECRET.TXT');
-    const ownerLink = pageA.locator('a[data-testid^="fs-download-"]');
-    const href = await ownerLink.getAttribute('href');
-    expect(href).toBeTruthy();
-    expect((await pageA.request.get(href!)).status()).toBe(200);
+    await expect(paneRow(pageA, 'SECRET.TXT')).toBeVisible();
+    const list = `/api/files/list?path=${encodeURIComponent(diskPath(row))}`;
+    const href = `/api/files/download?path=${encodeURIComponent(`${diskPath(row)}/SECRET.TXT`)}`;
+    expect((await pageA.request.get(list)).status()).toBe(200);
+    expect((await pageA.request.get(href)).status()).toBe(200);
+    // The per-disk file route the per-version page still downloads through, too.
+    const vol = readVolume(adf);
+    if (!vol.ok) throw new Error('fixture');
+    const blockRoute = `/api/disks/${row.id}/files/${vol.root.find((e) => e.name === 'SECRET.TXT')!.block}`;
+    expect((await pageA.request.get(blockRoute)).status()).toBe(200);
 
     const pageB = await b.newPage();
     await signUpFresh(pageB);
 
-    const deniedRoute = await pageB.request.get(href!);
-    expect(deniedRoute.status()).toBe(404);
-    expect((await deniedRoute.body()).byteLength).toBeLessThan(1000);
+    for (const url of [list, href, blockRoute]) {
+      const denied = await pageB.request.get(url, { maxRedirects: 0 });
+      expect(denied.status(), url).toBe(404);
+      expect((await denied.body()).byteLength).toBeLessThan(1000);
+      expect(await denied.json()).toEqual({ error: 'not_found' });
+    }
 
-    // The not-found card, not a 404 status: the app streams behind its loading.tsx (A1 States), so the status is sent before notFound() runs.
+    // The Files page names nothing of it: the pane says the place does not exist, as for any unknown path.
+    await openInFiles(pageB, row);
+    await expect(pageB.getByTestId('pane-right-error')).toHaveText('This place no longer exists.');
+    await expect(pageB.getByTestId('pane-right')).not.toContainText('SECRET');
+    await expect(pageB.getByTestId('disk-strip-right')).toHaveCount(0);
+    // And the old address of the disk: the not-found card (the app streams behind its loading.tsx, A1 States).
     await pageB.goto(`/disks/${row.id}/files`);
     await expect(pageB.getByTestId('not-found-page')).toBeVisible();
   } finally {

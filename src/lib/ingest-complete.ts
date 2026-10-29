@@ -112,15 +112,24 @@ async function verify(
 }
 
 /**
- * Deletes the bytes at a key that failed verification and has no `blobs` row.
+ * Deletes the bytes at a key that failed verification, unless something names
+ * the key (releaseRefused's check).
  *
  * Without this, a rejected upload leaves unverified content parked at
  * adf/<sha> that nobody can ever overwrite (allowOverwrite: false) — so the
  * legitimate owner of those bytes could never store them. Only ever called
  * for an UNREGISTERED key: content that already has a row was verified when
- * that row was written and must never be touched.
+ * that row was written and must never be touched. And it asks first: a Send or
+ * a STASH: file may name the key, whose bytes storeSendBytes has put there
+ * (overwriting planted ones) since this request read them (Files increment 3,
+ * carry b), and those must never be deleted.
  */
 async function release(sha256: string): Promise<void> {
+  await releaseRefused([sha256]);
+}
+
+/** The delete itself, best effort; only releaseRefused calls it, after its reference check. */
+async function removeBytes(sha256: string): Promise<void> {
   try {
     await diskStore.remove(sha256);
   } catch {
@@ -145,7 +154,7 @@ async function release(sha256: string): Promise<void> {
  * database, which nothing in ingest takes; the window is two round trips
  * wide, and the bytes are ones this very request just refused.
  *
- * Best effort, like release(): a failed lookup leaves the bytes where they
+ * Best effort, like removeBytes(): a failed lookup leaves the bytes where they
  * were, which is the state before this existed, and never fails the request.
  */
 export async function releaseRefused(shas: string[]): Promise<void> {
@@ -174,7 +183,7 @@ export async function releaseRefused(shas: string[]): Promise<void> {
     // the From the Amiga area still shows (plan 2026-10-19 ruling P6), and a refusal must not delete them.
     [...history.flatMap((h) => [h.blob, h.image]), ...elsewhere],
   );
-  for (const s of releasable) await release(s);
+  for (const s of releasable) await removeBytes(s);
 }
 
 export type CompleteFile = z.infer<typeof completeBody>['files'][number];

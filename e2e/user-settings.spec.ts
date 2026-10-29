@@ -51,13 +51,13 @@ test('the chosen start page is where the root URL and sign-in land', async ({ pa
   await signIn(page, email, password);
   await expect(page).toHaveURL(/\/devices/);
 
-  // And Upload, whose route is /ingest.
+  // And Files: the stored value is still 'upload' (Files increment 3 kept it), the route is /files.
   await page.goto('/settings');
   await hydrated(page, 'pref-start-page-upload');
   await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-start-page-upload').click()]);
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
   await page.goto('/');
-  await expect(page).toHaveURL(/\/ingest/);
+  await expect(page).toHaveURL(/\/files/);
 });
 
 test('saving Preferences does not put back a sort changed elsewhere since the page loaded', async ({ page }) => {

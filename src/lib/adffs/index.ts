@@ -18,8 +18,8 @@ export type { FileBytes } from './file';
 export type { Filesystem, BootInfo } from './boot';
 export { readUsage, type VolumeUsage } from './usage';
 export {
-  addFile, deleteEntry, renameEntry, replaceFile, makeDirectory, moveEntry, setProtection,
-  applyBatch, type WriteResult, type WriteError, type BatchOp,
+  addFile, deleteEntry, renameEntry, replaceFile, makeDirectory, moveEntry, setProtection, setComment,
+  applyBatch, type WriteResult, type WriteError, type BatchOp, type EntryMeta,
 } from './write';
 export { blocksForFile, blocksForPlan, type CostItem } from './capacity';
 export { geometryOf, geometryFor, DD_GEOMETRY, HD_GEOMETRY, type Geometry } from './geometry';

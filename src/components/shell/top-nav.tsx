@@ -19,11 +19,8 @@ const ITEMS = [
   // Libraries shared with this team (library sharing spec §4.5). Below lg it is in the More menu: the bar is four cells.
   { href: "/remote", label: "Remote", phone: false },
   { href: "/devices", label: "Devices", phone: true },
-  // Label only -- the route stays /ingest. "Ingest" was jargon for what is
-  // plainly an upload; the route and the /api/ingest/* namespace are
-  // referenced by the CLI, the proxy matcher and the design docs, so renaming
-  // those is a separate, much wider decision.
-  { href: "/ingest", label: "Upload", phone: true },
+  // The Files page replaced the Upload page (Files spec 2026-10-29 §5.3); /ingest redirects there.
+  { href: "/files", label: "Files", phone: true },
   // Below lg Help is in the More menu (C7 spec §2.3, Ruling 4).
   { href: "/help", label: "Help", phone: false },
 ];

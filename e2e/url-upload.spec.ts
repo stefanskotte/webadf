@@ -1,8 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { signUpFresh, libRows, stagingReady } from './helpers';
+import { signUpFresh, trayRows, libraryAddReady } from './helpers';
 import { cleanupSeeded } from './device-helpers';
 
-// Upload from a URL (POST /api/ingest/url, the URL field on /ingest).
+// Upload from a URL (POST /api/ingest/url; the URL field is in the Library's Add disks ▾ → Paste a URL… dialog since
+// Files increment 3).
 //
 // NO PUBLIC INTERNET. The route's whole point is that it refuses to fetch
 // from anything but a public address, so the app's own test server
@@ -54,34 +55,45 @@ test('refuses non-public and malformed targets with a code only, then rate-limit
   expect(Number(limited.headers()['retry-after'])).toBeGreaterThan(0);
 });
 
-test("refuses the app's own server (port and loopback) from the upload page", async ({ page, baseURL }) => {
-  await signUpFresh(page);
-  await page.goto('/ingest');
-  await stagingReady(page);
+/** The Library's Add disks ▾ → Paste a URL… dialog, open. */
+async function openUrlDialog(page: import('@playwright/test').Page) {
+  await page.goto('/library');
+  await libraryAddReady(page);
+  await page.getByTestId('library-add-disks').click();
+  await page.getByTestId('library-add-url').click();
+  const dialog = page.getByTestId('library-add-url-dialog');
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
 
-  const field = page.getByLabel('Or fetch from a URL');
+test("refuses the app's own server (port and loopback) from the Library's Paste a URL…", async ({ page, baseURL }) => {
+  await signUpFresh(page);
+  const dialog = await openUrlDialog(page);
+
+  const field = dialog.getByLabel('Or fetch from a URL');
   await expect(field).toBeVisible();
-  await expect(page.getByTestId('url-fetch')).toBeDisabled();
+  await expect(dialog.getByTestId('url-fetch')).toBeDisabled();
 
   // baseURL is http://localhost:$PORT -- a non-standard port on loopback.
   await field.fill(`${baseURL}/api/health`);
-  await page.getByTestId('url-fetch').click();
-  await expect(page.getByTestId('url-status')).toHaveText(/standard web ports/);
+  await dialog.getByTestId('url-fetch').click();
+  await expect(dialog.getByTestId('url-status')).toHaveText(/standard web ports/);
 
   await field.fill('http://localhost/disk.adf');
-  await page.getByTestId('url-fetch').click();
-  await expect(page.getByTestId('url-status')).toHaveText(/private or local network/);
+  await dialog.getByTestId('url-fetch').click();
+  await expect(dialog.getByTestId('url-status')).toHaveText(/private or local network/);
 
-  // A refused fetch adds no rows.
-  await expect(libRows(page)).toHaveCount(0);
+  // A refused fetch adds no rows: there is no tray at all.
+  await expect(trayRows(page)).toHaveCount(0);
+  await expect(page.getByTestId('library-tray')).toHaveCount(0);
 });
 
 test('the URL field and Fetch button fit a 390 px screen', async ({ page }) => {
   await signUpFresh(page);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/ingest');
+  const dialog = await openUrlDialog(page);
 
-  const button = page.getByTestId('url-fetch');
+  const button = dialog.getByTestId('url-fetch');
   await expect(button).toBeInViewport();
   const box = await button.boundingBox();
   expect(box!.x + box!.width).toBeLessThanOrEqual(390);
@@ -95,12 +107,11 @@ test('fetches a public disk image and lists it like a dropped file', async ({ pa
   test.skip(!fixture, 'needs E2E_URL_UPLOAD_FIXTURE (a public https URL of an ADF you control); the suite never fetches the public internet by default');
 
   await signUpFresh(page);
-  await page.goto('/ingest');
-  await stagingReady(page);
-  await page.getByLabel('Or fetch from a URL').fill(fixture!);
-  await page.getByTestId('url-fetch').click();
+  const dialog = await openUrlDialog(page);
+  await dialog.getByLabel('Or fetch from a URL').fill(fixture!);
+  await dialog.getByTestId('url-fetch').click();
 
-  await expect(page.getByTestId('url-status')).toHaveText(/Fetched: [1-9]/, { timeout: 60_000 });
+  await expect(dialog.getByTestId('url-status')).toHaveText(/Fetched: [1-9]/, { timeout: 60_000 });
   // A fixture somebody else already uploaded comes back deduped: both are success.
-  await expect(libRows(page).first()).toHaveAttribute('data-state', /^(done|deduped)$/);
+  await expect(trayRows(page).first()).toHaveAttribute('data-state', /^(done|deduped)$/);
 });

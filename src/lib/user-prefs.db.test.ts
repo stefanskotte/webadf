@@ -57,6 +57,7 @@ describe('user prefs storage', () => {
       library: { sort: { key: 'title', dir: 'asc' }, view: 'grid', pageSize: 48 },
       browse: { sort: { key: 'size', dir: 'desc' }, hideInfo: false },
       firmware: { skipPassword: false },
+      files: DEFAULT_PREFS.files,
     });
   });
 
@@ -82,6 +83,7 @@ describe('user prefs storage', () => {
       library: { sort: { key: 'publisher', dir: 'asc' }, view: 'grid', pageSize: 48 },
       browse: { sort: { key: 'date', dir: 'desc' }, hideInfo: false },
       firmware: { skipPassword: false },
+      files: DEFAULT_PREFS.files,
     });
   });
 
@@ -98,6 +100,7 @@ describe('user prefs storage', () => {
       library: { sort: { key: 'year', dir: 'asc' }, view: 'grid', pageSize: 48 },
       browse: { sort: { key: 'size', dir: 'asc' }, hideInfo: false },
       firmware: { skipPassword: false },
+      files: DEFAULT_PREFS.files,
     });
   });
 

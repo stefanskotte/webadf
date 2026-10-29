@@ -1,5 +1,5 @@
 /**
- * Shared by BOTH upload clients — src/components/ingest/dropzone.tsx (browser)
+ * Shared by BOTH upload clients — src/lib/library-ingest/run.ts (browser)
  * and cli/src/index.ts (Node, which imports this file directly across the
  * package boundary). Deliberately dependency-free and free of any node:/DOM
  * import so both can use it. There is exactly one copy of this rule: getting
@@ -127,4 +127,26 @@ export function classifyUpload(status: number, ok: boolean, body: string): Uploa
   if (ok) return 'uploaded';
   if (isBlobAlreadyExists(status, body)) return 'already-stored';
   return 'failed';
+}
+
+/**
+ * One file PUT to a presigned URL, as both browser upload paths do it (the library dropzone and a STASH: drop): a 403
+ * is an expired URL (1 h TTL), not a bad file, so `represign` is asked for a fresh one and the PUT tried once more.
+ * Only a 403 retries: re-PUTting an over-size or otherwise rejected file would just fail again more slowly. A network
+ * failure rejects; the caller decides what that file's row says. The URL is a credential: it is never logged or kept.
+ * `doFetch` is the global fetch unless a caller injects its own (the library ingest runner's tests do).
+ */
+export async function putPresigned(
+  url: string, file: Blob, represign: () => Promise<string | null>, doFetch: typeof fetch = fetch,
+): Promise<UploadOutcome> {
+  const putOnce = async (to: string) => {
+    const res = await doFetch(to, { method: 'PUT', body: file });
+    // The body is read only on failure, and only to classify it.
+    const body = res.ok ? '' : await res.text().catch(() => '');
+    return { outcome: classifyUpload(res.status, res.ok, body), expired: isExpiredPresign(res.status) };
+  };
+  const first = await putOnce(url);
+  if (!first.expired) return first.outcome;
+  const fresh = await represign();
+  return fresh ? (await putOnce(fresh)).outcome : first.outcome;
 }

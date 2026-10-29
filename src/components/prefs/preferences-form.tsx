@@ -1,19 +1,18 @@
 'use client';
 
-import { useId, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { toast } from 'sonner';
+import { useId } from 'react';
+import { PrefRow } from '@/components/prefs/pref-row';
+import { usePrefsChange } from '@/components/prefs/use-prefs-change';
 import { SortSelect } from '@/components/prefs/sort-select';
 import { SegRadioGroup } from '@/components/ui/seg-radio-group';
-import { CARD_STYLE, SETTINGS_CARD, SETTINGS_H2, SETTINGS_ROW, prefsStateLook } from '@/lib/settings-look';
-import { savePrefs } from '@/lib/user-prefs-client';
+import { CARD_STYLE, SETTINGS_CARD, SETTINGS_H2, prefsStateLook } from '@/lib/settings-look';
 import {
-  BROWSE_SORT_OPTIONS, LIBRARY_PAGE_SIZES, LIBRARY_SORT_OPTIONS, LIBRARY_VIEWS, START_PAGES, prefsDiff,
+  BROWSE_SORT_OPTIONS, LIBRARY_PAGE_SIZES, LIBRARY_SORT_OPTIONS, LIBRARY_VIEWS, START_PAGES,
   type LibraryViewMode, type StartPage, type UserPrefs,
 } from '@/lib/user-prefs-schema';
 import { pageSizeLabel } from '@/components/library/library-pager';
 
-const START_PAGE_LABELS: Record<StartPage, string> = { library: 'Library', devices: 'Devices', upload: 'Upload' };
+const START_PAGE_LABELS: Record<StartPage, string> = { library: 'Library', devices: 'Devices', upload: 'Files' };
 const LIBRARY_VIEW_LABELS: Record<LibraryViewMode, string> = { grid: 'Grid', table: 'Table' };
 
 /**
@@ -22,36 +21,12 @@ const LIBRARY_VIEW_LABELS: Record<LibraryViewMode, string> = { grid: 'Grid', tab
  * is never put back. A failed save puts the field back to what is stored and says so.
  */
 export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
-  const router = useRouter();
   const startLabel = useId(); const startHint = useId();
   const viewLabel = useId(); const viewHint = useId();
   const sizeLabel = useId(); const sizeHint = useId();
   const libLabel = useId(); const libHint = useId();
   const browseLabel = useId(); const browseHint = useId();
-  const [saved, setSaved] = useState(prefs);
-  const [draft, setDraft] = useState(prefs);
-  const [state, setState] = useState<'saved' | 'saving' | 'failed'>('saved');
-  // Saves in flight. Only the last one to finish settles the line, so two quick changes cannot end on "Saving…".
-  const pending = useRef(0);
-
-  async function change(next: UserPrefs) {
-    const diff = prefsDiff(saved, next);
-    setDraft(next);
-    setState('saving');
-    pending.current += 1;
-    try {
-      const stored = await savePrefs(diff);
-      setSaved(stored);
-      if (pending.current === 1) { setDraft(stored); setState('saved'); }
-      router.refresh();
-    } catch {
-      setDraft(saved);
-      setState('failed');
-      toast.error("Couldn't save your preferences. Try again.");
-    } finally {
-      pending.current -= 1;
-    }
-  }
+  const { draft, state, change } = usePrefsChange(prefs);
 
   const look = prefsStateLook(state);
   return (
@@ -101,20 +76,5 @@ export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
                     testId="pref-browse-sort" />
       </PrefRow>
     </section>
-  );
-}
-
-/** One Preferences row (spec §2.2): the label and hint on the left, the control on the right; stacked below sm. */
-function PrefRow({ labelId, hintId, label, hint, children }: {
-  labelId: string; hintId: string; label: string; hint: string; children: React.ReactNode;
-}) {
-  return (
-    <div className={`${SETTINGS_ROW} border-t py-3.5`} style={{ borderColor: 'var(--hairline)' }}>
-      <div className="flex min-w-0 flex-col gap-[3px]">
-        <span id={labelId} className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>{label}</span>
-        <span id={hintId} className="text-[13px]" style={{ color: 'var(--muted-2)' }}>{hint}</span>
-      </div>
-      <div className="min-w-0">{children}</div>
-    </div>
   );
 }

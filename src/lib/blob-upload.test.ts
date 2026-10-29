@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   isBlobAlreadyExists, isExpiredPresign, classifyUpload, isUploadableSize, MAX_DISK_BYTES,
-  MAX_HFE_PER_BATCH, splitBatches, describeUnuploadableSize, isHfeName,
+  MAX_HFE_PER_BATCH, splitBatches, describeUnuploadableSize, isHfeName, putPresigned,
 } from './blob-upload';
 
 // The exact body Vercel Blob returns for a second PUT to a key presigned with
@@ -154,3 +154,40 @@ describe('splitBatches', () => {
   });
 });
 
+
+describe('putPresigned', () => {
+  const file = new Blob(['bytes']);
+  const answers = (...rs: (Response | Error)[]) => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push(url);
+      const r = rs.shift()!;
+      if (r instanceof Error) throw r;
+      return r;
+    }));
+    return calls;
+  };
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('a 200 is uploaded, with no second URL asked for', async () => {
+    const calls = answers(new Response('', { status: 200 }));
+    const represign = vi.fn(async () => 'fresh');
+    expect(await putPresigned('u1', file, represign)).toBe('uploaded');
+    expect(calls).toEqual(['u1']);
+    expect(represign).not.toHaveBeenCalled();
+  });
+  it('a 403 asks for a fresh URL and PUTs once more', async () => {
+    const calls = answers(new Response('', { status: 403 }), new Response('', { status: 200 }));
+    expect(await putPresigned('u1', file, async () => 'u2')).toBe('uploaded');
+    expect(calls).toEqual(['u1', 'u2']);
+  });
+  it('a 403 with no fresh URL to be had fails, without a second PUT', async () => {
+    const calls = answers(new Response('', { status: 403 }));
+    expect(await putPresigned('u1', file, async () => null)).toBe('failed');
+    expect(calls).toEqual(['u1']);
+  });
+  it('a network failure rejects, for the caller to word', async () => {
+    answers(new TypeError('Failed to fetch'));
+    await expect(putPresigned('u1', file, async () => 'u2')).rejects.toThrow('Failed to fetch');
+  });
+});

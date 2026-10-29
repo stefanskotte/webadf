@@ -11,8 +11,8 @@ export const amigaUploads = pgTable('amiga_uploads', {
   id: text('id').primaryKey(),
   orgId: text('org_id').notNull(),
   deviceId: text('device_id').references(() => devices.id, { onDelete: 'set null' }),
-  /** The board's name when the upload opened: the row still names it after the board is unpaired or renamed. */
-  deviceName: text('device_name').notNull(),
+  /** The board's name when the upload opened: the row still names it after the board is unpaired or renamed. Null for browser and copy rows (spec 2026-10-29 §4.2). */
+  deviceName: text('device_name'),
   /** UTF-8, decoded from Latin-1 and cleaned (cleanAmigaPath). Data only: never a storage key. */
   path: text('path').notNull(),
   sizeBytes: integer('size_bytes').notNull(),
@@ -24,6 +24,12 @@ export const amigaUploads = pgTable('amiga_uploads', {
   amigaDate: text('amiga_date').notNull(),
   /** receiving | stored | failed | deleted */
   status: text('status').notNull().default('receiving'),
+  /** Where the row came from (Files spec 2026-10-29 §4.2): amiga (Transfer), browser (a drop or URL), copy (Files). */
+  source: text('source').notNull().default('amiga'),
+  /** file, or dir: an empty folder, a Makedir, or a folder with protection or a comment (increment 2 R2). */
+  kind: text('kind').notNull().default('file'),
+  /** The name the board sent, kept only when the row was stored under another (keep-both, R4): a repeated close hears it again (ruling 10). */
+  sentName: text('sent_name'),
   receivedBytes: integer('received_bytes').notNull().default(0),
   errorCode: text('error_code'),
   blobSha256: text('blob_sha256'),

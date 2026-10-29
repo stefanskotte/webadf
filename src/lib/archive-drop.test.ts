@@ -16,7 +16,7 @@ const fileItem = (name: string, bytes: Uint8Array): DroppedItem => ({
   file: new File([bytes as unknown as BlobPart], name),
 });
 const member = (path: string, text = 'x', protection: number | null = null) => ({
-  path, bytes: new TextEncoder().encode(text), protection,
+  path, bytes: new TextEncoder().encode(text), protection, date: null, comment: null,
 });
 const lha = (members: ReturnType<typeof member>[], skipped: ArchiveResult['skipped'] = []): ArchiveResult =>
   ({ format: 'lha', members, skipped });

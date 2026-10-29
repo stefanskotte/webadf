@@ -17,8 +17,11 @@ export function useRestore(): RestoreValue {
   return v;
 }
 
-export function RestoreProvider({ diskId, viewingSeq, currentHref, children }: {
-  diskId: string; viewingSeq: number | null; currentHref: string; children: ReactNode;
+export function RestoreProvider({ diskId, viewingSeq, currentHref, onRestored, children }: {
+  diskId: string; viewingSeq: number | null; currentHref: string;
+  /** In place of the router refresh after a restore at the head: Files (disk-strip.tsx) reloads its own panes. */
+  onRestored?: () => void;
+  children: ReactNode;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -72,7 +75,7 @@ export function RestoreProvider({ diskId, viewingSeq, currentHref, children }: {
           toast.error('This disk changed since the page loaded.', {
             description: 'Reloading the history so it matches.',
           });
-          router.refresh();
+          if (onRestored) onRestored(); else router.refresh();
           setOpen(false);
         } else if (res.status === 404) {
           toast.error('That version is no longer available.');
@@ -103,7 +106,7 @@ export function RestoreProvider({ diskId, viewingSeq, currentHref, children }: {
         router.replace(currentHref);
       } else {
         setOpen(false);
-        router.refresh();
+        if (onRestored) onRestored(); else router.refresh();
       }
     } catch {
       toast.error('Could not reach the server');

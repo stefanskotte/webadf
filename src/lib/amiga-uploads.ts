@@ -2,10 +2,11 @@ import { crc32 } from 'node:zlib';
 import { and, asc, desc, eq, gt, inArray, lt, lte, ne, or, sql } from 'drizzle-orm';
 import type { Db } from '@/db';
 import { devices } from '@/db/schema/devices';
-import { disks } from '@/db/schema/catalog';
 import { transfers } from '@/db/schema/transfers';
 import { amigaUploads, amigaUploadChunks } from '@/db/schema/amiga-uploads';
 import { cleanAmigaPath } from '@/lib/transfers';
+import { listStash, lockOrg, touchStashDirs } from '@/lib/stash';
+import { uniqueStashPath } from '@/lib/files/stash-paths';
 import { storeSendBytes } from '@/lib/send-http';
 import { firmwareAtLeast } from '@/lib/firmware-version';
 import {
@@ -16,6 +17,8 @@ import {
 
 export type UploadRow = typeof amigaUploads.$inferSelect;
 const LIVE = ['receiving', 'stored'];
+/** What a board sent (R5), as the board card's count sees it: STASH: rows from the browser, copies and folders are not its. */
+const FROM_AMIGA = [eq(amigaUploads.source, 'amiga'), eq(amigaUploads.kind, 'file')];
 
 export type OpenInput = { size: number; date: string; protection: number; path: string; comment: string };
 export type OpenResult = { ok: true; id: string; offset: number } | { ok: false; code: 'size' | 'full' | 'name' };
@@ -80,7 +83,7 @@ export type CloseResult = { ok: true; name: string } | { ok: false; status: 404 
 function settledAnswer(r: UploadRow, crc: number): CloseResult | null {
   if (r.status === 'receiving') return null;
   if (r.crc32 === crc >>> 0) {
-    if (r.status === 'stored') return { ok: true, name: r.path };
+    if (r.status === 'stored') return { ok: true, name: r.sentName ?? r.path };   // the name the board sent, not a keep-both one (R4)
     if (r.status === 'failed' && r.errorCode === 'crc') return { ok: false, status: 409, code: 'crc' };
   }
   return { ok: false, status: 409, code: 'gone' };
@@ -125,52 +128,21 @@ export async function closeUpload(db: Db, deviceId: string, id: string, crc: num
   }
   const sha = await storeSendBytes(bytes);   // adf/<sha256> through diskStore: local folder or Vercel Blob (ruling P5)
   const done = await db.transaction(async (tx) => {
+    // One name, one entry (R4): under the org lock, a path STASH: already holds is stored as its keep-both name.
+    await lockOrg(tx, r.orgId);
+    const others = (await listStash(tx, r.orgId, now)).filter((x) => x.id !== id && x.status !== 'failed');   // a failed stub holds no name: a retry of its path is stored as that path
+    const path = uniqueStashPath(others, r.path);
     const hit = await tx.update(amigaUploads).set({ status: 'stored', crc32: crc >>> 0, blobSha256: sha, storedAt: sql`now()`, receivedBytes: r.sizeBytes,
-      expiresAt: new Date(now.getTime() + UPLOAD_KEEP_MS) })
+      expiresAt: new Date(now.getTime() + UPLOAD_KEEP_MS), path, sentName: path === r.path ? null : r.path })
       .where(and(eq(amigaUploads.id, id), eq(amigaUploads.status, 'receiving'))).returning({ id: amigaUploads.id });
-    if (hit.length) await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
+    if (hit.length) {
+      await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
+      await touchStashDirs(tx, r.orgId, path, now);
+    }
     return hit.length > 0;
   });
   // Lost the update: another close stored it (ok, the same name) -- or a delete took it (gone, not ok).
   return done ? { ok: true, name: r.path } : lost({ ok: false, status: 404, code: 'gone' });
-}
-
-export type UploadView = {
-  id: string; path: string; sizeBytes: number; status: 'receiving' | 'stored' | 'failed'; receivedBytes: number;
-  errorCode: string | null; deviceId: string | null; deviceName: string; createdAt: number; storedAt: number | null;
-  expiresAt: number; libraryDiskId: string | null; libraryGameId: string | null; blobSha256: string | null;
-  /** When the row settled (stored_at, else created_at) as Postgres prints it, with microseconds: a Date is milliseconds and would round (ruling PF4). Clear all sends the greatest cursor in the list. */
-  cursor: string;
-};
-/** An exact position in the area (a created_at with microseconds) that Clear all compares without truncation. */
-export type UploadCursor = string;
-const CURSOR_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{6})Z$/;
-/** Exactly `YYYY-MM-DDTHH:MM:SS.uuuuuuZ` (UTC) and a real instant: the only shape the SQL ever sees. */
-export function isUploadCursor(s: unknown): s is UploadCursor {
-  if (typeof s !== 'string' || !CURSOR_RE.test(s)) return false;
-  const d = new Date(s.slice(0, 19) + 'Z');
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 19) === s.slice(0, 19);
-}
-export function toUploadView(r: UploadRow & { libraryGameId?: string | null; cursor: string }, now: number): UploadView {
-  // A partial past its 24 h never moves again: it reads failed at once, as the daily cron will mark it.
-  const lapsed = r.status === 'receiving' && r.expiresAt.getTime() <= now;
-  return {
-    id: r.id, path: r.path, sizeBytes: r.sizeBytes, status: lapsed ? 'failed' : (r.status as UploadView['status']),
-    receivedBytes: r.receivedBytes, errorCode: lapsed ? 'expired' : r.errorCode, deviceId: r.deviceId, deviceName: r.deviceName,
-    createdAt: r.createdAt.getTime(), storedAt: r.storedAt?.getTime() ?? null, expiresAt: r.expiresAt.getTime(),
-    libraryDiskId: r.libraryDiskId, libraryGameId: r.libraryGameId ?? null, blobSha256: r.blobSha256, cursor: r.cursor,
-  };
-}
-
-/** The org's area, newest first (the greatest `cursor` in the list is what Clear all sends back); `board` filters it. A stored row past its 30 days is gone already for the person. */
-export async function listUploads(db: Db, orgId: string, board: string | null, now = new Date()): Promise<UploadView[]> {
-  const rows = await db.select({ u: amigaUploads, gameId: disks.gameId, cursor: sql<string>`to_char(coalesce(${amigaUploads.storedAt}, ${amigaUploads.createdAt}) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` }).from(amigaUploads)
-    .leftJoin(disks, and(eq(disks.id, amigaUploads.libraryDiskId), eq(disks.orgId, orgId)))
-    .where(and(eq(amigaUploads.orgId, orgId), ne(amigaUploads.status, 'deleted'),
-      or(ne(amigaUploads.status, 'stored'), gt(amigaUploads.expiresAt, now)),
-      board ? eq(amigaUploads.deviceId, board) : undefined))
-    .orderBy(desc(amigaUploads.createdAt), desc(amigaUploads.id)).limit(UPLOAD_AREA_MAX_FILES);
-  return rows.map((r) => toUploadView({ ...r.u, libraryGameId: r.gameId, cursor: r.cursor }, now.getTime()));
 }
 
 export async function getUpload(db: Db, orgId: string, id: string): Promise<UploadRow | null> {
@@ -179,60 +151,9 @@ export async function getUpload(db: Db, orgId: string, id: string): Promise<Uplo
   return r ?? null;
 }
 
-/** The blob of a row the person can still use: stored and not past its 30 days (the list hides those too); else null. */
+/** The blob of a row the person can still use: stored and not past its 30 days; else null. */
 export function usableBlob(r: UploadRow, now = Date.now()): string | null {
   return r.status === 'stored' && r.blobSha256 && !(r.expiresAt && r.expiresAt.getTime() <= now) ? r.blobSha256 : null;
-}
-
-/** Delete one file: the row reads deleted and its chunks go now; the blob goes at the next weekly GC if nothing else holds it. */
-export async function deleteUpload(db: Db, orgId: string, id: string): Promise<boolean> {
-  return db.transaction(async (tx) => {
-    const done = await tx.update(amigaUploads).set({ status: 'deleted' })
-      .where(and(eq(amigaUploads.id, id), eq(amigaUploads.orgId, orgId), ne(amigaUploads.status, 'deleted')))
-      .returning({ id: amigaUploads.id });
-    if (done.length === 0) return false;
-    await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
-    return true;
-  });
-}
-
-/**
- * Stop (the Upload page's Stop, `DELETE ?only=receiving`): deletes the row only while it is still arriving -- receiving
- * and not past its 24 h, as toUploadView judges -- in the update's own WHERE, so a file that finished while the confirm
- * was open is kept. 'not_found' when there is no such row of the org (or it is deleted already).
- */
-export async function stopUpload(db: Db, orgId: string, id: string, now = new Date()): Promise<'stopped' | 'not_receiving' | 'not_found'> {
-  return db.transaction(async (tx) => {
-    const done = await tx.update(amigaUploads).set({ status: 'deleted' })
-      .where(and(eq(amigaUploads.id, id), eq(amigaUploads.orgId, orgId), eq(amigaUploads.status, 'receiving'), gt(amigaUploads.expiresAt, now)))
-      .returning({ id: amigaUploads.id });
-    if (done.length > 0) {
-      await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
-      return 'stopped';
-    }
-    const [left] = await tx.select({ id: amigaUploads.id }).from(amigaUploads)
-      .where(and(eq(amigaUploads.id, id), eq(amigaUploads.orgId, orgId), ne(amigaUploads.status, 'deleted')));
-    return left ? 'not_receiving' : 'not_found';
-  });
-}
-
-/**
- * Clear all (spec §4, ruling PF4): every stored or failed row settled at or before `cursor` (the newest row's
- * UploadView.cursor the person saw); a receiving row stays, and so does one that was still arriving when the person
- * looked and was stored since (settled = stored_at, else created_at). The comparison is on the exact Postgres timestamp, so a
- * file that arrived in the same millisecond, after the person looked, survives. With `board`, only that board's rows
- * go (the cursor is then the newest row of the filtered list).
- */
-export async function clearUploads(db: Db, orgId: string, cursor: UploadCursor, board: string | null = null): Promise<number> {
-  if (!isUploadCursor(cursor)) throw new RangeError('clearUploads: not an upload cursor');
-  return db.transaction(async (tx) => {
-    const done = await tx.update(amigaUploads).set({ status: 'deleted' })
-      .where(and(eq(amigaUploads.orgId, orgId), inArray(amigaUploads.status, ['stored', 'failed']), sql`coalesce(${amigaUploads.storedAt}, ${amigaUploads.createdAt}) <= ${cursor}::timestamptz`,
-        board ? eq(amigaUploads.deviceId, board) : undefined))
-      .returning({ id: amigaUploads.id });
-    if (done.length) await tx.delete(amigaUploadChunks).where(inArray(amigaUploadChunks.uploadId, done.map((d) => d.id)));
-    return done.length;
-  });
 }
 
 export async function setLibraryDisk(db: Db, orgId: string, id: string, diskId: string): Promise<void> {
@@ -242,7 +163,7 @@ export async function setLibraryDisk(db: Db, orgId: string, id: string, diskId: 
 /** Per board, for the card's line (spec §4): files stored within the last 24 h. */
 export async function uploadSummaries(db: Db, orgId: string, now = new Date()): Promise<Record<string, number>> {
   const rows = await db.select({ deviceId: amigaUploads.deviceId, n: sql<number>`count(*)::int` }).from(amigaUploads)
-    .where(and(eq(amigaUploads.orgId, orgId), eq(amigaUploads.status, 'stored'), gt(amigaUploads.storedAt, new Date(now.getTime() - 24 * 3600_000))))
+    .where(and(eq(amigaUploads.orgId, orgId), eq(amigaUploads.status, 'stored'), ...FROM_AMIGA, gt(amigaUploads.storedAt, new Date(now.getTime() - 24 * 3600_000))))
     .groupBy(amigaUploads.deviceId);
   const out: Record<string, number> = {};
   for (const r of rows) if (r.deviceId) out[r.deviceId] = r.n;
