@@ -260,3 +260,14 @@ describe('fix round 1', () => {
       .toEqual({ kind: 'refused', status: 503, refusal: { code: 'blob_unavailable' } });
   });
 });
+
+describe('devices', () => {
+  it('a device with no driver is unsupported, and nothing is written', async () => {
+    const s = await sha('d2');
+    expect(await runOp(ctx, { op: 'delete', sources: ['NET:/board1/x'] }))
+      .toMatchObject({ kind: 'refused', status: 400, refusal: { code: 'unsupported' } });
+    expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/ReadMe'], dest: 'NET:/board1', onClash: 'ask' }))
+      .toMatchObject({ kind: 'refused', status: 400, refusal: { code: 'unsupported' } });
+    expect(await sha('d2')).toBe(s);
+  });
+});

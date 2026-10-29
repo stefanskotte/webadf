@@ -2,7 +2,9 @@
 // as one .zip (spec 2026-10-29 §3.3), named by `?name=` (default "Files.zip").
 import { requireOrg } from '@/lib/session';
 import { parsePath, type FsPath } from '@/lib/files/path';
-import { BlobUnavailableError, readLibraryFile, zipLibraryPaths, ZIP_LIMITS } from '@/lib/files/library';
+import { BlobUnavailableError, zipLibraryPaths, ZIP_LIMITS } from '@/lib/files/library';
+import { driverFor } from '@/lib/files/drivers';
+import { Refused } from '@/lib/files/driver';
 
 // Reads (and an op writes) disk images from the store: the same 60 s every byte-touching handler sets.
 export const maxDuration = 60;
@@ -24,10 +26,11 @@ export async function GET(request: Request) {
   if (q.has('paths')) return zip(orgId, userId, q);
   const p = parsePath(q.get('path') ?? '');
   if (!p) return Response.json({ error: 'bad_path' }, { status: 400 });
-  if (p.device !== 'LIBRARY') return Response.json({ error: 'not_found' }, { status: 404 });
-  let f: Awaited<ReturnType<typeof readLibraryFile>>;
-  try { f = await readLibraryFile({ orgId, userId }, p); } catch (e) {
-    if (e instanceof BlobUnavailableError) return Response.json({ error: 'blob_unavailable' }, { status: 503 });
+  const driver = driverFor(p.device);
+  if (!driver) return Response.json({ error: 'not_found' }, { status: 404 });
+  let f: Awaited<ReturnType<typeof driver.read>>;
+  try { f = await driver.read({ orgId, userId }, p); } catch (e) {
+    if (e instanceof Refused) return Response.json({ error: e.refusal.code }, { status: e.status });
     throw e;
   }
   if (!f) return Response.json({ error: 'not_found' }, { status: 404 });

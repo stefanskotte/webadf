@@ -11,9 +11,10 @@ import { isLocal } from '@/lib/remote-hidden';
 import { readTop, tallyTop, zipReadTops, type ReadTop } from '@/lib/disk-zip';
 import { formatPath, isWithin, type FsPath } from './path';
 import { ZIP_MAX_BYTES } from './transfer';
+import type { FsCtx } from './driver';
 import type { Crumb, DiskInfo, FsEntry, Listing } from './types';
 
-export type FsCtx = { orgId: string; userId: string | null };
+export type { FsCtx };
 export type ResolvedDisk = { info: DiskInfo; bytes: Uint8Array; root: AdfEntry[]; rootBlock: number; intl: boolean };
 
 const ROOT: Crumb = { label: 'LIBRARY:', path: 'LIBRARY:' };

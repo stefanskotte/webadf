@@ -1,7 +1,8 @@
 import { requireOrg } from '@/lib/session';
 import { getUserPrefs } from '@/lib/user-prefs';
 import { formatPath, parsePath } from '@/lib/files/path';
-import { BlobUnavailableError, listLibrary } from '@/lib/files/library';
+import { driverFor } from '@/lib/files/drivers';
+import { Refused } from '@/lib/files/driver';
 import { refusalWords } from '@/lib/files/words';
 import { diskStripData } from '@/lib/files/disk-strip-data';
 import { stripDiskOf } from '@/lib/files/manager-rules';
@@ -26,9 +27,10 @@ function paneParam(raw: string | string[] | undefined): string {
 /** The pane's first listing; null when the place is gone, with the words when the image itself cannot be read. */
 async function firstListing(ctx: { orgId: string; userId: string }, path: string): Promise<{ listing: Listing | null; error?: string }> {
   try {
-    return { listing: await listLibrary(ctx, parsePath(path)!) };
+    const p = parsePath(path)!;
+    return { listing: await driverFor(p.device)!.list(ctx, p) };
   } catch (e) {
-    if (e instanceof BlobUnavailableError) return { listing: null, error: refusalWords('blob_unavailable') };
+    if (e instanceof Refused && e.refusal.code === 'blob_unavailable') return { listing: null, error: refusalWords('blob_unavailable') };
     throw e;
   }
 }
