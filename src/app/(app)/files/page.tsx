@@ -1,4 +1,7 @@
 import { requireOrg } from '@/lib/session';
+import { getDb } from '@/db';
+import { nowMs } from '@/lib/clock';
+import { listSendTargets } from '@/lib/send-targets';
 import { getUserPrefs } from '@/lib/user-prefs';
 import { DEFAULT_LEFT, DEFAULT_RIGHT, formatPath, PANE_DEVICES, parsePath } from '@/lib/files/path';
 import { driverFor } from '@/lib/files/drivers';
@@ -50,7 +53,12 @@ export default async function FilesPage({ searchParams }: { searchParams: Promis
   const rightPath = paneParam(sp.right, DEFAULT_RIGHT);
   const active = sp.active === 'right' ? 'right' : 'left';
   const ctx = { orgId, userId };
-  const [left, right, prefs] = await Promise.all([firstListing(ctx, leftPath), firstListing(ctx, rightPath), getUserPrefs(userId)]);
+  const now = nowMs();
+  const [left, right, prefs, targets] = await Promise.all([
+    firstListing(ctx, leftPath), firstListing(ctx, rightPath), getUserPrefs(userId), listSendTargets(getDb(), orgId, now),
+  ]);
+  // A pane at NET:/<board> names the board the Send zone starts on.
+  const netBoard = [leftPath, rightPath].map((p) => parsePath(p)).find((p) => p?.device === 'NET' && p.segments.length >= 1)?.segments[0] ?? null;
   // The disk strip of each pane inside a disk (Task 9): one read per disk, even with both panes in it. A disk whose
   // image cannot be read still gets one (stripDiskOf): the strip needs only the database, and its History mends it.
   const pane = (path: string, r: { listing: Listing | null; error?: string }) =>
@@ -65,6 +73,7 @@ export default async function FilesPage({ searchParams }: { searchParams: Promis
         <FilesManager
           initial={{ left: left.listing, right: right.listing, leftPath, rightPath, active, leftError: left.error, rightError: right.error, strips }}
           prefs={{ sort: prefs.files.sort }}
+          send={{ targets, initialBoard: netBoard, serverNow: now }}
         />
       </div>
     </>

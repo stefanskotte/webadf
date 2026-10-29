@@ -123,3 +123,54 @@ test('NET: in the panes: a board row with its key; Copy → queues, the pane fol
   expect((await queued(orgId, deviceId))['Drop.txt']).toEqual({ status: 'queued', size: 7, comment: '' });
   await expect(rowAt(page, 'left', 'Drop.txt')).toHaveCount(0);
 });
+
+test('Send files to the Amiga: a file and a folder dropped on the zone queue with their paths; a drop that does not fit sends nothing', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'A500 bench');
+  await boardSays(request, token, '1.19.0+gabc1234', 'ab12');
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: 'NET:', active: 'left' })}`);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="files-manager"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  });
+  const zone = page.getByTestId('files-drop-send');
+  await expect(zone).toContainText('Send files to the Amiga');
+  await expect(page.getByTestId('files-send-board')).toContainText('A500 bench');
+
+  // Over the 4 MB cap: refused whole, nothing queued (the small file beside it is not sent either).
+  await synthDrop(page, [
+    { name: 'small.txt', kind: 'file', content: 'tiny' },
+    { name: 'big.bin', kind: 'file', content: 'x'.repeat(4_194_305) },
+  ], '[data-testid="files-drop-send"]');
+  await expect(toast(page, 'big.bin is over 4 MB — nothing was sent')).toBeVisible({ timeout: LIVE });
+  expect(await queued(orgId, deviceId)).toEqual({});
+
+  // A file and a folder: the folder's file goes by its path.
+  await synthDrop(page, [
+    { name: 'notes.txt', kind: 'file', content: 'hello amiga' },
+    { name: 'Mods', kind: 'dir', children: [{ name: 'enigma.mod', kind: 'file', content: 'not really a module' }] },
+  ], '[data-testid="files-drop-send"]');
+  await expect(toast(page, 'Queued 2 files for A500 bench')).toBeVisible({ timeout: LIVE });
+  expect(await queued(orgId, deviceId)).toEqual({
+    'notes.txt': { status: 'queued', size: 11, comment: '' },
+    'Mods/enigma.mod': { status: 'queued', size: 19, comment: '' },
+  });
+
+  // Show queue takes the right pane to the board, listing what was queued.
+  await toast(page, 'Queued 2 files for A500 bench').getByRole('button', { name: 'Show queue' }).click();
+  await expect(page).toHaveURL(new RegExp(`right=NET%3A%2F${deviceId}`));
+  await expect(rowAt(page, 'right', 'Mods/enigma.mod')).toContainText('Waiting', { timeout: LIVE });
+
+  // The picker sends too, and a pane showing the board reloads.
+  await page.getByTestId('files-send-input').setInputFiles([{ name: 'picked.txt', mimeType: 'text/plain', buffer: Buffer.from('picked') }]);
+  await expect(rowAt(page, 'right', 'picked.txt')).toContainText('Waiting', { timeout: LIVE });
+});
+
+test('Send files to the Amiga: with no board that can receive, the zone says so and links to Devices', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/files');
+  const empty = page.getByTestId('files-send-no-board');
+  await expect(empty).toContainText('No board can receive files yet. Sending needs a board on firmware 1.15.0 or newer.');
+  await expect(empty.getByRole('link', { name: 'Devices' })).toHaveAttribute('href', '/devices');
+  await expect(page.getByTestId('files-send-input')).toHaveCount(0);
+});

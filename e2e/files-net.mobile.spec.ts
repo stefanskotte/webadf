@@ -56,3 +56,25 @@ test('at 390: Copy to… walks into a board under NET: and sends; Move to… the
   const box = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(box).toBeLessThanOrEqual(390);
 });
+
+test('at 390: the two drop zones stack and the Send zone has 44 px targets and no sideways scroll', async ({ page, request }) => {
+  await signUpFresh(page);
+  const a = await pairDevice(page, request, 'A500 bench');
+  await boardSays(request, a.token);
+  const b = await pairDevice(page, request, 'A1200');
+  await boardSays(request, b.token);
+  await page.goto('/files');
+  await expect(page.getByTestId('files-drop-send')).toBeVisible();
+  await expect(page.getByTestId('files-drop-stash')).toBeAttached();
+  const picker = page.getByTestId('files-send-board-picker');
+  await expect(picker).toBeVisible();
+  for (const label of await picker.locator('label').all()) {
+    expect((await label.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  }
+  const tile = (await page.getByTestId('files-send-browse').boundingBox())!;
+  expect(tile.height).toBeGreaterThanOrEqual(44);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  // The picker sends from a phone.
+  await page.getByTestId('files-send-input').setInputFiles([{ name: 'p.txt', mimeType: 'text/plain', buffer: Buffer.from('phone') }]);
+  await expect(page.locator('[data-sonner-toast]').filter({ hasText: /Queued 1 file for/ })).toBeVisible({ timeout: 15_000 });
+});

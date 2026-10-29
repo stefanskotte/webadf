@@ -34,6 +34,8 @@ import { DiskStrip } from './disk-strip';
 import { DropReview } from './drop-review';
 import { CopyToPicker } from './copy-to-picker';
 import { StashDropZone } from './stash-drop-zone';
+import { SendDropZone } from './send-drop-zone';
+import type { SendTarget } from '@/lib/send-ui';
 import { useStashUpload, type StashUploadResult } from './use-stash-upload';
 import { sameStashName } from '@/lib/files/stash-paths';
 import {
@@ -78,6 +80,8 @@ export type FilesManagerProps = {
     strips?: StripData[];
   };
   prefs: { sort: UserPrefs['files']['sort'] };
+  /** The Send files to the Amiga zone: the boards that can receive, the one a link named, and the server's clock. */
+  send: { targets: SendTarget[]; initialBoard: string | null; serverNow: number };
 };
 
 type Dialog =
@@ -248,7 +252,7 @@ function PhoneButton({ id, label, reason, busy, onClick, primary = false }: {
   );
 }
 
-export function FilesManager({ initial, prefs }: FilesManagerProps) {
+export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const router = useRouter();
   const [panes, setPanes] = useState<Record<Side, PaneState>>(() => ({
     left: firstState(initial.leftPath, initial.left, initial.leftError),
@@ -334,6 +338,12 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     const { panes: cur } = latest.current;
     void load('left', cur.left.path);
     void load('right', cur.right.path);
+  }
+
+  /** Files were queued for a board from the Send zone: a pane showing its queue reads it again. */
+  function sentTo(deviceId: string) {
+    const { panes: cur } = latest.current;
+    for (const side of ['left', 'right'] as const) if (cur[side].path === `NET:/${deviceId}`) void load(side, cur[side].path);
   }
 
   function navigate(side: Side, path: string) {
@@ -1145,9 +1155,11 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   return (
     <>
-    {/* The top drop zones (R1): Drop files into STASH:; the right cell waits for increment 3's Send files to the Amiga (Task 3). */}
+    {/* The top drop zones (R1): Drop files into STASH:, and Send files to the Amiga (R7). */}
     <div className="mb-5 grid grid-cols-2 gap-x-2.5 gap-y-2 sm:grid-cols-1 sm:gap-5 lg:grid-cols-2 lg:items-stretch">
       <StashDropZone busy={stash.busy} onItems={dropOnZone} onFetched={() => reloadBoth()} />
+      <SendDropZone targets={send.targets} initialBoard={send.initialBoard} serverNow={send.serverNow} onSent={sentTo}
+                    onShowQueue={(id) => navigate('right', `NET:/${id}`)} />
     </div>
     <div ref={rootRef} tabIndex={0} onKeyDown={onKeyDown} data-testid="files-manager" aria-label="File manager"
          onFocusCapture={(e) => { if (rootRef.current?.contains(e.target)) lastFocus.current = e.target; }}
