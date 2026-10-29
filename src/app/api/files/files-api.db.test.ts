@@ -51,6 +51,7 @@ const { GET: GET_DL } = await import('./download/route');
 
 const { readVolume } = await import('@/lib/adffs');
 const { unzipSync, strFromU8 } = await import('fflate');
+const { blockChecksum } = await import('@/lib/adffs/blocks');
 /** A root folder's block, for adding into it. */
 const resolveRoot = (adf: Uint8Array, name: string) => {
   const v = readVolume(adf); if (!v.ok) throw new Error('no volume');
@@ -86,6 +87,16 @@ beforeAll(async () => {
   const s = resolveRoot(other, 'S');
   other = must(addFile(other, s, 'Startup', new TextEncoder().encode('echo hi')));
   await seedDisk('g2', 'Other', 'd2', other);
+  // A crafted image: a file inside S whose header holds "../../x" (no AmigaDOS rules), checksum fixed.
+  let evil = formatVolume({ filesystem: 'OFS', volumeName: 'Evil' });
+  evil = must(makeDirectory(evil, ROOT_BLOCK, 'S'));
+  evil = must(addFile(evil, resolveRoot(evil, 'S'), 'x', new TextEncoder().encode('boo')));
+  { const v = readVolume(evil); if (!v.ok) throw new Error();
+    const blk = v.root.find((e) => e.name === 'S')!.children[0].block;
+    const b = evil.subarray(blk * 512, blk * 512 + 512); const n = new TextEncoder().encode('../../x');
+    b.fill(0, 432, 463); b[432] = n.length; b.set(n, 433);
+    new DataView(b.buffer, b.byteOffset).setUint32(20, blockChecksum(b, 5)); }
+  await seedDisk('g4', 'Evil', 'd4', evil);
   await seedDisk('g3', 'Gone', 'd3', formatVolume({ filesystem: 'OFS', volumeName: 'Gone' }), false);
 });
 afterAll(async () => { await closeDb(); await admin(`drop database if exists ${DB} with (force)`); });
@@ -159,6 +170,13 @@ describe('/api/files', () => {
     expect(strFromU8(files['ReadMe'])).toBe('hello');
     expect(strFromU8(files['Other.txt'])).toBe('other');
     expect(strFromU8(files['S/Startup'])).toBe('echo hi');
+  });
+  it('zip download: a crafted name cannot climb out of the archive (zip-slip)', async () => {
+    const r = await GET_DL(req('/api/files/download?paths=' + encodeURIComponent('LIBRARY:/g4/d4/S')));
+    expect(r.status).toBe(200);
+    const names = Object.keys(unzipSync(new Uint8Array(await r.arrayBuffer())));
+    expect(names.sort()).toEqual(['S/', 'S/.._.._x']);
+    for (const n of names) expect(n.split('/')).not.toContain('..');
   });
   it('zip download: foreign or unknown path 404, bad path 400, too many 413, missing blob 503', async () => {
     const dl = (...ps: string[]) => GET_DL(req('/api/files/download?' + ps.map((p) => 'paths=' + encodeURIComponent(p)).join('&')));

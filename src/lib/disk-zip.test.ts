@@ -3,7 +3,8 @@ import { unzipSync, strFromU8, Unzip, UnzipInflate } from 'fflate';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume } from '@/lib/adffs';
 import { addFile, makeDirectory } from '@/lib/adffs/write';
-import { zipEntries } from './disk-zip';
+import { blockChecksum } from '@/lib/adffs/blocks';
+import { safe, zipEntries } from './disk-zip';
 
 const ok = <T extends { ok: boolean }>(r: T) => { if (!r.ok) throw new Error('write'); return r as Extract<T, { ok: true }>; };
 const txt = (s: string) => new TextEncoder().encode(s);
@@ -81,5 +82,49 @@ describe('zipEntries', () => {
     expect(entries(unzip(zipEntries(adf, v.root, blocks)))).toEqual([
       ['A.txt', 'A.txt'], ['_../', ''], ['_../x', 'x'], ['__proto__', '__proto__'], ['a (2).txt', 'lower'], ['toString', 'toString'],
     ]);
+  });
+});
+
+/** Overwrite a header's name bytes as a crafted image would (no AmigaDOS rules), and fix the block's checksum. */
+function forgeName(adf: Uint8Array, block: number, name: string): Uint8Array {
+  const out = adf.slice();
+  const b = out.subarray(block * 512, block * 512 + 512);
+  const bytes = new TextEncoder().encode(name);
+  b.fill(0, 432, 432 + 31);
+  b[432] = bytes.length; b.set(bytes, 433);
+  new DataView(b.buffer, b.byteOffset).setUint32(20, blockChecksum(b, 5));
+  return out;
+}
+
+describe('zip-slip', () => {
+  it('safe() makes every name one harmless component and leaves ordinary names alone', () => {
+    expect(safe('Startup-Sequence')).toBe('Startup-Sequence');
+    expect(safe('Grüße (1).txt')).toBe('Grüße (1).txt');
+    expect(safe('..')).toBe('_..');
+    expect(safe('.')).toBe('_.');
+    expect(safe('')).toBe('_');
+    expect(safe('../../x')).toBe('.._.._x');
+    expect(safe('a\\b:c')).toBe('a_b_c');
+    expect(safe('/etc')).toBe('_etc');
+  });
+
+  it('hostile names in a crafted image cannot climb out of the archive', () => {
+    const { adf: clean, root: cleanRoot } = disk();
+    const s = cleanRoot.find((e) => e.name === 'S')!;
+    const inner = s.children.find((e) => e.name === 'a.txt')!;
+    const top = cleanRoot.find((e) => e.name === 'a.txt')!;
+    let adf = forgeName(clean, inner.block, '../../x');
+    adf = forgeName(adf, top.block, '..\\..\\evil');
+    adf = forgeName(adf, s.block, '/abs');
+    const v = readVolume(adf); if (!v.ok) throw new Error('forged image did not read');
+    expect(v.root.map((e) => e.name)).toContain('/abs');
+    const names = entries(unzip(zipEntries(adf, v.root, v.root.map((e) => e.block)))).map(([n]) => n);
+    expect(names.length).toBeGreaterThan(0);
+    for (const n of names) {
+      expect(n.startsWith('/')).toBe(false);
+      expect(n).not.toContain('\\');
+      expect(n.split('/')).not.toContain('..');
+    }
+    expect(names).toContain('_abs/.._.._x');
   });
 });

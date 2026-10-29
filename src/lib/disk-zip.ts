@@ -18,8 +18,17 @@ export type ZipOutcome =
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'unreadable'; name: string };
 
-/** "." and ".." are legal AmigaDOS names but mean something else in a zip path. */
-const safe = (name: string) => (name === '.' || name === '..' ? `_${name}` : name);
+/**
+ * One entry name as ONE safe zip path component. AmigaDOS itself refuses ':' and '/', but a crafted image can hold
+ * any bytes in a header (bcplString maps only control characters), so a name like "../../x" or "a\\b" must not
+ * become a path that climbs out of the folder it is extracted into (zip-slip). '/', '\\', ':' and control
+ * characters become '_'; an empty name, "." and ".." become "_", "_." and "_.." (the last two as before). Ordinary
+ * names are unchanged.
+ */
+export function safe(name: string): string {
+  const s = name.replace(/[/\\:\u0000-\u001f\u007f]/g, '_');
+  return s === '' ? '_' : s === '.' || s === '..' ? `_${s}` : s;
+}
 
 /** Write `files` (a path ending in "/" is a folder) as one zip, in order. */
 function writeZip(files: { path: string; bytes: Uint8Array | null }[]): Uint8Array {
