@@ -9,6 +9,7 @@ import { readVolume } from '@/lib/adffs';
 import { diskStore } from '@/lib/storage';
 import { signUpFresh, runTag } from './helpers';
 import { cleanupSeeded, seedDisk } from './device-helpers';
+import { synthDrop } from './drag-drop-helpers';
 
 /**
  * Files on a phone (spec 2026-10-29 §5, Files increment 1 Task 10): below lg one pane at a time, a Left | Right switch,
@@ -218,4 +219,111 @@ test('at 390: a tap on a folder row opens it; Move to… moves into a folder the
   await expect(page.getByTestId('pane-left-crumb-3')).toHaveText('src');
   await expect(row(page, 'left', 'ReadMe')).toHaveCount(1);
   await noSideways(page);
+});
+
+// ---- The disk page's phone tests (mobile.spec.ts), moved here with Files increment 1 (Task 11). ----------------
+
+/** A disk with C/SetPatch, README and DOOMED, open in Files on the right at 390, hydrated. */
+async function openPhoneDisk(page: Page, orgId: string, title: string) {
+  const r = applyBatch([
+    { op: 'mkdir', parentPath: '', name: 'C' },
+    { op: 'add', parentPath: 'C', name: 'SetPatch', bytes: new TextEncoder().encode('x') },
+    { op: 'add', parentPath: '', name: 'README', bytes: new TextEncoder().encode('yy') },
+    { op: 'add', parentPath: '', name: 'DOOMED', bytes: new TextEncoder().encode('to be renamed') },
+  ])(formatVolume({ filesystem: 'FFS', volumeName: title.slice(0, 20) }));
+  if (!r.ok) throw new Error(r.reason);
+  const sha256 = createHash('sha256').update(r.adf).digest('hex');
+  await diskStore.put(sha256, r.adf);
+  const d = await seedDisk(orgId, { title, diskNo: 1, sha256, writeProtected: false });
+  await page.goto(`/files?${new URLSearchParams({ left: 'LIBRARY:', right: `LIBRARY:/${d.gameId}/${d.diskId}`, active: 'right' })}`);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="files-side-switch"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  });
+  return d;
+}
+
+/** Every box of `ids` lies inside the 390 px viewport. */
+async function onScreen(page: Page, ids: string[]) {
+  for (const id of ids) {
+    const box = (await page.getByTestId(id).boundingBox())!;
+    expect(box.x, id).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width, id).toBeLessThanOrEqual(390);
+  }
+}
+
+test('at 390: a row shows its name, and More → Download downloads it', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  await openPhoneDisk(page, orgId, `PhoneDl-${runTag()}`);
+  // The regression that mattered on the Browse page: fixed columns wider than the card, the name computed to a negative
+  // width and the row's controls clipped away. Here: the name in view, and Download reachable and in view.
+  const readme = row(page, 'right', 'README');
+  await expect(readme.getByText('README', { exact: true })).toBeVisible();
+  const box = (await readme.boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  await readme.tap();
+  await expect(readme).toHaveAttribute('aria-selected', 'true');
+  await page.getByTestId('files-more').tap();
+  await expect(page.getByTestId('files-more-download')).toBeVisible();
+  await onScreen(page, ['files-more-download']);
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('files-more-download').tap()]);
+  expect(dl.suggestedFilename()).toBe('README');
+  // A folder row is one unambiguous target: a tap opens it.
+  await row(page, 'right', 'C').tap();
+  await expect(row(page, 'right', 'SetPatch')).toBeVisible();
+  await noSideways(page);
+});
+
+test('at 390: Makedir, Rename and Delete dialogs fit a phone, and their edits land on the disk', async ({ page }) => {
+  test.setTimeout(90_000);
+  const { orgId } = await signUpFresh(page);
+  const { diskId } = await openPhoneDisk(page, orgId, `PhoneEd-${runTag()}`);
+
+  // Makedir from More: the name dialog's field and buttons fit; the folder is made.
+  await page.getByTestId('files-more').tap();
+  await page.getByTestId('files-more-makedir').tap();
+  await expect(page.getByTestId('files-name-dialog')).toBeVisible();
+  await onScreen(page, ['files-name-input', 'files-name-save']);
+  await page.getByTestId('files-name-input').fill('Phone');
+  await page.getByTestId('files-name-save').tap();
+  await expect(row(page, 'right', 'Phone')).toBeVisible({ timeout: 15_000 });
+
+  // Rename from More.
+  await row(page, 'right', 'DOOMED').tap();
+  await page.getByTestId('files-more').tap();
+  await page.getByTestId('files-more-rename').tap();
+  await onScreen(page, ['files-name-input', 'files-name-save']);
+  await page.getByTestId('files-name-input').fill('KEPT');
+  await page.getByTestId('files-name-save').tap();
+  await expect(row(page, 'right', 'KEPT')).toBeVisible({ timeout: 15_000 });
+
+  // Delete from the bar: the confirm fits; cancelled, nothing goes.
+  await row(page, 'right', 'KEPT').tap();
+  await page.getByTestId('files-phone-delete').tap();
+  await onScreen(page, ['files-delete-confirm', 'files-delete-close']);
+  await page.getByTestId('files-delete-dialog').getByRole('button', { name: 'Cancel' }).tap();
+  await expect(page.getByTestId('files-delete-dialog')).toHaveCount(0);
+  await noSideways(page);
+  expect((await storedNames(diskId)).sort()).toEqual(['C', 'KEPT', 'Phone', 'README']);
+});
+
+test('at 390: the drop review fits a phone, staged list and all', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  await openPhoneDisk(page, orgId, `PhoneDrop-${runTag()}`);
+  // A long name the review must shorten for AmigaDOS: a name field, a note and buttons on the row.
+  await synthDrop(page, [{
+    name: 'Utilities', kind: 'dir',
+    children: [{ name: 'A name long enough that it has to be shortened for AmigaDOS', kind: 'file', content: 'hi' }],
+  }], '[data-testid="pane-right"]');
+  const review = page.getByTestId('files-drop-review');
+  const list = review.getByTestId('drop-staging-list');
+  await expect(list).toBeVisible();
+  await onScreen(page, ['drop-staging-list', 'drop-commit', 'drop-strip']);
+  await noSideways(page);
+  await review.getByTestId('drop-clear').tap();
+  await expect(list).toHaveCount(0);
+  await review.getByTestId('files-drop-review-cancel').tap();
+  await expect(review).toHaveCount(0);
+  // (The Browse page's press-and-hold drag of an entry onto a folder has no Files counterpart on a phone by design:
+  // a phone moves files with Move to…, which the second test above covers.)
 });

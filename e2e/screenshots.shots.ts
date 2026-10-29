@@ -330,9 +330,13 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   await page.goto(`/games/${fingers}`);
   await shoot(page, 'game');
 
-  await page.goto(`/disks/${sysInfo.id}/files`);
-  await expect(page.getByTestId('history-panel')).toBeVisible();
-  await expect(page.getByTestId('disk-card')).toBeVisible();
+  // Files (increment 1): LIBRARY: on the left, the disk on the right with its strip and its History open over it.
+  await page.goto(`/files?${new URLSearchParams({ left: 'LIBRARY:', right: `LIBRARY:/${sysInfoGame}/${sysInfo.id}`, active: 'right' })}`);
+  await hydrated(page, 'disk-strip-history-toggle');
+  await expect(page.getByTestId('pane-right').locator('[data-testid="pane-row"][data-name="ReadMe"]')).toBeVisible();
+  await page.getByTestId('disk-strip-history-toggle').click();
+  await expect(page.getByTestId('disk-strip-history')).toBeVisible();
+  await page.mouse.move(0, 0);
   await shoot(page, 'disk-files', { tall: true });
 
   await report();

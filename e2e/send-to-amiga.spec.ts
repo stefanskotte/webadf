@@ -136,7 +136,9 @@ async function seedSendDisk(orgId: string, title: string) {
   return { ...(await seedDisk(orgId, { title, diskNo: 1, sha256: sha })), mods };
 }
 
-test('Browse: Send on a folder queues its files with their paths and protection', async ({ page, request }) => {
+// Files increment 1 (Task 9) made the head of a disk the Files manager, which has no Send yet: Send to the Amiga
+// returns with NET: in Files increment 3. Until then this waits, unchanged.
+test.fixme('Browse: Send on a folder queues its files with their paths and protection', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
   const { token } = await pairDevice(page, request, 'Bench');
   await boardSays(request, token, 'c');

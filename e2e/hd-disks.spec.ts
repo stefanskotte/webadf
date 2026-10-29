@@ -8,7 +8,8 @@ import { diskStore } from '@/lib/storage';
 import { formatVolume } from '@/lib/adffs/format';
 import { readVolume } from '@/lib/adffs';
 import { HD_TRACK_DATA_BYTES } from '@/lib/adfmfm';
-import { signUpFresh, runTag, createAdf, libRows, stagingReady, openRowMenu, openVersion } from './helpers';
+import { signUpFresh, runTag, createAdf, libRows, stagingReady, openVersion } from './helpers';
+import { synthDrop } from './drag-drop-helpers';
 import { seedDisk, cleanupSeeded, pairDevice, authHeader } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
@@ -76,11 +77,13 @@ test('an uploaded HD ADF is tagged HD, can be made writable, and opens in the fi
   await page.goto('/library?view=table');
   await expect(page.getByTestId('game-hd-tag')).toBeVisible();
 
+  // Its files: the head of a disk is Files (Task 9), the disk on the right.
   await page.goto(`/disks/${d.id}/files`);
-  await expect(page.getByTestId('hd-not-browsable')).toHaveCount(0);
+  await expect(page).toHaveURL(/\/files\?/);
+  await expect(page.getByTestId('pane-right-meta')).toHaveText('No filesystem HD');
   // These bytes are noise with no DOS signature: the ordinary "no filesystem"
   // answer any such disk gets, not a refusal because it is HD.
-  await expect(page.getByTestId('file-edit-disabled')).toContainText('no filesystem');
+  await expect(page.getByTestId('pane-right-readonly')).toHaveText('This disk has no AmigaDOS filesystem.');
 });
 
 test('an HD disk mounts only on a board reporting playsHd, follows the library\'s write-protect flag, and is served as WFAD', async ({ page, request }) => {
@@ -299,42 +302,43 @@ test('a blank HD disk is made, edited in the browser, and its history lists and 
   expect(disk.sizeBytes).toBe(HD_BYTES);
 
   const AFTER_EDIT = { timeout: 15_000 };
-  await page.goto(`/disks/${disk.id}/files`);
-  await expect(page.getByTestId('file-toolbar')).toBeVisible();
-  await expect(page.getByTestId('file-edit-disabled')).toHaveCount(0);
-
-  // Through the toolbar: it must post the HD root, 1760.
-  await page.getByTestId('upload-input').setInputFiles({
-    name: 'HELLO.TXT', mimeType: 'application/octet-stream', buffer: Buffer.from('hello hd'),
+  const row = (name: string) => page.getByTestId('pane-right').locator(`[data-testid="pane-row"][data-name="${name}"]`);
+  await page.goto(`/files?${new URLSearchParams({ left: 'LIBRARY:', right: `LIBRARY:/${game.id}/${disk.id}`, active: 'right' })}`);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="files-manager"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
   });
-  await expect(page.getByTestId('upload-name')).toHaveValue('HELLO.TXT');
-  await page.getByTestId('upload-submit').click();
-  const row = page.locator('[data-testid="fs-entry"][data-name="HELLO.TXT"]');
-  await expect(row).toBeVisible(AFTER_EDIT);
+  await expect(page.getByTestId('pane-right-meta')).toHaveText('1.7 MB free · FFS HD');
+  await expect(page.getByTestId('pane-right-readonly')).toHaveCount(0);
 
-  const v = readVolume(new Uint8Array(await (await page.request.get(`/api/disks/${disk.id}/adf`)).body()));
-  if (!v.ok) throw new Error(`expected a volume, got ${v.reason}`);
-  const block = v.root.find((e) => e.name === 'HELLO.TXT')!.block;
-  await openRowMenu(page, block);
-  await page.getByTestId(`fs-rename-${block}`).click();
-  await page.getByTestId(`fs-rename-name-${block}`).fill('NEWNAME.TXT');
-  await page.getByTestId(`fs-rename-submit-${block}`).click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="NEWNAME.TXT"]')).toBeVisible(AFTER_EDIT);
+  // Through the drop review: it must write into the HD root, 1760.
+  await synthDrop(page, [{ name: 'HELLO.TXT', kind: 'file', content: 'hello hd' }], '[data-testid="pane-right"]');
+  const review = page.getByTestId('files-drop-review');
+  await expect(review.getByTestId('drop-destination-select')).toHaveValue('1760');
+  await review.getByTestId('drop-commit').click();
+  await expect(row('HELLO.TXT')).toBeVisible(AFTER_EDIT);
 
-  // History: file-level changes, newest first (HD writes spec §5.2).
-  const panel = page.getByTestId('history-panel');
+  await row('HELLO.TXT').click();
+  await page.getByTestId('files-rename').click();
+  await page.getByTestId('files-name-input').fill('NEWNAME.TXT');
+  await page.getByTestId('files-name-save').click();
+  await expect(row('NEWNAME.TXT')).toBeVisible(AFTER_EDIT);
+
+  // History, over the pane: file-level changes, newest first (HD writes spec §5.2).
+  await page.getByTestId('disk-strip-history-toggle').click();
+  const panel = page.getByTestId('disk-strip-history');
   await expect(panel.locator('li[data-testid^="version-"]')).toHaveCount(3);
-  await expect(page.getByTestId('version-2')).toHaveAttribute('data-head', 'true');
-  await expect(page.getByTestId('changes-2')).toContainText('NEWNAME.TXT');
+  await expect(panel.getByTestId('version-2')).toHaveAttribute('data-head', 'true');
+  await expect(panel.getByTestId('changes-2')).toContainText('NEWNAME.TXT');
   await openVersion(page, 1);
-  await expect(page.getByTestId('changes-1')).toContainText('HELLO.TXT');
+  await expect(panel.getByTestId('changes-1')).toContainText('HELLO.TXT');
 
   // Restore version 1 from the panel: HELLO.TXT is back under its first name.
-  await page.getByTestId('restore-1').click();
+  await panel.getByTestId('restore-1').click();
   await expect(page.getByTestId('restore-dialog')).toBeVisible();
   await page.getByTestId('restore-confirm').click();
   await expect(page.getByTestId('restore-dialog')).toHaveCount(0, AFTER_EDIT);
-  await expect(page.locator('[data-testid="fs-entry"][data-name="HELLO.TXT"]')).toBeVisible(AFTER_EDIT);
+  await expect(row('HELLO.TXT')).toBeVisible(AFTER_EDIT);
   const back = readVolume(new Uint8Array(await (await page.request.get(`/api/disks/${disk.id}/adf`)).body()));
   if (!back.ok) throw new Error(`expected a volume, got ${back.reason}`);
   expect(back.root.map((e) => e.name)).toEqual(['HELLO.TXT']);

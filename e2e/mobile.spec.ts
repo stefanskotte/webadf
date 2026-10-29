@@ -1,14 +1,11 @@
 import { test, expect, type Page } from '@playwright/test';
 import { createHash, randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
-import { syntheticVolume } from '@/lib/adffs/synthetic';
-import { readVolume } from '@/lib/adffs';
-import { signUpFresh, runTag, createAdf, stagingReady, openTitleMenu, openRowMenu } from './helpers';
+import { signUpFresh, runTag, stagingReady, openTitleMenu } from './helpers';
 import { cleanupSeeded, seedDisk, addDisk, pairDevice, authHeader, hydrated } from './device-helpers';
-import { synthDrop } from './drag-drop-helpers';
 import { zoneOf } from '@/lib/set-folder';
 import { seedProduction, seedSuggestion, cleanupDemozoo } from './demozoo-helpers';
 
@@ -28,6 +25,10 @@ import { seedProduction, seedSuggestion, cleanupDemozoo } from './demozoo-helper
 test.afterAll(async () => { await cleanupDemozoo(); await cleanupSeeded(); });
 
 const sha = (s: string) => createHash('sha256').update(`mobile-${s}`).digest('hex');
+
+// The disk page's three phone tests (a row's name and Download, the toolbar and row controls, the drop strip and a
+// press-and-hold drag onto a folder) moved to files.mobile.spec.ts with Files increment 1 (Task 11): the head of a disk
+// is the Files manager now.
 
 /** Same pattern as devices-page.spec.ts's setDevice: write directly to a
  * devices row -- how these tests drive a device into a specific state. */
@@ -229,56 +230,6 @@ test('an HFE that cannot be extracted says why on screen, not only in a tooltip,
   expect(overflow).toBeLessThanOrEqual(0);
 });
 
-test('a file tree row shows its name AND its download control', async ({ page }) => {
-  const u = await signUpFresh(page);
-  const tag = randomUUID().slice(0, 8);
-  const adf = syntheticVolume({
-    filesystem: 'FFS',
-    volumeName: `Mob-${tag}`,
-    entries: [{ name: 'C', entries: [{ name: 'SetPatch', bytes: new TextEncoder().encode('x') }] },
-              { name: 'README', bytes: new TextEncoder().encode('yy') }],
-  });
-  const content = Buffer.from(adf);
-  const sha256 = createHash('sha256').update(content).digest('hex');
-  const presign = await page.request.post('/api/ingest/presign', { data: { files: [{ sha256, sizeBytes: content.length }] } });
-  const { uploads } = await presign.json();
-  await fetch(uploads[0].url, { method: 'PUT', body: new Uint8Array(content) });
-  await page.request.post('/api/ingest/complete', { data: { files: [{ sha256, sizeBytes: content.length, filename: `m-${tag}.adf` }] } });
-  const row = (await getDb().select().from(disks).where(eq(disks.sha256, sha256)))[0];
-  void u;
-
-  await page.goto(`/disks/${row.id}/files`);
-  const readme = page.locator('[data-testid="fs-entry"][data-name="README"]');
-  await expect(readme).toBeVisible();
-
-  // This is the regression that mattered: the fixed columns totalled more
-  // than the card was wide, so the name computed to a negative width and the
-  // row's controls were clipped away entirely. The row's actions are in its
-  // ⋯ menu now (C4): the trigger must be in view, and so must Download inside it.
-  await expect(readme.getByText('README')).toBeVisible();
-  const more = readme.locator('[data-testid^="fs-more-"]');
-  await expect(more).toBeVisible();
-  let box = (await more.boundingBox())!;
-  expect(box.x).toBeGreaterThanOrEqual(0);
-  expect(box.x + box.width).toBeLessThanOrEqual(390);
-  await openRowMenu(page, 'README');
-  const download = page.locator('a[data-testid^="fs-download-"]');
-  await expect(download).toBeVisible();
-  box = (await download.boundingBox())!;
-  expect(box.x).toBeGreaterThanOrEqual(0);
-  expect(box.x + box.width).toBeLessThanOrEqual(390);
-
-  // D-6-4 (updated by task 11, and C4): the row now legitimately holds more than
-  // one <button> -- the grip, the protection chips and the ⋯ menu (where the row's actions are) joined the directory toggle -- so
-  // "only one button in the row" is no longer the invariant to protect.
-  // What still has to hold, and what this asserts, is that the toggle
-  // itself is uniquely locatable by its own testid rather than ambiguous
-  // among however many buttons the row happens to have.
-  await expect(
-    page.locator('[data-testid="fs-entry"][data-name="C"]').locator('[data-testid^="fs-toggle-"]'),
-  ).toHaveCount(1);
-});
-
 test('the table view at 390: each name wraps whole with its facts under it, the ⋯ is in view, nothing scrolls sideways', async ({ page }) => {
   const { u, run } = await seedLibrary(page, 3);
   const long = `Mobile ${run} A very long title that has to wrap onto a second line`.slice(0, 70);
@@ -377,208 +328,6 @@ test('the Create ADF panel opens as a bottom sheet and makes a disk at a phone w
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
   expect(overflow).toBeLessThanOrEqual(0);
-});
-
-/**
- * The file toolbar (upload, new folder) and a row's Rename/Delete controls,
- * at 390x844. Worth a real check for the same reason the create-disk menu
- * was: task-11's controls are ordinary buttons and inline forms, not the
- * dropdown that the Create ADF finding was about, but nothing here was ever
- * proven to fit a phone either, and the same card that clips the Download
- * link (the "a file tree row shows its name AND its download control" test
- * above) is exactly where these controls live too.
- */
-test('the file toolbar and a row\'s controls fit a phone', async ({ page }) => {
-  const u = await signUpFresh(page);
-  await page.goto('/library');
-  await createAdf(page);
-  // WAIT FOR THE CARD BEFORE QUERYING. createAdf() returns the moment it
-  // clicks the menu item, but the disk is made by a request still in
-  // flight, so a query fired immediately finds nothing and `game.id` throws
-  // on undefined. disk-files-edit.spec.ts hit exactly this and now hides the
-  // wait inside its own helper; this file has no such helper, so the wait is
-  // explicit. create-adf.spec.ts has always done it this way.
-  await expect(page.getByTestId('game-card')).toHaveCount(1);
-  const [game] = await getDb().select().from(games)
-    .where(and(eq(games.orgId, u.orgId), eq(games.authored, true)));
-  if (!game) throw new Error(`no authored game for org ${u.orgId} after createAdf`);
-  const [disk] = await getDb().select().from(disks).where(eq(disks.gameId, game.id));
-
-  await page.goto(`/disks/${disk.id}/files`);
-  const toolbar = page.getByTestId('file-toolbar');
-  await expect(toolbar).toBeVisible();
-  let box = (await toolbar.boundingBox())!;
-  expect(box.x).toBeGreaterThanOrEqual(0);
-  expect(box.x + box.width).toBeLessThanOrEqual(390);
-
-  // Selecting a file swaps the trigger for the name+submit+cancel form --
-  // that form is what has to fit, not just the trigger button.
-  await page.getByTestId('upload-input').setInputFiles({
-    name: 'PHONE.TXT', mimeType: 'application/octet-stream', buffer: Buffer.from('phone upload'),
-  });
-  for (const id of ['upload-name', 'upload-submit', 'upload-cancel']) {
-    box = (await page.getByTestId(id).boundingBox())!;
-    expect(box.x).toBeGreaterThanOrEqual(0);
-    expect(box.x + box.width).toBeLessThanOrEqual(390);
-  }
-  await page.getByTestId('upload-submit').tap();
-
-  const row = page.locator('[data-testid="fs-entry"][data-name="PHONE.TXT"]');
-  // Explicit timeout: this is a file write into an ADF plus a server
-  // re-render, not a local DOM update, and the default 5 s is tight enough
-  // that it fails under the load of a FULL suite run while passing every time
-  // this file is run on its own. Measured 2026-09-13 -- 1 failure in a
-  // 241-test run, 16/16 passes in isolation both before and after the change
-  // that was briefly suspected of causing it. Same 10 s the collection drag
-  // assertions in this suite already use, for the same reason.
-  await expect(row).toBeVisible({ timeout: 15_000 });
-
-  const adf = new Uint8Array(await (await page.request.get(`/api/disks/${disk.id}/adf`)).body());
-  const volume = readVolume(adf);
-  expect(volume.ok).toBe(true);
-  if (!volume.ok) return;
-  const block = volume.root.find((e) => e.name === 'PHONE.TXT')!.block;
-
-  await openRowMenu(page, block);
-  await page.getByTestId(`fs-rename-${block}`).tap();
-  for (const id of [`fs-rename-name-${block}`, `fs-rename-submit-${block}`, `fs-rename-cancel-${block}`]) {
-    box = (await page.getByTestId(id).boundingBox())!;
-    expect(box.x).toBeGreaterThanOrEqual(0);
-    expect(box.x + box.width).toBeLessThanOrEqual(390);
-  }
-  await page.getByTestId(`fs-rename-cancel-${block}`).tap();
-
-  await openRowMenu(page, block);
-  await page.getByTestId(`fs-delete-${block}`).tap();
-  for (const id of [`fs-delete-confirm-${block}`, `fs-delete-cancel-${block}`]) {
-    box = (await page.getByTestId(id).boundingBox())!;
-    expect(box.x).toBeGreaterThanOrEqual(0);
-    expect(box.x + box.width).toBeLessThanOrEqual(390);
-  }
-  await page.getByTestId(`fs-delete-cancel-${block}`).tap();
-
-  const overflow = await page.evaluate(
-    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
-  );
-  expect(overflow).toBeLessThanOrEqual(0);
-});
-
-/**
- * Task 11: the drop strip, the staging list it grows into, and a
- * press-and-hold drag onto a folder -- at 390x844.
- *
- * `synthDrop` (drag-drop-helpers.ts) is used here exactly as it is in
- * disk-drag-drop.spec.ts's desktop specs -- Playwright cannot drive a real
- * OS file drop on a phone any more than it can on a desktop browser, and
- * that helper's own comment states plainly what it does and does not
- * prove. What THIS test adds is the thing neither the desktop suite nor a
- * synthesized drop can check: whether the staging list it grows into
- * actually fits a 390px screen, and whether a real finger (via CDP, not a
- * mouse event wearing a touch costume -- same reasoning as `touchDrag`,
- * above) can still drag an entry inside the tree once the row also carries
- * a grip handle, a toggle, Rename, Delete and Move to....
- */
-test('the drop strip fits a phone, and a press-and-hold drags an entry onto a folder', async ({ page }) => {
-  // This one test signs up, makes a disk, writes two files, stages a drop, then touch-drags: ~25 s warm and over
-  // the 30 s default on a cold dev-server compile of the files page. The drag itself lands (the PATCH returns
-  // 200); the old failure was the budget running out while polling for the moved entry.
-  test.setTimeout(90_000);
-  const u = await signUpFresh(page);
-  await page.goto('/library');
-  await createAdf(page);
-  // WAIT FOR THE CARD BEFORE QUERYING -- see the identical comment on the
-  // file-toolbar test above; createAdf() returns before the disk exists.
-  await expect(page.getByTestId('game-card')).toHaveCount(1);
-  const [game] = await getDb().select().from(games)
-    .where(and(eq(games.orgId, u.orgId), eq(games.authored, true)));
-  if (!game) throw new Error(`no authored game for org ${u.orgId} after createAdf`);
-  const [disk] = await getDb().select().from(disks).where(eq(disks.gameId, game.id));
-
-  // A folder and a file to drag into it, made through the API rather than
-  // the UI -- this test is about touch input and layout, not about
-  // upload, and disk-drag-drop.spec.ts already covers making them by hand.
-  await page.request.post(`/api/disks/${disk.id}/files`, {
-    multipart: { parentBlock: '880', name: 'DEST' },
-  });
-  await page.request.post(`/api/disks/${disk.id}/files`, {
-    multipart: {
-      parentBlock: '880', name: 'DRAGME.TXT',
-      file: { name: 'DRAGME.TXT', mimeType: 'application/octet-stream', buffer: Buffer.from('mobile drag') },
-    },
-  });
-
-  await page.goto(`/disks/${disk.id}/files`);
-  const strip = page.getByTestId('drop-strip');
-  await expect(strip).toBeVisible();
-  let box = (await strip.boundingBox())!;
-  expect(box.x).toBeGreaterThanOrEqual(0);
-  expect(box.x + box.width).toBeLessThanOrEqual(390);
-
-  // Stage something so the LIST actually renders -- the always-visible
-  // strip above it was never the thing at risk of clipping; a list of rows
-  // with a name field, a conflict message and two buttons is.
-  await synthDrop(page, [{
-    name: 'Utilities',
-    kind: 'dir',
-    children: [{ name: 'A name long enough that it has to be shortened for AmigaDOS', kind: 'file', content: 'hi' }],
-  }]);
-  const list = page.getByTestId('drop-staging-list');
-  await expect(list).toBeVisible();
-  box = (await list.boundingBox())!;
-  expect(box.x).toBeGreaterThanOrEqual(0);
-  expect(box.x + box.width).toBeLessThanOrEqual(390);
-
-  const stagingOverflow = await page.evaluate(
-    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
-  );
-  expect(stagingOverflow).toBeLessThanOrEqual(0);
-
-  await page.getByTestId('drop-clear').tap();
-  await expect(list).toHaveCount(0);
-
-  // Now the press-and-hold drag: DRAGME.TXT onto DEST.
-  const adf = new Uint8Array(await (await page.request.get(`/api/disks/${disk.id}/adf`)).body());
-  const volume = readVolume(adf);
-  expect(volume.ok).toBe(true);
-  if (!volume.ok) return;
-  const dest = volume.root.find((e) => e.name === 'DEST')!;
-  const dragged = volume.root.find((e) => e.name === 'DRAGME.TXT')!;
-
-  const grip = page.getByTestId(`fs-drag-${dragged.block}`);
-  const dropZone = page.getByTestId(`fs-drop-${dest.block}`);
-  const entryRow = page.locator('[data-testid="fs-entry"][data-name="DRAGME.TXT"]');
-  await expect(grip).toBeVisible();
-  // PUT BOTH ROWS MID-VIEWPORT FIRST. The History panel (the time machine)
-  // made this page taller than a phone viewport, so it now scrolls -- and
-  // dnd-kit auto-scrolls a scrollable container whenever a drag's pointer
-  // sits in its top or bottom quarter. This drag is scripted from
-  // coordinates measured BEFORE it starts, so an auto-scroll slides the
-  // target out from under a finger that cannot chase it the way a person's
-  // would: measured at 156px of drift (the drop zone went from y=31 to
-  // y=205 mid-drag), which is more than two rows, and the drop then lands on
-  // nothing. A person gets the auto-scroll ON PURPOSE -- it is how you reach
-  // a folder that is off-screen -- so the behaviour is right and the
-  // assumption "this page does not scroll" is what stopped being true.
-  await grip.evaluate((el) => el.scrollIntoView({ block: 'center' }));
-  const gripBox = (await grip.boundingBox())!;
-  const dropBox = (await dropZone.boundingBox())!;
-  const from = { x: gripBox.x + gripBox.width / 2, y: gripBox.y + gripBox.height / 2 };
-  const targetY = dropBox.y + dropBox.height / 2;
-
-  // 250ms hold, matching the TouchSensor's own activation delay
-  // (file-tree.tsx copies collection-provider.tsx's sensor setup
-  // verbatim) -- anything shorter is a scroll gesture, not a drag.
-  const drag = await touchDrag(page, from, targetY - from.y, { holdMs: 400 });
-  await expect.poll(() => entryRow.evaluate((el) => getComputedStyle(el).opacity)).toBe('0.5');
-  await drag.end();
-
-  await expect.poll(async () => {
-    const after = new Uint8Array(await (await page.request.get(`/api/disks/${disk.id}/adf`)).body());
-    const afterVolume = readVolume(after);
-    if (!afterVolume.ok) return null;
-    const destAfter = afterVolume.root.find((e) => e.name === 'DEST');
-    return destAfter?.children.find((c) => c.name === 'DRAGME.TXT')?.block ?? null;
-  }, { timeout: 15_000 }).toBe(dragged.block);
 });
 
 test('the Demozoo review queue does not overflow at 390px', async ({ page }) => {
