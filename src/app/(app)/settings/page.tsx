@@ -5,6 +5,7 @@ import { auth } from '@/lib/auth';
 import { getUserPrefs } from '@/lib/user-prefs';
 import { SideNav, type SideNavGroup } from '@/components/shell/side-nav';
 import { PreferencesForm } from '@/components/prefs/preferences-form';
+import { FilesSettings } from '@/components/prefs/files-settings';
 import { FirmwarePasswordSetting } from '@/components/prefs/firmware-password-setting';
 import { AccountSecurity } from '@/components/prefs/account-security';
 import { DeleteAccount } from '@/components/prefs/delete-account';
@@ -19,6 +20,7 @@ const SECTIONS: SideNavGroup[] = [{
   label: 'Your account',
   items: [
     { href: '#prefs', label: 'Preferences', focusId: 'prefs-heading' },
+    { href: '#files', label: 'Files', focusId: 'files-heading' },
     { href: '#account', label: 'Sign-in & password', focusId: 'account-heading' },
     { href: '#firmware', label: 'Firmware updates', focusId: 'firmware-heading' },
     { href: '#danger', label: 'Delete account', focusId: 'danger-heading', tone: 'danger' },
@@ -26,7 +28,7 @@ const SECTIONS: SideNavGroup[] = [{
 }];
 
 /**
- * Settings › Account (A2; layout C5, board InfSettings; tab since 2026-10-28): Preferences, Sign-in & password,
+ * Settings › Account (A2; layout C5, board InfSettings; tab since 2026-10-28): Preferences, Files, Sign-in & password,
  * Firmware updates, Delete account. All of it belongs to the signed-in user -- not the org, not a board -- and follows
  * them to any browser. From lg a sticky section list sits beside the cards; below lg the cards stand alone.
  */
@@ -50,6 +52,7 @@ export default async function SettingsPage() {
       </aside>
       <div className="flex min-w-0 flex-col gap-5">
         <PreferencesForm prefs={prefs} />
+        <FilesSettings prefs={prefs} />
         <AccountSecurity email={email} sessionCount={sessions.length} />
         <FirmwarePasswordSetting skipPassword={prefs.firmware.skipPassword} />
         <DeleteAccount />

@@ -360,4 +360,7 @@ describe('sharing and remote help', () => {
     const b = HELP_TOPICS.remote.short + ' ' + bodyText('remote').replace(/\s+/g, ' ');
     for (const w of ['Add', 'Mount', 'Send', 'Download', 'yours', 'Access ended']) expect(b).toContain(w);
   });
+  it('preferences names the Files section (increment 4)', () => {
+    expect(bodyText('preferences')).toMatch(/Files\.\s+Its own section sets the panes Files opens with/);
+  });
 });

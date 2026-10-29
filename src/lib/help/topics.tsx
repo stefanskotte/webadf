@@ -738,6 +738,10 @@ export const HELP_TOPICS = {
           each change there is kept as soon as you make it.
         </p>
         <p>
+          <strong>Files.</strong> Its own section sets the panes Files opens with, .info files, the Comment column,
+          whether Delete asks and what happens when a name exists.
+        </p>
+        <p>
           <strong>Firmware updates.</strong> Settings can stop <em>Update</em> on Devices asking for your password.
           Turning that on takes your password; turning it off does not. Settings says which applies:{' '}
           <em>Password asked</em> or <em>Password not asked</em>. While it is on, anyone using your signed-in browser

@@ -71,8 +71,8 @@ test('Settings: the section list marks the section in view, and a click moves fo
   const nav = page.getByTestId('settings-nav');
   await expect(nav).toBeVisible();
   await expect(nav.getByRole('link', { name: 'Preferences' })).toHaveAttribute('aria-current', 'true');
-  // Tabs 2026-10-28: the list is the Account tab's four sections; Sharing and About have tabs of their own.
-  await expect(nav.getByRole('link')).toHaveText(['Preferences', 'Sign-in & password', 'Firmware updates', 'Delete account']);
+  // Tabs 2026-10-28: the list is the Account tab's five sections; Sharing and About have tabs of their own.
+  await expect(nav.getByRole('link')).toHaveText(['Preferences', 'Files', 'Sign-in & password', 'Firmware updates', 'Delete account']);
   // The nav and the radios hydrate in the same pass (no Suspense boundary between them).
   await hydrated(page, 'pref-start-page', 'onKeyDown');
   const danger = nav.getByRole('link', { name: 'Delete account' });
