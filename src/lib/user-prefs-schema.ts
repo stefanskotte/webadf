@@ -89,9 +89,27 @@ export type UserPrefs = {
    * Turning it OFF is free. A failed read is the default, false: fail safe.
    */
   firmware: { skipPassword: boolean };
-  /** The Files manager's sort, remembered per device (library, stash, net). */
-  files: { sort: { library: FilesSort; stash: FilesSort; net: FilesSort } };
+  /**
+   * The Files manager (spec section 6, rulings R2-R5): its sort, remembered
+   * per device (library, stash, net); the device each pane opens on at a bare
+   * /files; the Comment column; whether Delete asks on a disk; the answer
+   * given to a name clash up front ('ask' keeps the dialog).
+   */
+  files: {
+    sort: { library: FilesSort; stash: FilesSort; net: FilesSort };
+    panes: { left: FilesPaneDevice; right: FilesPaneDevice };
+    comments: FilesCommentMode;
+    confirmDelete: boolean;
+    onClash: FilesOnClash;
+  };
 };
+
+export const FILES_PANE_DEVICES = ['STASH', 'NET', 'LIBRARY'] as const;
+export type FilesPaneDevice = (typeof FILES_PANE_DEVICES)[number];
+export const FILES_COMMENT_MODES = ['auto', 'always', 'never'] as const;
+export type FilesCommentMode = (typeof FILES_COMMENT_MODES)[number];
+export const FILES_ON_CLASH = ['ask', 'keep-both', 'replace', 'skip'] as const;
+export type FilesOnClash = (typeof FILES_ON_CLASH)[number];
 
 /** Fresh objects every call: a caller may mutate what it gets back. */
 function defaults(): UserPrefs {
@@ -106,6 +124,10 @@ function defaults(): UserPrefs {
         stash: { key: 'date', dir: 'desc' },
         net: { key: 'date', dir: 'desc' },
       },
+      panes: { left: 'STASH', right: 'LIBRARY' },
+      comments: 'auto',
+      confirmDelete: true,
+      onClash: 'ask',
     },
   };
 }
@@ -143,6 +165,14 @@ const prefsSchema = z.object({
       stash: filesSortSchema.catch(() => defaults().files.sort.stash),
       net: filesSortSchema.catch(() => defaults().files.sort.net),
     }).catch(() => defaults().files.sort),
+    panes: z.object({
+      left: z.enum(FILES_PANE_DEVICES).catch(() => defaults().files.panes.left),
+      right: z.enum(FILES_PANE_DEVICES).catch(() => defaults().files.panes.right),
+    }).catch(() => defaults().files.panes),
+    comments: z.enum(FILES_COMMENT_MODES).catch(() => defaults().files.comments),
+    // Fail safe: only a real `false` stops the confirm.
+    confirmDelete: z.boolean().catch(true),
+    onClash: z.enum(FILES_ON_CLASH).catch(() => defaults().files.onClash),
   }).catch(() => defaults().files),
 });
 
@@ -173,6 +203,13 @@ const prefsPatchSchema = z.strictObject({
       stash: filesSortSchema.strict().optional(),
       net: filesSortSchema.strict().optional(),
     }).optional(),
+    panes: z.strictObject({
+      left: z.enum(FILES_PANE_DEVICES).optional(),
+      right: z.enum(FILES_PANE_DEVICES).optional(),
+    }).optional(),
+    comments: z.enum(FILES_COMMENT_MODES).optional(),
+    confirmDelete: z.boolean().optional(),
+    onClash: z.enum(FILES_ON_CLASH).optional(),
   }).optional(),
 });
 
@@ -203,6 +240,13 @@ export function applyPrefsPatch(cur: UserPrefs, patch: PrefsPatch): UserPrefs {
         stash: { ...(patch.files?.sort?.stash ?? cur.files.sort.stash) },
         net: { ...(patch.files?.sort?.net ?? cur.files.sort.net) },
       },
+      panes: {
+        left: patch.files?.panes?.left ?? cur.files.panes.left,
+        right: patch.files?.panes?.right ?? cur.files.panes.right,
+      },
+      comments: patch.files?.comments ?? cur.files.comments,
+      confirmDelete: patch.files?.confirmDelete ?? cur.files.confirmDelete,
+      onClash: patch.files?.onClash ?? cur.files.onClash,
     },
   };
 }
@@ -228,6 +272,14 @@ export function prefsDiff(from: UserPrefs, to: UserPrefs): PrefsPatch {
       patch.files = { sort: { ...patch.files?.sort, [d]: { ...to.files.sort[d] } } };
     }
   }
+  for (const side of ['left', 'right'] as const) {
+    if (from.files.panes[side] !== to.files.panes[side]) {
+      patch.files = { ...patch.files, panes: { ...patch.files?.panes, [side]: to.files.panes[side] } };
+    }
+  }
+  if (from.files.comments !== to.files.comments) patch.files = { ...patch.files, comments: to.files.comments };
+  if (from.files.confirmDelete !== to.files.confirmDelete) patch.files = { ...patch.files, confirmDelete: to.files.confirmDelete };
+  if (from.files.onClash !== to.files.onClash) patch.files = { ...patch.files, onClash: to.files.onClash };
   // `firmware` deliberately never: it has its own controls on Settings
   // (firmware-password-setting.tsx), and turning it on needs the password.
   return patch;
