@@ -177,6 +177,12 @@ export function Pane(p: PaneProps) {
                         <span aria-hidden className="shrink-0 rounded-[4px] px-[5px] py-px font-mono text-[10px] font-semibold"
                               style={{ background: glyph.bg, color: glyph.fg }}>{glyph.label}</span>
                         <span className={`truncate ${e.kind === 'file' ? '' : 'font-semibold'}`} style={{ color: 'var(--ink)' }}>{e.name}</span>
+                        {/* "New in vN": the Browse page's mark (file-tree.tsx), from the disk's History. */}
+                        {e.addedIn !== undefined && (
+                          <span data-testid={`pane-new-${e.name}`} title={`Added in version ${e.addedIn} — see History`}
+                                className="shrink-0 rounded-full px-1.5 py-px text-[10px] font-semibold"
+                                style={{ background: 'var(--success-bg)', color: 'var(--success-fg)' }}>new in v{e.addedIn}</span>
+                        )}
                         {e.marks.map((m) => (
                           <span key={m} className="shrink-0 rounded-full border px-[7px] text-[11px]"
                                 style={{ background: 'var(--surface-2)', borderColor: 'var(--line)', color: 'var(--muted-2)' }}>{m}</span>

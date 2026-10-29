@@ -13,7 +13,7 @@ import { synthDrop } from './drag-drop-helpers';
 
 /**
  * Files increment 1, Task 9: the disk strip above a pane inside a disk, Files… on the title page, the Browse address
- * redirecting to Files, and files from the computer dropped into a disk folder (R5).
+ * redirecting to Files, and files from the computer dropped into a disk folder (R5) through the drop review (Task 9b).
  */
 
 test.afterAll(cleanupSeeded);
@@ -81,7 +81,12 @@ test('files dropped from the computer land in the folder the pane shows, as a ne
   await expect(page.getByText('Open a disk to drop files into it')).toBeVisible();
   await expect(page).toHaveURL(/\/files\?/);
 
+  // The Browse page's review opens over the panes (Task 9b); nothing is written until it is confirmed.
   await synthDrop(page, [{ name: 'Notes.txt', kind: 'file', content: 'dropped from the computer' }], '[data-testid="pane-right"]');
+  const review = page.getByTestId('files-drop-review');
+  await expect(review.getByTestId('drop-staging-list')).toContainText('Notes.txt');
+  await review.getByTestId('drop-commit').click();
+  await expect(review).toHaveCount(0);
   await expect(page.getByText(/^Added 1 item to .+ — saved as version 1\.$/)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId('pane-right').getByTestId('pane-row').filter({ hasText: 'Notes.txt' })).toHaveCount(1);
   await expect(page.getByTestId('disk-strip-right').getByTestId('disk-strip-history-toggle')).toHaveText('History · v1');
@@ -92,9 +97,10 @@ test('files dropped from the computer land in the folder the pane shows, as a ne
   await expect(panel.getByTestId('version-1')).toHaveAttribute('data-head', 'true');
   await expect(panel.getByTestId('changes-1')).toContainText('Notes.txt');
 
-  // A name already there refuses the whole drop.
+  // A name already there is a clash the review holds back until it is answered.
   await synthDrop(page, [{ name: 'readme', kind: 'file', content: 'clash' }], '[data-testid="pane-right"]');
-  await expect(page.getByText('Something with that name is already there: readme.')).toBeVisible();
+  await expect(review.getByTestId('stage-conflict-0')).toContainText('ReadMe');
+  await expect(review.getByTestId('drop-commit')).toBeDisabled();
 });
 
 test('a disk in a drive: the chip says which, Eject to edit replaces Mount, and the volume name is locked', async ({ page, request }) => {

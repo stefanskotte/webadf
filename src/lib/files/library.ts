@@ -2,7 +2,7 @@
 // LIBRARY: (spec 2026-10-29 §4.1): titles → disks → a disk's AmigaDOS folders. SERVER ONLY.
 import { and, asc, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { disks, entitlements, games } from '@/db/schema/catalog';
+import { blobs, disks, entitlements, games } from '@/db/schema/catalog';
 import { diskStore } from '@/lib/storage';
 import { readVolume, readUsage, readFile, geometryOf, HD_GEOMETRY, type AdfEntry } from '@/lib/adffs';
 import { sameName } from '@/lib/adffs/write';
@@ -28,10 +28,12 @@ export async function loadDisk(ctx: FsCtx, gameId: string, diskId: string): Prom
   const db = getDb();
   const [row] = await db
     .select({ id: disks.id, gameId: disks.gameId, diskNo: disks.diskNo, label: disks.label, sha256: disks.sha256,
-      imageFormat: disks.imageFormat, title: games.title })
+      imageFormat: disks.imageFormat, title: games.title, tosecName: disks.tosecName, matchState: blobs.matchState })
     .from(disks)
     .innerJoin(entitlements, and(eq(entitlements.orgId, disks.orgId), eq(entitlements.sha256, disks.sha256)))
     .innerJoin(games, and(eq(games.id, disks.gameId), eq(games.orgId, ctx.orgId), isLocal(games)))
+    // Global, and LEFT: a blob the sweeper has not reached has no match yet, the same as 'none'.
+    .leftJoin(blobs, eq(blobs.sha256, disks.sha256))
     .where(and(eq(disks.id, diskId), eq(disks.gameId, gameId), eq(disks.orgId, ctx.orgId), isLocal(disks)))
     .limit(1);
   if (!row) return null;
@@ -45,6 +47,9 @@ export async function loadDisk(ctx: FsCtx, gameId: string, diskId: string): Prom
     usedBytes: usage?.usedBytes ?? null, freeBytes: usage?.freeBytes ?? null, totalBytes: usage?.totalBytes ?? null,
     holder: holder?.name ?? null, imageFormat: row.imageFormat, volumeName: vol.ok ? vol.volume.name : null, sha256: row.sha256,
     intl: vol.ok ? vol.volume.intl : false,
+    // disks.tosecName also holds the uploaded filename until a real match overwrites it, stamping 'matched' in the
+    // same write (the Browse page's D-W-3 rule): only then is there an identity to lose.
+    tosecName: row.matchState === 'matched' ? row.tosecName : null,
   };
   return { info, bytes, root: vol.ok ? vol.root : [], rootBlock: vol.ok ? vol.rootBlock : 0, intl: vol.ok ? vol.volume.intl : false };
 }

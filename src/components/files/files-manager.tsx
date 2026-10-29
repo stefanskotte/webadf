@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import type { FsEntry, Listing, RefusalCode, StripData } from '@/lib/files/types';
+import type { DiskInfo, FsEntry, Listing, RefusalCode, StripData } from '@/lib/files/types';
 import { nextSort, sortFsEntries, type FilesSort, type FilesSortKey } from '@/lib/files/sort';
 import { EMPTY_SELECTION, moveCursor, selectClick, togglePick, type Selection } from '@/lib/files/selection';
 import { commandFor, type FilesCommand } from '@/lib/files/keys';
@@ -13,12 +13,14 @@ import type { OpItem, OpRequest } from '@/lib/files/ops';
 import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
-import { planComputerDrop } from '@/lib/files/computer-drop';
-import { readDroppedItems } from '@/lib/drop-reader';
+import { identityToConfirm, undoTarget, withAddedIn, type OpVersion } from '@/lib/files/edit-rules';
+import { addedIn } from '@/lib/disk-history/added-in';
+import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
 import { isFileDrag } from '@/components/disks/native-drop';
-import { describeEditError } from '@/components/disks/file-actions';
+import { IdentityConfirmDialog, requestUndo } from '@/components/disks/file-actions';
 import { Pane } from './pane';
 import { DiskStrip } from './disk-strip';
+import { DropReview } from './drop-review';
 import {
   ClashDialog, ConfirmDeleteDialog, InfoDialog, NameDialog, ProtectDialog, placeName, type Clash, type ClashChoice,
 } from './dialogs';
@@ -55,16 +57,21 @@ type Dialog =
   | {
     kind: 'clash'; op: 'copy' | 'move'; sources: string[]; dest: string; where: string; clashes: Clash[]; at: number;
     choices: Record<string, ClashChoice>;
-    /** Requests still to send once these clashes are answered, and the outcomes of those already sent. */
-    rest: TransferGroup[]; done: OpItem[];
+    /** Requests still to send once these clashes are answered, and the outcomes (and versions) of those already sent. */
+    rest: TransferGroup[]; done: OpItem[]; versions: OpVersion[];
   }
   | { kind: 'delete'; side: Side; entries: FsEntry[] }
   | { kind: 'makedir'; side: Side }
   | { kind: 'rename'; side: Side; entry: FsEntry }
   | { kind: 'protect'; side: Side; entries: FsEntry[] }
-  | { kind: 'info'; side: Side; entry: FsEntry };
+  | { kind: 'info'; side: Side; entry: FsEntry }
+  /** The TOSEC-identity confirm before the first write to `disk` this visit; `next` goes on once it is confirmed. */
+  | { kind: 'identity'; disk: DiskInfo; next(): void }
+  /** Files from the computer, being read, under review for `folder` (from the disk's root) of `disk`. */
+  | { kind: 'drop'; disk: DiskInfo; folder: string; where: string; items: Promise<DroppedItem[]> };
 
 const GONE = 'This place no longer exists.';
+const NO_MARKS: ReadonlyMap<string, number> = new Map();
 const DRAG_TYPE = 'application/x-webfloppy-files';
 const DEFAULT_PATH = 'LIBRARY:';
 const KNOWN_CODES: ReadonlySet<string> = new Set<RefusalCode>([
@@ -147,6 +154,16 @@ function remapSelection(before: FsEntry[], after: FsEntry[], sel: Selection): Se
   return { anchor: map(sel.anchor), cursor: map(sel.cursor) ?? 0, picked };
 }
 
+/** The "new in vN" marks of the disk a listing is inside, from its strip's History; none above the disks. */
+function useMarks(l: Listing | null, strips: Record<string, StripData>): ReadonlyMap<string, number> {
+  const history = l?.disk ? strips[l.disk.diskId]?.history : undefined;
+  return useMemo(() => (history ? addedIn(history) : NO_MARKS), [history]);
+}
+
+function shown(l: Listing | null, marks: ReadonlyMap<string, number>): Listing | null {
+  return l && marks.size ? { ...l, entries: withAddedIn(l.entries, marks) } : l;
+}
+
 /** One button of the column. The reason sits on a wrapper too: a disabled button takes no pointer events, so its
  *  own title never shows. */
 function ActionButton({ id, label, reason, busy, onClick, primary = false }: {
@@ -201,8 +218,13 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   useEffect(() => { latest.current = { panes, active }; });
 
   const sortOf = (l: Listing | null, path: string) => sorts[deviceOf(l?.path ?? path)];
-  const rowsLeft = useMemo(() => (panes.left.listing ? sortFsEntries(panes.left.listing.entries, sorts[deviceOf(panes.left.listing.path)]) : []), [panes.left.listing, sorts]);
-  const rowsRight = useMemo(() => (panes.right.listing ? sortFsEntries(panes.right.listing.entries, sorts[deviceOf(panes.right.listing.path)]) : []), [panes.right.listing, sorts]);
+  // What each pane draws: its listing with the "new in vN" marks from its disk's History (the strip carries it).
+  const marksLeft = useMarks(panes.left.listing, strips);
+  const marksRight = useMarks(panes.right.listing, strips);
+  const shownLeft = useMemo(() => shown(panes.left.listing, marksLeft), [panes.left.listing, marksLeft]);
+  const shownRight = useMemo(() => shown(panes.right.listing, marksRight), [panes.right.listing, marksRight]);
+  const rowsLeft = useMemo(() => (shownLeft ? sortFsEntries(shownLeft.entries, sorts[deviceOf(shownLeft.path)]) : []), [shownLeft, sorts]);
+  const rowsRight = useMemo(() => (shownRight ? sortFsEntries(shownRight.entries, sorts[deviceOf(shownRight.path)]) : []), [shownRight, sorts]);
   const rowsOf = (s: Side) => (s === 'left' ? rowsLeft : rowsRight);
 
   // ---- loading and the URL ------------------------------------------------------------------------------------
@@ -362,7 +384,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   // ---- running an operation -----------------------------------------------------------------------------------
 
-  type Outcome = { kind: 'done'; items: OpItem[] } | { kind: 'clashes'; clashes: Clash[] } | { kind: 'refused' };
+  type Outcome = { kind: 'done'; items: OpItem[]; versions: OpVersion[] } | { kind: 'clashes'; clashes: Clash[] } | { kind: 'refused' };
 
   async function post(req: OpRequest, label: string): Promise<Outcome> {
     setBusy(label);
@@ -370,14 +392,16 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
       const res = await fetch('/api/files/ops', {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req),
       });
-      const body = (await res.json().catch(() => null)) as { items?: OpItem[]; error?: unknown; detail?: unknown; clashes?: Clash[] } | null;
+      const body = (await res.json().catch(() => null)) as {
+        items?: OpItem[]; versions?: OpVersion[]; error?: unknown; detail?: unknown; clashes?: Clash[];
+      } | null;
       if (res.status === 409 && body?.error === 'clashes' && body.clashes) return { kind: 'clashes', clashes: body.clashes };
       if (!res.ok || !body?.items) {
         toast.error(wordsFor(body?.error, body?.detail));
         if (body?.error === 'conflict') reloadBoth();
         return { kind: 'refused' };
       }
-      return { kind: 'done', items: body.items };
+      return { kind: 'done', items: body.items, versions: body.versions ?? [] };
     } catch {
       toast.error(refusalWords('failed'));
       return { kind: 'refused' };
@@ -386,11 +410,26 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     }
   }
 
+  /** Undo from a toast: the disk back to the version before the op's own, then fresh panes and strip. */
+  async function undo(v: OpVersion) {
+    if (await requestUndo(v.diskId, v.seq)) {
+      reloadBoth();
+      void refreshStrip(v.diskId);
+    }
+  }
+
+  /** A toast's Undo, when the op saved exactly one version of one disk (edit-rules.ts undoTarget). */
+  function undoAction(versions: OpVersion[]) {
+    const v = undoTarget(versions);
+    return v ? { action: { label: 'Undo', onClick: () => void undo(v) } } : {};
+  }
+
   /**
    * The toast for a finished operation, and fresh listings on both sides (which also clears both selections). With a
-   * `target` disk the toast waits for that disk's fresh strip and says which version the change was saved as.
+   * `target` disk the toast says which version the change was saved as (the op's own, else the disk's fresh head), and
+   * an op that saved one version of one disk offers Undo.
    */
-  async function report(done: OpItem[], success: (n: number) => string, target: string | null = null) {
+  async function report(done: OpItem[], success: (n: number) => string, target: string | null, versions: OpVersion[]) {
     const failed = done.filter((i): i is Extract<OpItem, { ok: false }> => !i.ok);
     const ok = done.length - failed.length;
     reloadBoth();
@@ -398,11 +437,13 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     const { panes: cur } = latest.current;
     const others = [cur.left.listing?.disk?.diskId, cur.right.listing?.disk?.diskId].filter((x): x is string => !!x && x !== target);
     for (const id of new Set(others)) void refreshStrip(id);
-    const seq = target && ok > 0 ? await refreshStrip(target) : null;
+    const head = target && ok > 0 ? await refreshStrip(target) : null;
+    const seq = versions.filter((v) => v.diskId === target).at(-1)?.seq ?? head;
     const said = (n: number) => (seq === null ? success(n) : `${success(n).replace(/\.$/, '')} — saved as version ${seq}.`);
-    if (failed.length === 0) toast.success(said(done.length));
+    if (failed.length === 0) toast.success(said(done.length), undoAction(versions));
     else {
       toast.error(ok > 0 ? `${said(ok)} ${items(failed.length)} could not be done.` : `Nothing was done.`, {
+        ...(ok > 0 ? undoAction(versions) : {}),
         description: (
           <ul data-testid="files-failures">
             {failed.map((f) => <li key={f.source}>{baseName(f.source)}: {refusalWords(f.refusal.code, f.refusal.detail)}</li>)}
@@ -419,7 +460,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   function transfer(op: 'copy' | 'move', sources: string[], dest: string, where: string) {
     if (busy) return;
-    void runGroups({ op, dest, where }, [{ onClash: 'ask', sources }], []);
+    void runGroups({ op, dest, where }, [{ onClash: 'ask', sources }], [], []);
   }
 
   /**
@@ -427,22 +468,23 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
    * in between) opens the Clash dialog; the groups not yet sent wait in it with what is already done, and go on once
    * every clash has an answer. A refusal stops the run (its toast is already up); what was done is still reported.
    */
-  async function runGroups(run: Run, groups: TransferGroup[], done: OpItem[]) {
+  async function runGroups(run: Run, groups: TransferGroup[], done: OpItem[], versions: OpVersion[]) {
     for (const [k, g] of groups.entries()) {
       const r = await post({ op: run.op, sources: g.sources, dest: run.dest, onClash: g.onClash },
         `${verbs[run.op][0]} ${items(g.sources.length)}…`);
-      if (r.kind === 'done') { done.push(...r.items); continue; }
+      if (r.kind === 'done') { done.push(...r.items); versions.push(...r.versions); continue; }
       if (r.kind === 'clashes') {
-        setDialog({ kind: 'clash', ...run, sources: g.sources, clashes: r.clashes, at: 0, choices: {}, rest: groups.slice(k + 1), done });
+        setDialog({ kind: 'clash', ...run, sources: g.sources, clashes: r.clashes, at: 0, choices: {}, rest: groups.slice(k + 1), done, versions });
         return;
       }
       break;
     }
-    finishRun(run, done);
+    finishRun(run, done, versions);
   }
 
-  function finishRun(run: Run, done: OpItem[]) {
-    if (done.length) void report(done, (n) => `${verbs[run.op][1]} ${items(n)} to ${run.where}.`, diskIdOf(run.dest));
+  /** Several requests saved several versions: Undo of the last alone would undo only part of the run, so none. */
+  function finishRun(run: Run, done: OpItem[], versions: OpVersion[]) {
+    if (done.length) void report(done, (n) => `${verbs[run.op][1]} ${items(n)} to ${run.where}.`, diskIdOf(run.dest), versions);
     else reloadBoth();
   }
 
@@ -454,7 +496,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     for (let i = d.at; i < upto; i++) choices[d.clashes[i].source] = choice;
     if (upto < d.clashes.length) { setDialog({ ...d, at: upto, choices }); return; }
     setDialog(null);
-    void runGroups(d, [...clashGroups(d.sources, d.clashes.map((c) => c.source), choices), ...d.rest], [...d.done]);
+    void runGroups(d, [...clashGroups(d.sources, d.clashes.map((c) => c.source), choices), ...d.rest], [...d.done], [...d.versions]);
   }
 
   /** Cancel stops the run here; anything an earlier request already did is still reported. */
@@ -462,22 +504,43 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     if (dialog?.kind !== 'clash') return;
     const d: ClashDialogState = dialog;
     setDialog(null);
-    if (d.done.length) finishRun(d, d.done);
+    if (d.done.length) finishRun(d, d.done, d.versions);
   }
 
   const where = (l: Listing | null) => (l?.disk ? l.disk.label : 'the other side');
+
+  /**
+   * Run `go` once every disk it will change has had its TOSEC-identity confirm (the Browse page's D-W-3): asked before
+   * the first write to such a disk this visit, one disk at a time; Cancel writes nothing.
+   */
+  const confirmedIdentity = useRef(new Set<string>());
+  function guarded(changes: (DiskInfo | null | undefined)[], go: () => void) {
+    const disk = identityToConfirm(changes, confirmedIdentity.current);
+    if (!disk) { go(); return; }
+    setDialog({ kind: 'identity', disk, next: () => guarded(changes, go) });
+  }
+
+  function confirmIdentity() {
+    if (dialog?.kind !== 'identity') return;
+    const { disk, next } = dialog;
+    confirmedIdentity.current.add(disk.diskId);
+    setDialog(null);
+    next();
+  }
 
   function act(cmd: 'copy' | 'move' | 'delete' | 'rename' | 'makedir' | 'protect' | 'info' | 'download') {
     if (busy) return;
     const reason = reasons[cmd];
     if (reason) { toast.error(reason); return; }
     const side = active;
+    const sources = picked.map((e) => e.path);
     switch (cmd) {
-      case 'copy': case 'move': void transfer(cmd, picked.map((e) => e.path), dst!.path, where(dst)); return;
-      case 'delete': setDialog({ kind: 'delete', side, entries: picked }); return;
-      case 'rename': setDialog({ kind: 'rename', side, entry: picked[0] }); return;
-      case 'makedir': setDialog({ kind: 'makedir', side }); return;
-      case 'protect': setDialog({ kind: 'protect', side, entries: picked }); return;
+      case 'copy': guarded([dst?.disk], () => transfer('copy', sources, dst!.path, where(dst))); return;
+      case 'move': guarded([dst?.disk, src?.disk], () => transfer('move', sources, dst!.path, where(dst))); return;
+      case 'delete': guarded([src?.disk], () => setDialog({ kind: 'delete', side, entries: picked })); return;
+      case 'rename': guarded([src?.disk], () => setDialog({ kind: 'rename', side, entry: picked[0] })); return;
+      case 'makedir': guarded([src?.disk], () => setDialog({ kind: 'makedir', side })); return;
+      case 'protect': guarded([src?.disk], () => setDialog({ kind: 'protect', side, entries: picked })); return;
       case 'info': setDialog({ kind: 'info', side, entry: picked[0] }); return;
       case 'download': {
         const a = document.createElement('a');
@@ -494,7 +557,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     const r = await post(req, label);
     // The disk the operation changed: where it made the folder, else where its first source is.
     const target = diskIdOf('dest' in req ? req.dest : 'source' in req ? req.source : req.sources[0]);
-    if (r.kind === 'done') { setDialog(null); void report(r.items, success, target); }
+    if (r.kind === 'done') { setDialog(null); void report(r.items, success, target, r.versions); }
   }
 
   function swap() {
@@ -550,48 +613,43 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     e.dataTransfer.effectAllowed = 'copyMove';
   }
 
+  /** A drop while an operation runs is not taken; said, rather than lost without a word. */
+  const BUSY_DROP = 'Wait for the current operation to finish, then drop again.';
+
+  /** The folder row a drop landed on, else the folder the pane shows. */
+  function dropFolder(l: Listing, e: React.DragEvent): string {
+    const row = (e.target as HTMLElement).closest?.('tr[data-testid="pane-row"]') as HTMLElement | null;
+    return row?.dataset.kind === 'dir' ? l.entries.find((x) => x.name === row.dataset.name)?.path ?? l.path : l.path;
+  }
+
   /**
-   * Files from the computer dropped on a pane (R5): into the folder the pane shows, through the Browse page's drop
-   * pipeline (computer-drop.ts, then the disk's batch route). Only a writable folder inside a disk takes them.
+   * Files from the computer dropped on a pane (R5): the Browse page's review (drop-review.tsx) for the folder they
+   * landed in, then the disk's batch route. Only a writable folder inside a disk takes them.
    */
   function dropFromComputer(side: Side, e: React.DragEvent) {
     const l = panes[side].listing;
     if (!l?.disk) { toast.error('Open a disk to drop files into it'); return; }
     if (!l.writable) { toast.error(readOnly(l)); return; }
-    if (busy) return;
+    if (busy) { toast.error(BUSY_DROP); return; }
     activate(side);
     const disk = l.disk;
-    const parentPath = (parsePath(l.path)?.segments ?? []).slice(2).join('/');
-    const folder = l.entries.map((x) => ({ name: x.name, kind: x.kind === 'dir' ? 'dir' as const : 'file' as const }));
-    const where = l.crumbs[l.crumbs.length - 1]?.label ?? disk.label;
-    // Read synchronously, before any await: the browser empties the DataTransfer once this handler returns.
+    const dest = dropFolder(l, e);
+    const folder = (parsePath(dest)?.segments ?? []).slice(2).join('/');
+    const where = dest === l.path ? l.crumbs[l.crumbs.length - 1]?.label ?? disk.label : baseName(dest);
+    // Read synchronously, before any await or confirm: the browser empties the DataTransfer once this handler returns.
     const reading = readDroppedItems(e.dataTransfer.items);
-    void (async () => {
-      const plan = planComputerDrop(await reading, folder, { filesystem: disk.filesystem ?? 'OFS', intl: disk.intl, freeBytes: disk.freeBytes, parentPath });
-      if (!plan.ok) { if (plan.message) toast.error(plan.message); return; }
-      const form = new FormData();
-      for (const [path, file] of plan.parts) form.set(path, file);
-      form.set('manifest', JSON.stringify(plan.manifest));
-      setBusy(`Adding ${items(plan.manifest.length)}…`);
-      try {
-        const res = await fetch(`/api/disks/${disk.diskId}/files/batch`, { method: 'POST', body: form });
-        const body = (await res.json().catch(() => null)) as { seq?: unknown; reason?: unknown; error?: unknown } | null;
-        if (!res.ok) {
-          const reason = typeof body?.reason === 'string' ? body.reason : typeof body?.error === 'string' ? body.error : `the server answered ${res.status}`;
-          toast.error('Could not add the files', { description: describeEditError(reason) });
-          return;
-        }
-        const seq = typeof body?.seq === 'number' ? body.seq : null;
-        toast.success(`Added ${items(plan.manifest.length)} to ${where}${seq === null ? '' : ` — saved as version ${seq}`}.`, {
-          description: plan.renamed.length ? `Renamed for AmigaDOS: ${plan.renamed.map(([a, b]) => `${a} → ${b}`).join(', ')}` : undefined,
-        });
-      } catch {
-        toast.error(refusalWords('failed'));
-      } finally {
-        setBusy(null);
-        stripChanged(disk.diskId);
-      }
-    })();
+    guarded([disk], () => setDialog({ kind: 'drop', disk, folder, where, items: reading }));
+  }
+
+  /** The review wrote its batch: fresh panes and strip, and the versioned toast with Undo. */
+  function dropWritten(d: Extract<Dialog, { kind: 'drop' }>, written: { seq: number | null; message: string }) {
+    // The review may have been closed while it wrote, and another dialog opened since: only the review itself closes.
+    setDialog((cur) => (cur === d ? null : cur));
+    reloadBoth();
+    void refreshStrip(d.disk.diskId);
+    const saved = written.seq === null ? '' : ` — saved as version ${written.seq}`;
+    toast.success(`${written.message} to ${d.where}${saved}.`,
+      undoAction(written.seq === null ? [] : [{ diskId: d.disk.diskId, seq: written.seq }]));
   }
 
   /** Rows dropped on a pane: Copy, or Move with Shift; onto a folder row, into that folder. */
@@ -602,20 +660,20 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     if (!raw) return;
     let data: { from: Side; paths: string[] };
     try { data = JSON.parse(raw); } catch { return; }
-    if (busy || !Array.isArray(data.paths) || data.paths.length === 0) return;
+    if (!Array.isArray(data.paths) || data.paths.length === 0) return;
+    if (busy) { toast.error(BUSY_DROP); return; }
     const l = panes[side].listing;
     if (!l?.disk) { toast.error('Open a disk to drop files into it'); return; }
     if (!l.writable) { toast.error(readOnly(l)); return; }
-    let dest = l.path;
-    const row = (e.target as HTMLElement).closest?.('tr[data-testid="pane-row"]') as HTMLElement | null;
-    if (row?.dataset.kind === 'dir') dest = l.entries.find((x) => x.name === row.dataset.name)?.path ?? dest;
+    const dest = dropFolder(l, e);
     if (data.paths.includes(dest)) return;                       // a folder dropped on itself
     if (data.from === side && dest === l.path) return;           // put back where it was picked up
     const op = e.shiftKey ? 'move' : 'copy';
     const from = panes[data.from]?.listing;
     if (op === 'move' && from && !from.writable) { toast.error(readOnly(from)); return; }
     activate(side);
-    void transfer(op, data.paths, dest, l.disk.label);
+    const label = l.disk.label;
+    guarded([l.disk, op === 'move' ? from?.disk : null], () => transfer(op, data.paths, dest, label));
   }
 
   // ---- drawing ------------------------------------------------------------------------------------------------
@@ -630,7 +688,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     const strip = disk ? strips[disk.diskId] : undefined;
     return (
       <div className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] max-lg:h-[460px]">
-        <Pane side={side} active={active === side} listing={p.listing} loading={p.loading} error={p.error}
+        <Pane side={side} active={active === side} listing={side === 'left' ? shownLeft : shownRight} loading={p.loading} error={p.error}
               sort={sortOf(p.listing, p.path)} selection={p.selection} showComment={false}
               onActivate={() => activate(side)} onNavigate={(path) => navigate(side, path)}
               onSort={(key) => changeSort(side, key)}
@@ -713,8 +771,18 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
       )}
       {dialog?.kind === 'info' && (
         <InfoDialog entry={dialog.entry} writable={!!dialogListing?.writable} busy={dialogBusy} onClose={() => setDialog(null)}
-                    onSaveComment={(comment) => void runFromDialog({ op: 'comment', source: dialog.entry.path, comment },
-                      'Saving the comment…', () => `Comment saved on ${dialog.entry.name}.`)} />
+                    onSaveComment={(comment) => {
+                      const entry = dialog.entry;
+                      guarded([dialogListing?.disk], () => void runFromDialog({ op: 'comment', source: entry.path, comment },
+                        'Saving the comment…', () => `Comment saved on ${entry.name}.`));
+                    }} />
+      )}
+      {dialog?.kind === 'identity' && dialog.disk.tosecName && (
+        <IdentityConfirmDialog tosecName={dialog.disk.tosecName} onCancel={() => setDialog(null)} onConfirm={confirmIdentity} />
+      )}
+      {dialog?.kind === 'drop' && (
+        <DropReview disk={dialog.disk} folder={dialog.folder} items={dialog.items} onClose={() => setDialog(null)}
+                    onWritten={(w) => dropWritten(dialog, w)} />
       )}
     </div>
   );

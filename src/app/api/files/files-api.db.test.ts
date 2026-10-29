@@ -41,6 +41,8 @@ const { migrate } = await import('drizzle-orm/node-postgres/migrator');
 const { createHash } = await import('node:crypto');
 const { games, disks, entitlements, blobs } = await import('@/db/schema/catalog');
 const { organization } = await import('@/db/schema/auth');
+const { devices } = await import('@/db/schema/devices');
+const { eq } = await import('drizzle-orm');
 const { diskStore } = await import('@/lib/storage');
 const { formatVolume } = await import('@/lib/adffs/format');
 const { addFile, makeDirectory } = await import('@/lib/adffs/write');
@@ -48,6 +50,7 @@ const { ROOT_BLOCK } = await import('@/lib/adffs/constants');
 const { GET: GET_LIST } = await import('./list/route');
 const { POST: POST_OPS } = await import('./ops/route');
 const { GET: GET_DL } = await import('./download/route');
+const { GET: GET_REVIEW } = await import('./drop-review/route');
 
 const { readVolume } = await import('@/lib/adffs');
 const { unzipSync, strFromU8 } = await import('fflate');
@@ -119,7 +122,30 @@ describe('/api/files', () => {
     expect((await POST_OPS(new Request('http://localhost/api/files/ops', { method: 'POST', body: 'not json' }))).status).toBe(400);
     const ok = await POST_OPS(json({ op: 'makedir', dest: 'LIBRARY:/g1/d1', name: 'Made' }));
     expect(ok.status).toBe(200);
-    expect((await ok.json()).items).toEqual([expect.objectContaining({ ok: true })]);
+    const body = await ok.json();
+    expect(body.items).toEqual([expect.objectContaining({ ok: true })]);
+    // The version it saved, for the toast's Undo (Task 9b).
+    expect(body.versions).toEqual([{ diskId: 'd1', seq: expect.any(Number) }]);
+  });
+  it('drop-review: the disk as the drop review needs it; not a disk or foreign 404; held 409 (Task 9b)', async () => {
+    const r = await GET_REVIEW(req('/api/files/drop-review?path=' + encodeURIComponent('LIBRARY:/g2/d2')));
+    expect(r.status).toBe(200);
+    const d = await r.json();
+    expect(d).toMatchObject({ filesystem: 'OFS', intl: false, rootBlock: ROOT_BLOCK, volumeName: 'Other', disabled: null });
+    expect(d.freeBlocks).toBeGreaterThan(0);
+    expect(d.existingNamesByDir['']).toEqual(expect.arrayContaining([{ name: 'Other.txt', kind: 'file' }, { name: 'S', kind: 'dir' }]));
+    expect(d.existingNamesByDir.S).toEqual([{ name: 'Startup', kind: 'file' }]);
+    expect(d.entries.map((e: { name: string }) => e.name).sort()).toEqual(['Other.txt', 'S']);
+    expect((await GET_REVIEW(req('/api/files/drop-review?path=LIBRARY:/g2'))).status).toBe(404);
+    expect((await GET_REVIEW(req('/api/files/drop-review?path=nope'))).status).toBe(400);
+    asOrg('o2');
+    expect((await GET_REVIEW(req('/api/files/drop-review?path=' + encodeURIComponent('LIBRARY:/g2/d2')))).status).toBe(404);
+    asOrg('o1');
+    const [d2] = await getDb().select({ sha256: disks.sha256 }).from(disks).where(eq(disks.id, 'd2'));
+    await getDb().insert(devices).values({ id: 'devR', orgId: 'o1', name: 'A500 bench', macAddress: 'AA:BB:CC:DD:EE:09', tokenHash: 'hR', desiredSha256: d2.sha256 });
+    const held = await GET_REVIEW(req('/api/files/drop-review?path=' + encodeURIComponent('LIBRARY:/g2/d2')));
+    expect([held.status, (await held.json()).error]).toEqual([409, 'read_only']);
+    await getDb().delete(devices);
   });
   it('conflict maps to 409 conflict', async () => {
     seam.next = { ok: false, status: 409, reason: 'conflict' };

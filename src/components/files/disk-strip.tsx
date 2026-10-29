@@ -16,7 +16,8 @@ import { RestoreProvider } from '@/components/disks/restore-dialog';
 /**
  * The disk strip (Files increment 1, Task 9; mock-up files-from-disk.html parts 1 and 2): what the old Browse page's
  * Disk card carried, in one row above a pane that is inside a disk -- the drive it is in, Mount (or Eject to edit
- * while a board holds it), the space, History over the pane, the .adf download and the volume name.
+ * while a board holds it), the space, History over the pane, the .adf download and the volume name -- and its
+ * "Your copy of <name>'s library" notice for a person's own copy of a shared title.
  *
  * The Mount menu, the History panel and the Restore confirm are the Browse page's own components. `onChanged` is
  * called after anything here changed the disk or its drive (an eject, a rename, a restore): the manager reloads the
@@ -188,6 +189,10 @@ export function DiskStrip({ side, disk, data, onChanged }: DiskStripProps) {
       </button>
       <a href={`/api/disks/${disk.diskId}/adf`} data-testid="disk-strip-adf" className={BTN} style={BTN_STYLE}
          title={`Download ${disk.label} as an .adf`}>⬇ ADF</a>
+      {/* The Browse page's notice under its breadcrumb, on a line of its own. */}
+      {data.copiedFrom && (
+        <p data-testid="disk-copied-from" className="basis-full text-[13px]" style={{ color: 'var(--muted)' }}>{data.copiedFrom}</p>
+      )}
 
       {historyOpen && (
         <div data-testid="disk-strip-history"

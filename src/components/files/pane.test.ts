@@ -124,4 +124,11 @@ describe('Pane (Files increment 1, Task 7)', () => {
     expect(render({ listing: null, loading: true })).toContain('data-testid="pane-left-loading"');
     expect(render({ listing: null, error: 'That is no longer there.' })).toMatch(/role="alert"[^>]*>That is no longer there\./);
   });
+
+  it('an entry a version added wears "new in vN", as on the Browse page (Task 9b)', () => {
+    const html = render({ listing: { ...diskListing, entries: [entry('List', 'file', { addedIn: 3 }), entry('Assign', 'file')] } });
+    const marks = [...html.matchAll(/data-testid="pane-new-([^"]+)"[^>]*>([^<]*)</g)].map((m) => [m[1], m[2]]);
+    expect(marks).toEqual([['List', 'new in v3']]);
+  });
 });
+

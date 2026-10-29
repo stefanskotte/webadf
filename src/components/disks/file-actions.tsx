@@ -60,6 +60,33 @@ export function describeEditError(reason: string): string {
   }
 }
 
+/**
+ * Undo (A5): put `diskId` back to the version before `seq`, the one an edit recorded -- refused by the server
+ * (`ifHead`, "changed_since") when anything has written the disk since, and while a board holds it. Toasts the
+ * outcome either way; true once it is undone. The Browse page's edits and the Files manager's share it.
+ */
+export async function requestUndo(diskId: string, seq: number): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/disks/${diskId}/restore`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ seq: seq - 1, ifHead: seq }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      const reason = typeof body?.reason === 'string' ? body.reason
+        : typeof body?.error === 'string' ? body.error
+        : `the server answered ${res.status}`;
+      toast.error("Couldn't undo that", { description: describeEditError(reason) });
+      return false;
+    }
+    toast.success('Undone');
+    return true;
+  } catch {
+    toast.error('Could not reach the server', { description: 'Nothing was undone.' });
+    return false;
+  }
+}
+
 interface FileEditContextValue {
   diskId: string;
   disabled: EditDisabled | null;
@@ -112,7 +139,7 @@ export function useFileEdit(): FileEditContextValue {
  * the exact same gate.
  */
 export function FileEditProvider({
-  diskId, disabled, tosecName, rootBlock, children,
+  diskId, disabled, tosecName, rootBlock, onWritten, children,
 }: {
   diskId: string;
   disabled: EditDisabled | null;
@@ -129,6 +156,12 @@ export function FileEditProvider({
   tosecName: string | null;
   /** From readVolume's `rootBlock` (page.tsx). */
   rootBlock: number;
+  /**
+   * The Files manager's drop review (Task 9b): called with the version a successful write recorded, IN PLACE of this
+   * provider's own success toast and router refresh -- the manager says it with its versioned toast and Undo, and
+   * reloads its panes itself (a router refresh does not).
+   */
+  onWritten?: (written: { seq: number | null; message: string }) => void;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -143,24 +176,7 @@ export function FileEditProvider({
   const pendingRef = useRef<(() => void) | null>(null);
 
   async function undo(seq: number) {
-    try {
-      const res = await fetch(`/api/disks/${diskId}/restore`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ seq: seq - 1, ifHead: seq }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        const reason = typeof body?.reason === 'string' ? body.reason
-          : typeof body?.error === 'string' ? body.error
-          : `the server answered ${res.status}`;
-        toast.error("Couldn't undo that", { description: describeEditError(reason) });
-        return;
-      }
-      toast.success('Undone');
-      router.refresh();
-    } catch {
-      toast.error('Could not reach the server', { description: 'Nothing was undone.' });
-    }
+    if (await requestUndo(diskId, seq)) router.refresh();
   }
 
   async function execute(perform: () => Promise<Response>, successMessage: string, onSuccess?: () => void, opts: RunEditOptions = {}) {
@@ -175,7 +191,12 @@ export function FileEditProvider({
         toast.error('Could not make that change', { description: describeEditError(reason) });
         return;
       }
-      const seq = opts.undoable ? (await res.json().catch(() => null))?.seq : null;
+      const seq = opts.undoable || onWritten ? (await res.json().catch(() => null))?.seq : null;
+      if (onWritten) {
+        onSuccess?.();
+        onWritten({ seq: typeof seq === 'number' ? seq : null, message: successMessage });
+        return;
+      }
       if (typeof seq === 'number' && seq > 0) {
         toast.success(successMessage, { action: { label: 'Undo', onClick: () => void undo(seq) } });
       } else {
@@ -220,66 +241,74 @@ export function FileEditProvider({
   return (
     <FileEditContext.Provider value={{ diskId, disabled, busy, runEdit, rootBlock }}>
       {children}
-      {/*
-        Portalled to document.body, same reasoning as DeleteDiskDialog: this
-        can be triggered from inside a .glass-card ancestor, and
-        backdrop-filter on that ancestor would become the containing block
-        for a `fixed` overlay nested inside it, wrecking the layout. `open`
-        starts false and is only ever set from an event handler, so
-        `document` is always available by the time this branch runs.
-      */}
-      {confirmOpen && createPortal((
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: 'var(--scrim)' }}
-        >
-          <div
-            role="alertdialog"
-            aria-modal="true"
-            aria-label="This edit will drop the disk's TOSEC identity"
-            data-testid="identity-confirm-dialog"
-            className="glass-card wf-modal w-full max-w-[440px] p-6 text-left"
-          >
-            <h2 className="text-[20px] font-bold" style={{ fontFamily: 'var(--font-display)', color: 'var(--ink)' }}>
-              This will drop the disk&apos;s TOSEC identity
-            </h2>
-            {/*
-              Says what the edit DOES, not just "are you sure" -- the
-              operator ruled 2026-09-01 that editing is the intended use of
-              this catalog, not a mistake to be talked out of.
-            */}
-            <p className="mt-2 text-[13px]" style={{ color: 'var(--muted)' }}>
-              This disk currently matches <strong style={{ color: 'var(--ink)' }}>{tosecName}</strong> in
-              TOSEC. Editing it writes a new copy of the disk under a new checksum, and that copy will
-              no longer match the entry — the catalog will show it by its own volume name instead. The
-              original file is kept exactly as it is; this only affects the new copy you are about to
-              create.
-            </p>
-            <div className="mt-5 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                data-testid="identity-confirm-cancel"
-                onClick={cancelIdentityDrop}
-                className="h-[38px] rounded-[10px] border px-4 text-[13px] font-medium hover:bg-[var(--track)]"
-                style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                data-testid="identity-confirm-proceed"
-                onClick={confirmIdentityDrop}
-                className="h-[38px] rounded-[10px] px-4 text-[13px] font-semibold"
-                style={{ background: 'var(--ink)', color: 'var(--surface)' }}
-              >
-                Edit anyway
-              </button>
-            </div>
-          </div>
-        </div>
-      ), document.body)}
+      {confirmOpen && tosecName && (
+        <IdentityConfirmDialog tosecName={tosecName} onCancel={cancelIdentityDrop} onConfirm={confirmIdentityDrop} />
+      )}
     </FileEditContext.Provider>
   );
+}
+
+/**
+ * The D-W-3 confirm before the first edit of a disk that matches a TOSEC entry: what the edit does to that identity.
+ * Shared by the Browse page's FileEditProvider and the Files manager, so the words cannot drift apart.
+ *
+ * Portalled to document.body, same reasoning as DeleteDiskDialog: this can be triggered from inside a .glass-card
+ * ancestor, and backdrop-filter on that ancestor would become the containing block for a `fixed` overlay nested
+ * inside it, wrecking the layout. It is only ever opened from an event handler, so `document` is always available.
+ */
+export function IdentityConfirmDialog({ tosecName, onCancel, onConfirm }: {
+  tosecName: string; onCancel(): void; onConfirm(): void;
+}) {
+  return createPortal((
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'var(--scrim)' }}
+    >
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-label="This edit will drop the disk's TOSEC identity"
+        data-testid="identity-confirm-dialog"
+        className="glass-card wf-modal w-full max-w-[440px] p-6 text-left"
+      >
+        <h2 className="text-[20px] font-bold" style={{ fontFamily: 'var(--font-display)', color: 'var(--ink)' }}>
+          This will drop the disk&apos;s TOSEC identity
+        </h2>
+        {/*
+          Says what the edit DOES, not just "are you sure" -- the
+          operator ruled 2026-09-01 that editing is the intended use of
+          this catalog, not a mistake to be talked out of.
+        */}
+        <p className="mt-2 text-[13px]" style={{ color: 'var(--muted)' }}>
+          This disk currently matches <strong style={{ color: 'var(--ink)' }}>{tosecName}</strong> in
+          TOSEC. Editing it writes a new copy of the disk under a new checksum, and that copy will
+          no longer match the entry — the catalog will show it by its own volume name instead. The
+          original file is kept exactly as it is; this only affects the new copy you are about to
+          create.
+        </p>
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            data-testid="identity-confirm-cancel"
+            onClick={onCancel}
+            className="h-[38px] rounded-[10px] border px-4 text-[13px] font-medium hover:bg-[var(--track)]"
+            style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            data-testid="identity-confirm-proceed"
+            onClick={onConfirm}
+            className="h-[38px] rounded-[10px] px-4 text-[13px] font-semibold"
+            style={{ background: 'var(--ink)', color: 'var(--surface)' }}
+          >
+            Edit anyway
+          </button>
+        </div>
+      </div>
+    </div>
+  ), document.body);
 }
 
 /**

@@ -11,7 +11,7 @@ import { findHolder } from '@/lib/disk-holder';
 import { ejectMessage, mountedReason } from '@/lib/mount-wording';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
-import { readVolume, readUsage, DD_GEOMETRY, type AdfEntry } from '@/lib/adffs';
+import { readVolume, readUsage, DD_GEOMETRY } from '@/lib/adffs';
 import { listCollections } from '@/lib/collections';
 import { listDevices } from '@/lib/queries';
 import { mountChoices, holderText } from '@/lib/mount-choice';
@@ -32,6 +32,7 @@ import { VersionBanner } from '@/components/disks/version-banner';
 import { FileTree } from '@/components/disks/file-tree';
 import { FilesCard } from '@/components/disks/files-card';
 import { DropStaging } from '@/components/disks/drop-staging';
+import { existingNamesByDir } from '@/lib/staging';
 import { NativeDropProvider } from '@/components/disks/native-drop';
 import { FileEditProvider, FileToolbar, type EditDisabled } from '@/components/disks/file-actions';
 import { HistoryPanel } from '@/components/disks/history-panel';
@@ -52,37 +53,6 @@ export const dynamic = 'force-dynamic';
 // the newest stretch of the chain. The platform default would cut a
 // long-history disk off mid-render.
 export const maxDuration = 60;
-
-/**
- * Every directory already on this disk, keyed by its root-relative path
- * ('' for the root itself) to the entries it already holds -- what
- * `stageDrop` (Task 3) calls `existingNamesByDir`, and what the staging
- * area re-derives live as a person edits a name (drop-staging.tsx). Built
- * here, once, from the same `AdfEntry[]` the tree already renders, rather
- * than a second read of the volume.
- *
- * Carries each entry's `kind` alongside its `name` (fix round 1, Finding
- * 2) -- a name-only map cannot tell a same-named FILE from a same-named
- * DIRECTORY apart, and that distinction is exactly what decides whether
- * "replace" is even a sound offer for a colliding row (`replaceFile`
- * requires `ST_FILE`; the batch route refuses a mismatched replace
- * correctly, but only after the whole batch has already been attempted).
- */
-function existingNamesByDir(
-  entries: AdfEntry[],
-  prefix = '',
-): Record<string, { name: string; kind: 'file' | 'dir' }[]> {
-  const out: Record<string, { name: string; kind: 'file' | 'dir' }[]> = {
-    [prefix]: entries.map((e) => ({ name: e.name, kind: e.kind })),
-  };
-  for (const entry of entries) {
-    if (entry.kind === 'dir') {
-      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-      Object.assign(out, existingNamesByDir(entry.children, path));
-    }
-  }
-  return out;
-}
 
 export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'>) {
   const { orgId, userId } = await requireOrg();

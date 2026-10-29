@@ -14,6 +14,7 @@ import { kindFromSetName, pickKind } from '@/lib/game-kind';
 import { isHdAdf } from '@/lib/disk-format';
 import { titleDiskColor } from '@/lib/library-look';
 import { loadHistory, type HistoryVersion } from '@/lib/disk-history/history';
+import { copiedFromText } from '@/lib/remote/copy';
 import type { StripData } from './types';
 
 /**
@@ -39,7 +40,7 @@ export async function diskStripData(orgId: string, diskId: string): Promise<Stri
   const db = getDb();
   const [disk] = await db
     .select({ sha256: disks.sha256, gameId: disks.gameId, imageFormat: disks.imageFormat, sizeBytes: disks.sizeBytes,
-      authored: games.authored })
+      authored: games.authored, copiedFrom: games.copiedFrom })
     .from(disks)
     .innerJoin(entitlements, and(eq(entitlements.sha256, disks.sha256), eq(entitlements.orgId, orgId)))
     .leftJoin(games, and(eq(games.id, disks.gameId), eq(games.orgId, orgId)))
@@ -74,5 +75,6 @@ export async function diskStripData(orgId: string, diskId: string): Promise<Stri
     diskId, choices, history, historyUnavailable,
     headSeq: history.find((v) => v.isHead)?.seq ?? null,
     color: titleDiskColor({ id: diskId, hasHd: isHdAdf(disk), kind, formats: [disk.imageFormat], authored: disk.authored ?? false }),
+    copiedFrom: copiedFromText(disk.copiedFrom),
   };
 }

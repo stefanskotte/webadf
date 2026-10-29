@@ -15,7 +15,7 @@ const { DiskStrip, driveChip, usageLine } = await import('./disk-strip');
 const disk: DiskInfo = {
   diskId: 'd1', gameId: 'g1', title: 'SysInfo', label: 'Disk 1', filesystem: 'OFS', hd: false,
   usedBytes: 857 * 1024, freeBytes: 23 * 1024, totalBytes: 880 * 1024,
-  holder: null, imageFormat: 'adf', volumeName: 'SysInfo', sha256: 'a'.repeat(64), intl: false,
+  holder: null, imageFormat: 'adf', volumeName: 'SysInfo', sha256: 'a'.repeat(64), intl: false, tosecName: null,
 };
 
 const board = (o: Partial<MountChoice> = {}): MountChoice => ({
@@ -25,7 +25,7 @@ const board = (o: Partial<MountChoice> = {}): MountChoice => ({
 const inDf0 = board({ state: 'converged', holding: 'SysInfo — disk 1', isThisDisk: true, action: 'eject', actionLabel: 'Eject' });
 
 const data = (o: Partial<StripData> = {}): StripData => ({
-  diskId: 'd1', choices: [board()], history: [], historyUnavailable: false, headSeq: 2, color: 'red', ...o,
+  diskId: 'd1', choices: [board()], history: [], historyUnavailable: false, headSeq: 2, color: 'red', copiedFrom: null, ...o,
 });
 
 const noop = () => {};
@@ -92,5 +92,10 @@ describe('DiskStrip', () => {
     expect(tagOf(html, 'disk-strip-history')).toBeUndefined();
     // A disk never edited has no version yet: plain "History".
     expect(textOf(render({}, { headSeq: null }), 'disk-strip-history-toggle')).toBe('History');
+  });
+
+  it("an own copy of a shared library's disk says whose it was (Task 9b); any other disk says nothing", () => {
+    expect(textOf(render({}, { copiedFrom: "Your copy of Bob's library" }), 'disk-copied-from')).toBe('Your copy of Bob&#x27;s library');
+    expect(tagOf(render(), 'disk-copied-from')).toBeUndefined();
   });
 });

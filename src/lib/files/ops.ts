@@ -15,6 +15,7 @@ import { isMountedReason } from '@/lib/mount-wording';
 import { AMIGA_COMMENT_MAX, AMIGA_NAME_MAX, amigaNameProblem, childOf, formatPath, isWithin, parsePath, type FsPath } from './path';
 import { BlobUnavailableError, loadDisk, readOnlyReasonOf, resolveInDisk, type FsCtx, type ResolvedDisk } from './library';
 import type { Refusal, RefusalCode } from './types';
+import type { OpVersion } from './edit-rules';
 
 export type OpRequest =
   | { op: 'copy' | 'move'; sources: string[]; dest: string; onClash: 'ask' | 'replace' | 'skip' | 'keep-both' }
@@ -25,9 +26,14 @@ export type OpRequest =
   | { op: 'comment'; source: string; comment: string };
 export type OpItem = { source: string; ok: true } | { source: string; ok: false; refusal: Refusal };
 export type OpResult =
-  | { kind: 'done'; items: OpItem[] }
+  /** `versions`: each history version the op saved, in the order it saved them (Undo needs exactly one, Task 9b). */
+  | { kind: 'done'; items: OpItem[]; versions: OpVersion[] }
   | { kind: 'clashes'; clashes: { source: string; name: string; dest: string }[] }
   | { kind: 'refused'; refusal: Refusal; status: number };
+/** What each op below answers; runOp adds the versions its edits saved. */
+type Outcome = { kind: 'done'; items: OpItem[] } | Extract<OpResult, { kind: 'clashes' }>;
+/** The caller's context, collecting the version every edit of this op saves. */
+type Run = FsCtx & { versions: OpVersion[] };
 
 /** A refusal thrown from anywhere below runOp; runOp (or a per-item catch) turns it into a result. */
 class Refused extends Error {
@@ -38,18 +44,24 @@ function refuse(code: RefusalCode, status: number, detail?: string): never {
 }
 
 export async function runOp(ctx: FsCtx, req: OpRequest): Promise<OpResult> {
+  const run: Run = { ...ctx, versions: [] };
   try {
-    switch (req.op) {
-      case 'copy': case 'move': return await copyOrMove(ctx, req);
-      case 'delete': return await deleteMany(ctx, req.sources);
-      case 'makedir': return await makeDir(ctx, req.dest, req.name);
-      case 'rename': return await renameOne(ctx, req.source, req.name);
-      case 'protect': return await protectMany(ctx, req.sources, req.protection);
-      case 'comment': return await commentOne(ctx, req.source, req.comment);
-    }
+    const r = await outcomeOf(run, req);
+    return r.kind === 'done' ? { ...r, versions: run.versions } : r;
   } catch (e) {
     if (e instanceof Refused) return { kind: 'refused', refusal: e.refusal, status: e.status };
     throw e;
+  }
+}
+
+function outcomeOf(ctx: Run, req: OpRequest): Promise<Outcome> {
+  switch (req.op) {
+    case 'copy': case 'move': return copyOrMove(ctx, req);
+    case 'delete': return deleteMany(ctx, req.sources);
+    case 'makedir': return makeDir(ctx, req.dest, req.name);
+    case 'rename': return renameOne(ctx, req.source, req.name);
+    case 'protect': return protectMany(ctx, req.sources, req.protection);
+    case 'comment': return commentOne(ctx, req.source, req.comment);
   }
 }
 
@@ -160,9 +172,10 @@ function fromEdit(o: Extract<DiskEditOutcome, { ok: false }>): Refused {
   return hit ? new Refused({ code: hit[0] }, hit[1]) : new Refused({ code: 'failed', detail: o.reason }, o.status);
 }
 
-async function edit(ctx: FsCtx, d: ResolvedDisk, step: Step) {
+async function edit(ctx: Run, d: ResolvedDisk, step: Step) {
   const o = await applyDiskEdit(ctx.orgId, d.info.diskId, step, ctx.userId);
   if (!o.ok) throw fromEdit(o);
+  if (o.seq !== null) ctx.versions.push({ diskId: d.info.diskId, seq: o.seq });
 }
 
 /** Run `fn` for one item; a refusal becomes that item's result instead of the whole op's. */
@@ -204,7 +217,7 @@ function blocksOf(e: AdfEntry, fs: 'OFS' | 'FFS'): number {
   return e.kind === 'file' ? blocksForFile(e.sizeBytes, fs) : 1 + e.children.reduce((n, c) => n + blocksOf(c, fs), 0);
 }
 
-async function copyOrMove(ctx: FsCtx, req: Extract<OpRequest, { op: 'copy' | 'move' }>): Promise<OpResult> {
+async function copyOrMove(ctx: Run, req: Extract<OpRequest, { op: 'copy' | 'move' }>): Promise<Outcome> {
   const move = req.op === 'move';
   const cache: Disks = new Map();
   const destLoc = locate(req.dest);
@@ -351,7 +364,7 @@ function deepestFirst<T extends { loc: Loc }>(xs: T[]): T[] {
 // ---- delete, protect: many entries, one edit per disk ------------------------------------------------------
 
 /** One edit per disk, composing `step` for each source on it. One disk: its refusal is the op's; several: per item. */
-async function perDisk(ctx: FsCtx, sources: string[], step: (names: string[]) => Step, order: <T extends { loc: Loc }>(xs: T[]) => T[] = (xs) => xs): Promise<OpResult> {
+async function perDisk(ctx: Run, sources: string[], step: (names: string[]) => Step, order: <T extends { loc: Loc }>(xs: T[]) => T[] = (xs) => xs): Promise<Outcome> {
   const cache: Disks = new Map();
   const located: { raw: string; loc: Loc; d: ResolvedDisk }[] = [];
   for (const raw of sources) {
@@ -375,11 +388,11 @@ async function perDisk(ctx: FsCtx, sources: string[], step: (names: string[]) =>
   return { kind: 'done', items: sources.map((s) => results.get(s)!) };
 }
 
-function deleteMany(ctx: FsCtx, sources: string[]): Promise<OpResult> {
+function deleteMany(ctx: Run, sources: string[]): Promise<Outcome> {
   return perDisk(ctx, sources, (names) => onEntry(names, (adf, h) => deleteEntry(adf, h.parentBlock, h.entry.block)), deepestFirst);
 }
 
-function protectMany(ctx: FsCtx, sources: string[], protection: number): Promise<OpResult> {
+function protectMany(ctx: Run, sources: string[], protection: number): Promise<Outcome> {
   if (!Number.isInteger(protection) || protection < 0 || protection > 0xff) refuse('unsupported', 400, 'protection is 8 bits');
   // Only the eight bits the browser shows: multi-user bits above them stay as they were.
   return perDisk(ctx, sources, (names) => onEntry(names, (adf, h) => setProtection(adf, h.parentBlock, h.entry.block, protection, 0xff)));
@@ -387,7 +400,7 @@ function protectMany(ctx: FsCtx, sources: string[], protection: number): Promise
 
 // ---- one entry: rename, comment, makedir -------------------------------------------------------------------
 
-async function onOne(ctx: FsCtx, source: string, step: Step): Promise<OpResult> {
+async function onOne(ctx: Run, source: string, step: Step): Promise<Outcome> {
   const loc = locateEntry(source);
   const d = await diskOf(ctx, new Map(), loc);
   entryAt(d, loc);
@@ -396,17 +409,17 @@ async function onOne(ctx: FsCtx, source: string, step: Step): Promise<OpResult> 
   return { kind: 'done', items: [{ source, ok: true }] };
 }
 
-function renameOne(ctx: FsCtx, source: string, name: string): Promise<OpResult> {
+function renameOne(ctx: Run, source: string, name: string): Promise<Outcome> {
   checkName(name);
   return onOne(ctx, source, onEntry(locateEntry(source).names, (adf, h) => renameEntry(adf, h.parentBlock, h.entry.block, name)));
 }
 
-function commentOne(ctx: FsCtx, source: string, comment: string): Promise<OpResult> {
+function commentOne(ctx: Run, source: string, comment: string): Promise<Outcome> {
   checkComment(comment);
   return onOne(ctx, source, onEntry(locateEntry(source).names, (adf, h) => setComment(adf, h.parentBlock, h.entry.block, comment)));
 }
 
-async function makeDir(ctx: FsCtx, destRaw: string, name: string): Promise<OpResult> {
+async function makeDir(ctx: Run, destRaw: string, name: string): Promise<Outcome> {
   checkName(name);
   const loc = locate(destRaw);
   const d = await diskOf(ctx, new Map(), loc);

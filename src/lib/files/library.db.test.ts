@@ -83,6 +83,17 @@ describe('LIBRARY: listing', () => {
     expect(l.disk!.holder).toBe('A500 bench');
     await getDb().delete(devices);
   });
+  it("names the disk's TOSEC identity only when its blob really matched (Task 9b)", async () => {
+    const { eq } = await import('drizzle-orm');
+    const db = getDb();
+    // The uploaded filename sits in tosecName on every disk; that is no identity to lose.
+    await db.update(disks).set({ tosecName: 'Turrican (1990)(Rainbow Arts).adf' }).where(eq(disks.id, 'd2'));
+    expect((await listLibrary(ctx, P('LIBRARY:/g2/d2')))!.disk!.tosecName).toBeNull();
+    const [d2] = await db.select({ sha256: disks.sha256 }).from(disks).where(eq(disks.id, 'd2'));
+    await db.update(blobs).set({ matchState: 'matched', matchCheckedAt: new Date() }).where(eq(blobs.sha256, d2.sha256));
+    expect((await listLibrary(ctx, P('LIBRARY:/g2/d2')))!.disk!.tosecName).toBe('Turrican (1990)(Rainbow Arts).adf');
+    await db.update(blobs).set({ matchState: null, matchCheckedAt: null }).where(eq(blobs.sha256, d2.sha256));
+  });
   it('hides a disk with no entitlement from the title listing and 404s it', async () => {
     const adf = formatVolume({ filesystem: 'OFS', volumeName: 'NoEnt' });
     const sha = createHash('sha256').update(adf).digest('hex');

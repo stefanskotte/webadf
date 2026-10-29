@@ -230,8 +230,9 @@ export const HELP_TOPICS = {
           restore forward again. A disk that is mounted on a board can&apos;t be restored — eject it there first.
         </p>
         <p>
-          <strong>Undo</strong> after adding, moving or deleting files in the browser is a restore of the version
-          before. It is refused once anything else has changed the disk, such as an Amiga save; use the History then.
+          <strong>Undo</strong> after changing a disk&apos;s files in the browser is a restore of the version before.
+          A move between two disks has no Undo. Undo is refused once anything else has changed the disk, such as an
+          Amiga save, or while it is in a drive; use the History then.
         </p>
         <p>
           <strong>Why a restored disk gets a new date.</strong> The Amiga recognises a disk by its creation date and

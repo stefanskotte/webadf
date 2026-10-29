@@ -2,11 +2,15 @@
 import type { MountChoice } from '@/lib/mount-choice';
 import type { HistoryVersion } from '@/lib/disk-history/history';
 import type { DiskColor } from '@/lib/disk-icon';
+import type { AdfEntry } from '@/lib/adffs';
+import type { ExistingEntry } from '@/lib/staging';
 export type EntryKind = 'title' | 'disk' | 'dir' | 'file';
 export type FsEntry = {
   name: string; kind: EntryKind; path: string;
   size: number | null; date: string | null; protection: string | null; comment: string | null;
   marks: string[];
+  /** The version that added this entry to its disk ("new in vN", from the disk's History); absent for none. */
+  addedIn?: number;
 };
 export type DiskInfo = {
   diskId: string; gameId: string; title: string; label: string; filesystem: 'OFS' | 'FFS' | null; hd: boolean;
@@ -14,6 +18,11 @@ export type DiskInfo = {
   holder: string | null; imageFormat: 'adf' | 'hfe'; volumeName: string | null; sha256: string;
   /** The volume's international mode: which case fold its names compare under (sameName). */
   intl: boolean;
+  /**
+   * The TOSEC name this disk is recognised as, ONLY when its blob really matched (`blobs.matchState = 'matched'`), not
+   * merely `disks.tosecName`, which also holds the uploaded filename: editing drops that identity (D-W-3).
+   */
+  tosecName: string | null;
 };
 export type Crumb = { label: string; path: string };
 export type Listing = {
@@ -26,9 +35,20 @@ export type RefusalCode =
 export type Refusal = { code: RefusalCode; detail?: string };
 /**
  * What a pane inside a disk shows in its disk strip besides the listing (disk-strip-data.ts): the Mount choices, the
- * History (with `headSeq`, the current version, null for a disk never changed) and the title's disk colour.
+ * History (with `headSeq`, the current version, null for a disk never changed), the title's disk colour, and for a
+ * person's own copy of a shared library's title the notice saying whose it was (`copiedFrom`, the words; else null).
  */
 export type StripData = {
   diskId: string; choices: MountChoice[]; history: HistoryVersion[]; historyUnavailable: boolean;
-  headSeq: number | null; color: DiskColor;
+  headSeq: number | null; color: DiskColor; copiedFrom: string | null;
+};
+/**
+ * A writable disk as the drop review (drop-staging.tsx) needs it (Task 9b, /api/files/drop-review): its whole tree,
+ * for the Destination list and the clash checks, and its free space. `disabled` says why nothing can be written though
+ * the disk is not read-only (its allocation bitmap cannot be trusted), else null.
+ */
+export type DropReviewData = {
+  filesystem: 'OFS' | 'FFS'; intl: boolean; rootBlock: number; volumeName: string;
+  entries: AdfEntry[]; existingNamesByDir: Record<string, ExistingEntry[]>;
+  freeBlocks: number; freeBytes: number | null; disabled: string | null;
 };

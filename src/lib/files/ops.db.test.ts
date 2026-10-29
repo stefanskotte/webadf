@@ -115,7 +115,9 @@ describe('copy', () => {
   it('copies a file and a folder between disks in one version, keeping date, protection and comment', async () => {
     const before = await versions('d2');
     const r = await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/C', 'LIBRARY:/g1/d1/ReadMe'], dest: 'LIBRARY:/g2/d2', onClash: 'ask' });
-    expect(r).toEqual({ kind: 'done', items: [{ source: 'LIBRARY:/g1/d1/C', ok: true }, { source: 'LIBRARY:/g1/d1/ReadMe', ok: true }] });
+    // The one version it saved is named, for Undo (Task 9b).
+    expect(r).toEqual({ kind: 'done', items: [{ source: 'LIBRARY:/g1/d1/C', ok: true }, { source: 'LIBRARY:/g1/d1/ReadMe', ok: true }],
+      versions: [{ diskId: 'd2', seq: before + 1 }] });
     expect(await versions('d2')).toBe(before + 1);
     const a = (await readLibraryFile(ctx, P('LIBRARY:/g2/d2/C/Assign')))!;
     const src = (await readLibraryFile(ctx, P('LIBRARY:/g1/d1/C/Assign')))!;
@@ -137,7 +139,8 @@ describe('copy', () => {
     expect((await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/ReadMe'], dest: 'LIBRARY:/g2/d2', onClash: 'keep-both' })).kind).toBe('done');
     expect(await readLibraryFile(ctx, P('LIBRARY:/g2/d2/ReadMe_1'))).not.toBeNull();
     const s = await sha('d2');
-    await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/ReadMe'], dest: 'LIBRARY:/g2/d2', onClash: 'skip' });
+    expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/ReadMe'], dest: 'LIBRARY:/g2/d2', onClash: 'skip' }))
+      .toMatchObject({ kind: 'done', versions: [] });   // nothing written, nothing to undo
     expect(await sha('d2')).toBe(s);
     await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/ReadMe'], dest: 'LIBRARY:/g2/d2', onClash: 'replace' });
     expect(new TextDecoder().decode((await readLibraryFile(ctx, P('LIBRARY:/g2/d2/ReadMe')))!.bytes)).toBe('hello');
@@ -179,14 +182,16 @@ describe('move, delete, makedir, rename, protect, comment', () => {
     await runOp(ctx, { op: 'makedir', dest: 'LIBRARY:/g2/d2', name: 'Box' });
     const [a1, b1] = [await versions('d1'), await versions('d2')];
     expect([a1, b1]).toEqual([a, b + 1]);
-    expect((await runOp(ctx, { op: 'move', sources: ['LIBRARY:/g2/d2/Box'], dest: 'LIBRARY:/g1/d1', onClash: 'ask' })).kind).toBe('done');
+    expect(await runOp(ctx, { op: 'move', sources: ['LIBRARY:/g2/d2/Box'], dest: 'LIBRARY:/g1/d1', onClash: 'ask' }))
+      .toMatchObject({ kind: 'done', versions: [{ diskId: 'd1', seq: a1 + 1 }, { diskId: 'd2', seq: b1 + 1 }] });
     expect([await versions('d1'), await versions('d2')]).toEqual([a1 + 1, b1 + 1]);
     expect(await listLibrary(ctx, P('LIBRARY:/g1/d1/Box'))).not.toBeNull();
     expect(await listLibrary(ctx, P('LIBRARY:/g2/d2/Box'))).toBeNull();
   });
   it('deletes several items in one version', async () => {
     const v = await versions('d2');
-    await runOp(ctx, { op: 'delete', sources: ['LIBRARY:/g2/d2/ReadMe', 'LIBRARY:/g2/d2/ReadMe_1'] });
+    expect(await runOp(ctx, { op: 'delete', sources: ['LIBRARY:/g2/d2/ReadMe', 'LIBRARY:/g2/d2/ReadMe_1'] }))
+      .toMatchObject({ kind: 'done', versions: [{ diskId: 'd2', seq: v + 1 }] });
     expect(await versions('d2')).toBe(v + 1);
     expect(await readLibraryFile(ctx, P('LIBRARY:/g2/d2/ReadMe'))).toBeNull();
   });
@@ -233,7 +238,8 @@ describe('fix round 1', () => {
       if (!r.ok) throw new Error(r.reason);
     };
     expect(await runOp(ctx, { op: 'move', sources: ['LIBRARY:/g4/d4/Moving'], dest: 'LIBRARY:/g5/d5', onClash: 'ask' })).toEqual({
-      kind: 'done', items: [{ source: 'LIBRARY:/g4/d4/Moving', ok: false, refusal: { code: 'conflict', detail: 'copied, but the original could not be removed' } }] });
+      kind: 'done', items: [{ source: 'LIBRARY:/g4/d4/Moving', ok: false, refusal: { code: 'conflict', detail: 'copied, but the original could not be removed' } }],
+      versions: [{ diskId: 'd5', seq: expect.any(Number) }] });   // only the copy was saved
     expect(seam.afterNextEdit).toBeNull();
     expect(await text('LIBRARY:/g5/d5/Moving')).toBe('abc');
     expect(await text('LIBRARY:/g4/d4/Moving')).toBe('xyz');
@@ -241,9 +247,9 @@ describe('fix round 1', () => {
   it('refuses replacing a file with itself as name_exists, not cycle', async () => {
     const s = await sha('d5');
     expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g5/d5/Moving'], dest: 'LIBRARY:/g5/d5', onClash: 'replace' })).toEqual({
-      kind: 'done', items: [{ source: 'LIBRARY:/g5/d5/Moving', ok: false, refusal: { code: 'name_exists', detail: 'same file' } }] });
+      kind: 'done', items: [{ source: 'LIBRARY:/g5/d5/Moving', ok: false, refusal: { code: 'name_exists', detail: 'same file' } }], versions: [] });
     expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g5/d5/Tree'], dest: 'LIBRARY:/g5/d5', onClash: 'replace' })).toEqual({
-      kind: 'done', items: [{ source: 'LIBRARY:/g5/d5/Tree', ok: false, refusal: { code: 'cycle' } }] });   // a folder stays cycle
+      kind: 'done', items: [{ source: 'LIBRARY:/g5/d5/Tree', ok: false, refusal: { code: 'cycle' } }], versions: [] });   // a folder stays cycle
     expect(await sha('d5')).toBe(s);
   });
   it('a disk whose blob is gone is refused blob_unavailable 503, not thrown', async () => {
