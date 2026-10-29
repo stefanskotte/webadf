@@ -43,6 +43,9 @@ beforeAll(async () => {
   await stash('Mods/enigma.mod', enc('mod!'));
   await stash('t.zip', new Uint8Array(readFileSync('src/lib/archive/fixtures/t.zip')));
   await stash('bad.lha', enc('not an lha at all'));
+  // Member names no STASH: path can carry (fix round 1).
+  await stash('names.zip', new Uint8Array(makeZip([{ name: './a.txt', data: Buffer.from('A') }, { name: '../b.txt', data: Buffer.from('B') },
+    { name: 'x/../y', data: Buffer.from('Y') }, { name: 'ctl\u0001.txt', data: Buffer.from('C') }])));
   // One member over MAX_ZIP_MEMBER_BYTES (4 MiB): the archive is refused whole (ruling 5), not listed short.
   await stash('big.zip', new Uint8Array(makeZip([{ name: 'small.txt', data: Buffer.from('hi') }, { name: 'huge.bin', data: Buffer.alloc(5 * 1024 * 1024), deflate: true }])));
   await getDb().insert(amigaUploads).values({ id: 'arr1', orgId: 'o1', deviceId: 'dev1', deviceName: 'A500 bench', path: 'Mods/arriving.mod',
@@ -99,6 +102,27 @@ describe('STASH: listing', () => {
   });
 });
 
+describe('STASH: archive member names', () => {
+  it("drops '.', and lists '..', control characters and the like as members it can't open, at paths that parse", async () => {
+    const l = (await stashDriver.list(ctx, P('STASH:/names.zip')))!;
+    expect(l.entries.map((e) => [e.name, e.marks])).toEqual(expect.arrayContaining([
+      ['a.txt', []], ['b.txt', ["can't open — bad name"]], ['y', ["can't open — bad name"]], ['ctl_.txt', ["can't open — bad name"]]]));
+    expect(l.entries).toHaveLength(4);
+    for (const e of l.entries) expect(parsePath(e.path), e.path).not.toBeNull();
+    expect(new TextDecoder().decode((await stashDriver.read(ctx, P('STASH:/names.zip/a.txt')))!.bytes)).toBe('A');
+    await expect(stashDriver.read(ctx, P('STASH:/names.zip/b.txt'))).rejects.toMatchObject({ refusal: { code: 'archive_unreadable', detail: 'bad name' } });
+    await expect(stashDriver.collect(ctx, P('STASH:/names.zip/y'))).rejects.toMatchObject({ refusal: { code: 'archive_unreadable' } });
+  });
+  it("collecting the archive's root never yields a '..'", async () => {
+    // The archive itself is a file; its members come out only through a folder or one member.
+    const a = (await stashDriver.collect(ctx, P('STASH:/names.zip/a.txt')))!;
+    expect(a.map((i) => i.rel)).toEqual([['a.txt']]);
+    const { openArchive } = await import('./stash-archive');
+    const opened = (await openArchive('names.zip', (await stashDriver.read(ctx, P('STASH:/names.zip')))!.bytes))!;
+    for (const m of [...opened.files, ...opened.unreadable]) expect(m.path).not.toContain('..');
+  });
+});
+
 describe('STASH: read and collect', () => {
   it('reads a file and an archive member with their meta', async () => {
     expect((await stashDriver.read(ctx, P('STASH:/ReadMe')))).toMatchObject({ name: 'ReadMe', comment: 'top', protection: '----r-e-' });
@@ -106,7 +130,7 @@ describe('STASH: read and collect', () => {
     expect(new TextDecoder().decode(m.bytes)).toMatch(/^The quick brown fox/);
     expect(m.date?.toISOString()).toBe('2026-09-11T14:47:48.000Z');
     expect(await stashDriver.read(ctx, P('STASH:/Mods'))).toBeNull();
-    expect(await stashDriver.read(ctx, P('STASH:/Mods/arriving.mod'))).toBeNull();
+    await expect(stashDriver.read(ctx, P('STASH:/Mods/arriving.mod'))).rejects.toMatchObject({ refusal: { code: 'unsupported', detail: 'still arriving from the Amiga' }, status: 409 });
   });
   it('collects a stored file with its blob, and refuses a folder with a file still arriving', async () => {
     const items = (await stashDriver.collect(ctx, P('STASH:/ReadMe')))!;

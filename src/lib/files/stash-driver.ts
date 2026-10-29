@@ -85,7 +85,7 @@ async function openRow(name: string, row: StashRow & { blobSha256: string }, acc
   return { opened, tree };
 }
 
-/** Members at or under `inner` (case-insensitive, as names compare everywhere in STASH:). */
+/** Members at or under `inner` (case-insensitive, as names compare everywhere in STASH:); `path` is memberPath's. */
 const under = (inner: readonly string[]) => (path: string) => {
   const segs = path.split('/').filter(Boolean);
   return segs.length >= inner.length && inner.every((s, i) => sameStashName(s, segs[i]));
@@ -168,6 +168,7 @@ async function read(ctx: FsCtx, p: FsPath): Promise<FileBytes | null> {
   if (!loc) return null;
   if (loc.at === 'stash') {
     const row = loc.row;
+    if (loc.node.kind === 'file' && row?.status === 'receiving') refuse('unsupported', 409, STILL_ARRIVING);
     if (loc.node.kind !== 'file' || !row || row.status !== 'stored' || !row.blobSha256) return null;
     return { name: loc.node.name, bytes: await readBlob(row.blobSha256), date: row.date, protection: protectionString(row.protection), comment: row.comment || null };
   }

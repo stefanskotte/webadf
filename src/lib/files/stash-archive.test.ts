@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { makeZip } from '@/lib/__fixtures__/make-zip';
-import { openArchive } from './stash-archive';
+import { MEMBER_DEPTH_MAX, memberPath, openArchive } from './stash-archive';
 
 const tzip = new Uint8Array(readFileSync('src/lib/archive/fixtures/t.zip'));
 
@@ -61,5 +61,14 @@ describe('openArchive', () => {
     const a = (await openArchive('m.zip', new Uint8Array(mixed)))!;
     expect(a.files.map((f) => f.path)).toEqual([['ok.txt']]);
     expect(a.unreadable).toEqual([{ path: ['secret.txt'], reason: 'encrypted' }]);
+  });
+  it("memberPath drops '.', and makes a name no STASH: path carries bad, shown by its last name made safe", () => {
+    expect(memberPath('./a/./b.txt')).toEqual({ path: ['a', 'b.txt'], bad: false });
+    expect(memberPath('../b.txt')).toEqual({ path: ['b.txt'], bad: true });
+    expect(memberPath('x/..')).toEqual({ path: ['_'], bad: true });
+    expect(memberPath('d/c\u0001.txt')).toEqual({ path: ['c_.txt'], bad: true });
+    expect(memberPath('x'.repeat(256))).toEqual({ path: ['x'.repeat(255)], bad: true });
+    expect(memberPath(Array(MEMBER_DEPTH_MAX + 1).fill('d').join('/')).bad).toBe(true);
+    expect(memberPath(Array(MEMBER_DEPTH_MAX).fill('d').join('/')).bad).toBe(false);
   });
 });

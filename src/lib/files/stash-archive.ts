@@ -18,7 +18,24 @@ const isSizeReason = (r: string) => r === 'too large' || r === 'archive limit re
 /** Reasons that are about the archive, not one member: nothing past them can be trusted. */
 const ARCHIVE_REASONS = new Set(['not a zip', 'unsupported-header-level', 'truncated header']);
 
-const split = (path: string) => path.split('/').filter(Boolean);
+/** The control characters parsePath refuses in a segment. */
+const CONTROL = /[\u0000-\u001f\u007f]/;
+const SEGMENT_MAX = 255;
+/** parsePath allows 40 segments in all; this leaves room for the STASH: folders and the archive's own name above it. */
+export const MEMBER_DEPTH_MAX = 32;
+
+/**
+ * A member's names as STASH: shows them: '.' segments dropped. A name no STASH: path can carry ('..', a control
+ * character, a segment over 255, deeper than MEMBER_DEPTH_MAX) is `bad`, shown at the archive's root under its last
+ * name made safe, so every listed path parses and no copy ever hands a writer a '..'.
+ */
+export function memberPath(raw: string): { path: string[]; bad: boolean } {
+  const segs = raw.split('/').filter((s) => s && s !== '.');
+  const bad = segs.length > MEMBER_DEPTH_MAX || segs.some((s) => s === '..' || CONTROL.test(s) || s.length > SEGMENT_MAX);
+  if (!bad) return { path: segs, bad };
+  const last = (raw.split('/').filter(Boolean).pop() ?? '').replace(/[\u0000-\u001f\u007f]/g, '_').slice(0, SEGMENT_MAX);
+  return { path: [last === '.' || last === '..' || !last ? '_' : last], bad };
+}
 
 /**
  * The archive's members as files (folders implicit), or null when it is over MAX_ARCHIVE_BYTES, unreadable, or any
@@ -28,7 +45,9 @@ const split = (path: string) => path.split('/').filter(Boolean);
  */
 export async function openArchive(name: string, bytes: Uint8Array, accept?: (path: string) => boolean): Promise<OpenedArchive | null> {
   if (!isArchiveName(name) || bytes.length > MAX_ARCHIVE_BYTES) return null;
-  const caps = { maxEntryBytes: MAX_ZIP_MEMBER_BYTES, maxTotalBytes: MAX_ZIP_TOTAL_BYTES, accept };
+  // `accept` judges the path as STASH: shows it (memberPath), the one a read or collect names.
+  const caps = { maxEntryBytes: MAX_ZIP_MEMBER_BYTES, maxTotalBytes: MAX_ZIP_TOTAL_BYTES,
+    accept: accept && ((raw: string) => accept(memberPath(raw).path.join('/'))) };
   let read: { entries: { path: string; bytes: Uint8Array; date: Date | null; protection: number | null }[]; skipped: { path: string; reason: string }[] };
   try {
     read = /\.zip$/i.test(name) ? await readZip(bytes, caps) : readLha(bytes, caps);
@@ -37,9 +56,17 @@ export async function openArchive(name: string, bytes: Uint8Array, accept?: (pat
   }
   const skipped = read.skipped.filter((s) => s.reason !== 'not selected');
   if (skipped.some((s) => isSizeReason(s.reason) || ARCHIVE_REASONS.has(s.reason))) return null;
-  const files = read.entries.map((e) => ({ path: split(e.path), bytes: e.bytes, date: e.date, protection: e.protection, comment: null }))
-    .filter((f) => f.path.length > 0);
-  const unreadable = skipped.map((s) => ({ path: split(s.path), reason: s.reason })).filter((u) => u.path.length > 0);
+  const files: ArchiveFile[] = [];
+  const unreadable: ArchiveUnreadable[] = [];
+  for (const e of read.entries) {
+    const m = memberPath(e.path);
+    if (m.bad) unreadable.push({ path: m.path, reason: 'bad name' });
+    else if (m.path.length) files.push({ path: m.path, bytes: e.bytes, date: e.date, protection: e.protection, comment: null });
+  }
+  for (const k of skipped) {
+    const m = memberPath(k.path);
+    if (m.path.length) unreadable.push({ path: m.path, reason: k.reason });
+  }
   // No members at all, or (opened whole) none it can read: not an archive this can open, never an empty folder that
   // looks fine. With `accept`, members set aside as not selected still prove it is one.
   if (read.entries.length === 0 && read.skipped.length === 0) return null;
