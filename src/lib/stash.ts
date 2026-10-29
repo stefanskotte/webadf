@@ -43,15 +43,17 @@ export function lockOrg(tx: Pick<Db, 'execute'>, orgId: string) {
   return tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`amiga_uploads:${orgId}`}))`);
 }
 
-/** A file added under folders keeps their rows alive: each ancestor dir row is kept 30 days from now (ruling 16). */
-export async function touchStashDirs(tx: Pick<Db, 'update'>, orgId: string, path: string, now: Date): Promise<void> {
-  const segs = path.split('/').filter(Boolean);
-  const parents: string[] = [];
-  for (let k = 1; k < segs.length; k++) parents.push(segs.slice(0, k).join('/').toLowerCase());
-  if (parents.length === 0) return;
+/** A file added under folders keeps their rows alive: each ancestor dir row of `paths` is kept 30 days from now (ruling 16), in one statement. */
+export async function touchStashDirs(tx: Pick<Db, 'update'>, orgId: string, paths: string | readonly string[], now: Date): Promise<void> {
+  const parents = new Set<string>();
+  for (const path of typeof paths === 'string' ? [paths] : paths) {
+    const segs = path.split('/').filter(Boolean);
+    for (let k = 1; k < segs.length; k++) parents.add(segs.slice(0, k).join('/').toLowerCase());
+  }
+  if (parents.size === 0) return;
   await tx.update(amigaUploads).set({ expiresAt: new Date(now.getTime() + UPLOAD_KEEP_MS) })
     .where(and(eq(amigaUploads.orgId, orgId), eq(amigaUploads.kind, 'dir'), eq(amigaUploads.status, 'stored'),
-      inArray(sql`lower(${amigaUploads.path})`, parents)));
+      inArray(sql`lower(${amigaUploads.path})`, [...parents])));
 }
 
 /** All or nothing under the org lock: `replaceIds` are deleted in the same transaction and not counted. */
@@ -72,18 +74,18 @@ export async function insertStash(db: Db, orgId: string, source: 'browser' | 'co
         .returning({ id: amigaUploads.id });   // only this org's rows: their chunks go, nobody else's
       if (gone.length) await tx.delete(amigaUploadChunks).where(inArray(amigaUploadChunks.uploadId, gone.map((g) => g.id)));
     }
-    const ids: string[] = [];
-    for (const e of entries) {
-      const id = crypto.randomUUID();
-      ids.push(id);
-      await tx.insert(amigaUploads).values({
-        id, orgId, deviceId: null, deviceName: null, source, kind: e.kind, path: e.path, sizeBytes: e.sizeBytes, receivedBytes: e.sizeBytes,
-        protection: e.protection >>> 0, comment: e.comment, amigaDate: amigaDateText(e.date ?? now), status: 'stored',
+    // One statement for the batch and one for its folders: the board's close waits on this lock.
+    const ids = entries.map(() => crypto.randomUUID());
+    if (entries.length) {
+      await tx.insert(amigaUploads).values(entries.map((e, k) => ({
+        id: ids[k], orgId, deviceId: null, deviceName: null, source, kind: e.kind, path: e.path, sizeBytes: e.sizeBytes, receivedBytes: e.sizeBytes,
+        protection: e.protection >>> 0, comment: e.comment, amigaDate: amigaDateText(e.date ?? now), status: 'stored' as const,
         blobSha256: e.sha256, storedAt: now,
-        createdAt: sql`clock_timestamp()`,   // now() is the transaction's start: a batch must keep its order (oldest first)
+        // now() is the transaction's start: a batch must keep its order (oldest first), a microsecond apart at least.
+        createdAt: sql`clock_timestamp() + interval '${sql.raw(String(k))} microseconds'`,
         expiresAt: new Date(now.getTime() + UPLOAD_KEEP_MS),
-      });
-      await touchStashDirs(tx, orgId, e.path, now);
+      })));
+      await touchStashDirs(tx, orgId, entries.map((e) => e.path), now);
     }
     return { ok: true as const, ids };
   });

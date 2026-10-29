@@ -119,6 +119,9 @@ export interface LhaReadOptions {
   /** Largest sum of decoded output; once a member would pass it, it is skipped
    *  as 'archive limit reached'. Default: unbounded. */
   maxTotalBytes?: number;
+  /** Most headers (folders too); the one past it ends the read as 'too many
+   *  members', before it is decoded. Default: unbounded. */
+  maxMembers?: number;
 }
 
 /** Methods this reader decodes, and the window size each one uses. */
@@ -145,11 +148,16 @@ export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResu
   const entries: LhaEntry[] = [];
   const skipped: { path: string; reason: string }[] = [];
   let off = 0;
+  let members = 0;
 
   while (off + 21 < buf.length) {
     const level = buf[off + 20];
     const method = td.decode(buf.subarray(off + 2, off + 7));
     if (!method.startsWith('-lh') && !method.startsWith('-lz')) break;
+    if (++members > (opts.maxMembers ?? Number.MAX_SAFE_INTEGER)) {
+      skipped.push({ path: '(archive)', reason: 'too many members' });
+      break;
+    }
 
     let packed = u32(buf, off + 7);
     const original = u32(buf, off + 11);

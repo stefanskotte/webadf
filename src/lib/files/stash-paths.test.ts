@@ -23,6 +23,16 @@ describe('stashTree', () => {
     expect(rowsUnder(stashFind(t, ['Mods'])!).sort()).toEqual([0, 1]);
     expect(stashFind(t, ['ReadMe', 'x'])).toBeNull();
   });
+  it('builds a 4000-member tree in well under a second, distinct names and twins alike', () => {
+    for (const rows of [Array.from({ length: 4000 }, (_, i) => r(`Dir/f${i}.txt`)), Array.from({ length: 4000 }, () => r('Dir/same.txt'))]) {
+      const t0 = performance.now();
+      const t = stashTree(rows);
+      expect(performance.now() - t0).toBeLessThan(1000);
+      const names = t.children[0].children.map((c) => c.name.toLowerCase());
+      expect([names.length, new Set(names).size]).toEqual([4000, 4000]);
+    }
+    expect(stashTree([r('a.txt'), r('A.TXT'), r('a.txt')]).children.map((c) => c.name)).toEqual(['a.txt', 'A_1.TXT', 'a_2.txt']);
+  });
   it('the tree names legacy twins apart: the oldest keeps the name', () => {
     const t = stashTree([r('ReadMe'), r('readme'), r('Mods'), r('Mods/a.mod')]);
     expect(t.children.map((c) => [c.name, c.row])).toEqual([['ReadMe', 0], ['readme_1', 1], ['Mods', 2], ['Mods_1', null]]);

@@ -1,7 +1,7 @@
 // src/lib/files/stash-archive.ts
 // A .lha/.lzh/.zip in STASH: opened on the server as a read-only folder (Files spec 2026-10-29 §4.2, increment 2): its
 // members as files, with the dates and protection the archive records, bounded by the caps archive/index.ts sets. SERVER ONLY.
-import { isArchiveName, MAX_ARCHIVE_BYTES, MAX_ZIP_MEMBER_BYTES, MAX_ZIP_TOTAL_BYTES } from '@/lib/archive';
+import { isArchiveName, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_MEMBERS, MAX_ZIP_MEMBER_BYTES, MAX_ZIP_TOTAL_BYTES } from '@/lib/archive';
 import { readLha } from '@/lib/archive/lha';
 import { readZip } from '@/lib/archive/zip';
 
@@ -16,7 +16,7 @@ export type OpenedArchive = { files: ArchiveFile[]; unreadable: ArchiveUnreadabl
  */
 const isSizeReason = (r: string) => r === 'too large' || r === 'archive limit reached' || r.startsWith('corrupt (');
 /** Reasons that are about the archive, not one member: nothing past them can be trusted. */
-const ARCHIVE_REASONS = new Set(['not a zip', 'unsupported-header-level', 'truncated header']);
+const ARCHIVE_REASONS = new Set(['not a zip', 'unsupported-header-level', 'truncated header', 'too many members']);
 
 /** The control characters parsePath refuses in a segment. */
 const CONTROL = /[\u0000-\u001f\u007f]/;
@@ -38,15 +38,15 @@ export function memberPath(raw: string): { path: string[]; bad: boolean } {
 }
 
 /**
- * The archive's members as files (folders implicit), or null when it is over MAX_ARCHIVE_BYTES, unreadable, or any
- * member it was asked for is over the caps. `accept` (a member's '/'-path) limits the decoding to those members: a read
+ * The archive's members as files (folders implicit), or null when it is over MAX_ARCHIVE_BYTES or MAX_ARCHIVE_MEMBERS,
+ * unreadable, or any member it was asked for is over the caps. `accept` (a member's '/'-path) limits the decoding to those members: a read
  * of one member inflates that member only. Without it every member is decoded -- the readers report sizes and dates
  * only for members they decode, so a listing pays the full (capped) inflate.
  */
 export async function openArchive(name: string, bytes: Uint8Array, accept?: (path: string) => boolean): Promise<OpenedArchive | null> {
   if (!isArchiveName(name) || bytes.length > MAX_ARCHIVE_BYTES) return null;
   // `accept` judges the path as STASH: shows it (memberPath), the one a read or collect names.
-  const caps = { maxEntryBytes: MAX_ZIP_MEMBER_BYTES, maxTotalBytes: MAX_ZIP_TOTAL_BYTES,
+  const caps = { maxEntryBytes: MAX_ZIP_MEMBER_BYTES, maxTotalBytes: MAX_ZIP_TOTAL_BYTES, maxMembers: MAX_ARCHIVE_MEMBERS,
     accept: accept && ((raw: string) => accept(memberPath(raw).path.join('/'))) };
   let read: { entries: { path: string; bytes: Uint8Array; date: Date | null; protection: number | null }[]; skipped: { path: string; reason: string }[] };
   try {

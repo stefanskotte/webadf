@@ -62,6 +62,26 @@ describe('STASH: store', () => {
     expect(paths).toEqual(expect.arrayContaining(['Mods/ReadMe', 'Mods/readme_1']));
     await deleteStash(db(), 'o1', [one.id, two.id]);
   });
+  it('writes a batch in one insert and one ancestor touch while it holds the org lock, keeping its order', async () => {
+    const now = new Date();
+    await insertStash(db(), 'o1', 'browser', [{ ...file('Batch'), kind: 'dir', sha256: null, sizeBytes: 0 }], { now: new Date(now.getTime() - 86_400_000) });
+    const calls = { insert: 0, update: 0 };
+    // Counts the statements insertStash builds on its transaction.
+    const counting = new Proxy(db(), { get: (t, k) => k !== 'transaction' ? Reflect.get(t, k)
+      : (fn: (tx: unknown) => Promise<unknown>) => t.transaction((tx) => fn(new Proxy(tx, { get: (x, kk) => {
+        if (kk === 'insert' || kk === 'update') calls[kk]++;
+        const v = Reflect.get(x, kk);
+        return typeof v === 'function' ? v.bind(x) : v;
+      } }))) });
+    const paths = Array.from({ length: 12 }, (_, i) => `Batch/Sub${i % 3}/f${String(i).padStart(2, '0')}`);
+    const r = await insertStash(counting, 'o1', 'copy', paths.map((p) => file(p)), { now });
+    expect(r.ok).toBe(true);
+    expect(calls).toEqual({ insert: 1, update: 1 });
+    const rows = await listStash(db(), 'o1');
+    expect(rows.filter((x) => x.path.startsWith('Batch/')).map((x) => x.path)).toEqual(paths);
+    expect((await db().select().from(amigaUploads).where(eq(amigaUploads.path, 'Batch')))[0].expiresAt.getTime()).toBeGreaterThan(now.getTime() + 29 * 86_400_000);
+    await deleteStash(db(), 'o1', rows.filter((x) => x.path === 'Batch' || x.path.startsWith('Batch/')).map((x) => x.id));
+  });
   it('refuses a batch that would pass 500 entries, inserting nothing', async () => {
     const live = (await listStash(db(), 'o1')).length;
     const fill = Array.from({ length: 500 - live - 1 }, (_, i) => file(`Fill/f${i}`, 1));

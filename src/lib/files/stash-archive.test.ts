@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { makeZip } from '@/lib/__fixtures__/make-zip';
+import { MAX_ARCHIVE_MEMBERS } from '@/lib/archive';
 import { MEMBER_DEPTH_MAX, memberPath, openArchive } from './stash-archive';
 
 const tzip = new Uint8Array(readFileSync('src/lib/archive/fixtures/t.zip'));
@@ -18,7 +19,30 @@ function encrypted(zip: Buffer): Uint8Array {
   return out;
 }
 
+/** A level-0 LHA of stored (-lh0-) members, enough for the member cap. */
+function makeLha(names: string[]): Uint8Array {
+  const parts: Buffer[] = [];
+  for (const n of names) {
+    const name = Buffer.from(n);
+    const h = Buffer.alloc(24 + name.length);
+    h[0] = 22 + name.length; h.write('-lh0-', 2, 'latin1');
+    h[20] = 0; h[21] = name.length; name.copy(h, 22);
+    parts.push(h);
+  }
+  return new Uint8Array(Buffer.concat([...parts, Buffer.from([0])]));
+}
+
 describe('openArchive', () => {
+  it('refuses an archive of more than MAX_ARCHIVE_MEMBERS members whole, fast; at the cap it opens', async () => {
+    const names = (n: number) => Array.from({ length: n }, (_, i) => `d${i % 7}/m${i}.txt`);
+    const t0 = performance.now();
+    expect(await openArchive('many.zip', new Uint8Array(makeZip(names(MAX_ARCHIVE_MEMBERS + 1).map((name) => ({ name, data: Buffer.alloc(0) })))))).toBeNull();
+    expect(await openArchive('many.lha', makeLha(names(MAX_ARCHIVE_MEMBERS + 1)))).toBeNull();
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect((await openArchive('cap.zip', new Uint8Array(makeZip(names(MAX_ARCHIVE_MEMBERS).map((name) => ({ name, data: Buffer.alloc(0) }))))))!.files)
+      .toHaveLength(MAX_ARCHIVE_MEMBERS);
+    expect((await openArchive('cap.lha', makeLha(names(MAX_ARCHIVE_MEMBERS))))!.files).toHaveLength(MAX_ARCHIVE_MEMBERS);
+  });
   it('opens a zip as files with paths split into names and the dates it records', async () => {
     const a = (await openArchive('t.zip', tzip))!;
     expect(a.files.map((f) => f.path.join('/')).sort()).toEqual(['src/noise.bin', 'src/readme.txt', 'src/sub/deep.txt', 'src/tiny.txt']);

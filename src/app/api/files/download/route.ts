@@ -7,6 +7,7 @@ import { driverFor } from '@/lib/files/drivers';
 import { refuse, Refused, type FsCtx, type IncomingItem } from '@/lib/files/driver';
 import { tallyIncoming, zipIncoming } from '@/lib/disk-zip';
 import { diskStore } from '@/lib/storage';
+import { mapLimit } from '@/lib/pool';
 
 // Reads (and an op writes) disk images from the store: the same 60 s every byte-touching handler sets.
 export const maxDuration = 60;
@@ -83,7 +84,7 @@ function within(p: FsPath, outer: FsPath): boolean {
 /**
  * A selection that reaches beyond LIBRARY: each path through its own driver's `collect`, in order, the caps counted as
  * each comes (a STASH: file by its row's size, before its blob is read), then the bytes the collect left in the store
- * read, then one zip. An entry selected twice, or inside another selected folder, goes in once.
+ * read (up to 12 at a time), then one zip. An entry selected twice, or inside another selected folder, goes in once.
  */
 async function zipAcross(orgId: string, userId: string, paths: FsPath[], q: URLSearchParams): Promise<Response> {
   const ctx: FsCtx = { orgId, userId };
@@ -98,12 +99,12 @@ async function zipAcross(orgId: string, userId: string, paths: FsPath[], q: URLS
       const n = tallyIncoming(tops);
       if (n.entries > ZIP_LIMITS.maxEntries || n.bytes > ZIP_LIMITS.maxBytes) return Response.json(TOO_LARGE, { status: 413 });
     }
-    const blobs = new Map<string, Uint8Array>();
-    for (const t of tops) for (const i of t.items) {
-      if (i.kind !== 'file' || i.bytes || !i.sha256) continue;
-      if (!blobs.has(i.sha256)) blobs.set(i.sha256, await diskStore.read(i.sha256).catch((): never => refuse('blob_unavailable', 503)));
-      i.bytes = blobs.get(i.sha256);
-    }
+    // Each blob once, up to 12 reads at a time (a 60 s function), all before the zip is built.
+    const wanted = tops.flatMap((t) => t.items).filter((i) => i.kind === 'file' && !i.bytes && i.sha256);
+    const shas = [...new Set(wanted.map((i) => i.sha256!))];
+    const read = await mapLimit(shas, 12, (sha) => diskStore.read(sha).catch((): never => refuse('blob_unavailable', 503)));
+    const blobs = new Map(shas.map((sha, k) => [sha, read[k]] as const));
+    for (const i of wanted) i.bytes = blobs.get(i.sha256!);
   } catch (e) {
     if (e instanceof Refused) return refused(e);
     throw e;

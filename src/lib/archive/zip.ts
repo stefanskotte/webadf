@@ -82,6 +82,9 @@ export interface ZipReadOptions {
    *  as 'archive limit reached' (many small bombs, or one bomb named many
    *  times). Default: unbounded. */
   maxTotalBytes?: number;
+  /** Most central-directory records (folders too); over it the whole archive
+   *  is refused as 'too many members' before a byte is inflated. Default: unbounded. */
+  maxMembers?: number;
 }
 
 /** Find the end-of-central-directory record, scanning back over any comment. */
@@ -109,6 +112,8 @@ export async function readZip(buf: Uint8Array, opts: ZipReadOptions = {}): Promi
 
   const count = u16(buf, eocd + 10);
   let cen = u32(buf, eocd + 16);
+  // The walk below never passes `count` records, so the count is the bound.
+  if (count > (opts.maxMembers ?? Number.MAX_SAFE_INTEGER)) return { entries, skipped: [{ path: '(archive)', reason: 'too many members' }] };
 
   for (let i = 0; i < count; i++) {
     if (cen + 46 > buf.length || u32(buf, cen) !== CEN_SIG) break;

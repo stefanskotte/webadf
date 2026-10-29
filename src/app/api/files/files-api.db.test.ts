@@ -128,6 +128,17 @@ beforeAll(async () => {
 });
 afterAll(async () => { await closeDb(); await admin(`drop database if exists ${DB} with (force)`); });
 
+/** Wraps a diskStore method so a test can see how many calls were in flight at once (each held 10 ms). */
+function inFlight(method: 'read' | 'stat') {
+  const orig = diskStore[method].bind(diskStore) as (...a: unknown[]) => Promise<unknown>;
+  let now = 0, max = 0;
+  const spy = vi.spyOn(diskStore, method).mockImplementation((async (...a: unknown[]) => {
+    now++; max = Math.max(max, now);
+    try { await new Promise((r) => setTimeout(r, 10)); return await orig(...a); } finally { now--; }
+  }) as never);
+  return { max: () => max, restore: () => spy.mockRestore() };
+}
+
 describe('/api/files', () => {
   it('lists, refuses a bad path, and 404s a foreign one', async () => {
     expect((await GET_LIST(req('/api/files/list?path=LIBRARY:/g1'))).status).toBe(200);
@@ -306,6 +317,15 @@ describe('/api/files', () => {
     // An entry selected twice, or inside a selected folder, is in the zip once.
     const once = await dlMany('STASH:/Mods', 'STASH:/mods/a.mod', 'STASH:/Notes.txt', 'STASH:/notes.txt');
     expect(Object.keys(unzipSync(new Uint8Array(await once.arrayBuffer()))).sort()).toEqual(['Mods/', 'Mods/a.mod', 'Notes.txt']);
+  });
+  it('a zip across devices reads its STASH: blobs side by side, not one after another (60 s functions)', async () => {
+    const reads = inFlight('read');
+    try {
+      const z = await dlMany('STASH:/Notes.txt', 'STASH:/Mods', 'STASH:/Other/ReadMe', 'STASH:/t.zip');
+      expect(z.status).toBe(200);
+      expect(Object.keys(unzipSync(new Uint8Array(await z.arrayBuffer()))).sort()).toEqual(['Mods/', 'Mods/a.mod', 'Notes.txt', 'ReadMe', 't.zip']);
+      expect(reads.max()).toBeGreaterThan(1);
+    } finally { reads.restore(); }
   });
   it('a zip across devices: unknown or foreign 404, archive member it cannot read 422, over the cap 413 before a STASH: blob is read', async () => {
     expect((await dlMany('STASH:/Notes.txt', 'STASH:/Nothing')).status).toBe(404);

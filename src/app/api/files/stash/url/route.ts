@@ -7,7 +7,7 @@ import { fetchUrlSafely, URL_FETCH_LIMITS, type UrlFetchCode } from '@/lib/url-f
 import { takeUrlFetch } from '@/lib/url-fetch-limit';
 import { nameFromResponse } from '@/lib/url-ingest';
 import { cleanAmigaPath } from '@/lib/transfers';
-import { storeOwnBytes } from '@/lib/files/stash-commit';
+import { storeSendBytes } from '@/lib/send-http';
 import { writeStash } from '@/lib/files/stash-driver';
 import { Refused } from '@/lib/files/driver';
 import type { RefusalCode } from '@/lib/files/types';
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
   }
   const name = cleanAmigaPath(nameFromResponse(got.finalUrl, got.contentDisposition).replace(/\//g, '_')) ?? 'download';
   try {
-    const sha256 = await storeOwnBytes(got.bytes);
+    const sha256 = await storeSendBytes(got.bytes);
     const r = await writeStash({ orgId, userId, versions: [] }, { device: 'STASH', segments: [] },
       [{ source: body.data.url, items: [{ rel: [name], kind: 'file', sha256, size: got.bytes.length, date: null, protection: 0, comment: null }] }],
       'keep-both', 'browser');

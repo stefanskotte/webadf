@@ -24,7 +24,7 @@ export interface DiskStore {
    * memory here, and round-tripping it out to a presigned URL and back would
    * add a network hop to move bytes to themselves.
    */
-  put(sha256: string, bytes: Uint8Array): Promise<{ key: string }>;
+  put(sha256: string, bytes: Uint8Array, opts?: { overwrite?: boolean }): Promise<{ key: string }>;
   /** Metadata for a stored blob, or null when it is absent. */
   stat(sha256: string): Promise<BlobStat | null>;
   /** Full contents. Only ever called for a blob whose digest still has to be verified. */
@@ -57,11 +57,12 @@ function key(sha256: string): string {
 
 /** Content-addressed disk images at adf/<sha256>. */
 export const diskStore: DiskStore = {
-  async put(sha256, bytes) {
+  async put(sha256, bytes, opts) {
     assertSha(sha256);
     const pathname = key(sha256);
     try {
-      await backend().put(pathname, bytes, { contentType: 'application/octet-stream', overwrite: false });
+      // overwrite: the caller has hashed what the key holds and found other bytes there (storeSendBytes).
+      await backend().put(pathname, bytes, { contentType: 'application/octet-stream', overwrite: opts?.overwrite ?? false });
       return { key: pathname };
     } catch (err) {
       // Already in the store without its row -- a crash between the two

@@ -52,6 +52,9 @@ export const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 export const MAX_ZIP_MEMBER_BYTES = MAX_COMPRESSED_IMAGE_BYTES;
 /** What a whole zip or LHA may inflate to: the URL path's worst case, 20 images of 4 MiB. */
 export const MAX_ZIP_TOTAL_BYTES = 20 * MAX_COMPRESSED_IMAGE_BYTES;
+/** Most members a STASH: archive may hold (counted as the reader walks the headers, before inflating): an archive of
+ *  65,535 empty members costs a listing more than a function's 60 s, whatever the byte caps say. */
+export const MAX_ARCHIVE_MEMBERS = 4096;
 
 export function isArchiveName(name: string): boolean {
   return /\.(lha|lzh|zip)$/i.test(name);

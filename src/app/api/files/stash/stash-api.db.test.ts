@@ -45,6 +45,17 @@ beforeAll(async () => {
 });
 afterAll(async () => { await closeDb(); await admin(`drop database if exists ${DB} with (force)`); });
 
+/** Wraps a diskStore method so a test can see how many calls were in flight at once (each held 10 ms). */
+function inFlight(method: 'read' | 'stat') {
+  const orig = diskStore[method].bind(diskStore) as (...a: unknown[]) => Promise<unknown>;
+  let now = 0, max = 0;
+  const spy = vi.spyOn(diskStore, method).mockImplementation((async (...a: unknown[]) => {
+    now++; max = Math.max(max, now);
+    try { await new Promise((r) => setTimeout(r, 10)); return await orig(...a); } finally { now--; }
+  }) as never);
+  return { max: () => max, restore: () => spy.mockRestore() };
+}
+
 describe('/api/files/stash', () => {
   it('presign answers a URL only for blobs not yet stored', async () => {
     const r = await PRESIGN(json('/api/files/stash/presign', { files: [{ sha256: sha, sizeBytes: bytes.length }] }));
@@ -59,6 +70,23 @@ describe('/api/files/stash', () => {
     for (const files of [[{ sha256: other, sizeBytes: 0 }], [{ sha256: other, sizeBytes: 20 * 1024 * 1024 + 1 }], [{ sha256: 'XYZ', sizeBytes: 5 }], []]) {
       expect((await PRESIGN(json('/api/files/stash/presign', { files }))).status).toBe(400);
     }
+  });
+  it('commit checks its blobs side by side, and stores nothing of a top until all of them pass', async () => {
+    const files = ['p1', 'p2', 'p3', 'p4'].map((t) => new TextEncoder().encode(`parallel ${t}`));
+    const shas = files.map((b) => createHash('sha256').update(b).digest('hex'));
+    for (let i = 0; i < files.length; i++) await diskStore.put(shas[i], files[i]);
+    const stats = inFlight('stat');
+    try {
+      const r = await commit([{ path: 'Par', kind: 'dir', sizeBytes: 0 },
+        ...files.map((b, i) => ({ path: `Par/f${i}`, kind: 'file', sha256: shas[i], sizeBytes: b.length })),
+        { path: 'Half/ok', kind: 'file', sha256: shas[0], sizeBytes: files[0].length },
+        { path: 'Half/missing', kind: 'file', sha256: '9'.repeat(64), sizeBytes: 4 }]);
+      expect((await r.json()).items).toEqual([{ source: 'Par', ok: true },
+        { source: 'Half', ok: false, refusal: { code: 'failed', detail: 'upload did not arrive whole' } }]);
+      expect(stats.max()).toBeGreaterThan(1);
+    } finally { stats.restore(); }
+    expect((await rowsAt('o1', 'Par/f3'))[0].blobSha256).toBe(shas[3]);
+    expect(await rowsAt('o1', 'Half/ok')).toEqual([]);
   });
   it('commit stores a dropped folder with its file date', async () => {
     const r = await commit([

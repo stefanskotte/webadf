@@ -101,6 +101,17 @@ beforeAll(async () => {
 });
 afterAll(async () => { await closeDb(); await admin(`drop database if exists ${DB} with (force)`); });
 
+/** Wraps a diskStore method so a test can see how many calls were in flight at once (each held 10 ms). */
+function inFlight(method: 'read' | 'stat') {
+  const orig = diskStore[method].bind(diskStore) as (...a: unknown[]) => Promise<unknown>;
+  let now = 0, max = 0;
+  const spy = vi.spyOn(diskStore, method).mockImplementation((async (...a: unknown[]) => {
+    now++; max = Math.max(max, now);
+    try { await new Promise((r) => setTimeout(r, 10)); return await orig(...a); } finally { now--; }
+  }) as never);
+  return { max: () => max, restore: () => spy.mockRestore() };
+}
+
 describe('copies between STASH: and disks', () => {
   it('copies a disk folder into STASH:, keeping date, protection and comment', async () => {
     const r = await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/C'], dest: 'STASH:', onClash: 'ask' });
@@ -158,6 +169,19 @@ describe('copies between STASH: and disks', () => {
     expect(await runOp(ctx, { op: 'move', sources: ['STASH:/t.zip/src/tiny.txt'], dest: 'LIBRARY:/g4/d4', onClash: 'ask' }))
       .toMatchObject({ kind: 'refused', status: 409, refusal: { code: 'read_only', detail: 'archive' } });
     expect(await sha('d4')).toBe(s4);
+  });
+  it('a move out of STASH: of a file still arriving, alone or in its folder, is refused before anything is written', async () => {
+    await getDb().insert(amigaUploads).values({ id: 'arrX', orgId: 'o1', deviceId: 'dev1', deviceName: 'A500 bench', path: 'Incoming/part.mod',
+      sizeBytes: 100, receivedBytes: 10, amigaDate: '17000.0.0', status: 'receiving', expiresAt: new Date(Date.now() + 3600_000) });
+    try {
+      const s4 = await sha('d4'); const v4 = await versions('d4'); const before = await live();
+      for (const source of ['STASH:/Incoming/part.mod', 'STASH:/Incoming']) {
+        expect(await runOp(ctx, { op: 'move', sources: [source], dest: 'LIBRARY:/g4/d4', onClash: 'replace' }), source)
+          .toMatchObject({ kind: 'refused', status: 409, refusal: { code: 'unsupported', detail: 'still arriving from the Amiga' } });
+      }
+      expect([await sha('d4'), await versions('d4'), await live()]).toEqual([s4, v4, before]);
+      expect((await rowAt('Incoming/part.mod'))!.status).toBe('receiving');
+    } finally { await getDb().delete(amigaUploads).where(eq(amigaUploads.id, 'arrX')); }
   });
   it('an Amiga-made archive member keeps its protection in STASH:', async () => {
     await runOp(ctx, { op: 'copy', sources: ['STASH:/amiga.zip/Tool'], dest: 'STASH:', onClash: 'ask' });
@@ -220,6 +244,17 @@ describe('inside STASH:', () => {
     const [row] = await getDb().select().from(amigaUploads).where(eq(amigaUploads.id, 'arr3'));
     expect(row.status).toBe('receiving');
     await runOp(ctx, { op: 'delete', sources: ['STASH:/S'] });
+  });
+  it('a copy out of an archive stores its members side by side, all before any row', async () => {
+    await runOp(ctx, { op: 'makedir', dest: 'STASH:', name: 'Par' });
+    const stats = inFlight('stat');
+    try {
+      expect(await runOp(ctx, { op: 'copy', sources: ['STASH:/t.zip/src'], dest: 'STASH:/Par', onClash: 'ask' }))
+        .toMatchObject({ kind: 'done', items: [{ ok: true }] });
+      expect(stats.max()).toBeGreaterThan(1);
+    } finally { stats.restore(); }
+    expect((await live()).filter((p) => p.startsWith('Par/'))).toEqual(['Par/src', 'Par/src/noise.bin', 'Par/src/readme.txt', 'Par/src/sub', 'Par/src/sub/deep.txt', 'Par/src/tiny.txt']);
+    await runOp(ctx, { op: 'delete', sources: ['STASH:/Par'] });
   });
   it('a copy inside STASH: reuses the blob, no new bytes', async () => {
     await runOp(ctx, { op: 'makedir', dest: 'STASH:', name: 'Dup' });

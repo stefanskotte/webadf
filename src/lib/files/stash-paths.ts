@@ -30,13 +30,18 @@ export const sameStashName = (a: string, b: string): boolean => a.toLowerCase() 
 
 /** 'ReadMe' → 'ReadMe_1', 'a.txt' → 'a_1.txt': the first free number, the stem trimmed to keep the name ≤ 30. */
 export function keepBothName(name: string, taken: (n: string) => boolean): string {
+  return keepBothFrom(name, taken, 1).name;
+}
+
+/** keepBothName counting from `first`: a caller that knows every number below it is taken skips them. */
+function keepBothFrom(name: string, taken: (n: string) => boolean, first: number): { name: string; n: number } {
   const dot = name.lastIndexOf('.');
   const [stem, ext0] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
-  for (let n = 1; ; n++) {
+  for (let n = first; ; n++) {
     const suffix = `_${n}`;
     const ext = ext0.length + suffix.length < AMIGA_NAME_MAX ? ext0 : '';
     const candidate = stem.slice(0, AMIGA_NAME_MAX - suffix.length - ext.length) + suffix + ext;
-    if (!taken(candidate)) return candidate;
+    if (!taken(candidate)) return { name: candidate, n };
   }
 }
 
@@ -44,35 +49,59 @@ export type StashNode = { name: string; kind: 'dir' | 'file'; row: number | null
 
 const takenIn = (n: StashNode) => (name: string) => n.children.some((c) => sameStashName(c.name, name));
 
-/** Rows (oldest first) as a tree; implicit folders have row null; a later twin of a name gets the keep-both name (R4). */
+/**
+ * Rows (oldest first) as a tree; implicit folders have row null; a later twin of a name gets the keep-both name (R4).
+ * Linear in the rows: each folder's children are looked up by lower-cased name, and each name's twins number on from
+ * the last one given (an archive of 4,096 members, all one name, must not cost n² or n³).
+ */
 export function stashTree(rows: readonly { path: string; kind: 'file' | 'dir' }[]): StashNode {
   const root: StashNode = { name: '', kind: 'dir', row: null, children: [] };
+  // Per folder: its children by lower-cased name (the first of a name wins, as a find would), and the next twin number.
+  const index = new Map<StashNode, { byName: Map<string, StashNode>; next: Map<string, number> }>();
+  const indexOf = (n: StashNode) => {
+    let ix = index.get(n);
+    if (!ix) index.set(n, ix = { byName: new Map(), next: new Map() });
+    return ix;
+  };
+  const add = (parent: StashNode, child: StashNode) => {
+    parent.children.push(child);
+    const { byName } = indexOf(parent);
+    const k = child.name.toLowerCase();
+    if (!byName.has(k)) byName.set(k, child);
+  };
+  const twinName = (parent: StashNode, seg: string) => {
+    const { byName, next } = indexOf(parent);
+    const k = seg.toLowerCase();
+    const got = keepBothFrom(seg, (n) => byName.has(n.toLowerCase()), next.get(k) ?? 1);
+    next.set(k, got.n + 1);
+    return got.name;
+  };
   // A file that a folder of the same name was needed under: the folder shown beside it.
   const twinDir = new Map<StashNode, StashNode>();
   rows.forEach((row, i) => {
     const segs = row.path.split('/').filter(Boolean);
     let cur = root;
     segs.forEach((seg, k) => {
-      const hit = cur.children.find((c) => sameStashName(c.name, seg));
+      const hit = indexOf(cur).byName.get(seg.toLowerCase());
       if (k < segs.length - 1) {
         if (hit?.kind === 'dir') { cur = hit; return; }
         if (hit) {
           let twin = twinDir.get(hit);
           if (!twin) {
-            twin = { name: keepBothName(seg, takenIn(cur)), kind: 'dir', row: null, children: [] };
-            cur.children.push(twin);
+            twin = { name: twinName(cur, seg), kind: 'dir', row: null, children: [] };
+            add(cur, twin);
             twinDir.set(hit, twin);
           }
           cur = twin;
           return;
         }
         const dir: StashNode = { name: seg, kind: 'dir', row: null, children: [] };
-        cur.children.push(dir);
+        add(cur, dir);
         cur = dir;
         return;
       }
       if (hit && hit.kind === 'dir' && hit.row === null && row.kind === 'dir') { hit.row = i; return; }
-      cur.children.push({ name: hit ? keepBothName(seg, takenIn(cur)) : seg, kind: row.kind, row: i, children: [] });
+      add(cur, { name: hit ? twinName(cur, seg) : seg, kind: row.kind, row: i, children: [] });
     });
   });
   return root;

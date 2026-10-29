@@ -7,6 +7,7 @@ import { getDb } from '@/db';
 import { diskStore } from '@/lib/storage';
 import { deleteStash, insertStash, listStash, moveStash, setStashMeta, StashBusy, STASH_FULL, type NewStashEntry, type StashRow } from '@/lib/stash';
 import { storeSendBytes } from '@/lib/send-http';
+import { mapLimit } from '@/lib/pool';
 import { isArchiveName, MAX_ARCHIVE_BYTES } from '@/lib/archive';
 import { protectionString } from '@/lib/adffs/dir';
 import { uploadFailureText } from '@/lib/from-amiga-ui';
@@ -376,7 +377,10 @@ export async function writeStash(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], o
   }
   if (entries.length) {
     mustHaveRoom(s, entries, replaceIds);
-    for (const e of entries) if (e.kind === 'file' && !e.sha256) e.sha256 = await storeSendBytes(e.bytes!);
+    // Up to 12 stores at a time (a 60 s function), every one before the single insert: all or nothing as before.
+    const toStore = entries.filter((e) => e.kind === 'file' && !e.sha256);
+    const stored = await mapLimit(toStore, 12, (e) => storeSendBytes(e.bytes!));
+    toStore.forEach((e, k) => { e.sha256 = stored[k]; });
     await insertAll(ctx, source, entries.map((e): NewStashEntry => ({ path: e.path, kind: e.kind, sha256: e.sha256, sizeBytes: e.sizeBytes,
       date: e.date, protection: e.protection, comment: e.comment })), replaceIds);
   }
