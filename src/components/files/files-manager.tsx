@@ -20,14 +20,14 @@ import {
   acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, offersUndo, placeOf,
 } from '@/lib/files/pane-rules';
 import { netPollMs, NET_MOVE_IN, NET_PICK_BOARD } from '@/lib/files/net-rules';
-import { COLLECTIONS_STAY, filingNoun, filingReason, shelfOf, shelfOfRow, shelfReasons } from '@/lib/files/shelf-rules';
+import { COLLECTIONS_STAY, createAdfReason, filingNoun, filingReason, shelfOf, shelfOfRow, shelfReasons } from '@/lib/files/shelf-rules';
 import { stashPollMs, trackArriving, withStalls, type ArrivingSeen } from '@/lib/files/arriving';
 import { netDropRefusal, sendToBoard } from '@/lib/files/net-send';
 import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
 import { diskRelative, identityToConfirm, undoTarget, withAddedIn, type OpVersion } from '@/lib/files/edit-rules';
-import { dropBlocked, fetchDownload, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
+import { dropBlocked, fetchDownload, opTitle, reloadsBoth, skippedItems, skippedWords, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
 import { addedIn } from '@/lib/disk-history/added-in';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
 import { isFileDrag } from '@/components/disks/native-drop';
@@ -45,6 +45,7 @@ import { isSignedOutAnswer, SIGNED_OUT_TEXT } from '@/lib/signed-out';
 import {
   ClashDialog, ConfirmDeleteDialog, InfoDialog, NameDialog, ProtectDialog, placeName, type Clash, type ClashChoice,
 } from './dialogs';
+import { CreateAdfDialog } from './create-adf-dialog';
 
 /**
  * The Files manager (spec 2026-10-29 §5): two panes with the button column between them. It owns everything the
@@ -114,6 +115,8 @@ type Dialog =
   | { kind: 'rename'; side: Side; entry: FsEntry; refused?: { name: string; words: string } }
   | { kind: 'protect'; side: Side; entries: FsEntry[] }
   | { kind: 'info'; side: Side; entry: FsEntry }
+  /** Create ADF… (Files 2 §4): a blank disk in the `side` pane's place. */
+  | { kind: 'create'; side: Side }
   /** Copy to… / Move to… on a phone: `sources` from the active pane, the picker starting at the other pane's place. */
   | { kind: 'pick'; op: 'copy' | 'move'; sources: string[]; start: string }
   /** The TOSEC-identity confirm before the first write to `disk` this visit; `next` goes on once it is confirmed. */
@@ -362,9 +365,11 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    * The filter stays when the listing that lands is of the place the pane showed (a reload after an operation), else it
    * clears (R6) -- only once it lands, so the old rows keep the view their picks were made in while they wait.
    * A refusal with the code `stayOn` leaves the pane where it was and says so in a toast (an archive that does not
-   * open: the person is still in its folder, and can download it). Resolves true when the place was listed.
+   * open: the person is still in its folder, and can download it). `select`: the path of a row to pick once the
+   * listing lands (a disk just made, §4); the filter then clears so the row is drawn. Resolves true when the place was listed.
    */
-  async function load(side: Side, path: string, stayOn?: RefusalCode): Promise<boolean> {
+  async function load(side: Side, path: string, opts: { stayOn?: RefusalCode; select?: string } = {}): Promise<boolean> {
+    const { stayOn } = opts;
     const n = ++seq.current[side];
     setPanes((ps) => ({ ...ps, [side]: { ...ps[side], path: stayOn ? ps[side].path : path, loading: true } }));
     const r = await fetchListing(path);
@@ -374,11 +379,17 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       setPanes((ps) => ({ ...ps, [side]: { ...ps[side], loading: false } }));
       return false;
     }
+    let selection: Selection = EMPTY_SELECTION;
+    if ('listing' in r && opts.select) {
+      const drawn = paneRows(r.listing.entries, latest.current.sorts[deviceOf(r.listing.path)], { filter: '', hideInfo: latest.current.hideInfo });
+      const i = drawn.findIndex((x) => x.path === opts.select);
+      if (i >= 0) selection = { anchor: i, cursor: i, picked: new Set([i]) };
+    }
     setPanes((ps) => ({
       ...ps,
       [side]: 'listing' in r
-        ? { path, listing: r.listing, loading: false, error: null, gone: false, errorDisk: null, selection: EMPTY_SELECTION,
-            filter: ps[side].listing?.path === r.listing.path ? ps[side].filter : '' }
+        ? { path, listing: r.listing, loading: false, error: null, gone: false, errorDisk: null, selection,
+            filter: !opts.select && ps[side].listing?.path === r.listing.path ? ps[side].filter : '' }
         : { path, listing: null, loading: false, error: 'gone' in r ? GONE : r.error, gone: 'gone' in r,
             errorDisk: 'gone' in r ? null : errorDiskOf(r), selection: EMPTY_SELECTION, filter: '' },
     }));
@@ -415,7 +426,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    */
   function openArchive(side: Side, path: string) {
     if (active !== side) setActive(side);
-    void load(side, path, 'archive_unreadable').then((ok) => {
+    void load(side, path, { stayOn: 'archive_unreadable' }).then((ok) => {
       if (!ok) return;
       const { panes: cur } = latest.current;
       window.history.pushState(null, '', urlOf(side === 'left' ? path : cur.left.path, side === 'right' ? path : cur.right.path, side));
@@ -678,6 +689,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     moveTo: collectionPicked ? COLLECTIONS_STAY : filingFrom ? null : outOfNet ?? sourceReason(true) ?? failedReason(picked),
     // Disk images in STASH: into the library (R8).
     addlib: addToLibraryReason(src, picked),
+    // A blank disk in STASH:, or a new title on LIBRARY: or in a collection (§4).
+    createadf: createAdfReason(src),
   };
   /** Add to library is offered only while the active pane is in STASH: (R8). */
   const inStash = !!src && deviceOf(src.path) === 'stash';
@@ -870,7 +883,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     next();
   }
 
-  function act(cmd: 'copy' | 'move' | 'delete' | 'rename' | 'makedir' | 'protect' | 'info' | 'download' | 'copyTo' | 'moveTo' | 'addlib') {
+  function act(cmd: 'copy' | 'move' | 'delete' | 'rename' | 'makedir' | 'protect' | 'info' | 'download' | 'copyTo' | 'moveTo' | 'addlib' | 'createadf') {
     if (busy) return;
     const reason = reasons[cmd];
     if (reason) { toast.error(reason); return; }
@@ -893,7 +906,32 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       case 'moveTo': setDialog({ kind: 'pick', op: 'move', sources, start: panes[otherSide(side)].path }); return;
       case 'download': void download(downloadHref(picked, folderName)); return;
       case 'addlib': void addToLibrary(picked); return;
+      case 'createadf': setDialog({ kind: 'create', side }); return;
     }
+  }
+
+  /**
+   * Create ADF… (§4): one op into the `side` pane's place; the toast names what was made (a title on LIBRARY: offers
+   * Open title), and the pane reloads with the new disk picked. The other pane reloads too when it shows the same place.
+   */
+  async function createDisk(side: Side, v: { name: string; filesystem: 'FFS' | 'OFS'; density: 'dd' | 'hd' }) {
+    const l = panes[side].listing;
+    if (!l) return;
+    const r = await post({ op: 'create-adf', dest: l.path, ...v, onClash: prefs.files.onClash }, 'Creating the disk…');
+    if (r.kind === 'clashes') { toast.error(refusalWords('name_exists')); return; }   // a race with the dialog's own check
+    if (r.kind !== 'done') return;
+    ranOp.current = true;
+    setDialog(null);
+    const made = r.items[0];
+    const first = r.added[0];
+    if (!made) return;
+    if (!made.ok) toast.error(refusalWords(made.refusal.code, made.refusal.detail));
+    else if (made.skipped) toast.success(skippedWords(1));
+    else toast.success(`Made ${first ? v.name : `${v.name}.adf`} in ${placeOf(l)}.`,
+      first ? { action: { label: 'Open title', onClick: () => router.push(`/games/${first.gameId}`) } } : {});
+    void load(side, l.path, { select: made.ok && !made.skipped ? made.source : undefined });
+    const other = otherSide(side);
+    if (latest.current.panes[other].path === l.path) void load(other, l.path);
   }
 
   /**
@@ -1339,7 +1377,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     );
   }
 
-  const sep = <div aria-hidden className="my-1 h-px max-lg:hidden" style={{ background: 'var(--line)' }} />;
+  const sep = <div aria-hidden className="my-0.5 h-px max-lg:hidden" style={{ background: 'var(--line)' }} />;
 
   return (
     <>
@@ -1383,7 +1421,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
            style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
         {pane('left')}
         <div data-testid="files-actions" role="group" aria-label="File actions"
-             className="files-bar flex flex-wrap gap-1.5 border-t p-2 max-lg:order-last max-lg:rounded-b-[20px] lg:flex-col lg:gap-[7px] lg:border-x lg:border-t-0 lg:px-2 lg:py-4"
+             className="files-bar flex flex-wrap gap-1.5 border-t p-2 max-lg:order-last max-lg:rounded-b-[20px] lg:flex-col lg:gap-[5px] lg:border-x lg:border-t-0 lg:px-2 lg:py-3"
              style={{ borderColor: 'var(--line)', background: 'var(--surface-2)' }}>
           <ActionButton busy={busy !== null} id="copy" label={arrow ? 'Copy →' : '← Copy'} reason={reasons.copy} onClick={() => act('copy')}
                         primary={picked.length > 0} />
@@ -1392,6 +1430,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
           <ActionButton busy={busy !== null} id="delete" label="Delete" reason={reasons.delete} onClick={() => act('delete')} />
           <ActionButton busy={busy !== null} id="rename" label="Rename" reason={reasons.rename} onClick={() => act('rename')} />
           <ActionButton busy={busy !== null} id="makedir" label="Makedir" reason={reasons.makedir} onClick={() => act('makedir')} />
+          <ActionButton busy={busy !== null} id="createadf" label="Create ADF…" reason={reasons.createadf} onClick={() => act('createadf')} />
           <ActionButton busy={busy !== null} id="protect" label="Protect" reason={reasons.protect} onClick={() => act('protect')} />
           <ActionButton busy={busy !== null} id="info" label="Info" reason={reasons.info} onClick={() => act('info')} />
           {inStash && (
@@ -1414,7 +1453,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
             <DropdownMenuContent side="top" align="end" data-testid="files-more-menu"
                                  className="w-[min(240px,calc(100vw-32px))] rounded-2xl"
                                  style={{ background: 'var(--surface)', color: 'var(--ink)', border: '1px solid var(--line)', boxShadow: 'var(--shadow-card)' }}>
-              {([['rename', 'Rename…'], ['makedir', 'Makedir…'], ['protect', 'Protect…'], ['info', 'Info'],
+              {([['rename', 'Rename…'], ['makedir', 'Makedir…'], ['createadf', 'Create ADF…'], ['protect', 'Protect…'], ['info', 'Info'],
                 ...(inStash ? [['addlib', 'Add to library']] as const : []), ['download', 'Download']] as const).map(([id, label]) => (
                 // Not disabled: a tap on one that cannot act now says why.
                 <DropdownMenuItem key={id} data-testid={`files-more-${id}`} aria-disabled={reasons[id] !== null || undefined}
@@ -1457,6 +1496,14 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
                         : runFromDialog({ op: 'makedir', dest: dialogListing!.path, name }, naming ? 'Making the collection…' : 'Making the folder…',
                           () => (naming ? `Made the collection ${name}.` : `Made the folder ${name}.`), dialogTarget, inline));
                     }} />
+      )}
+      {dialog?.kind === 'create' && (
+        // The subtitle names a STASH: folder by its path ("In STASH:/Disks"); elsewhere the place's own name ("In Demos").
+        <CreateAdfDialog where={panes[dialog.side].listing?.path.startsWith('STASH:') ? panes[dialog.side].listing!.path : placeOf(panes[dialog.side].listing)}
+                         busy={dialogBusy}
+                         taken={prefs.files.onClash === 'ask' && panes[dialog.side].listing?.path.startsWith('STASH:')
+                           ? panes[dialog.side].listing!.entries.map((e) => e.name) : null}
+                         onCancel={() => setDialog(null)} onCreate={(v) => void createDisk(dialog.side, v)} />
       )}
       {dialog?.kind === 'protect' && (
         <ProtectDialog entries={dialog.entries} busy={dialogBusy} onCancel={() => setDialog(null)}

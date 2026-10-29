@@ -150,7 +150,7 @@ test('the button column holds the actions in the board order; Rename focuses its
   await openInFiles(page, disk);
   await paneRow(page, 'NOTES.TXT').click();
   await expect(page.getByTestId('files-actions').locator('button:visible'))
-    .toHaveText(['← Copy', '← Move', 'Delete', 'Rename', 'Makedir', 'Protect', 'Info', 'Download', 'Swap ⇄']);
+    .toHaveText(['← Copy', '← Move', 'Delete', 'Rename', 'Makedir', 'Create ADF…', 'Protect', 'Info', 'Download', 'Swap ⇄']);
   // One file downloads by its path (R4).
   const [dl, res] = await Promise.all([page.waitForEvent('download'),
     page.waitForResponse((r) => r.url().includes('/api/files/download?')), page.getByTestId('files-download').click()]);

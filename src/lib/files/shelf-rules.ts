@@ -93,3 +93,13 @@ export function filingNoun(src: Listing | null): (n: number) => string {
   const word = shelfOf(src) ? 'title' : 'disk';
   return (n) => `${n} ${word}${n === 1 ? '' : 's'}`;
 }
+
+/** Why Create ADF… cannot make a disk where `l` is (§4), or null. The archive words are refusalWords('read_only',
+ *  'archive')'s, written out: words.ts imports this module, so this module never imports words.ts. */
+export function createAdfReason(l: Listing | null): string | null {
+  if (!l) return 'Open STASH: or LIBRARY: first';
+  const device = parsePath(l.path)?.device;
+  if (device === 'NET') return NOT_ON_NET;
+  if (device === 'STASH') return l.readOnlyReason === 'archive' ? 'Archives are read-only — copy files out of them.' : null;
+  return l.library?.level === 'root' || l.library?.level === 'collection' ? null : GO_UP;
+}

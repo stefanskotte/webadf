@@ -78,6 +78,12 @@ describe('Create ADF in STASH:', () => {
     expect((await listStash(getDb(), 'o1')).length).toBe(before);
     await runOp(ctx, { op: 'delete', sources: ['STASH:/Big'] });
   });
+  it('the name is trimmed: " Trim " makes Trim.adf with the volume name Trim (Task 6 review)', async () => {
+    expect(await make('STASH:/Disks', ' Trim ')).toMatchObject({ kind: 'done', items: [{ source: 'STASH:/Disks/Trim.adf', ok: true }] });
+    const v = readVolume((await stashDriver.read(ctx, P('STASH:/Disks/Trim.adf')))!.bytes);
+    expect(v.ok && v.volume.name).toBe('Trim');
+    expect(await make('STASH:', '   ')).toMatchObject({ kind: 'refused', refusal: { code: 'bad_name', detail: 'empty' } });
+  });
   it('inside an archive: refused read-only, nothing stored', async () => {
     await insertStash(getDb(), 'o1', 'copy', [{ path: 'Box.lha', kind: 'file', sha256: 'c'.repeat(64), sizeBytes: 10, date: null, protection: 0, comment: '' }]);
     const before = (await listStash(getDb(), 'o1')).length;
@@ -104,6 +110,12 @@ describe('Create ADF in LIBRARY:', () => {
     const { added, items } = r as { added: { gameId: string }[]; items: { source: string }[] };
     expect(items[0].source).toBe(`LIBRARY:/c1/${added[0].gameId}`);
     expect(await getDb().select().from(collectionGames).where(and(eq(collectionGames.collectionId, 'c1'), eq(collectionGames.gameId, added[0].gameId)))).toHaveLength(1);
+  });
+  it('the title is named by the trimmed name', async () => {
+    const r = await make('LIBRARY:', '  Work  ');
+    const { added } = r as { added: { gameId: string }[] };
+    const [g] = await getDb().select().from(games).where(eq(games.id, added[0].gameId));
+    expect(g.title).toBe('Work');
   });
   it('a title, a disk, a foreign collection: refused, nothing made', async () => {
     const before = (await getDb().select().from(games)).length;

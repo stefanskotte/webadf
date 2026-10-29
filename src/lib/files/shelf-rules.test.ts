@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { collectionNameProblem, SHELF_WORDS, MAKEDIR_IN_DISK, filingReason, shelfOf, shelfOfRow, shelfReasons, COLLECTIONS_STAY, filingNoun } from './shelf-rules';
+import { collectionNameProblem, SHELF_WORDS, MAKEDIR_IN_DISK, filingReason, shelfOf, shelfOfRow, shelfReasons, COLLECTIONS_STAY, filingNoun, createAdfReason } from './shelf-rules';
 import type { FsEntry, Listing } from './types';
 
 describe('collection names (Files 2 R3: the Library\'s 1-80 characters, trimmed)', () => {
@@ -96,5 +96,19 @@ describe('fix round 1', () => {
     expect(filingNoun(root)(2)).toBe('2 titles');
     expect(filingNoun(stash)(1)).toBe('1 disk');
     expect(filingNoun(stash)(3)).toBe('3 disks');
+  });
+});
+
+describe('Create ADF… (§4)', () => {
+  it('in STASH: and on LIBRARY: or a collection; never NET:, a title, a disk or an archive', () => {
+    expect(createAdfReason(L('STASH:/Disks', undefined, { writable: true }))).toBeNull();
+    expect(createAdfReason(root)).toBeNull();
+    expect(createAdfReason(demos)).toBeNull();
+    expect(createAdfReason(L('NET:'))).toBe('Disks are made in STASH: or LIBRARY:');
+    expect(createAdfReason(L('NET:/dev1'))).toBe('Disks are made in STASH: or LIBRARY:');
+    expect(createAdfReason(L('LIBRARY:/g1', { level: 'title', collectionId: null }))).toBe('Go up to the library or a collection');
+    expect(createAdfReason(L('LIBRARY:/g1/d1', { level: 'disk', collectionId: null }))).toBe('Go up to the library or a collection');
+    expect(createAdfReason(L('STASH:/a.lha', undefined, { readOnlyReason: 'archive' }))).toBe('Archives are read-only — copy files out of them.');
+    expect(createAdfReason(null)).toBe('Open STASH: or LIBRARY: first');
   });
 });

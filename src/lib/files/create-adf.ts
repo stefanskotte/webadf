@@ -15,14 +15,16 @@ export type CreateAdfRequest = { dest: string; name: string; filesystem: 'OFS' |
 export const CREATED = 'create-adf';
 
 export async function createAdf(ctx: OpCtx, req: CreateAdfRequest): Promise<Outcome> {
-  checkName(req.name);   // R7: an AmigaDOS volume name, in STASH: and LIBRARY: alike
+  // Trimmed, as the dialog trims it: " Work " makes Work. R7: an AmigaDOS volume name, in STASH: and LIBRARY: alike.
+  const name = req.name.trim();
+  checkName(name);
   const p = parsePath(req.dest);
   if (!p) refuse('not_found', 404);
   if (p.device === 'NET') refuse('unsupported', 400, NOT_ON_NET);
   if (p.device === 'STASH') {
-    const bytes = formatVolume({ filesystem: req.filesystem, volumeName: req.name, density: req.density });
+    const bytes = formatVolume({ filesystem: req.filesystem, volumeName: name, density: req.density });
     // writeStash refuses an archive folder (read_only "archive") and a full STASH: (stash_full) before storing a byte.
-    const out = await writeStash(ctx, p, [{ source: CREATED, items: [{ rel: [`${req.name}.adf`], kind: 'file', bytes, date: new Date(), protection: 0, comment: null }] }],
+    const out = await writeStash(ctx, p, [{ source: CREATED, items: [{ rel: [`${name}.adf`], kind: 'file', bytes, date: new Date(), protection: 0, comment: null }] }],
       req.onClash, 'copy');
     if (out.kind !== 'done') return out;
     const at = out.placed?.[0]?.path;
@@ -33,7 +35,7 @@ export async function createAdf(ctx: OpCtx, req: CreateAdfRequest): Promise<Outc
   // A foreign or deleted collection id reads as a title id: no such title is not found, not "go up" (§7).
   if (at.level === 'title' && !(await titleExists(ctx, at.gameId))) refuse('not_found', 404);
   if (at.level === 'title' || at.level === 'disk') refuse('unsupported', 400, GO_UP);
-  const made = await createBlankDisk(ctx.orgId, { volumeName: req.name, filesystem: req.filesystem, density: req.density,
+  const made = await createBlankDisk(ctx.orgId, { volumeName: name, filesystem: req.filesystem, density: req.density,
     collectionId: at.level === 'collection' ? at.collection.id : null, mustFile: true });
   if (!made) refuse('not_found', 404);
   const path = libPath(...at.prefix, made.gameId);

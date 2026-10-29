@@ -10,12 +10,12 @@ import { ToggleGroup } from '@base-ui/react/toggle-group';
 import { Toggle } from '@base-ui/react/toggle';
 import { useMediaQuery } from '@base-ui/react/unstable-use-media-query';
 
-type Density = 'dd' | 'hd';
-type Filesystem = 'FFS' | 'OFS';
+export type Density = 'dd' | 'hd';
+export type Filesystem = 'FFS' | 'OFS';
 
 // The defaults, restored EVERY time the panel opens -- see below.
-const DEFAULT_DENSITY: Density = 'dd';
-const DEFAULT_FILESYSTEM: Filesystem = 'FFS';
+export const DEFAULT_DENSITY: Density = 'dd';
+export const DEFAULT_FILESYSTEM: Filesystem = 'FFS';
 
 /**
  * Make a blank Amiga disk, where you are standing.
@@ -211,7 +211,7 @@ function CreateDiskForm(props: {
  * pressed item be un-pressed (an empty value); that is ignored, so tapping
  * the current answer again leaves it chosen.
  */
-function Choice<T extends string>(props: {
+export function Choice<T extends string>(props: {
   label: string;
   testid: string;
   value: T;
