@@ -20,6 +20,11 @@ export interface ArchiveMember {
    *  NOT defaulted to 0 here: "said nothing" and "said rwed" are different
    *  claims and only the first may be replaced downstream. */
   protection: number | null;
+  /** The date the archive records (Unix time if it has one, else the DOS stamp
+   *  as a wall clock), or null when it records none. */
+  date: Date | null;
+  /** Always null: comments are out of scope for both readers. */
+  comment: string | null;
 }
 
 export interface ArchiveResult {
@@ -78,7 +83,7 @@ export async function expandArchive(
       if (entries.length === 0 && skipped.length > 0 && skipped[0].reason === 'not a zip') {
         return { error: 'unreadable' };
       }
-      return { format: 'zip', members: entries, skipped };
+      return { format: 'zip', members: entries.map((e) => ({ ...e, comment: null })), skipped };
     }
     // The same caps as a zip: an LHA header states each member's size and the
     // decoder allocates what it says, so without them a crafted header asks
@@ -89,7 +94,7 @@ export async function expandArchive(
     // answer is "could not read it" rather than an empty list that looks like
     // an empty archive.
     if (entries.length === 0 && skipped.length === 0) return { error: 'unreadable' };
-    return { format: 'lha', members: entries, skipped };
+    return { format: 'lha', members: entries.map((e) => ({ ...e, comment: null })), skipped };
   } catch {
     // Neither reader is supposed to throw, but this is a drop target: an
     // exception escaping here is a dead UI, so the guarantee is enforced at

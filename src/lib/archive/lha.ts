@@ -1,3 +1,4 @@
+import { dosDateTime } from './dos-date';
 import { decodeLzh, decodeLh1, LzhWorkBudgetError, LzhCorruptError } from './lzh-decode';
 
 /**
@@ -10,7 +11,8 @@ import { decodeLzh, decodeLh1, LzhWorkBudgetError, LzhCorruptError } from './lzh
  * reference tool.
  *
  * NESTED ARCHIVES ARE OUT OF SCOPE by the operator's decision, as are file
- * comments. Amiga protection bits are IN scope and are the reason the
+ * comments (re-confirmed for the Files manager, 2026-10-29: dates and
+ * protection are read, comments are not). Amiga protection bits are IN scope and are the reason the
  * extended-header walk below exists at all.
  */
 
@@ -24,6 +26,9 @@ export interface LhaEntry {
   /** AmigaDOS protection bits as stored in a file header block at offset 320,
    *  or null when the archive carries none (anything not written by an Amiga). */
   protection: number | null;
+  /** The Unix time (level 1 extension 0x54, level 2 header; UTC) when present,
+   *  else the DOS stamp read as a wall clock (R10); null when invalid. */
+  date: Date | null;
   method: string;
 }
 
@@ -73,12 +78,13 @@ function toPath(raw: Uint8Array): string {
  */
 function readExtended(
   buf: Uint8Array, firstSizeAt: number, headersAt: number,
-): { dir: string; name: string; protection: number | null; end: number } {
+): { dir: string; name: string; protection: number | null; unixTime: Date | null; end: number } {
   let dir = '';
   let name = '';
   let protection: number | null = null;
+  let unixTime: Date | null = null;
 
-  if (firstSizeAt + 2 > buf.length) return { dir, name, protection, end: headersAt };
+  if (firstSizeAt + 2 > buf.length) return { dir, name, protection, unixTime, end: headersAt };
   let size = u16(buf, firstSizeAt);
   let pos = headersAt;
 
@@ -92,13 +98,14 @@ function readExtended(
     if (type === 0x01) name = toPath(body);
     else if (type === 0x02) dir = toPath(body);
     else if (type === 0x40 && body.length >= 2) protection = u16(body, 0);
+    else if (type === 0x54 && body.length >= 4) unixTime = new Date(u32(body, 0) * 1000);
 
     const next = u16(buf, bodyEnd);
     pos = bodyEnd + 2;
     if (next === 0) break;
     size = next;
   }
-  return { dir, name, protection, end: pos };
+  return { dir, name, protection, unixTime, end: pos };
 }
 
 export interface LhaReadOptions {
@@ -149,6 +156,7 @@ export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResu
     let dataStart: number;
     let path = '';
     let protection: number | null = null;
+    let date: Date | null = null;
 
     if (level === 0 || level === 1) {
       const headerSize = buf[off];
@@ -157,6 +165,7 @@ export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResu
       path = toPath(buf.subarray(off + 22, off + 22 + nameLen));
       // Level 0 ends at header_size; level 1 continues into extended headers
       // whose sizes are counted in `packed`, not in the base header.
+      date = dosDateTime(u32(buf, off + 15));
       const baseEnd = off + headerSize + 2;
       if (level === 0) {
         dataStart = baseEnd;
@@ -164,6 +173,7 @@ export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResu
         // The first extension's size lives in the base header's last two bytes.
         const ext = readExtended(buf, baseEnd - 2, baseEnd);
         protection = ext.protection;
+        date = ext.unixTime ?? date;
         // The DIRECTORY comes from extension 0x02; the NAME stays whatever the
         // base header said unless extension 0x01 overrides it. Replacing the
         // whole path with ext.dir + ext.name drops the filename entirely when
@@ -181,6 +191,7 @@ export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResu
       // headers themselves starting right after it.
       const ext = readExtended(buf, off + 24, off + 26);
       protection = ext.protection;
+      date = new Date(u32(buf, off + 15) * 1000);
       path = ext.dir + ext.name;
       dataStart = off + headerSize;
     } else {
@@ -220,7 +231,7 @@ export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResu
       if (data.length < original) {
         skipped.push({ path, reason: `truncated (${data.length}/${original} bytes)` });
       } else {
-        entries.push({ path, bytes: data.slice(0, original), protection, method });
+        entries.push({ path, bytes: data.slice(0, original), protection, date, method });
       }
     } else if (DECODERS[method] !== undefined) {
       // Charged whether or not the stream turns out complete: the work and the
@@ -243,7 +254,7 @@ export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResu
       } else if (outBytes.length !== original) {
         skipped.push({ path, reason: `truncated (${outBytes.length}/${original} bytes)` });
       } else {
-        entries.push({ path, bytes: outBytes, protection, method });
+        entries.push({ path, bytes: outBytes, protection, date, method });
       }
     } else {
       // -lh2-, -lh3-, -lzs-, -lz5- and the other pre-1990 methods are
