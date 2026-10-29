@@ -25,8 +25,9 @@ import { useNativeDrop, isFileDrag } from './native-drop';
 import { SelectionBar } from './selection-bar';
 import { FilesCard } from './files-card';
 import { DiskIcon } from '@/components/ui/disk-icon';
-import { countInfo, entryGlyph, infoCompanions, plural, protectionChips } from '@/lib/disk-files-look';
+import { countInfo, entryGlyph, infoCompanions, plural } from '@/lib/disk-files-look';
 import { ProtectionEditor } from './protection-editor';
+import { ProtectionCells } from './protection-cells';
 import { FileRowMenu } from './file-row-menu';
 import { filterTree } from '@/lib/file-filter';
 import { underSelected } from '@/lib/disk-entries';
@@ -818,12 +819,7 @@ function FileRow({
   );
 
   const glyph = entryGlyph(entry);
-  const chips = protectionChips(entry.protection).map((c) => (
-    <span key={c.letter} title={c.label} className="grid h-[18px] w-[14px] place-items-center rounded-[4px]"
-          style={c.on ? { background: 'var(--track)', color: 'var(--ink)' } : { color: 'var(--muted-2)' }}>
-      {c.on ? c.letter : '-'}
-    </span>
-  ));
+  const chips = <ProtectionCells protection={entry.protection} />;
   const glyphChip = (
     <span aria-hidden data-testid={`fs-glyph-${entry.block}`}
           className="grid h-[22px] w-[22px] shrink-0 place-items-center rounded-[6px] font-mono text-[9px] font-bold"
