@@ -199,9 +199,14 @@ export function DiskStrip({ side, disk, data, onChanged }: DiskStripProps) {
         <p data-testid="disk-copied-from" className="basis-full text-[13px]" style={{ color: 'var(--muted)' }}>{data.copiedFrom}</p>
       )}
 
+      {/* Below lg the History over a short pane runs past the page's foot, and the page then ends at the panel's
+          bottom -- under the fixed tab bar, so at full scroll its last versions were out of reach. The wrapper reaches
+          a bar's height (and a gutter) further down, so the page scrolls the whole panel clear of the bar; it lets
+          taps through, so the strip of pane it covers stays usable. */}
       {historyOpen && (
+        <div className="pointer-events-none absolute top-full right-2 z-20 mt-1 w-[min(380px,calc(100%-16px))] max-lg:pb-[calc(4.5rem+env(safe-area-inset-bottom)+8px)]">
         <div data-testid="disk-strip-history"
-             className="absolute top-full right-2 z-20 mt-1 max-h-[min(520px,60dvh)] w-[min(380px,calc(100%-16px))] overflow-y-auto rounded-[20px]"
+             className="pointer-events-auto max-h-[min(520px,60dvh)] overflow-y-auto rounded-[20px]"
              style={{ boxShadow: '0 12px 24px rgb(0 0 0 / .12)' }}>
           <RestoreProvider diskId={disk.diskId} viewingSeq={null} currentHref={`/disks/${disk.diskId}/files`} onRestored={onChanged}>
             {data.historyUnavailable ? (
@@ -214,6 +219,7 @@ export function DiskStrip({ side, disk, data, onChanged }: DiskStripProps) {
                             mountedMessage={holderName ? ejectMessage(mountedReason(holderName)) : null} />
             )}
           </RestoreProvider>
+        </div>
         </div>
       )}
     </div>

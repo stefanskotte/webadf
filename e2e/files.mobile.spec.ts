@@ -1,8 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks } from '@/db/schema/catalog';
+import { diskVersions } from '@/db/schema/disk-history';
 import { formatVolume } from '@/lib/adffs/format';
 import { applyBatch } from '@/lib/adffs/write';
 import { readVolume } from '@/lib/adffs';
@@ -418,5 +419,41 @@ test('at 390: the STASH: drop zone stacks above the switch; Copy to… copies a 
   await expect(page.locator('[data-sonner-toast]').filter({ hasText: /Copied 1 item to .*Disk 1.* — saved as version 1\./ }))
     .toBeVisible({ timeout: 15_000 });
   expect(await storedNames(to.diskId)).toEqual(['a.txt']);
+  await noSideways(page);
+});
+
+test('at 390: a long History over a short pane scrolls clear of the tab bar -- its first version can be tapped', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const tag = runTag();
+  // An empty disk (a short pane) with 16 versions: the panel is at its max height and runs past the page's foot.
+  const adf = formatVolume({ filesystem: 'FFS', volumeName: `Hist${tag.slice(0, 6)}` });
+  const sha256 = createHash('sha256').update(adf).digest('hex');
+  await diskStore.put(sha256, adf);
+  const { gameId, diskId } = await seedDisk(orgId, { title: `PhoneHist-${tag}`, diskNo: 1, sha256, writeProtected: false });
+  await getDb().insert(diskVersions).values(Array.from({ length: 16 }, (_, seq) => ({
+    id: randomUUID(), diskId, orgId, seq, kind: 'snapshot', blobSha256: sha256, imageSha256: sha256,
+    source: seq === 0 ? 'original' : 'browser', sectorCount: 0,
+  })));
+  const disk = `LIBRARY:/${gameId}/${diskId}`;
+  await page.goto(`/files?left=${encodeURIComponent(disk)}&right=${encodeURIComponent(disk)}&active=left`);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="files-side-switch"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  });
+  await page.getByTestId('disk-strip-left').getByTestId('disk-strip-history-toggle').tap();
+  const panel = page.getByTestId('disk-strip-history');
+  await expect(panel.getByTestId('version-15')).toBeVisible();
+
+  // The page at its full scroll, the panel at its own end: the oldest version is there, above the fixed tab bar.
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await panel.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  const m = await page.evaluate(() => ({
+    panel: document.querySelector('[data-testid="disk-strip-history"]')!.getBoundingClientRect().bottom,
+    bar: document.querySelector('[data-nav-pill]')!.parentElement!.getBoundingClientRect().top,
+  }));
+  expect(m.panel, 'the panel ends above the tab bar').toBeLessThanOrEqual(m.bar);
+  const v0 = (await panel.getByTestId('version-0').boundingBox())!;
+  expect(await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('[data-testid="version-0"]'),
+    [v0.x + v0.width / 2, v0.y + v0.height / 2])).toBe(true);
   await noSideways(page);
 });
