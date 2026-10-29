@@ -6,6 +6,7 @@ import { sortFsEntries, type FilesSort } from './sort';
 import type { Selection } from './selection';
 import { parsePath } from './path';
 import type { FsEntry, Listing } from './types';
+import type { HelpTopicId } from '@/lib/help/topics';
 
 /** The filter text (this pane's, R6) and Show .info (both panes, R7). */
 export type PaneView = { filter: string; hideInfo: boolean };
@@ -71,7 +72,7 @@ export function paneDefaults(p: UserPrefs['files']['panes']): { left: string; ri
 }
 
 /** R9: the "?" in a pane's header. */
-export function paneHelpTopic(path: string): 'files' | 'stash-net' {
+export function paneHelpTopic(path: string): HelpTopicId {
   const d = parsePath(path)?.device;
   return d === 'STASH' || d === 'NET' ? 'stash-net' : 'files';
 }

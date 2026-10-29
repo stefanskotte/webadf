@@ -72,7 +72,7 @@ export default async function FilesPage({ searchParams }: { searchParams: Promis
 
   return (
     <>
-      <PageHeader size="lg" eyebrow="Move files" title="Files" />
+      <PageHeader size="lg" eyebrow="Move files" title="Files" help="files" />
       <div className="px-4 pb-10 sm:px-7">
         <FilesManager
           initial={{ left: left.listing, right: right.listing, leftPath, rightPath, active, leftError: left.error, rightError: right.error, strips }}

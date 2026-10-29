@@ -23,7 +23,7 @@ const PROSE = [
 /**
  * The Help page (C5 spec §3; board InfHelp): every topic on the one page as an article card (Ruling 12), a grouped
  * topic list sticky from lg (Ruling 13), and the board's "Search help" filter (Ruling 15). Below lg the filter and a
- * closed "Topics · 17" disclosure sit above the articles; the nav inside it is the same single nav.
+ * closed "Topics · 21" disclosure sit above the articles; the nav inside it is the same single nav.
  */
 export function HelpBrowser() {
   const [q, setQ] = useState('');

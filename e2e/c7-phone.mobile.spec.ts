@@ -420,7 +420,7 @@ test('C7-09a touch targets and no sideways scroll: a title, its disk files, Sett
 test('C7-11 Help at 390: a /help#topic load leaves the topic at the top after the Topics list closes', async ({ page }) => {
   await signUpFresh(page);
   await page.goto('/help#second-drive');
-  await expect(page.getByTestId('help-nav-toggle')).toHaveText('Topics · 19');
+  await expect(page.getByTestId('help-nav-toggle')).toHaveText('Topics · 21');
   await expect(page.locator('details:has([data-testid="help-nav-toggle"])')).not.toHaveAttribute('open');
   await expect.poll(async () => Math.round((await page.locator('#second-drive').boundingBox())!.y)).toBeLessThan(200);
   await expect(page.locator('#second-drive')).toBeInViewport();

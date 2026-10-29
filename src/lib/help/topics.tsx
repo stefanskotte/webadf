@@ -35,7 +35,7 @@ export const HELP_TOPICS = {
       <>
         <p>
           <strong>Adding disks.</strong> Drop disk images, folders of them or .zip and .lha files anywhere on the
-          page, or use <em>Add disks</em>. A tray below says what each did.
+          page, or use <em>Add disks</em>, which also takes a URL. A tray below says what each did.
         </p>
         <p>
           <strong>Grid or table.</strong> The grid and table buttons at the top switch views and keep the
@@ -48,8 +48,8 @@ export const HELP_TOPICS = {
           see its titles; <em>↑ Library</em> takes you back. <em>All titles</em> has the same way back.
         </p>
         <p>
-          <strong>Pages.</strong> 48 titles to a page, unless you change <em>Per page</em> (under the list) or{' '}
-          <em>Titles per page</em> (Settings). A new size or sort starts at page 1; switching views keeps it.
+          <strong>Pages.</strong> 48 titles to a page, unless you change <em>Per page</em> or{' '}
+          <em>Titles per page</em> (Settings). A new size or sort starts at page 1.
         </p>
         <p>
           <strong>Controls.</strong> A card&apos;s or a row&apos;s <em>⋯</em> menu has, in order: mount or eject
@@ -66,6 +66,53 @@ export const HELP_TOPICS = {
           <strong>Selecting.</strong> <em>Select titles</em> ticks titles to move or delete; nothing changes until you
           confirm. Titles in a drive are kept.
         </p>
+      </>
+    ),
+  },
+
+  // Sources: Files spec 2026-10-29 §4-§7; increments 1-4 rulings (inc. 4 R2 delete confirm on disks only, R4 clash
+  // answer, R6 the filter, R7 Show .info, R9 this topic); pane.tsx (device buttons, filter box "Filter names", Show .info
+  // switch), files-manager.tsx (the button column Copy/Move/Delete/Rename/Makedir/Protect/Info/Download/Swap, the
+  // phone's Left/Right and Copy to…/Move to…, a drag copies and Shift at the drop moves -- Chromium reads Shift only once
+  // the drag has begun, increment-1 ledger Task 11), disk-strip.tsx (drive chip, Mount or Eject to edit, History, ⬇ ADF),
+  // dialogs.tsx (Replace, Skip, Keep both), keys.ts (the keys), view.ts (filter, Show .info, folders copied whole).
+  files: {
+    title: 'Files',
+    short: 'Two panes for every file that is not a whole disk: STASH:, NET: and the disks in LIBRARY:. Pick files on one side and copy or move them to the other.',
+    body: (
+      <>
+        <p>
+          <strong>Three places.</strong> <em>STASH:</em> holds loose files: what you drop on the page and what your
+          Amiga sends. <em>NET:</em> lists your boards; copying into one sends the files to its Amiga.{' '}
+          <em>LIBRARY:</em> opens a title, then a disk, then its folders.
+        </p>
+        <p>
+          <strong>Copy and move.</strong> Pick files in a pane (Shift-click for a range,
+          Ctrl- or ⌘-click for one more), then press <em>Copy</em> or <em>Move</em> in the middle column. Dragging rows
+          onto the other pane copies them; to move them instead, hold Shift after the drag has started, until you drop.
+          When a name is already there, choose Replace, Skip or Keep both.
+        </p>
+        <p>
+          <strong>Inside a disk.</strong> The strip above the files shows which drive holds the disk, the free space,{' '}
+          <em>Mount</em>, <em>History</em> and <em>⬇ ADF</em>. Each change saves one new version, with
+          Undo. A disk in a drive cannot be changed until you eject it with <em>Eject to edit</em>.{' '}
+          <em>Protect</em> sets protection bits; <em>Info</em> shows a file&apos;s details and comment.
+        </p>
+        <p>
+          <strong>Finding files.</strong> Type in a pane&apos;s filter box to see only names that contain it;{' '}
+          <em>Show .info</em> hides or shows icon files. Copying or deleting a folder still takes everything in it.
+        </p>
+        <p>
+          <strong>Keys.</strong> ↑ and ↓ move, Space picks, Enter opens, Backspace goes up, Tab switches pane, / filters,
+          F5 copies, F6 moves, F7 makes a folder, F2 renames, Delete deletes.
+        </p>
+        <p>
+          <strong>On a phone.</strong> One pane at a time: <em>Left</em> and <em>Right</em> at the top switch.{' '}
+          <em>Copy to…</em> and <em>Move to…</em> ask where.
+        </p>
+        <GoodToKnow items={[
+          'Settings › Account › Files sets the panes Files opens with, .info files, the Comment column, whether Delete asks first, and the answer when a name is already there.',
+        ]} />
       </>
     ),
   },
@@ -484,6 +531,44 @@ export const HELP_TOPICS = {
     ),
   },
 
+  // Sources: Files spec 2026-10-29 §4.2-§4.3, §5; increment 2 rulings (STASH: keeps no versions, archives stay one file
+  // and open read-only), increment 3 rulings R1-R8 (NET: rows, Delete cancels or clears, no move into NET:, the key on
+  // the board's row), increment 4 R8 (the "dropped" mark); stash-drop-zone.tsx (the zone's title, Paste a URL),
+  // stash-driver.ts (marks: from <board>, dropped; "kept 30 days"), net-driver.ts (boards on XFER_FW, `key ABCD`),
+  // amiga-upload-limits.ts (500 files, 256 MB, 30 days, 4 MB), stash-paths.ts (20 MB), send-limits.ts (4 MB, 32, 16 MB).
+  'stash-net': {
+    title: 'STASH: and NET:',
+    short: 'STASH: keeps loose files for 30 days: what you drop on the Files page and what your Amiga sends. NET: holds what waits to go to each board’s Amiga.',
+    body: (
+      <>
+        <p>
+          <strong>STASH:</strong> Drop files, folders, .lha or .zip on <em>Drop files into STASH:</em>, or paste a URL.
+          Files your Amiga sends with Transfer land here too, marked with the board; files you dropped are marked{' '}
+          <em>dropped</em>. Make folders, rename, protect and comment as on a disk.
+        </p>
+        <p>
+          <strong>Archives.</strong> An .lha or .zip stays one file. <em>Open</em> shows what is inside, read-only; copy
+          files out to use them.
+        </p>
+        <p>
+          <strong>Disk images.</strong> <em>Add to library</em> makes an ADF, DSK, ADZ, DMS, DMZ or HFE file a library disk.
+        </p>
+        <p>
+          <strong>NET:</strong> lists your boards on firmware 1.15.0 or newer. Copy files or folders into a board to send
+          them to its Amiga: each waits there until Transfer takes it, marked waiting, sending, delivered or failed.
+          Delete cancels a waiting file or clears a finished one. A board&apos;s row shows four digits of its key
+          (<em>key AB12</em>), the digits Transfer shows.
+        </p>
+        <GoodToKnow items={[
+          'STASH: holds up to 500 files or 256 MB for your organization, and keeps each file 30 days. A file can be 20 MB from your computer, 4 MB from the Amiga.',
+          'Up to 4 MB a file, and 32 files or 16 MB waiting for one board.',
+          'Nothing is copied out of NET:, and a copy into it leaves the original where it was.',
+          'STASH: keeps no versions: a delete there cannot be undone.',
+        ]} />
+      </>
+    ),
+  },
+
   // Sources: spec docs/superpowers/specs/2026-10-25-phase-c3-upload-design.md §2.2; docs/superpowers/specs/2026-10-16-paulanet-phase4-send-to-amiga-design.md §1 (D4 limits, D8 never
   // overwrite, D9 accepted risk), §4 (the Upload page column, Browse Send, Send .adf), §5 (Receive, now Transfer, and Install);
   // src/lib/send-limits.ts (XFER_FW, limits), src/lib/send-ui.ts (the words), tools/paulanet-disk/Install;
@@ -767,8 +852,8 @@ export type HelpGroup = { id: HelpGroupId; name: string; topics: readonly HelpTo
  */
 export const HELP_GROUPS: readonly HelpGroup[] = [
   { id: 'drives', name: 'Drives', topics: ['boards', 'display', 'second-drive', 'next-disk', 'nfc', 'write-protect'] },
-  { id: 'disks', name: 'Library and disks', topics: ['library', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image'] },
-  { id: 'network', name: 'Amiga networking', topics: ['network', 'send', 'from-amiga'] },
+  { id: 'disks', name: 'Library and disks', topics: ['library', 'files', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image'] },
+  { id: 'network', name: 'Amiga networking', topics: ['network', 'stash-net', 'send', 'from-amiga'] },
   { id: 'server', name: 'This server', topics: ['preferences', 'sharing', 'remote', 'own-server', 'about'] },
 ];
 

@@ -276,4 +276,8 @@ describe('the filter and Show .info (increment 4)', () => {
     const h = render({ listing: withInfo, view: { filter: 'ass', hideInfo: true } });
     expect(h).toMatch(/1 of 5 shown · 1 \.info file hidden/);
   });
+  it('the ? names the device: stash-net in STASH:, files in a disk', () => {
+    expect(render({ listing: stashListing, help: 'stash-net' })).toContain('data-testid="help-tip-stash-net"');
+    expect(render({ help: 'files' })).toContain('data-testid="help-tip-files"');
+  });
 });

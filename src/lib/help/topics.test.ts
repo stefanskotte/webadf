@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HELP_TOPICS, HELP_ORDER, HELP_GROUPS, helpGroupOf, type HelpTopicId } from './topics';
 
-const IDS: HelpTopicId[] = ['library', 'boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'from-amiga', 'cover-image', 'about', 'preferences', 'sharing', 'remote'];
+const IDS: HelpTopicId[] = ['library', 'boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'from-amiga', 'cover-image', 'about', 'preferences', 'sharing', 'remote', 'files', 'stash-net'];
 // Internal words a reader of the help should never meet (spec §5).
 const BANNED = /\b(PSRAM|TBYB|poll|sha256|cursor|WPROT)\b/i;
 
@@ -337,14 +337,14 @@ describe('help groups (C5 spec §3.1, Ruling 14)', () => {
       ['drives', 'Drives'], ['disks', 'Library and disks'], ['network', 'Amiga networking'], ['server', 'This server'],
     ]);
     expect(HELP_GROUPS[0].topics).toEqual(['boards', 'display', 'second-drive', 'next-disk', 'nfc', 'write-protect']);
-    expect(HELP_GROUPS[1].topics).toEqual(['library', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image']);
-    expect(HELP_GROUPS[2].topics).toEqual(['network', 'send', 'from-amiga']);
+    expect(HELP_GROUPS[1].topics).toEqual(['library', 'files', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image']);
+    expect(HELP_GROUPS[2].topics).toEqual(['network', 'stash-net', 'send', 'from-amiga']);
     expect(HELP_GROUPS[3].topics).toEqual(['preferences', 'sharing', 'remote', 'own-server', 'about']);
   });
   it('put every topic in exactly one group, and HELP_ORDER is the groups flattened', () => {
     const all = HELP_GROUPS.flatMap((g) => g.topics);
     expect([...all].sort()).toEqual([...IDS].sort());
-    expect(new Set(all).size).toBe(19);
+    expect(new Set(all).size).toBe(21);
     expect(HELP_ORDER).toEqual(all);
     expect(helpGroupOf('library').name).toBe('Library and disks');
     expect(helpGroupOf('write-protect').id).toBe('drives');
@@ -362,5 +362,26 @@ describe('sharing and remote help', () => {
   });
   it('preferences names the Files section (increment 4)', () => {
     expect(bodyText('preferences')).toMatch(/Files\.\s+Its own section sets the panes Files opens with/);
+  });
+});
+
+describe('Files help (increment 4)', () => {
+  it('files names the three places, copy and move, Shift after the drag starts, the strip, the filter, the keys and the phone', () => {
+    const b = bodyText('files').replace(/\s+/g, ' ');
+    for (const w of ['STASH:', 'NET:', 'LIBRARY:', 'Copy', 'Move', 'hold Shift after the drag has started', 'Replace, Skip or Keep both',
+      'one new version', 'Undo', 'Eject to edit', 'Protect', 'Info', 'filter box', 'Show .info', 'F5', 'F6', 'F7', 'F2', '/ filters',
+      'Space', 'Backspace', 'Tab', 'Left', 'Right', 'Copy to…', 'Move to…', 'Settings › Account › Files']) expect(b).toContain(w);
+  });
+  it('stash-net names the limits, archives, Add to library, the marks, sending by copy and the key digits', () => {
+    const b = HELP_TOPICS['stash-net'].short + bodyText('stash-net').replace(/\s+/g, ' ');
+    for (const w of ['30 days', '500 files', '256 MB', '20 MB', '4 MB', '32 files', '16 MB', 'read-only', 'Add to library',
+      'dropped', 'marked with the board', '1.15.0', 'Delete cancels', 'key AB12', 'cannot be undone', 'paste a URL',
+      'Nothing is copied out of NET:']) expect(b).toContain(w);
+  });
+  it('library says Add disks takes a URL', () => {
+    expect(bodyText('library').replace(/\s+/g, ' ')).toContain('Add disks , which also takes a URL');
+  });
+  it('the new topics never say drive in their title or short (the help filter test pins drive to four topics)', () => {
+    for (const id of ['files', 'stash-net'] as const) expect(HELP_TOPICS[id].title + HELP_TOPICS[id].short).not.toMatch(/drive/i);
   });
 });

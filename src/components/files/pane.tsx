@@ -9,7 +9,7 @@ import { entryGlyph } from '@/lib/disk-files-look';
 import { ProtectionCells } from '@/components/disks/protection-cells';
 import { PANE_DEVICES } from '@/lib/files/path';
 import { paneRows, paneFoot, viewCounts, type PaneView } from '@/lib/files/view';
-import { HELP_TOPICS } from '@/lib/help/topics';
+import type { HelpTopicId } from '@/lib/help/topics';
 import { HelpTip } from '@/components/help/help-tip';
 import { Switch } from '@/components/ui/switch';
 import { acceptsCopies, addToLibraryReason, holdsFiles, netBoardOf } from '@/lib/files/pane-rules';
@@ -26,8 +26,8 @@ export type PaneProps = {
   /** This pane's filter and the shared Show .info (R6, R7). */
   view: PaneView;
   onFilter(text: string): void; onShowInfo(show: boolean): void;
-  /** The topic of the header's "?" (drawn once HELP_TOPICS has it). */
-  help: 'files' | 'stash-net';
+  /** The topic of the header's "?" (paneHelpTopic: stash-net in STASH: and NET:, files in LIBRARY:). */
+  help: HelpTopicId;
   filterRef?: Ref<HTMLInputElement>;
   onActivate(): void; onNavigate(path: string): void; onSort(key: FilesSortKey): void;
   /** Below lg: the one sort button's next order (phoneSortAfter). */
@@ -131,7 +131,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
               {d}
             </button>
           ))}
-          {p.help in HELP_TOPICS && <HelpTip topic={p.help as keyof typeof HELP_TOPICS} className="ml-auto" />}
+          <HelpTip topic={p.help} className="ml-auto" />
         </div>
         <div className="flex min-w-0 items-center gap-1.5">
           <button type="button" aria-label="Up one level" title="Up one level" data-testid={tid('up')} disabled={!parent}

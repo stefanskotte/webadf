@@ -1,9 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import { HelpTip } from '@/components/help/help-tip';
 import { DropCard, INK_LABEL, INK_STYLE, TILE, TILE_LOOK } from '@/components/ingest/drop-card';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
 import { describeUrlRefusal } from '@/lib/url-ingest-messages';
+
+/** The "?" placed as the Send zone's is (send-drop-zone.tsx): over the tile's corner on a phone. */
+const STASH_HELP = 'max-sm:z-20 max-sm:col-start-2 max-sm:row-start-1 max-sm:m-1.5 max-sm:self-start max-sm:justify-self-end';
 
 /**
  * "Drop files into STASH:" (Files spec 2026-10-29 §5, R1): the Files page's top drop zone. A drop on the card, or the
@@ -57,6 +61,7 @@ export function StashDropZone({ busy, onItems, onFetched }: {
 
   return (
     <DropCard testId="files-drop-stash" headingId="files-drop-stash-heading" title="Drop files into STASH:"
+              help={<HelpTip topic="stash-net" className={STASH_HELP} />}
               hint="Any file or folder, up to 20 MB a file. .lha and .zip stay whole — open them in the pane."
               disk={{ color: 'grey', set: 'ANY FILE · .LHA · .ZIP', title: 'STASH:' }} tileCol="full" disabled={working}
               // Read before this handler returns: the browser empties the DataTransfer after it (drop-reader.ts).
