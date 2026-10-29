@@ -83,4 +83,36 @@ describe('diskFilesFromDrop', () => {
     expect(r).toEqual({ files: [], refused: [{ name: 'huge.zip', reason: "can't open this archive" }], notes: [] });
     expect(read).not.toHaveBeenCalled();
   });
+
+  it('a drop of many archives is handed over a chunk at a time, never holding more than one chunk of members', async () => {
+    const PER = 30;
+    const delivered: number[] = [];
+    let extracted = 0;
+    const heldAtRead: number[] = [];
+    const items = Array.from({ length: 4 }, (_, a) => {
+      const zip = zipOf(Array.from({ length: PER }, (_, k) => ({ name: `Z${a}/D${k}.adf`, bytes: new Uint8Array([a, k]) })));
+      const file = new File([zip as unknown as BlobPart], `z${a}.zip`);
+      const read = file.arrayBuffer.bind(file);
+      // Members of the archives read so far, less those already handed over: what the tab holds as this one is read.
+      vi.spyOn(file, 'arrayBuffer').mockImplementation(async () => {
+        heldAtRead.push(extracted - delivered.reduce((n, c) => n + c, 0));
+        extracted += PER;
+        return read();
+      });
+      return { name: `z${a}.zip`, kind: 'file' as const, file };
+    });
+    const names: string[] = [];
+    const r = await diskFilesFromDrop(items, async (files) => { delivered.push(files.length); names.push(...files.map((f) => f.name)); }, 50);
+    expect(r.files).toEqual([]);
+    expect(delivered).toEqual([50, 50, 20]);
+    expect(names).toHaveLength(4 * PER);
+    expect(new Set(names).size).toBe(PER);
+    expect(Math.max(...heldAtRead)).toBeLessThan(50);
+  });
+
+  it('without onChunk every image comes back at once, as before', async () => {
+    const zip = zipOf(Array.from({ length: 60 }, (_, k) => ({ name: `D${k}.adf`, bytes: new Uint8Array([k]) })));
+    const r = await diskFilesFromDrop([{ name: 'z.zip', kind: 'file', file: new File([zip as unknown as BlobPart], 'z.zip') }], undefined, 50);
+    expect(r.files).toHaveLength(60);
+  });
 });

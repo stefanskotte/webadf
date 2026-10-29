@@ -56,10 +56,15 @@ export function LibraryIngestProvider({ children }: { children: ReactNode }) {
   async function addItems(items: DropFileItem[] | Promise<DropFileItem[]>) {
     drop.current++;
     setReading(true);
-    let files: File[] = [];
+    // A drop of many archives goes up a chunk at a time as they are opened (DROP_CHUNK), not all held in the tab
+    // first; its rows land in the tray chunk by chunk under the same drop. An error out of the upload itself is the
+    // pipeline's to show on its rows, not "could not be read".
+    let failedUpload: unknown = null;
+    const addChunk = async (chunk: File[]) => {
+      try { await ingest.addFiles(chunk); } catch (e) { failedUpload ??= e; }
+    };
     try {
-      const r = await diskFilesFromDrop(await items);
-      files = r.files;
+      const r = await diskFilesFromDrop(await items, addChunk);
       if (r.notes.length) {
         const added = r.notes.map((text) => ({ key: ++noteSeq.current, text }));
         setNotes((ns) => [...added, ...ns]);
@@ -74,7 +79,7 @@ export function LibraryIngestProvider({ children }: { children: ReactNode }) {
     } finally {
       setReading(false);
     }
-    if (files.length) await ingest.addFiles(files);
+    if (failedUpload) throw failedUpload;
   }
 
   async function addFetched(fetched: FetchedRow[], since: string) {

@@ -10,6 +10,9 @@ export type DropRefusal = { name: string; reason: string };
 
 const baseName = (path: string) => path.split('/').pop() ?? path;
 
+/** Archive members a drop holds in the tab before they go up: a drop of many archives is added a chunk at a time. */
+export const DROP_CHUNK = 50;
+
 /**
  * The disk images a drop carries (R8): image files as they are, folders walked (the items already hold a folder's
  * files, as readDroppedItems returns them; a `dir` item itself carries nothing), .zip/.lha/.lzh opened for the images
@@ -19,11 +22,25 @@ const baseName = (path: string) => path.split('/').pop() ?? path;
  * readme in a game's .lha is the ordinary case): `notes` says, one line per archive, that they were left out. Dotfiles (.DS_Store, ._Game.adf) are a folder's
  * housekeeping, not something the person dropped: they are left out without a word, as __MACOSX/ is inside a zip.
  * Nested archives are not opened (expandArchive's rule).
+ *
+ * With `onChunk`, what the drop carries is handed over as it goes, and `files` comes back empty: whenever `chunk`
+ * archive members are waiting, they (and the images before them) are awaited through `onChunk` before the next
+ * member or archive is read, so a drop of many archives never holds more than one chunk of extracted members.
  */
-export async function diskFilesFromDrop(items: DropFileItem[]): Promise<{ files: File[]; refused: DropRefusal[]; notes: string[] }> {
-  const files: File[] = [];
+export async function diskFilesFromDrop(items: DropFileItem[], onChunk?: (files: File[]) => Promise<void>, chunk = DROP_CHUNK):
+  Promise<{ files: File[]; refused: DropRefusal[]; notes: string[] }> {
+  let files: File[] = [];
+  // Archive members held in `files` (their bytes are in the tab; a plain image is only a handle on the disk).
+  let held = 0;
   const refused: DropRefusal[] = [];
   const notes: string[] = [];
+  const flush = async () => {
+    if (!onChunk || !files.length) return;
+    const out = files;
+    files = [];
+    held = 0;
+    await onChunk(out);
+  };
   for (const item of items) {
     if (item.kind !== 'file' || !item.file) continue;
     const name = baseName(item.name);
@@ -56,6 +73,7 @@ export async function diskFilesFromDrop(items: DropFileItem[]): Promise<{ files:
       if (!DISK_IMAGE_PATTERN.test(member)) { others++; continue; }
       images++;
       files.push(new File([m.bytes as unknown as BlobPart], member, { lastModified: m.date?.getTime() ?? Date.now() }));
+      if (++held >= chunk) await flush();
     }
     // An image the reader would not decode (over the per-member cap, an unknown method) is named with the reader's
     // reason; the rest of what it skipped is counted with the other files.
@@ -68,5 +86,6 @@ export async function diskFilesFromDrop(items: DropFileItem[]): Promise<{ files:
     if (images === 0 && !unreadImages) refused.push({ name, reason: 'no disk images inside' });
     else if (others > 0) notes.push(`${name}: ${others === 1 ? '1 other file' : `${others} other files`} inside, not disk images, left out`);
   }
+  await flush();
   return { files, refused, notes };
 }
