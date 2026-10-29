@@ -71,6 +71,12 @@ test('at 390: the two drop zones stack and the Send zone has 44 px targets and n
   for (const label of await picker.locator('label').all()) {
     expect((await label.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   }
+  // The zones' sections are display:contents on a phone: measure the tiles, which are the zones' full-width cells.
+  const t1 = (await page.getByTestId('files-stash-browse').boundingBox())!;
+  const t2 = (await page.getByTestId('files-send-browse').boundingBox())!;
+  expect(t2.y).toBeGreaterThanOrEqual(t1.y + t1.height);
+  expect(t1.width).toBeGreaterThan(300);
+  expect(t2.width).toBeGreaterThan(300);
   const tile = (await page.getByTestId('files-send-browse').boundingBox())!;
   expect(tile.height).toBeGreaterThanOrEqual(44);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);

@@ -9,9 +9,7 @@ import { useSendBoard } from '@/components/send/use-send-board';
 import { XFER_FW } from '@/lib/send-limits';
 import { longOffline, orderTargets, receiverLine, targetState, type SendTarget } from '@/lib/send-ui';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
-import { planNetSend } from '@/lib/files/net-rules';
-import { sendToBoard, type NetSendResult } from '@/lib/files/net-send';
-import { refusalWords } from '@/lib/files/words';
+import { netDropRefusal, sendToBoard, type NetSendResult } from '@/lib/files/net-send';
 import { SIGNED_OUT_TEXT } from '@/lib/signed-out';
 import type { Listing } from '@/lib/files/types';
 
@@ -19,16 +17,6 @@ import type { Listing } from '@/lib/files/types';
 const SEND_HELP = 'max-sm:z-20 max-sm:col-start-2 max-sm:row-start-1 max-sm:m-1.5 max-sm:self-start max-sm:justify-self-end';
 
 type Sendable = { path: string; file: File; size: number };
-
-/** Why a drop is refused whole, in words naming the file at fault; null when it fits the board's queue (R7). */
-export function sendRefusal(files: { path: string; size: number }[], queue: { files: number; bytes: number }): string | null {
-  if (files.length === 0) return 'Nothing to send — the drop held no files.';
-  const plan = planNetSend(files.map((f) => f.size), queue);
-  if (plan.ok) return null;
-  if (plan.why === 'queue_full') return refusalWords('queue_full');
-  const name = files[plan.index ?? 0].path;
-  return plan.why === 'too_large' ? `${name} is over 4 MB — nothing was sent` : `${name} is empty — nothing was sent`;
-}
 
 /** The toast after the uploads: all queued, or how many of how many and why the rest stopped. */
 export function sentReport(r: NetSendResult, total: number, boardName: string): { ok: boolean; title: string; lines: string[] } {
@@ -73,7 +61,7 @@ export function SendDropZone({ targets, initialBoard, serverNow, onSent, onShowQ
     return (
       <DropCard testId="files-drop-send" headingId="files-drop-send-heading" title="Send files to the Amiga"
         help={<HelpTip topic="send" className={SEND_HELP} />}
-        disk={{ color: 'grey', set: 'Any file · 4 MB', title: 'To the Amiga' }} tileCol={2}
+        disk={{ color: 'grey', set: 'Any file · 4 MB', title: 'To the Amiga' }} tileCol="full"
         hint={
           <p data-testid="files-send-no-board">
             No board can receive files yet. Sending needs a board on firmware {XFER_FW} or newer.{' '}
@@ -81,7 +69,7 @@ export function SendDropZone({ targets, initialBoard, serverNow, onSent, onShowQ
           </p>
         }>
         {/* Below sm the tile, unpressable: it says why, and the hint under the tiles names the fix. */}
-        <div data-tile="Pair a board first" aria-hidden="true" className={`hidden ${TILE_LOOK} ${TILE[2]} max-sm:flex max-sm:items-center`} />
+        <div data-tile="Pair a board first" aria-hidden="true" className={`hidden ${TILE_LOOK} ${TILE.full} max-sm:flex max-sm:items-center`} />
       </DropCard>
     );
   }
@@ -108,7 +96,7 @@ export function SendDropZone({ targets, initialBoard, serverNow, onSent, onShowQ
         if (!l?.queue) { toast.error(`${to.name} cannot take files now. Check Devices.`); return; }
         queue = l.queue;
       } catch { toast.error('The board\'s queue could not be read. Check the connection and try again.'); return; }
-      const refusal = sendRefusal(files, queue);
+      const refusal = netDropRefusal(files, queue);
       if (refusal) { toast.error(refusal); return; }
       setBusy(`Sending ${files.length === 1 ? '1 file' : `${files.length} files`}…`);
       const r = await sendToBoard(to.id, files);
@@ -132,13 +120,13 @@ export function SendDropZone({ targets, initialBoard, serverNow, onSent, onShowQ
   return (
     <DropCard testId="files-drop-send" headingId="files-drop-send-heading" title="Send files to the Amiga"
       help={<HelpTip topic="send" className={SEND_HELP} />} disabled={busy !== null}
-      disk={{ color: 'blue', set: 'Any file · 4 MB', title: 'To the Amiga' }} tileCol={2}
+      disk={{ color: 'blue', set: 'Any file · 4 MB', title: 'To the Amiga' }} tileCol="full"
       hint="Any file up to 4 MB, or a folder. It waits in NET: until Transfer on the Amiga takes it."
       // Read before this handler returns: the browser empties the DataTransfer after it (drop-reader.ts).
       onItems={(items) => void send(fromItems(readDroppedItems(items)))}>
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 max-sm:contents">
         <label htmlFor="files-send-input" data-testid="files-send-browse" data-tile={busy ? 'Working…' : 'Send to Amiga'}
-               className={`${INK_LABEL} ${TILE_LOOK} ${TILE[2]}`} style={INK_STYLE}>
+               className={`${INK_LABEL} ${TILE_LOOK} ${TILE.full}`} style={INK_STYLE}>
           <span className="max-sm:hidden">{busy ? 'Working…' : 'Choose files'}</span>
           <input id="files-send-input" type="file" multiple aria-label="Choose files to send" className="sr-only" data-testid="files-send-input"
                  disabled={busy !== null}

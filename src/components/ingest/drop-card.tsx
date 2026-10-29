@@ -15,6 +15,8 @@ export const INK_STYLE = { '--tw-ring-color': 'var(--ring)' } as React.CSSProper
 export const TILE = {
   1: 'max-sm:col-start-1 max-sm:row-start-1',
   2: 'max-sm:col-start-2 max-sm:row-start-1',
+  /** A zone alone in its row (Files, spec §5.4): the tile spans both columns of the zone's own two-column grid. */
+  full: 'max-sm:col-span-2 max-sm:col-start-1 max-sm:row-start-1',
 } as const;
 
 /**
@@ -30,7 +32,7 @@ export const TILE_LOOK = 'max-sm:h-24 max-sm:w-full max-sm:flex-col max-sm:justi
  */
 export function DropCard({ testId, headingId, title, help, hint, disk, tileCol, disabled, onFiles, onItems, children }: {
   testId: string; headingId: string; title: string; help?: React.ReactNode; hint: React.ReactNode;
-  disk: { color: DiskColor; set: string; title: string }; tileCol: 1 | 2; disabled?: boolean;
+  disk: { color: DiskColor; set: string; title: string }; tileCol: 1 | 2 | 'full'; disabled?: boolean;
   onFiles?: (files: FileList) => void;
   /** In place of onFiles, for a card that takes folders: the drop's items, to read before the handler returns. */
   onItems?: (items: DataTransferItemList) => void;

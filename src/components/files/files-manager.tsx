@@ -1156,10 +1156,15 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   return (
     <>
     {/* The top drop zones (R1): Drop files into STASH:, and Send files to the Amiga (R7). */}
-    <div className="mb-5 grid grid-cols-2 gap-x-2.5 gap-y-2 sm:grid-cols-1 sm:gap-5 lg:grid-cols-2 lg:items-stretch">
-      <StashDropZone busy={stash.busy} onItems={dropOnZone} onFetched={() => reloadBoth()} />
-      <SendDropZone targets={send.targets} initialBoard={send.initialBoard} serverNow={send.serverNow} onSent={sentTo}
-                    onShowQueue={(id) => navigate('right', `NET:/${id}`)} />
+    <div className="mb-5 grid grid-cols-1 gap-5 lg:grid-cols-2 lg:items-stretch">
+      {/* Below lg the zones stack (spec §5.4); below sm each is its own two-column tile grid, its tile full width. */}
+      <div className="grid min-w-0 max-sm:grid-cols-2 max-sm:gap-x-2.5 max-sm:gap-y-2 sm:contents">
+        <StashDropZone busy={stash.busy} onItems={dropOnZone} onFetched={() => reloadBoth()} />
+      </div>
+      <div className="grid min-w-0 max-sm:grid-cols-2 max-sm:gap-x-2.5 max-sm:gap-y-2 sm:contents">
+        <SendDropZone targets={send.targets} initialBoard={send.initialBoard} serverNow={send.serverNow} onSent={sentTo}
+                      onShowQueue={(id) => navigate('right', `NET:/${id}`)} />
+      </div>
     </div>
     <div ref={rootRef} tabIndex={0} onKeyDown={onKeyDown} data-testid="files-manager" aria-label="File manager"
          onFocusCapture={(e) => { if (rootRef.current?.contains(e.target)) lastFocus.current = e.target; }}

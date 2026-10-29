@@ -58,12 +58,12 @@ export function StashDropZone({ busy, onItems, onFetched }: {
   return (
     <DropCard testId="files-drop-stash" headingId="files-drop-stash-heading" title="Drop files into STASH:"
               hint="Any file or folder, up to 20 MB a file. .lha and .zip stay whole — open them in the pane."
-              disk={{ color: 'grey', set: 'ANY FILE · .LHA · .ZIP', title: 'STASH:' }} tileCol={1} disabled={working}
+              disk={{ color: 'grey', set: 'ANY FILE · .LHA · .ZIP', title: 'STASH:' }} tileCol="full" disabled={working}
               // Read before this handler returns: the browser empties the DataTransfer after it (drop-reader.ts).
               onItems={(items) => onItems(readDroppedItems(items))}>
       <div className="flex flex-col gap-2 max-sm:contents sm:flex-row sm:flex-wrap sm:items-center">
         <label htmlFor="files-stash-input" data-testid="files-stash-browse" data-tile={working ? 'Working…' : 'Into STASH:'}
-               className={`${INK_LABEL} ${TILE_LOOK} ${TILE[1]}`} style={INK_STYLE}>
+               className={`${INK_LABEL} ${TILE_LOOK} ${TILE.full}`} style={INK_STYLE}>
           <span className="max-sm:hidden">{working ? 'Working…' : 'Browse files'}</span>
           <input id="files-stash-input" type="file" multiple aria-label="Browse files" className="sr-only"
                  data-testid="files-stash-input" disabled={working}

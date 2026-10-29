@@ -10,8 +10,8 @@ describe('netDropRefusal (C2: files from the computer dropped on NET:/<board>)',
     expect(netDropRefusal([{ path: 'a.txt', size: 10 }], { files: 32, bytes: 0 }))
       .toBe("The board's queue holds 32 files / 16 MB; wait for it to empty or cancel some.");
     expect(netDropRefusal([{ path: 'a', size: 1 }, { path: 'Mods/big.mod', size: 5 * MB }], { files: 0, bytes: 0 }))
-      .toBe('Too large — Mods/big.mod is over 4 MB.');
-    expect(netDropRefusal([{ path: 'Empty.txt', size: 0 }], { files: 0, bytes: 0 })).toBe('Empty.txt is empty — nothing to send.');
+      .toBe('Mods/big.mod is over 4 MB — nothing was sent');
+    expect(netDropRefusal([{ path: 'Empty.txt', size: 0 }], { files: 0, bytes: 0 })).toBe('Empty.txt is empty — nothing was sent');
   });
 });
 

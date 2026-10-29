@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { SendTarget } from '@/lib/send-ui';
-import { SendDropZone, sendRefusal, sentReport } from './send-drop-zone';
+import { SendDropZone, sentReport } from './send-drop-zone';
 
 const target = (id: string, name: string, o: Partial<SendTarget> = {}): SendTarget => ({
   id, name, macAddress: null, defaultName: false, online: true, lastSeenAt: 1000, network: true, rx: 'c', rxAt: 1000, ...o,
@@ -34,17 +34,6 @@ describe('SendDropZone markup', () => {
     expect(h).toContain('files-send-board-d2');
     expect(h).toContain('type="radio"');
   });
-});
-
-describe('sendRefusal', () => {
-  const none = { files: 0, bytes: 0 };
-  it('lets a drop that fits through', () => expect(sendRefusal([{ path: 'a', size: 10 }], none)).toBeNull());
-  it('names the file over 4 MB', () =>
-    expect(sendRefusal([{ path: 'a', size: 1 }, { path: 'big.lha', size: 5_000_000 }], none)).toBe('big.lha is over 4 MB — nothing was sent'));
-  it('names an empty file', () => expect(sendRefusal([{ path: 'z', size: 0 }], none)).toBe('z is empty — nothing was sent'));
-  it('refuses what would overfill the queue', () =>
-    expect(sendRefusal([{ path: 'a', size: 1 }], { files: 32, bytes: 0 })).toContain('32 files / 16 MB'));
-  it('refuses an empty drop', () => expect(sendRefusal([], none)).toContain('Nothing to send'));
 });
 
 describe('sentReport', () => {

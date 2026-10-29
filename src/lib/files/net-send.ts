@@ -5,10 +5,10 @@
 import { sendErrorText } from '@/lib/send-ui';
 import { planNetSend } from './net-rules';
 import { refusalWords } from './words';
+import { SIGNED_OUT_TEXT } from '@/lib/signed-out';
 
 export const NOTHING_TO_SEND = 'Nothing to send — the drop held no files.';
 const NOT_FINISHED = 'The upload did not finish. Check the connection and try again.';
-const SIGNED_OUT = 'Signed out — sign in again';
 
 /** Why these files cannot go to the board whose queue holds `queue` now, in words; null when they fit. */
 export function netDropRefusal(files: { path: string; size: number }[], queue: { files: number; bytes: number }): string | null {
@@ -17,8 +17,8 @@ export function netDropRefusal(files: { path: string; size: number }[], queue: {
   if (plan.ok) return null;
   const path = plan.index === undefined ? '' : files[plan.index].path;
   if (plan.why === 'queue_full') return refusalWords('queue_full');
-  if (plan.why === 'too_large') return refusalWords('too_large', `${path} is over 4 MB`);
-  return `${path} is empty — nothing to send.`;
+  if (plan.why === 'too_large') return `${path} is over 4 MB — nothing was sent`;
+  return `${path} is empty — nothing was sent`;
 }
 
 export type NetSendResult = {
@@ -42,7 +42,7 @@ export async function sendToBoard(deviceId: string, files: { path: string; file:
       out.failed.push({ path, why: NOT_FINISHED });
       continue;
     }
-    if (res.redirected) { out.stopped = SIGNED_OUT; break; }
+    if (res.redirected) { out.stopped = SIGNED_OUT_TEXT; break; }
     if (res.ok) { out.queued++; continue; }
     const code = ((await res.json().catch(() => null)) as { error?: string } | null)?.error;
     if (code === 'queue_full') { out.stopped = refusalWords('queue_full'); break; }
