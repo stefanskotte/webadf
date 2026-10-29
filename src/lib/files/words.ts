@@ -2,6 +2,7 @@
 import { isMountedReason } from '../mount-wording';
 import type { RefusalCode } from './types';
 import { NET_COPY_OUT, NET_MOVE_IN, NET_PICK_BOARD } from './net-rules';
+import { COLLECTION_EXISTS, SHELF_WORDS } from './shelf-rules';
 
 const REMOVE_FAILED = 'copied, but the original could not be removed';
 /** = StashBusy's message (stash.ts, server-only): a STASH: file the board has not finished sending. */
@@ -27,11 +28,13 @@ export function refusalWords(code: RefusalCode, detail?: string): string {
       if (detail === 'comment') return 'Comments can only use Latin-1 characters.';
       if (detail === 'empty') return 'Type a name.';
       if (detail === 'too-long') return 'AmigaDOS names are at most 30 characters.';
+      if (detail === 'collection-too-long') return 'Collection names are at most 80 characters.';
       if (detail === 'bad-char') return 'Names cannot contain : or /, or characters an Amiga cannot show.';
       return 'AmigaDOS names are at most 30 characters, without : or /.';
     case 'name_exists':
       if (detail === 'same file') return 'That is the same file.';
       if (detail === 'two sources share a name') return 'Two of the chosen items have the same name.';
+      if (detail === COLLECTION_EXISTS) return `${COLLECTION_EXISTS}.`;
       return 'Something with that name is already there.';
     case 'comment_too_long': return 'Comments are at most 79 characters.';
     case 'not_found': return 'That is no longer there.';
@@ -41,6 +44,7 @@ export function refusalWords(code: RefusalCode, detail?: string): string {
       if (detail === STILL_ARRIVING) return 'That is still arriving from the Amiga.';
       if (detail === NET_COPY_OUT || detail === NET_MOVE_IN) return `${detail}.`;
       if (detail && /^.+ is empty$/.test(detail)) return `${detail} — nothing was sent.`;
+      if (detail && SHELF_WORDS.includes(detail)) return `${detail}.`;
       return detail ? `Not supported: ${detail}.` : 'That is not supported.';
     case 'blob_unavailable': return 'The disk image could not be read. Try again in a moment.';
     case 'failed': return detail ? `Something went wrong: ${detail}.` : 'Something went wrong.';

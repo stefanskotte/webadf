@@ -15,7 +15,7 @@ import { isMountedReason } from '@/lib/mount-wording';
 import { childOf, formatPath, isWithin, parsePath, type FsPath } from './path';
 import { diskStore } from '@/lib/storage';
 import { BlobUnavailableError, listLibrary, loadDisk, readLibraryFile, readOnlyReasonOf, resolveInDisk, type ResolvedDisk } from './library';
-import { placeInLibrary } from './library-paths';
+import { opMemo, placeInLibrary } from './library-paths';
 import type { RefusalCode } from './types';
 import {
   checkComment, checkName, groupBy, itemResult, keepBothName, REMOVE_FAILED, refuse, Refused, skippedItem,
@@ -38,7 +38,7 @@ async function locate(ctx: FsCtx, raw: string): Promise<Loc> {
   const path = parsePath(raw);
   if (!path) refuse('not_found', 404);
   if (path.device !== 'LIBRARY') refuse('unsupported', 400, `${path.device}: is not available yet`);
-  const at = await placeInLibrary(ctx, path.segments);
+  const at = await placeInLibrary(ctx, path.segments, opMemo(ctx));
   if (!at) refuse('not_found', 404);
   if (at.level !== 'disk') refuse('unsupported', 400, 'not inside a disk');
   return { path, canon: { device: 'LIBRARY', segments: [at.gameId, at.diskId, ...at.names] }, gameId: at.gameId, diskId: at.diskId, names: at.names };

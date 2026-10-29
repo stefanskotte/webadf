@@ -10,10 +10,9 @@ import {
   groupBy, refuse, Refused, REMOVE_FAILED,
   type Added, type CopyMove, type FsCtx, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome, type VolumeDriver,
 } from './driver';
-import { stashEntryOf, STILL_ARRIVING } from './stash-driver';
 import { NET_MOVE_IN } from './net-rules';
-import { addUploadToLibrary } from '@/lib/stash-library';
-import { libraryEligible } from '@/lib/from-amiga-ui';
+import { addDiskImages } from './add-to-library';
+import { deleteOnShelf, fileOnShelf, makeCollection, renameOnShelf, shelfDest, shelfItem } from './shelf';
 import type { Refusal } from './types';
 import type { OpVersion } from './edit-rules';
 
@@ -68,28 +67,41 @@ function need<K extends keyof VolumeDriver>(d: VolumeDriver, k: K): NonNullable<
 async function dispatch(ctx: OpCtx, req: OpRequest): Promise<Outcome> {
   switch (req.op) {
     case 'copy': case 'move': {
-      const dest = pathOf(req.dest); const dd = driverOf(dest);
+      const dest = pathOf(req.dest);
+      // LIBRARY: above the disks (the root, a collection, a title's disk list): filing, not a write (Files 2 §3.2).
+      const shelf = await shelfDest(ctx, dest);
+      if (shelf) return fileOnShelf(ctx, req as CopyMove, shelf);
+      const dd = driverOf(dest);
       const srcs = req.sources.map(pathOf); srcs.forEach(driverOf);
       // C16: a send never takes the original away; Move into NET: is offered nowhere, and the engine says why.
       if (req.op === 'move' && dest.device === 'NET') refuse('unsupported', 400, NET_MOVE_IN);
       if (srcs.every((s) => s.device === dest.device)) return (need(dd, 'within') as NonNullable<VolumeDriver['within']>).call(dd, ctx, req as CopyMove);
       return crossDevice(ctx, req, srcs, dest);
     }
-    case 'delete': return perDevice(req.sources, (d, s) => (need(d, 'remove') as NonNullable<VolumeDriver['remove']>).call(d, ctx, s));
+    case 'delete': {
+      // A collection, title or disk row among them: the shelf answers for every source, per item.
+      for (const s of req.sources) if (await shelfItem(ctx, pathOf(s))) return deleteOnShelf(ctx, req.sources);
+      return perDevice(req.sources, (d, s) => (need(d, 'remove') as NonNullable<VolumeDriver['remove']>).call(d, ctx, s));
+    }
     case 'protect': return perDevice(req.sources, (d, s) => (need(d, 'setMeta') as NonNullable<VolumeDriver['setMeta']>).call(d, ctx, s, { protection: req.protection }));
     case 'comment': {
       const d = driverOf(pathOf(req.source));
       return (need(d, 'setMeta') as NonNullable<VolumeDriver['setMeta']>).call(d, ctx, [req.source], { comment: req.comment });
     }
     case 'rename': {
+      const at = await shelfItem(ctx, pathOf(req.source));
+      if (at) return renameOnShelf(ctx, req.source, at, req.name);
       const d = driverOf(pathOf(req.source));
       return (need(d, 'rename') as NonNullable<VolumeDriver['rename']>).call(d, ctx, req.source, req.name);
     }
     case 'makedir': {
-      const p = pathOf(req.dest); const d = driverOf(p);
+      const p = pathOf(req.dest);
+      const shelf = await shelfDest(ctx, p);
+      if (shelf) return makeCollection(ctx, shelf, req.name);
+      const d = driverOf(p);
       return (need(d, 'makedir') as NonNullable<VolumeDriver['makedir']>).call(d, ctx, p, req.name);
     }
-    case 'add-to-library': return addToLibrary(ctx, req.sources);
+    case 'add-to-library': { const r = await addDiskImages(ctx, req.sources); return { kind: 'done', ...r }; }
   }
 }
 
@@ -157,36 +169,4 @@ async function crossDevice(ctx: OpCtx, req: CopyMove, srcs: FsPath[], dest: FsPa
     }
   }
   return { kind: 'done', items: req.sources.map((s) => results.get(s)!) };
-}
-
-/** Add to library (R8), per item: a stored disk image in STASH: itself goes through addUploadToLibrary; nothing else does. */
-async function addToLibrary(ctx: OpCtx, sources: string[]): Promise<Outcome> {
-  const items: OpItem[] = [];
-  const added: Added[] = [];
-  for (const source of sources) {
-    try {
-      const p = pathOf(source);
-      if (p.device !== 'STASH') refuse('unsupported', 400, 'only files in STASH: are added to the library');
-      const at = await stashEntryOf(ctx, p);
-      if (!at) refuse('not_found', 404);
-      if (at.in === 'archive') refuse('unsupported', 400, 'copy it out of the archive first');
-      const row = at.row;
-      if (row?.status === 'receiving') refuse('unsupported', 409, STILL_ARRIVING);
-      if (!row || row.kind !== 'file') refuse('not_a_disk_image', 422, 'a folder');
-      if (row.status !== 'stored') refuse('not_found', 404);
-      if (!libraryEligible(row.path, row.sizeBytes)) refuse('not_a_disk_image', 422);
-      const r = await addUploadToLibrary(ctx.orgId, row.id);
-      if (!r.ok) {
-        if (r.error === 'not_found') refuse('not_found', 404);
-        if (r.error === 'ingest_failed') refuse('failed', 502, 'the library could not take it');
-        refuse('not_a_disk_image', 422, r.reason);
-      }
-      added.push({ source, gameId: r.gameId, diskId: r.diskId });
-      items.push({ source, ok: true });
-    } catch (e) {
-      if (!(e instanceof Refused)) throw e;
-      items.push({ source, ok: false, refusal: e.refusal });
-    }
-  }
-  return { kind: 'done', items, added };
 }

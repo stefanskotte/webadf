@@ -66,6 +66,14 @@ describe('refusalWords', () => {
     expect(refusalWords('bad_name', 'too-long')).toBe('AmigaDOS names are at most 30 characters.');
     expect(refusalWords('bad_name', 'bad-char')).toBe('Names cannot contain : or /, or characters an Amiga cannot show.');
   });
+  it('Files 2: titles on the Library page, the library already, collections', () => {
+    expect(refusalWords('unsupported', 'Rename or delete titles on the Library page')).toBe('Rename or delete titles on the Library page.');
+    expect(refusalWords('unsupported', 'It is in the library already')).toBe('It is in the library already.');
+    expect(refusalWords('unsupported', 'Collections hold titles, not folders')).toBe('Collections hold titles, not folders.');
+    expect(refusalWords('unsupported', 'Open a disk or STASH: to make a folder in it')).toBe('Open a disk or STASH: to make a folder in it.');
+    expect(refusalWords('name_exists', 'A collection with that name already exists')).toBe('A collection with that name already exists.');
+    expect(refusalWords('bad_name', 'collection-too-long')).toBe('Collection names are at most 80 characters.');
+  });
   it('says the NET: things (increment 3)', () => {
     expect(refusalWords('queue_full')).toBe("The board's queue holds 32 files / 16 MB; wait for it to empty or cancel some.");
     expect(refusalWords('unsupported', 'Files waiting for the Amiga cannot be copied out')).toBe('Files waiting for the Amiga cannot be copied out.');

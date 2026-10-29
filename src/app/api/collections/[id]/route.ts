@@ -22,6 +22,8 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 
   const renamed = await renameCollection(orgId, id, parsed.data.name);
   if (!renamed) return Response.json({ error: 'not_found' }, { status: 404 });
+  // Names are unique per library, any case (Files 2 R3).
+  if (renamed === 'name_exists') return Response.json({ error: 'name_exists' }, { status: 409 });
 
   return Response.json({ ok: true });
 }

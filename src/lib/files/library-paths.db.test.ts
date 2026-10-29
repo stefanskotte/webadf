@@ -1,7 +1,7 @@
 // src/lib/files/library-paths.db.test.ts
 // LIBRARY: through collections (Files 2 §3.1): the root, a collection, a title or disk through one, stale and foreign
 // paths, and ops that must not care which form of a disk's path they were given.
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Client } from 'pg';
 
 const base = process.env.TEST_DATABASE_URL!;
@@ -151,5 +151,26 @@ describe('ops through a collection prefix are prefix-blind', () => {
   it('a disk path through a collection the title is not in is not found for an op', async () => {
     expect(await runOp(ctx, { op: 'delete', sources: ['LIBRARY:/c2/g2/d2/ReadMe'] }))
       .toMatchObject({ kind: 'refused', refusal: { code: 'not_found' } });
+  });
+});
+
+describe('one op asks where a path is once per collection and title (Task 2 review: memoised per op)', () => {
+  it('placeInLibrary with a memo asks each lookup once, whatever the number of paths below it', async () => {
+    const memo = new Map<string, Promise<unknown>>();
+    for (let i = 0; i < 200; i++) {
+      expect(await placeInLibrary(ctx, ['c1', 'g1', 'd1', `F${i}`], memo)).toMatchObject({ level: 'disk', gameId: 'g1', diskId: 'd1', names: [`F${i}`] });
+    }
+    expect(memo.size).toBe(2);   // the collection, and the title filed in it
+    // A stale path stays not found through the memo too.
+    expect(await placeInLibrary(ctx, ['c2', 'g2', 'd2'], memo)).toBeNull();
+  });
+  it('a 200-item op through a collection reads the database a bounded number of times', async () => {
+    const spy = vi.spyOn(getDb(), 'select');
+    try {
+      const sources = Array.from({ length: 100 }, () => ['LIBRARY:/c1/g1/d1/ReadMe', 'LIBRARY:/c1/g1/d1/C/Assign']).flat();
+      const r = await runOp(ctx, { op: 'protect', sources, protection: 0 });
+      expect(r).toMatchObject({ kind: 'done' });
+      expect(spy.mock.calls.length).toBeLessThan(20);
+    } finally { spy.mockRestore(); }
   });
 });

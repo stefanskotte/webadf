@@ -9,7 +9,7 @@ import { games } from '@/db/schema/catalog';
 import { collections, collectionGames } from '@/db/schema/collections';
 import { isLocal } from '@/lib/remote-hidden';
 import { formatPath } from './path';
-import type { FsCtx } from './driver';
+import type { FsCtx, OpCtx } from './driver';
 
 export type Shelved = { id: string; name: string };
 /** `prefix`: the segments before the title (the collection id, or none): what every path below this place keeps. */
@@ -44,13 +44,37 @@ export async function titleExists(ctx: FsCtx, gameId: string): Promise<boolean> 
   return !!g;
 }
 
-export async function placeInLibrary(ctx: FsCtx, segments: readonly string[]): Promise<LibraryPlace | null> {
+/**
+ * placeInLibrary's database answers, shared by the paths of one op (Task 2 review): a 200-item op through one collection
+ * asks twice (the collection, the title filed in it), not 400 times. Only within one op: a later op must see a
+ * collection deleted or a title unfiled since.
+ */
+export type PlaceMemo = Map<string, Promise<unknown>>;
+
+const opMemos = new WeakMap<object, PlaceMemo>();
+/** The memo of the op `ctx` runs (keyed by its versions list, which runOp makes fresh for every op); none outside an op. */
+export function opMemo(ctx: FsCtx): PlaceMemo | undefined {
+  const key = (ctx as Partial<OpCtx>).versions;
+  if (!key) return undefined;
+  let m = opMemos.get(key);
+  if (!m) { m = new Map(); opMemos.set(key, m); }
+  return m;
+}
+
+function remember<T>(memo: PlaceMemo | undefined, key: string, ask: () => Promise<T>): Promise<T> {
+  if (!memo) return ask();
+  let hit = memo.get(key) as Promise<T> | undefined;
+  if (!hit) { hit = ask(); memo.set(key, hit); }
+  return hit;
+}
+
+export async function placeInLibrary(ctx: FsCtx, segments: readonly string[], memo?: PlaceMemo): Promise<LibraryPlace | null> {
   if (!segments.length) return { level: 'root', collection: null, prefix: [] };
-  const collection = await collectionOf(ctx, segments[0]);
+  const collection = await remember(memo, `collection ${segments[0]}`, () => collectionOf(ctx, segments[0]));
   if (collection && segments.length === 1) return { level: 'collection', collection, prefix: [collection.id] };
   const prefix = collection ? [collection.id] : [];
   const [gameId, diskId, ...names] = segments.slice(prefix.length);
-  if (collection && !(await isFiledIn(ctx, collection.id, gameId))) return null;
+  if (collection && !(await remember(memo, `filed ${collection.id} ${gameId}`, () => isFiledIn(ctx, collection.id, gameId)))) return null;
   if (!diskId) return { level: 'title', collection, prefix, gameId };
   return { level: 'disk', collection, prefix, gameId, diskId, names };
 }

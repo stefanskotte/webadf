@@ -8,7 +8,7 @@ export const maxDuration = 60;
 
 const path = z.string().min(1).max(1024);
 const sources = z.array(path).min(1).max(1000);
-const name = z.string().min(1).max(64);   // the engine applies the Amiga name rules
+const name = z.string().min(1).max(80);   // AmigaDOS rules on disks and in STASH:, collection rules on LIBRARY: (the engine applies them)
 const Body = z.discriminatedUnion('op', [
   z.object({ op: z.enum(['copy', 'move']), sources, dest: path, onClash: z.enum(['ask', 'replace', 'skip', 'keep-both']) }),
   z.object({ op: z.literal('delete'), sources }),

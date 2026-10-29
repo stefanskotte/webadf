@@ -11,7 +11,7 @@
 // comment on orgFilter makes the same point about an empty org id).
 
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, ne, sql } from 'drizzle-orm';
 import { atomic } from '@/db/atomic';
 import { getDb } from '@/db';
 import { games } from '@/db/schema/catalog';
@@ -162,9 +162,28 @@ export async function countUncategorized(orgId: string): Promise<number> {
   return row?.n ?? 0;
 }
 
-/** Lands at the end of this org's list: sortKey is max(sortKey) + 1, or 0 for the first collection. */
-export async function createCollection(orgId: string, name: string): Promise<CollectionListItem> {
+/**
+ * Another of this org's collections already has the name, in any case (Files 2 operator ruling R3: names are unique per
+ * library). Compared trimmed and with Postgres's lower(), the same expression the unique index uses (migration 0052,
+ * Task 4b), so this pre-check and the index never disagree. `exceptId`: the collection being renamed, which may take
+ * its own name in another case.
+ */
+export async function collectionNameTaken(orgId: string, name: string, exceptId?: string): Promise<boolean> {
+  const [hit] = await getDb().select({ id: collections.id }).from(collections)
+    .where(orgFilter(collections, orgId, and(
+      sql`lower(${collections.name}) = lower(${name.trim()})`,
+      exceptId === undefined ? undefined : ne(collections.id, exceptId),
+    ))).limit(1);
+  return !!hit;
+}
+
+/**
+ * Lands at the end of this org's list: sortKey is max(sortKey) + 1, or 0 for the first collection. 'name_exists' when
+ * another of this org's collections has the name in any case (R3), with nothing written.
+ */
+export async function createCollection(orgId: string, name: string): Promise<CollectionListItem | 'name_exists'> {
   const db = getDb();
+  if (await collectionNameTaken(orgId, name)) return 'name_exists';
   const [{ maxSort }] = await db
     .select({ maxSort: sql<number>`coalesce(max(${collections.sortKey}), -1)::int` })
     .from(collections)
@@ -176,11 +195,13 @@ export async function createCollection(orgId: string, name: string): Promise<Col
   return { id, name, sortKey, gameCount: 0, diskCount: 0 };
 }
 
-export async function renameCollection(orgId: string, id: string, name: string): Promise<boolean> {
+/** false: not this org's collection. 'name_exists': another of this org's collections has the name, any case (R3). */
+export async function renameCollection(orgId: string, id: string, name: string): Promise<boolean | 'name_exists'> {
   const db = getDb();
   const owned = await db.select({ id: collections.id }).from(collections)
     .where(orgFilter(collections, orgId, eq(collections.id, id))).limit(1);
   if (owned.length === 0) return false;
+  if (await collectionNameTaken(orgId, name, id)) return 'name_exists';
 
   await db.update(collections).set({ name }).where(eq(collections.id, id));
   return true;

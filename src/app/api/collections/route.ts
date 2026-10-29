@@ -26,5 +26,7 @@ export async function POST(request: Request) {
   }
 
   const created = await createCollection(orgId, parsed.data.name);
+  // Names are unique per library, any case (Files 2 R3).
+  if (created === 'name_exists') return Response.json({ error: 'name_exists' }, { status: 409 });
   return Response.json(created, { status: 200 });
 }
