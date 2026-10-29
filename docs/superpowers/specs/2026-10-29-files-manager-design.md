@@ -72,10 +72,11 @@ An entry: `{ name, kind: 'dir'|'file'|'archive'|'disk'|'title'|'board', size?, d
 ### 3.3 API
 
 - `GET /api/files/list?path=…` → the listing.
-- `POST /api/files/ops` with `{ op: 'copy'|'move'|'delete'|'makedir'|'rename'|'protect'|'comment', sources: string[], dest?: string, name?: string, protection?: number, comment?: string, onClash?: 'ask'|'replace'|'skip'|'keep-both' }`.
+- `POST /api/files/ops` with `{ op: 'copy'|'move'|'delete'|'makedir'|'rename'|'protect'|'comment'|'add-to-library', sources: string[], dest?: string, name?: string, protection?: number, comment?: string, onClash?: 'ask'|'replace'|'skip'|'keep-both' }`.
   - Copy/move with `onClash: 'ask'` and a clash returns `409 { clashes: [...] }` without writing anything; the client
     asks (Replace / Skip / Keep both, "for all") and resends with a choice.
   - The answer lists one outcome per source: done, or refused with a reason code and words.
+  - `add-to-library` (amendment, increment 2): STASH: disk-image files become library disks, as Add to library on Amiga uploads did.
 - `GET /api/files/download?path=…` (one file) and `?paths=…` (several, as .zip).
 
 All three go through `requireOrg()`. No new auth.
