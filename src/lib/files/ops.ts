@@ -1,12 +1,17 @@
 // src/lib/files/ops.ts
-// The Files ops engine's front door (spec 2026-10-29 §4): copy, move, delete, makedir, rename, protect and comment.
-// It sends each op to the driver of the device its paths name (drivers.ts); a device's storage rules live in its driver
-// (LIBRARY: library-driver.ts). SERVER ONLY.
+// The Files ops engine's front door (spec 2026-10-29 §4): copy, move, delete, makedir, rename, protect, comment and
+// Add to library. It sends each op to the driver of the device its paths name (drivers.ts); a device's storage rules
+// live in its driver (LIBRARY: library-driver.ts, STASH: stash-driver.ts). A copy or move between devices is collect on
+// the source's driver, write on the destination's, then (a move) remove of what was written. SERVER ONLY.
 import { parsePath, type FsPath } from './path';
 import { driverFor } from './drivers';
 import {
-  refuse, Refused, type CopyMove, type FsCtx, type OnClash, type OpCtx, type OpItem, type Outcome, type VolumeDriver,
+  groupBy, refuse, Refused, REMOVE_FAILED,
+  type Added, type CopyMove, type FsCtx, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome, type VolumeDriver,
 } from './driver';
+import { stashEntryOf, STILL_ARRIVING } from './stash-driver';
+import { addUploadToLibrary } from '@/lib/stash-library';
+import { libraryEligible } from '@/lib/from-amiga-ui';
 import type { Refusal } from './types';
 import type { OpVersion } from './edit-rules';
 
@@ -19,10 +24,11 @@ export type OpRequest =
   | { op: 'makedir'; dest: string; name: string }
   | { op: 'rename'; source: string; name: string }
   | { op: 'protect'; sources: string[]; protection: number }      // AmigaDOS bits, 0..0xff, as files/[block] PATCH takes
-  | { op: 'comment'; source: string; comment: string };
+  | { op: 'comment'; source: string; comment: string }
+  | { op: 'add-to-library'; sources: string[] };                  // STASH: disk images into the library (R8)
 export type OpResult =
   /** `versions`: each history version the op saved, in the order it saved them (Undo needs exactly one, Task 9b). */
-  | (Extract<Outcome, { kind: 'done' }> & { versions: OpVersion[] })
+  | ({ kind: 'done'; items: OpItem[]; added?: Added[] } & { versions: OpVersion[] })
   | Extract<Outcome, { kind: 'clashes' }>
   | { kind: 'refused'; refusal: Refusal; status: number };
 
@@ -30,7 +36,9 @@ export async function runOp(ctx: FsCtx, req: OpRequest): Promise<OpResult> {
   const run: OpCtx = { ...ctx, versions: [] };
   try {
     const r = await dispatch(run, req);
-    return r.kind === 'done' ? { ...r, versions: run.versions } : r;
+    // `written` is the engine's own business (crossDevice); the caller hears items, what was added, and the versions.
+    if (r.kind !== 'done') return r;
+    return { kind: 'done', items: r.items, ...(r.added ? { added: r.added } : {}), versions: run.versions };
   } catch (e) {
     if (e instanceof Refused) return { kind: 'refused', refusal: e.refusal, status: e.status };
     throw e;
@@ -76,6 +84,7 @@ async function dispatch(ctx: OpCtx, req: OpRequest): Promise<Outcome> {
       const p = pathOf(req.dest); const d = driverOf(p);
       return (need(d, 'makedir') as NonNullable<VolumeDriver['makedir']>).call(d, ctx, p, req.name);
     }
+    case 'add-to-library': return addToLibrary(ctx, req.sources);
   }
 }
 
@@ -101,7 +110,70 @@ async function perDevice(sources: string[], run: (d: VolumeDriver, s: string[]) 
   return { kind: 'done', items: sources.map((s) => results.get(s)!) };
 }
 
-/** Increment 2 Task 5 fills this in; until then a copy between devices is unsupported. */
-async function crossDevice(_ctx: OpCtx, _req: CopyMove, _srcs: FsPath[], dest: FsPath): Promise<Outcome> {
-  refuse('unsupported', 400, `copying into ${dest.device}: from another device`);
+/**
+ * Copy or move between devices: every source collected, then ONE write into the destination. A move then removes,
+ * per device, only the sources the writer reports it wrote (ruling 1: a skipped or refused one keeps its original),
+ * and each only while it is still exactly what was collected.
+ */
+async function crossDevice(ctx: OpCtx, req: CopyMove, srcs: FsPath[], dest: FsPath): Promise<Outcome> {
+  const dd = driverOf(dest);
+  const write = need(dd, 'write') as NonNullable<VolumeDriver['write']>;
+  const tops: IncomingTop[] = [];
+  for (const [i, p] of srcs.entries()) {
+    const items = await driverOf(p).collect(ctx, p);
+    if (!items) refuse('not_found', 404);
+    tops.push({ source: req.sources[i], items });
+  }
+  if (req.op === 'move') for (const p of srcs) need(driverOf(p), 'remove');
+  const out = await write.call(dd, ctx, dest, tops, req.onClash);
+  if (out.kind !== 'done' || req.op !== 'move') return out;
+  const written = new Set(out.written ?? []);
+  const moved = req.sources.filter((s) => written.has(s));
+  const results = new Map(out.items.map((x) => [x.source, x] as const));
+  for (const [device, list] of groupBy(moved, (s) => pathOf(s).device)) {
+    const d = driverFor(device)!;
+    const unchanged = new Map(tops.filter((t) => list.includes(t.source)).map((t) => [t.source, t.items] as const));
+    try {
+      const r = await d.remove!(ctx, list, unchanged);
+      if (r.kind === 'done') {
+        for (const x of r.items) if (!x.ok) results.set(x.source, { source: x.source, ok: false, refusal: { code: x.refusal.code, detail: REMOVE_FAILED } });
+      }
+    } catch (e) {
+      if (!(e instanceof Refused)) throw e;
+      for (const s of list) results.set(s, { source: s, ok: false, refusal: { code: e.refusal.code, detail: REMOVE_FAILED } });
+    }
+  }
+  return { kind: 'done', items: req.sources.map((s) => results.get(s)!) };
+}
+
+/** Add to library (R8), per item: a stored disk image in STASH: itself goes through addUploadToLibrary; nothing else does. */
+async function addToLibrary(ctx: OpCtx, sources: string[]): Promise<Outcome> {
+  const items: OpItem[] = [];
+  const added: Added[] = [];
+  for (const source of sources) {
+    try {
+      const p = pathOf(source);
+      if (p.device !== 'STASH') refuse('unsupported', 400, 'only files in STASH: are added to the library');
+      const at = await stashEntryOf(ctx, p);
+      if (!at) refuse('not_found', 404);
+      if (at.in === 'archive') refuse('unsupported', 400, 'copy it out of the archive first');
+      const row = at.row;
+      if (row?.status === 'receiving') refuse('unsupported', 409, STILL_ARRIVING);
+      if (!row || row.kind !== 'file') refuse('not_a_disk_image', 422, 'a folder');
+      if (row.status !== 'stored') refuse('not_found', 404);
+      if (!libraryEligible(row.path, row.sizeBytes)) refuse('not_a_disk_image', 422);
+      const r = await addUploadToLibrary(ctx.orgId, row.id);
+      if (!r.ok) {
+        if (r.error === 'not_found') refuse('not_found', 404);
+        if (r.error === 'ingest_failed') refuse('failed', 502, 'the library could not take it');
+        refuse('not_a_disk_image', 422, r.reason);
+      }
+      added.push({ source, gameId: r.gameId, diskId: r.diskId });
+      items.push({ source, ok: true });
+    } catch (e) {
+      if (!(e instanceof Refused)) throw e;
+      items.push({ source, ok: false, refusal: e.refusal });
+    }
+  }
+  return { kind: 'done', items, added };
 }

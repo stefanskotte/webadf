@@ -14,10 +14,22 @@ export type OpItem = { source: string; ok: true } | { source: string; ok: false;
 export type Clash = { source: string; name: string; dest: string };
 /** A disk image Add to library placed (Task 5). */
 export type Added = { source: string; gameId: string; diskId: string };
-export type Outcome = { kind: 'done'; items: OpItem[]; added?: Added[] } | { kind: 'clashes'; clashes: Clash[] };
+/**
+ * `written`: the sources a write actually placed (not skipped, not refused). A move between devices removes only these
+ * (ruling 1); runOp does not pass it on.
+ */
+export type Outcome = { kind: 'done'; items: OpItem[]; added?: Added[]; written?: string[] } | { kind: 'clashes'; clashes: Clash[] };
 export type FileBytes = { name: string; bytes: Uint8Array; date: Date | null; protection: string; comment: string | null };
-/** One entry of a copy, a folder before what it holds; rel[0] is the copied entry's own name. `sha256` when the bytes are already in diskStore. */
-export type IncomingItem = { rel: string[]; kind: 'file' | 'dir'; bytes?: Uint8Array; sha256?: string; date: Date | null; protection: number; comment: string | null };
+/**
+ * One entry of a copy, a folder before what it holds; rel[0] is the copied entry's own name. `sha256` when the bytes are
+ * already in diskStore, then `size` says how many there are, so a writer can refuse what does not fit before reading
+ * them (ruling 13). `id`: what the entry was on its own device when collected (a STASH: row id, a LIBRARY: header
+ * block), so a move's remove can tell the original from something made in its place since.
+ */
+export type IncomingItem = {
+  rel: string[]; kind: 'file' | 'dir'; bytes?: Uint8Array; sha256?: string; size?: number; id?: string;
+  date: Date | null; protection: number; comment: string | null;
+};
 export type IncomingTop = { source: string; items: IncomingItem[] };
 export type CopyMove = { op: 'copy' | 'move'; sources: string[]; dest: string; onClash: OnClash };
 
@@ -43,6 +55,12 @@ export function checkComment(comment: string): void {
 export { keepBothName } from './stash-paths';
 
 export const REMOVE_FAILED = 'copied, but the original could not be removed';
+
+export function groupBy<T, K>(xs: T[], key: (x: T) => K): Map<K, T[]> {
+  const m = new Map<K, T[]>();
+  for (const x of xs) m.set(key(x), [...(m.get(key(x)) ?? []), x]);
+  return m;
+}
 
 /** Run `fn` for one item; a refusal becomes that item's result instead of the whole op's. */
 export function itemResult(source: string, fn: () => void): OpItem {

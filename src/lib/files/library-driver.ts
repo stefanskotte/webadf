@@ -13,10 +13,11 @@ import { sameName } from '@/lib/adffs/write';
 import { applyDiskEdit, type DiskEditOutcome } from '@/lib/disk-write';
 import { isMountedReason } from '@/lib/mount-wording';
 import { childOf, formatPath, isWithin, parsePath, type FsPath } from './path';
+import { diskStore } from '@/lib/storage';
 import { BlobUnavailableError, listLibrary, loadDisk, readLibraryFile, readOnlyReasonOf, resolveInDisk, type ResolvedDisk } from './library';
 import type { RefusalCode } from './types';
 import {
-  checkComment, checkName, itemResult, keepBothName, REMOVE_FAILED, refuse, Refused,
+  checkComment, checkName, groupBy, itemResult, keepBothName, REMOVE_FAILED, refuse, Refused,
   type CopyMove, type FsCtx, type IncomingItem, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome, type VolumeDriver,
 } from './driver';
 
@@ -234,15 +235,19 @@ async function copyOrMove(ctx: Run, req: CopyMove): Promise<Outcome> {
 
 type Plan = { adds: PlanItem[]; deletes: Step[]; moves: Step[]; freed: number };
 
+/** The plan fits the destination disk, by the bytes each add carries or, before they are read, the size it says it has. */
+function mustFit(dd: ResolvedDisk, plan: Plan) {
+  const need = blocksForPlan(plan.adds.map((i): CostItem => ({ kind: i.kind, sizeBytes: i.bytes?.length ?? i.size ?? 0 })), dd.info.filesystem!);
+  const usage = readUsage(dd.bytes);
+  if (usage && need > usage.freeBlocks + plan.freed) {
+    refuse('disk_full', 400, `needs ${Math.ceil(need / 2)} KB, ${Math.floor((usage.freeBlocks + plan.freed) / 2)} KB free`);
+  }
+}
+
 /** Checks the plan fits the destination disk, then writes it as ONE edit: deletes, moves, then the batch of adds. */
 async function commitPlan(ctx: Run, dd: ResolvedDisk, destLoc: Loc, plan: Plan) {
-  const { adds, deletes, moves, freed } = plan;
-  const fs = dd.info.filesystem!;
-  const need = blocksForPlan(adds.map((i): CostItem => ({ kind: i.kind, sizeBytes: i.bytes?.length ?? 0 })), fs);
-  const usage = readUsage(dd.bytes);
-  if (usage && need > usage.freeBlocks + freed) {
-    refuse('disk_full', 400, `needs ${Math.ceil(need / 2)} KB, ${Math.floor((usage.freeBlocks + freed) / 2)} KB free`);
-  }
+  const { adds, deletes, moves } = plan;
+  mustFit(dd, plan);
 
   if (deletes.length || moves.length || adds.length) {
     const parentPath = (rel: string[]) => [...destLoc.names, ...rel.slice(0, -1)].join('/');
@@ -290,12 +295,6 @@ function stillAsCopied(adf: Uint8Array, h: Hit, s: { hit: Hit; copied: PlanItem[
     return n.rel.join('/') === c.rel.join('/') && n.kind === c.kind && n.protection === c.protection && n.comment === c.comment
       && n.date?.getTime() === c.date?.getTime() && sameBytes(n.bytes, c.bytes);
   });
-}
-
-function groupBy<T, K>(xs: T[], key: (x: T) => K): Map<K, T[]> {
-  const m = new Map<K, T[]>();
-  for (const x of xs) m.set(key(x), [...(m.get(key(x)) ?? []), x]);
-  return m;
 }
 
 /** Children before their parents, so deleting both never deletes through an already-deleted folder. */
@@ -382,6 +381,7 @@ async function collect(ctx: FsCtx, p: FsPath): Promise<IncomingItem[] | null> {
     const hit = entryAt(d, loc);
     const out: PlanItem[] = [];
     walk(d.bytes, hit.entry, [hit.entry.name], out);
+    out[0] = { ...out[0], id: String(hit.entry.block) };   // what remove(unchanged) holds the original to
     return out;
   } catch (e) {
     if (e instanceof Refused && e.refusal.code === 'not_found') return null;
@@ -404,7 +404,10 @@ async function write(ctx: Run, dir: FsPath, tops: IncomingTop[], onClash: OnClas
   for (const top of tops) {
     const name = top.items[0]?.rel[0] ?? '';
     const item = itemResult(top.source, () => {
-      for (const i of top.items) checkName(i.rel[i.rel.length - 1]);
+      for (const i of top.items) {
+        checkName(i.rel[i.rel.length - 1]);
+        if (i.kind === 'file' && !i.bytes && !i.sha256) refuse('failed', 500, `${i.rel.join('/')} came without its bytes`);
+      }
       checkName(name);
       if (placed.some((n) => same(n, name))) refuse('name_exists', 409, 'two sources share a name');
     });
@@ -418,6 +421,7 @@ async function write(ctx: Run, dir: FsPath, tops: IncomingTop[], onClash: OnClas
   }
 
   const plan: Plan = { adds: [], deletes: [], moves: [], freed: 0 };
+  const written: string[] = [];
   const taken = (n: string) => dest.children.some((c) => same(c.name, n)) || placed.some((p) => same(p, n));
   for (const p of planned) {
     results.set(p.top.source, itemResult(p.top.source, () => {
@@ -429,10 +433,15 @@ async function write(ctx: Run, dir: FsPath, tops: IncomingTop[], onClash: OnClas
         plan.freed += blocksOf(p.clash, fs);
       }
       plan.adds.push(...p.top.items.map((i) => ({ ...i, rel: [name, ...i.rel.slice(1)] })));
+      written.push(p.top.source);
     }));
   }
+  // Ruling 13: what fits is judged by the sizes the items carry, then the bytes that are only named by sha-256 are read.
+  mustFit(dd, plan);
+  plan.adds = await Promise.all(plan.adds.map(async (i) => (i.kind === 'file' && !i.bytes
+    ? { ...i, bytes: await diskStore.read(i.sha256!).catch((): never => refuse('blob_unavailable', 503)) } : i)));
   await commitPlan(ctx, dd, destLoc, plan);
-  return { kind: 'done', items: tops.map((t) => results.get(t.source)!) };
+  return { kind: 'done', items: tops.map((t) => results.get(t.source)!), written };
 }
 
 /** Delete; with `unchanged`, each source only while it is still exactly what was collected (a move's second half). */
@@ -448,6 +457,8 @@ async function remove(ctx: Run, sources: string[], unchanged?: ReadonlyMap<strin
       const hit = entryAt(d, loc);
       const copied = unchanged.get(raw);
       if (!copied) refuse('failed', 500, 'nothing was collected from it');
+      // Not the entry collected: one deleted and made again since, however alike, was never copied.
+      if (copied[0]?.id !== undefined && copied[0].id !== String(hit.entry.block)) refuse('conflict', 409);
       list.push({ raw, loc, d, hit, copied });
     } catch (e) {
       if (!(e instanceof Refused)) throw e;
