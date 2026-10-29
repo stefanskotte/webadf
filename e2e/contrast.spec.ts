@@ -547,7 +547,7 @@ test('the Files STASH: row pairs are legible: the failed mark, size, Delete, a h
 });
 
 // The Library's own way in (Files increment 3, R8/R9): Add disks ▾ and its menu, the drop overlay's words over the
-// scrim, and the tray (summary, Added, Already in the library, Refused — why, Open title) at 1280 x 900.
+// scrim, and the tray (summary, Added, Refused — why, Open title) at 1280 x 900.
 test('the Library add pairs are legible: Add disks, its menu, the drop overlay, the tray summary and row states', async ({ page }) => {
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -582,7 +582,7 @@ test('the Library add pairs are legible: Add disks, its menu, the drop overlay, 
   });
   await expect(page.getByTestId('library-drop-overlay')).toHaveCount(0);
 
-  // The tray: one added, then the same again (already in the library) beside a refused text file.
+  // The tray: one added, then the same again (a disk the library already held) beside a refused text file.
   const adf = Buffer.alloc(901_120);
   adf.write(`DOS\0contrast-${runTag()}`, 0);
   const sha = createHash('sha256').update(adf).digest('hex');
@@ -595,11 +595,11 @@ test('the Library add pairs are legible: Add disks, its menu, the drop overlay, 
     ['tray Open title', `[data-testid="library-tray-open-${sha}"]`],
   ]);
   await pick([{ name: 'Contrast (1990)(X).adf', buffer: adf }, { name: 'notes.txt', buffer: Buffer.from('not a disk') }]);
-  await expect(page.getByTestId('library-tray-summary')).toHaveText(/already in the library/, { timeout: 30_000 });
+  await expect(page.getByTestId('library-tray-summary')).toHaveText('1 added · 1 refused', { timeout: 30_000 });
   await page.mouse.move(0, 0);
   await legible(page, 'library', [
     ['tray summary', '[data-testid="library-tray-summary"]'],
-    ['tray "Already in the library"', '[data-testid="library-tray-row"][data-state="deduped"] [data-testid="library-tray-state"]'],
+    ['tray "Added" (a disk already held)', '[data-testid="library-tray-row"][data-state="deduped"] [data-testid="library-tray-state"]'],
     ['tray "Refused — why"', '[data-testid="library-tray-row"][data-state="failed"] [data-testid="library-tray-state"]'],
   ]);
   await page.screenshot({ path: 'test-results/zz-library-add.png', fullPage: true });

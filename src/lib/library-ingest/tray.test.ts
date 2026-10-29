@@ -3,13 +3,15 @@ import { traySummary, trayState } from './tray';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const row = (state: any, note?: string) => ({ source: 'lib', key: `lib:${Math.random()}`, kind: 'lib', name: 'x.adf', sizeBytes: 1, state, note, title: null, at: 0 }) as any;
 describe('tray', () => {
-  it('sums what happened', () => {
-    expect(traySummary([row('done'), row('done'), row('deduped'), row('failed', 'bad')])).toBe('2 added · 1 already in the library · 1 refused');
+  it('sums what happened: a disk the library already had counts as added (Files 2 §5)', () => {
+    expect(traySummary([row('done'), row('done'), row('deduped'), row('failed', 'bad')])).toBe('3 added · 1 refused');
     expect(traySummary([row('hashing'), row('done')])).toBe('1 added · 1 working');
+    expect(traySummary([row('deduped')])).toBe('1 added');
   });
-  it('words each state', () => {
+  it('words each state; a deduped row reads Added in the same tone', () => {
     expect(trayState(row('uploading'))).toEqual({ word: 'Uploading…', tone: 'busy' });
-    expect(trayState(row('deduped'))).toEqual({ word: 'Already in the library', tone: 'done' });
+    expect(trayState(row('deduped'))).toEqual({ word: 'Added', tone: 'done' });
+    expect(trayState(row('done'))).toEqual({ word: 'Added', tone: 'done' });
     expect(trayState(row('failed', 'not a disk'))).toEqual({ word: 'Refused — not a disk', tone: 'fail' });
   });
 });

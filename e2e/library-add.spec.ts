@@ -165,7 +165,7 @@ test('an .lha dropped anywhere on the page adds the disks inside it, the overlay
   await expect(page.getByTestId('library-drop-overlay')).toHaveCount(0);
 });
 
-test('an ADF already in the library says so, newest drop first', async ({ page }) => {
+test('an ADF the library already had reads Added, newest drop first', async ({ page }) => {
   const tag = runTag();
   await signUpFresh(page);
   await page.goto('/library');
@@ -178,8 +178,9 @@ test('an ADF already in the library says so, newest drop first', async ({ page }
     { name: `LibAdd New ${tag} (1990)(X).adf`, kind: 'file', bytes: bytes(b) },
     { name: `LibAdd Dup ${tag} (1990)(X).adf`, kind: 'file', bytes: bytes(a) },
   ], TARGET);
-  await expect(summary(page)).toHaveText('1 added · 1 already in the library', { timeout: 30_000 });
-  await expect(rowOf(page, `lib:${sha(a)}`)).toContainText('Already in the library');
+  await expect(summary(page)).toHaveText('2 added', { timeout: 30_000 });
+  await expect(rowOf(page, `lib:${sha(a)}`)).toContainText('Added');
+  await expect(rowOf(page, `lib:${sha(a)}`)).toHaveAttribute('data-state', 'deduped');
   // The second drop's rows lead, in the order they were dropped.
   await expect(page.getByTestId('library-tray-row')).toHaveCount(2);
   await expect(page.getByTestId('library-tray-row').first()).toHaveAttribute('data-key', `lib:${sha(b)}`);

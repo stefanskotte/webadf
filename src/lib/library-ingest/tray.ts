@@ -3,31 +3,24 @@
 import { newRow, type LibRow } from './rows';
 import type { DropRefusal } from './drop-files';
 
-/** "3 added · 1 already in the library · 1 refused", and "· 2 working" while any row is still hashing or uploading.
- *  A count of nothing is left out; no rows at all is the empty string. */
+/** "3 added · 1 refused", and "· 2 working" while any row is still hashing or uploading. A disk the library already
+ *  had is added too (Files 2 §5: one "Added"; the server only skipped the upload). A count of nothing is left out. */
 export function traySummary(rows: LibRow[]): string {
-  let added = 0, already = 0, refused = 0, working = 0;
+  let added = 0, refused = 0, working = 0;
   for (const r of rows) {
-    if (r.state === 'done') added++;
-    else if (r.state === 'deduped') already++;
+    if (r.state === 'done' || r.state === 'deduped') added++;
     else if (r.state === 'failed') refused++;
     else working++;
   }
-  return [
-    added && `${added} added`,
-    already && `${already} already in the library`,
-    refused && `${refused} refused`,
-    working && `${working} working`,
-  ].filter(Boolean).join(' · ');
+  return [added && `${added} added`, refused && `${refused} refused`, working && `${working} working`].filter(Boolean).join(' · ');
 }
 
-/** One row's state word and tone: Hashing… / Uploading… / Added / Already in the library / Refused (— why). */
+/** One row's state word and tone: Hashing… / Uploading… / Added / Refused (— why). */
 export function trayState(r: LibRow): { word: string; tone: 'busy' | 'done' | 'wait' | 'fail' } {
   switch (r.state) {
     case 'hashing': return { word: 'Hashing…', tone: 'busy' };
     case 'uploading': return { word: 'Uploading…', tone: 'busy' };
-    case 'done': return { word: 'Added', tone: 'done' };
-    case 'deduped': return { word: 'Already in the library', tone: 'done' };
+    case 'done': case 'deduped': return { word: 'Added', tone: 'done' };
     case 'failed': return { word: r.note ? `Refused — ${r.note}` : 'Refused', tone: 'fail' };
   }
 }
