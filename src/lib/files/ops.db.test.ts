@@ -259,12 +259,12 @@ describe('fix round 1', () => {
       kind: 'done', items: [{ source: 'LIBRARY:/g5/d5/Tree', ok: false, refusal: { code: 'cycle' } }], versions: [] });   // a folder stays cycle
     expect(await sha('d5')).toBe(s);
   });
-  it('a disk whose blob is gone is refused blob_unavailable 503, not thrown', async () => {
+  it('a disk whose blob is gone is refused blob_unavailable 503 naming the disk, not thrown', async () => {
     await diskStore.remove(await sha('d6'));
     expect(await runOp(ctx, { op: 'makedir', dest: 'LIBRARY:/g6/d6', name: 'X' }))
-      .toEqual({ kind: 'refused', status: 503, refusal: { code: 'blob_unavailable' } });
+      .toEqual({ kind: 'refused', status: 503, refusal: { code: 'blob_unavailable', detail: 'd6' } });
     expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g5/d5/Moving'], dest: 'LIBRARY:/g6/d6', onClash: 'ask' }))
-      .toEqual({ kind: 'refused', status: 503, refusal: { code: 'blob_unavailable' } });
+      .toEqual({ kind: 'refused', status: 503, refusal: { code: 'blob_unavailable', detail: 'd6' } });
   });
 });
 

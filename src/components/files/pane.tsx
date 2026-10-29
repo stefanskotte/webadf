@@ -58,6 +58,7 @@ export function paneSize(bytes: number): string {
 
 /** The type chip: the Browse glyph for files and folders; a title, a disk and a board are folders here. */
 function glyphOf(e: FsEntry): { label: string; bg: string; fg: string } {
+  if (e.kind === 'collection') return entryGlyph({ kind: 'dir', name: e.name });
   if (e.kind === 'title') return { label: 'TTL', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
   if (e.kind === 'disk') return { label: 'DSK', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
   // A board under NET: opens as its queue, so it is a folder here too (increment 3).

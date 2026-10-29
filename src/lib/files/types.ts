@@ -4,8 +4,11 @@ import type { HistoryVersion } from '@/lib/disk-history/history';
 import type { DiskColor } from '@/lib/disk-icon';
 import type { AdfEntry } from '@/lib/adffs';
 import type { ExistingEntry } from '@/lib/staging';
-/** 'archive': a .lha/.lzh/.zip in STASH:, a file that also opens as a read-only folder. 'board': a board under NET:. */
-export type EntryKind = 'title' | 'disk' | 'dir' | 'file' | 'archive' | 'board';
+/**
+ * 'archive': a .lha/.lzh/.zip in STASH:, a file that also opens as a read-only folder. 'board': a board under NET:.
+ * 'collection': a Library collection under LIBRARY:, a folder of titles (Files 2).
+ */
+export type EntryKind = 'title' | 'disk' | 'dir' | 'file' | 'archive' | 'board' | 'collection';
 export type FsEntry = {
   name: string; kind: EntryKind; path: string;
   size: number | null; date: string | null; protection: string | null; comment: string | null;
@@ -16,6 +19,8 @@ export type FsEntry = {
   received?: number;
   /** A folder inside a disk: everything under it, at any depth (what deleting it removes as well). */
   inside?: { files: number; folders: number };
+  /** The Size cell's words for a row without bytes: a collection's "12 titles". */
+  sizeText?: string;
 };
 export type DiskInfo = {
   diskId: string; gameId: string; title: string; label: string; filesystem: 'OFS' | 'FFS' | null; hd: boolean;
@@ -35,6 +40,14 @@ export type Listing = {
   writable: boolean; readOnlyReason: string | null; disk: DiskInfo | null; meta: string;
   /** NET:/<board> only: what counts against the board's 32 files / 16 MB now (a drop checks it before uploading). */
   queue?: { deviceId: string; files: number; bytes: number };
+  /**
+   * LIBRARY: only: where the pane is (Files 2): the root, a collection, a title's disks, or inside a disk. At the root
+   * the collection rows come first, in the Library's collection order (sortKey) as listed: a pane keeps them in this
+   * order whatever its column sort, and sorts only the titles after them.
+   */
+  library?: { level: 'root' | 'collection' | 'title' | 'disk'; collectionId: string | null };
+  /** Inside a disk: the disk's own path, with its collection prefix ("new in vN" and the drop folder read under it). */
+  diskBase?: string | null;
 };
 export type RefusalCode =
   | 'not_found' | 'read_only' | 'mounted' | 'disk_full' | 'name_exists' | 'bad_name' | 'comment_too_long'

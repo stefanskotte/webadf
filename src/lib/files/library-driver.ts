@@ -15,6 +15,7 @@ import { isMountedReason } from '@/lib/mount-wording';
 import { childOf, formatPath, isWithin, parsePath, type FsPath } from './path';
 import { diskStore } from '@/lib/storage';
 import { BlobUnavailableError, listLibrary, loadDisk, readLibraryFile, readOnlyReasonOf, resolveInDisk, type ResolvedDisk } from './library';
+import { placeInLibrary } from './library-paths';
 import type { RefusalCode } from './types';
 import {
   checkComment, checkName, groupBy, itemResult, keepBothName, REMOVE_FAILED, refuse, Refused, skippedItem,
@@ -25,24 +26,27 @@ type Run = OpCtx;
 
 // ---- paths, disks, edits -------------------------------------------------------------------------------------
 
-type Loc = { path: FsPath; gameId: string; diskId: string; names: string[] };
+/** A LIBRARY: path inside a disk. `canon` is the same place without its collection prefix: what two paths of one disk
+ *  are compared by (a cycle, an entry inside a folder), whichever form each came in (R2). */
+type Loc = { path: FsPath; canon: FsPath; gameId: string; diskId: string; names: string[] };
 type Disks = Map<string, ResolvedDisk>;
 type Step = (adf: Uint8Array) => WriteResult;
 type Hit = { entry: AdfEntry; parentBlock: number; dirBlock: number };
 
-/** A LIBRARY: path inside a disk. Other devices arrive in later increments. */
-function locate(raw: string): Loc {
+/** A LIBRARY: path inside a disk, reached directly or through a collection the title is filed in. */
+async function locate(ctx: FsCtx, raw: string): Promise<Loc> {
   const path = parsePath(raw);
   if (!path) refuse('not_found', 404);
   if (path.device !== 'LIBRARY') refuse('unsupported', 400, `${path.device}: is not available yet`);
-  const [gameId, diskId, ...names] = path.segments;
-  if (!gameId || !diskId) refuse('unsupported', 400, 'not inside a disk');
-  return { path, gameId, diskId, names };
+  const at = await placeInLibrary(ctx, path.segments);
+  if (!at) refuse('not_found', 404);
+  if (at.level !== 'disk') refuse('unsupported', 400, 'not inside a disk');
+  return { path, canon: { device: 'LIBRARY', segments: [at.gameId, at.diskId, ...at.names] }, gameId: at.gameId, diskId: at.diskId, names: at.names };
 }
 
 /** An entry, not a disk or title: what copy/move/delete/rename/protect/comment act on. */
-function locateEntry(raw: string): Loc {
-  const loc = locate(raw);
+async function locateEntry(ctx: FsCtx, raw: string): Promise<Loc> {
+  const loc = await locate(ctx, raw);
   if (!loc.names.length) refuse('unsupported', 400, 'not an entry on a disk');
   return loc;
 }
@@ -52,7 +56,7 @@ async function diskOf(ctx: FsCtx, cache: Disks, loc: Loc): Promise<ResolvedDisk>
   const hit = cache.get(key);
   if (hit) return hit;
   let d: ResolvedDisk | null;
-  try { d = await loadDisk(ctx, loc.gameId, loc.diskId); } catch (e) { if (e instanceof BlobUnavailableError) refuse('blob_unavailable', 503); throw e; }
+  try { d = await loadDisk(ctx, loc.gameId, loc.diskId); } catch (e) { if (e instanceof BlobUnavailableError) refuse('blob_unavailable', 503, loc.diskId); throw e; }
   if (!d) refuse('not_found', 404);
   cache.set(key, d);
   return d;
@@ -147,7 +151,7 @@ function blocksOf(e: AdfEntry, fs: 'OFS' | 'FFS'): number {
 async function copyOrMove(ctx: Run, req: CopyMove): Promise<Outcome> {
   const move = req.op === 'move';
   const cache: Disks = new Map();
-  const destLoc = locate(req.dest);
+  const destLoc = await locate(ctx, req.dest);
   const dd = await diskOf(ctx, cache, destLoc);
   const dest = dirAt(dd, destLoc);
   const intl = dd.intl;
@@ -156,12 +160,12 @@ async function copyOrMove(ctx: Run, req: CopyMove): Promise<Outcome> {
   type Src = { raw: string; loc: Loc; d: ResolvedDisk; hit: Hit; local: boolean };
   const srcs: Src[] = [];
   for (const raw of req.sources) {
-    const loc = locateEntry(raw);
+    const loc = await locateEntry(ctx, raw);
     const d = await diskOf(ctx, cache, loc);
     const hit = entryAt(d, loc);
     const local = d === dd;
     // A folder into itself or below: on the same disk only, where the two paths share a tree.
-    if (local && hit.entry.kind === 'dir' && isWithin(destLoc.path, loc.path, same)) refuse('cycle', 400);
+    if (local && hit.entry.kind === 'dir' && isWithin(destLoc.canon, loc.canon, same)) refuse('cycle', 400);
     srcs.push({ raw, loc, d, hit, local });
   }
   mustBeWritable(dd);
@@ -210,7 +214,7 @@ async function copyOrMove(ctx: Run, req: CopyMove): Promise<Outcome> {
       if (p.clash && req.onClash === 'replace') {
         // Deleting what the source sits inside (or is) would delete the source with it.
         if (p.local && p.clash.block === p.hit.entry.block && p.clash.kind === 'file') refuse('name_exists', 409, 'same file');
-        if (p.local && isWithin(p.loc.path, childOf(destLoc.path, p.clash.name), same)) refuse('cycle', 400);
+        if (p.local && isWithin(p.loc.canon, childOf(destLoc.canon, p.clash.name), same)) refuse('cycle', 400);
         deletes.push(onEntry([...destLoc.names, p.clash.name], (adf, h) => deleteEntry(adf, h.parentBlock, h.entry.block)));
         freed += blocksOf(p.clash, fs);
       }
@@ -310,7 +314,7 @@ async function perDisk(ctx: Run, sources: string[], step: (names: string[]) => S
   const cache: Disks = new Map();
   const located: { raw: string; loc: Loc; d: ResolvedDisk }[] = [];
   for (const raw of sources) {
-    const loc = locateEntry(raw);
+    const loc = await locateEntry(ctx, raw);
     const d = await diskOf(ctx, cache, loc);
     entryAt(d, loc);
     located.push({ raw, loc, d });
@@ -342,8 +346,7 @@ function protectMany(ctx: Run, sources: string[], protection: number): Promise<O
 
 // ---- one entry: rename, comment, makedir -------------------------------------------------------------------
 
-async function onOne(ctx: Run, source: string, step: Step): Promise<Outcome> {
-  const loc = locateEntry(source);
+async function onOne(ctx: Run, loc: Loc, source: string, step: Step): Promise<Outcome> {
   const d = await diskOf(ctx, new Map(), loc);
   entryAt(d, loc);
   mustBeWritable(d);
@@ -351,19 +354,21 @@ async function onOne(ctx: Run, source: string, step: Step): Promise<Outcome> {
   return { kind: 'done', items: [{ source, ok: true }] };
 }
 
-function renameOne(ctx: Run, source: string, name: string): Promise<Outcome> {
+async function renameOne(ctx: Run, source: string, name: string): Promise<Outcome> {
   checkName(name);
-  return onOne(ctx, source, onEntry(locateEntry(source).names, (adf, h) => renameEntry(adf, h.parentBlock, h.entry.block, name)));
+  const loc = await locateEntry(ctx, source);
+  return onOne(ctx, loc, source, onEntry(loc.names, (adf, h) => renameEntry(adf, h.parentBlock, h.entry.block, name)));
 }
 
-function commentOne(ctx: Run, source: string, comment: string): Promise<Outcome> {
+async function commentOne(ctx: Run, source: string, comment: string): Promise<Outcome> {
   checkComment(comment);
-  return onOne(ctx, source, onEntry(locateEntry(source).names, (adf, h) => setComment(adf, h.parentBlock, h.entry.block, comment)));
+  const loc = await locateEntry(ctx, source);
+  return onOne(ctx, loc, source, onEntry(loc.names, (adf, h) => setComment(adf, h.parentBlock, h.entry.block, comment)));
 }
 
 async function makeDir(ctx: Run, destRaw: string, name: string): Promise<Outcome> {
   checkName(name);
-  const loc = locate(destRaw);
+  const loc = await locate(ctx, destRaw);
   const d = await diskOf(ctx, new Map(), loc);
   const dir = dirAt(d, loc);
   mustBeWritable(d);
@@ -377,7 +382,7 @@ async function makeDir(ctx: Run, destRaw: string, name: string): Promise<Outcome
 /** One entry walked for a copy to another device; null when it is not there. */
 async function collect(ctx: FsCtx, p: FsPath): Promise<IncomingItem[] | null> {
   try {
-    const loc = locateEntry(formatPath(p));
+    const loc = await locateEntry(ctx, formatPath(p));
     const d = await diskOf(ctx, new Map(), loc);
     const hit = entryAt(d, loc);
     const out: PlanItem[] = [];
@@ -392,7 +397,7 @@ async function collect(ctx: FsCtx, p: FsPath): Promise<IncomingItem[] | null> {
 
 /** Entries from another device (or this one) written into one folder of a disk: ONE edit, however many tops. */
 async function write(ctx: Run, dir: FsPath, tops: IncomingTop[], onClash: OnClash): Promise<Outcome> {
-  const destLoc = locate(formatPath(dir));
+  const destLoc = await locate(ctx, formatPath(dir));
   const dd = await diskOf(ctx, new Map(), destLoc);
   const dest = dirAt(dd, destLoc);
   mustBeWritable(dd);
@@ -453,7 +458,7 @@ async function remove(ctx: Run, sources: string[], unchanged?: ReadonlyMap<strin
   const list: Removal[] = [];
   for (const raw of sources) {
     try {
-      const loc = locateEntry(raw);
+      const loc = await locateEntry(ctx, raw);
       const d = await diskOf(ctx, cache, loc);
       const hit = entryAt(d, loc);
       const copied = unchanged.get(raw);
@@ -474,7 +479,7 @@ async function remove(ctx: Run, sources: string[], unchanged?: ReadonlyMap<strin
 async function mustRemove(ctx: FsCtx, sources: string[]): Promise<void> {
   const cache: Disks = new Map();
   for (const raw of sources) {
-    const loc = locateEntry(raw);
+    const loc = await locateEntry(ctx, raw);
     const d = await diskOf(ctx, cache, loc);
     entryAt(d, loc);
     mustBeWritable(d);
@@ -494,7 +499,7 @@ async function setMeta(ctx: Run, sources: string[], meta: { protection?: number;
 /** BlobUnavailableError (a disk whose image the store cannot give) is the driver's refusal 503, whichever method met it. */
 async function guarded<T>(fn: () => Promise<T>): Promise<T> {
   try { return await fn(); } catch (e) {
-    if (e instanceof BlobUnavailableError) refuse('blob_unavailable', 503);
+    if (e instanceof BlobUnavailableError) refuse('blob_unavailable', 503, e.diskId);
     throw e;
   }
 }

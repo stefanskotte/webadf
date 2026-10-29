@@ -49,7 +49,7 @@ export function placesIn(l: Listing): FsEntry[] {
   return l.entries.filter((e) => e.kind !== 'file' && e.kind !== 'archive').sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }
 
-const PLACE_GLYPH: Record<string, string> = { title: 'TTL', disk: 'DSK', dir: 'DIR', board: 'BRD' };
+const PLACE_GLYPH: Record<string, string> = { title: 'TTL', disk: 'DSK', dir: 'DIR', board: 'BRD', collection: 'DIR' };
 
 export function CopyToPicker({ op, count, start, busy, list, onPick, onCancel }: CopyToPickerProps) {
   const [path, setPath] = useState(start);
