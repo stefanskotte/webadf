@@ -6,6 +6,8 @@ import { disks } from '@/db/schema/catalog';
 import { transfers } from '@/db/schema/transfers';
 import { amigaUploads, amigaUploadChunks } from '@/db/schema/amiga-uploads';
 import { cleanAmigaPath } from '@/lib/transfers';
+import { listStash, lockOrg, touchStashDirs } from '@/lib/stash';
+import { uniqueStashPath } from '@/lib/files/stash-paths';
 import { storeSendBytes } from '@/lib/send-http';
 import { firmwareAtLeast } from '@/lib/firmware-version';
 import {
@@ -16,6 +18,8 @@ import {
 
 export type UploadRow = typeof amigaUploads.$inferSelect;
 const LIVE = ['receiving', 'stored'];
+/** The Upload page's "From the Amiga" list sees only what a board sent (R5): STASH: rows from the browser, copies and folders are not its. */
+const FROM_AMIGA = [eq(amigaUploads.source, 'amiga'), eq(amigaUploads.kind, 'file')];
 
 export type OpenInput = { size: number; date: string; protection: number; path: string; comment: string };
 export type OpenResult = { ok: true; id: string; offset: number } | { ok: false; code: 'size' | 'full' | 'name' };
@@ -80,7 +84,7 @@ export type CloseResult = { ok: true; name: string } | { ok: false; status: 404 
 function settledAnswer(r: UploadRow, crc: number): CloseResult | null {
   if (r.status === 'receiving') return null;
   if (r.crc32 === crc >>> 0) {
-    if (r.status === 'stored') return { ok: true, name: r.path };
+    if (r.status === 'stored') return { ok: true, name: r.sentName ?? r.path };   // the name the board sent, not a keep-both one (R4)
     if (r.status === 'failed' && r.errorCode === 'crc') return { ok: false, status: 409, code: 'crc' };
   }
   return { ok: false, status: 409, code: 'gone' };
@@ -125,10 +129,17 @@ export async function closeUpload(db: Db, deviceId: string, id: string, crc: num
   }
   const sha = await storeSendBytes(bytes);   // adf/<sha256> through diskStore: local folder or Vercel Blob (ruling P5)
   const done = await db.transaction(async (tx) => {
+    // One name, one entry (R4): under the org lock, a path STASH: already holds is stored as its keep-both name.
+    await lockOrg(tx, r.orgId);
+    const others = (await listStash(tx, r.orgId, now)).filter((x) => x.id !== id);
+    const path = uniqueStashPath(others, r.path);
     const hit = await tx.update(amigaUploads).set({ status: 'stored', crc32: crc >>> 0, blobSha256: sha, storedAt: sql`now()`, receivedBytes: r.sizeBytes,
-      expiresAt: new Date(now.getTime() + UPLOAD_KEEP_MS) })
+      expiresAt: new Date(now.getTime() + UPLOAD_KEEP_MS), path, sentName: path === r.path ? null : r.path })
       .where(and(eq(amigaUploads.id, id), eq(amigaUploads.status, 'receiving'))).returning({ id: amigaUploads.id });
-    if (hit.length) await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
+    if (hit.length) {
+      await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
+      await touchStashDirs(tx, r.orgId, path, now);
+    }
     return hit.length > 0;
   });
   // Lost the update: another close stored it (ok, the same name) -- or a delete took it (gone, not ok).
@@ -156,7 +167,7 @@ export function toUploadView(r: UploadRow & { libraryGameId?: string | null; cur
   const lapsed = r.status === 'receiving' && r.expiresAt.getTime() <= now;
   return {
     id: r.id, path: r.path, sizeBytes: r.sizeBytes, status: lapsed ? 'failed' : (r.status as UploadView['status']),
-    receivedBytes: r.receivedBytes, errorCode: lapsed ? 'expired' : r.errorCode, deviceId: r.deviceId, deviceName: r.deviceName,
+    receivedBytes: r.receivedBytes, errorCode: lapsed ? 'expired' : r.errorCode, deviceId: r.deviceId, deviceName: r.deviceName ?? 'Board',
     createdAt: r.createdAt.getTime(), storedAt: r.storedAt?.getTime() ?? null, expiresAt: r.expiresAt.getTime(),
     libraryDiskId: r.libraryDiskId, libraryGameId: r.libraryGameId ?? null, blobSha256: r.blobSha256, cursor: r.cursor,
   };
@@ -166,7 +177,7 @@ export function toUploadView(r: UploadRow & { libraryGameId?: string | null; cur
 export async function listUploads(db: Db, orgId: string, board: string | null, now = new Date()): Promise<UploadView[]> {
   const rows = await db.select({ u: amigaUploads, gameId: disks.gameId, cursor: sql<string>`to_char(coalesce(${amigaUploads.storedAt}, ${amigaUploads.createdAt}) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` }).from(amigaUploads)
     .leftJoin(disks, and(eq(disks.id, amigaUploads.libraryDiskId), eq(disks.orgId, orgId)))
-    .where(and(eq(amigaUploads.orgId, orgId), ne(amigaUploads.status, 'deleted'),
+    .where(and(eq(amigaUploads.orgId, orgId), ne(amigaUploads.status, 'deleted'), ...FROM_AMIGA,
       or(ne(amigaUploads.status, 'stored'), gt(amigaUploads.expiresAt, now)),
       board ? eq(amigaUploads.deviceId, board) : undefined))
     .orderBy(desc(amigaUploads.createdAt), desc(amigaUploads.id)).limit(UPLOAD_AREA_MAX_FILES);
@@ -227,7 +238,7 @@ export async function clearUploads(db: Db, orgId: string, cursor: UploadCursor, 
   if (!isUploadCursor(cursor)) throw new RangeError('clearUploads: not an upload cursor');
   return db.transaction(async (tx) => {
     const done = await tx.update(amigaUploads).set({ status: 'deleted' })
-      .where(and(eq(amigaUploads.orgId, orgId), inArray(amigaUploads.status, ['stored', 'failed']), sql`coalesce(${amigaUploads.storedAt}, ${amigaUploads.createdAt}) <= ${cursor}::timestamptz`,
+      .where(and(eq(amigaUploads.orgId, orgId), inArray(amigaUploads.status, ['stored', 'failed']), ...FROM_AMIGA, sql`coalesce(${amigaUploads.storedAt}, ${amigaUploads.createdAt}) <= ${cursor}::timestamptz`,
         board ? eq(amigaUploads.deviceId, board) : undefined))
       .returning({ id: amigaUploads.id });
     if (done.length) await tx.delete(amigaUploadChunks).where(inArray(amigaUploadChunks.uploadId, done.map((d) => d.id)));
@@ -242,7 +253,7 @@ export async function setLibraryDisk(db: Db, orgId: string, id: string, diskId: 
 /** Per board, for the card's line (spec §4): files stored within the last 24 h. */
 export async function uploadSummaries(db: Db, orgId: string, now = new Date()): Promise<Record<string, number>> {
   const rows = await db.select({ deviceId: amigaUploads.deviceId, n: sql<number>`count(*)::int` }).from(amigaUploads)
-    .where(and(eq(amigaUploads.orgId, orgId), eq(amigaUploads.status, 'stored'), gt(amigaUploads.storedAt, new Date(now.getTime() - 24 * 3600_000))))
+    .where(and(eq(amigaUploads.orgId, orgId), eq(amigaUploads.status, 'stored'), ...FROM_AMIGA, gt(amigaUploads.storedAt, new Date(now.getTime() - 24 * 3600_000))))
     .groupBy(amigaUploads.deviceId);
   const out: Record<string, number> = {};
   for (const r of rows) if (r.deviceId) out[r.deviceId] = r.n;

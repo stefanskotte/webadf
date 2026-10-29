@@ -2,7 +2,7 @@
 // The seam between the Files engine and a device's storage (spec 2026-10-29 §3, increment 2): one VolumeDriver per
 // device (LIBRARY:, STASH:, later NET:). ops.ts dispatches by the path's device; the routes list and read through the
 // driver. A driver refuses by throwing Refused, so BlobUnavailableError never leaves LIBRARY's driver. SERVER ONLY.
-import { amigaNameProblem, AMIGA_COMMENT_MAX, AMIGA_NAME_MAX, type Device, type FsPath } from './path';
+import { amigaNameProblem, AMIGA_COMMENT_MAX, type Device, type FsPath } from './path';
 import type { Listing, Refusal, RefusalCode } from './types';
 import type { OpVersion } from './edit-rules';
 
@@ -40,17 +40,7 @@ export function checkComment(comment: string): void {
   if (/[^\x20-\x7E\xA0-\xFF]/.test(comment)) refuse('bad_name', 400, 'comment');
 }
 
-/** 'ReadMe' → 'ReadMe_1', 'a.txt' → 'a_1.txt': the first free number, the stem trimmed to keep the name ≤ 30. */
-export function keepBothName(name: string, taken: (n: string) => boolean): string {
-  const dot = name.lastIndexOf('.');
-  const [stem, ext0] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
-  for (let n = 1; ; n++) {
-    const suffix = `_${n}`;
-    const ext = ext0.length + suffix.length < AMIGA_NAME_MAX ? ext0 : '';
-    const candidate = stem.slice(0, AMIGA_NAME_MAX - suffix.length - ext.length) + suffix + ext;
-    if (!taken(candidate)) return candidate;
-  }
-}
+export { keepBothName } from './stash-paths';
 
 export const REMOVE_FAILED = 'copied, but the original could not be removed';
 
