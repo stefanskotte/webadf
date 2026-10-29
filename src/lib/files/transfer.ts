@@ -17,6 +17,13 @@ export function clashGroups(sources: string[], clashed: string[], choices: Recor
   })).filter((g) => g.sources.length > 0);
 }
 
+/**
+ * The multi-file download's byte cap (spec 2026-10-29 §3.3; final review): a zip is answered in one response, and the
+ * hosting platform refuses a response body over ~4.5 MB. The same cap for self-hosters (no feature is smaller there).
+ * One file is never zipped and is at most an HD disk's 1.76 MB, so it is never refused by this.
+ */
+export const ZIP_MAX_BYTES = 4 * 1024 * 1024;
+
 /** Longer download URLs than this risk a server's header limit; the person zips a folder instead. */
 export const DOWNLOAD_URL_MAX = 8000;
 

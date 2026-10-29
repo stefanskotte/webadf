@@ -34,12 +34,12 @@ const STANDARD: BatchOp[] = [
 ];
 
 /** A real FFS disk built from `ops`, stored, and seeded as a one-disk title of this org. */
-async function seedTitle(orgId: string, title: string, ops: BatchOp[] = STANDARD) {
-  const r = applyBatch(ops)(formatVolume({ filesystem: 'FFS', volumeName: title.slice(0, 24) }));
+async function seedTitle(orgId: string, title: string, ops: BatchOp[] = STANDARD, density: 'dd' | 'hd' = 'dd') {
+  const r = applyBatch(ops)(formatVolume({ filesystem: 'FFS', volumeName: title.slice(0, 24), density }));
   if (!r.ok) throw new Error(r.reason);
   const sha256 = createHash('sha256').update(r.adf).digest('hex');
   await diskStore.put(sha256, r.adf);
-  const seeded = await seedDisk(orgId, { title, diskNo: 1, sha256, writeProtected: false });
+  const seeded = await seedDisk(orgId, { title, diskNo: 1, sha256, sizeBytes: r.adf.length, writeProtected: false });
   return { ...seeded, sha256, path: `LIBRARY:/${seeded.gameId}/${seeded.diskId}` };
 }
 
@@ -364,4 +364,28 @@ test('Info edits a comment', async ({ page }) => {
   await row(page, 'right', 'ReadMe').dblclick();
   await expect(page.getByTestId('files-info-comment')).toHaveValue('Read me before anything else');
   expect(at((await stored(a.diskId)).root, 'ReadMe')!.comment).toBe('Read me before anything else');
+});
+
+test('a download over the cap says so in words and saves nothing; a smaller one still saves (final review)', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const tag = runTag();
+  // A folder of 1,000 empty files is 1,001 entries: one over the zip's cap, on any server. An HD disk has the room.
+  const many: BatchOp[] = [{ op: 'mkdir', parentPath: '', name: 'Many' },
+    ...Array.from({ length: 1000 }, (_, i): BatchOp => ({ op: 'add', parentPath: 'Many', name: `F${i}`, bytes: new Uint8Array(0) }))];
+  const a = await seedTitle(orgId, `Cap-${tag}`, [...STANDARD, ...many], 'hd');
+  await openFiles(page, 'LIBRARY:', a.path, 'right');
+  const saved: string[] = [];
+  page.on('download', (d) => saved.push(d.suggestedFilename()));
+
+  await row(page, 'right', 'Many').click();
+  const [res] = await Promise.all([page.waitForResponse((r) => r.url().includes('/api/files/download?')),
+    page.getByTestId('files-download').click()]);
+  expect(res.status()).toBe(413);
+  await expect(toast(page, 'Too big to download at once — select fewer files (4 MB).')).toBeVisible();
+  expect(saved).toEqual([]);
+
+  await row(page, 'right', 'ReadMe').click();
+  await row(page, 'right', 'C').click({ modifiers: ['ControlOrMeta'] });
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('files-download').click()]);
+  expect(dl.suggestedFilename()).toMatch(/\.zip$/);
 });

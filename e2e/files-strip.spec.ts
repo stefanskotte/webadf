@@ -69,6 +69,29 @@ test('Files… opens the disk on the right with its strip; the Browse address la
   await expect(page.getByTestId('disk-strip-right')).toBeVisible();
 });
 
+test('a disk whose image cannot be read keeps its strip, with History, on load and on arriving (final review)', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const tag = runTag();
+  // A disk row whose image was never stored: listing it is blob_unavailable.
+  const sha256 = createHash('sha256').update(`never-stored-${tag}`).digest('hex');
+  const { gameId } = await seedDisk(orgId, { title: `Lost-${tag}`, diskNo: 1, sha256, writeProtected: false });
+
+  const unreadable = 'The disk image could not be read. Try again in a moment.';
+  // Arriving on the client: the left pane opens the disk from its title (the strip is fetched after the move).
+  await page.goto(`/files?${new URLSearchParams({ left: `LIBRARY:/${gameId}`, right: 'LIBRARY:', active: 'left' })}`);
+  await managerReady(page);
+  await page.getByTestId('pane-left').locator('[data-testid="pane-row"][data-kind="disk"]').dblclick();
+  await expect(page.getByTestId('pane-left-error')).toHaveText(unreadable);
+  const strip = page.getByTestId('disk-strip-left');
+  await expect(strip).toContainText(`Lost-${tag}`);
+  await expect(strip.getByTestId('disk-strip-history-toggle')).toBeVisible();
+
+  // On load: the URL now names the disk, and the server page builds the strip itself.
+  await page.reload();
+  await expect(page.getByTestId('pane-left-error')).toHaveText(unreadable);
+  await expect(page.getByTestId('disk-strip-left').getByTestId('disk-strip-history-toggle')).toBeVisible();
+});
+
 test('files dropped from the computer land in the folder the pane shows, as a new version', async ({ page }) => {
   const { orgId } = await signUpFresh(page);
   const tag = runTag();

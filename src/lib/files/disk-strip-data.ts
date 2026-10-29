@@ -15,6 +15,7 @@ import { isHdAdf } from '@/lib/disk-format';
 import { titleDiskColor } from '@/lib/library-look';
 import { loadHistory, type HistoryVersion } from '@/lib/disk-history/history';
 import { copiedFromText } from '@/lib/remote/copy';
+import { findHolder } from '@/lib/disk-holder';
 import type { StripData } from './types';
 
 /**
@@ -40,15 +41,17 @@ export async function diskStripData(orgId: string, diskId: string): Promise<Stri
   const db = getDb();
   const [disk] = await db
     .select({ sha256: disks.sha256, gameId: disks.gameId, imageFormat: disks.imageFormat, sizeBytes: disks.sizeBytes,
-      authored: games.authored, copiedFrom: games.copiedFrom })
+      diskNo: disks.diskNo, label: disks.label, tosecName: disks.tosecName, matchState: blobs.matchState,
+      title: games.title, authored: games.authored, copiedFrom: games.copiedFrom })
     .from(disks)
     .innerJoin(entitlements, and(eq(entitlements.sha256, disks.sha256), eq(entitlements.orgId, orgId)))
     .leftJoin(games, and(eq(games.id, disks.gameId), eq(games.orgId, orgId)))
+    .leftJoin(blobs, eq(blobs.sha256, disks.sha256))
     .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId), isLocal(disks)))
     .limit(1);
   if (!disk) return null;
 
-  const [deviceRows, kindRows, deviceNames] = await Promise.all([
+  const [deviceRows, kindRows, deviceNames, holder] = await Promise.all([
     listDevices(orgId),
     db.select({ setName: tosecEntries.setName })
       .from(disks)
@@ -57,6 +60,7 @@ export async function diskStripData(orgId: string, diskId: string): Promise<Stri
       .where(and(eq(disks.gameId, disk.gameId), eq(disks.orgId, orgId))),
     db.select({ id: devices.id, name: devices.name }).from(devices).where(orgFilter(devices, orgId))
       .then((rows) => new Map(rows.map((d) => [d.id, d.name] as const))),
+    findHolder(db, orgId, disk.sha256),
   ]);
 
   let history: HistoryVersion[] = [];
@@ -76,5 +80,12 @@ export async function diskStripData(orgId: string, diskId: string): Promise<Stri
     headSeq: history.find((v) => v.isHead)?.seq ?? null,
     color: titleDiskColor({ id: diskId, hasHd: isHdAdf(disk), kind, formats: [disk.imageFormat], authored: disk.authored ?? false }),
     copiedFrom: copiedFromText(disk.copiedFrom),
+    // library.ts loadDisk's DiskInfo less what only the image knows; the same Disk N name and D-W-3 identity rule.
+    info: {
+      diskId, gameId: disk.gameId, title: disk.title ?? '', label: disk.label ?? `Disk ${disk.diskNo}`, filesystem: null,
+      hd: isHdAdf(disk), usedBytes: null, freeBytes: null, totalBytes: null, holder: holder?.name ?? null,
+      imageFormat: disk.imageFormat, volumeName: null, sha256: disk.sha256, intl: false,
+      tosecName: disk.matchState === 'matched' ? disk.tosecName : null,
+    },
   };
 }

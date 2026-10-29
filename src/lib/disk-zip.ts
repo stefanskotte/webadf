@@ -73,6 +73,52 @@ export function zipEntries(adf: Uint8Array, root: AdfEntry[], blocks: readonly n
 /** The Files manager's multi-file download caps (spec 2026-10-29 §3.3): entries counted with every folder. */
 export type ZipLimits = { maxEntries: number; maxBytes: number };
 
+/** What `entry` puts in a zip: every entry under it, counted with the folders, and its files' bytes. Reads nothing. */
+export function tallyTop(entry: AdfEntry): { entries: number; bytes: number } {
+  let entries = 0; let bytes = 0;
+  const count = (e: AdfEntry) => { entries++; if (e.kind === 'dir') e.children.forEach(count); else bytes += e.sizeBytes; };
+  count(entry);
+  return { entries, bytes };
+}
+
+/** One top entry read out of its image, so the image can be let go: its files as paths below its (not yet chosen) name. */
+export type ReadTop = { name: string; files: { rel: string; bytes: Uint8Array | null }[] };
+
+/** Read `entry` (a folder with everything under it) out of `adf`; `unreadable` names the first file that cannot be read. */
+export function readTop(adf: Uint8Array, entry: AdfEntry): ReadTop | { unreadable: string } {
+  const files: ReadTop['files'] = [];
+  const add = (e: AdfEntry, rel: string): string | null => {
+    if (e.kind === 'dir') {
+      files.push({ rel: `${rel}/`, bytes: null });
+      for (const c of e.children) {
+        const bad = add(c, `${rel}/${safe(c.name)}`);
+        if (bad !== null) return bad;
+      }
+      return null;
+    }
+    const content = readFile(adf, e.block);
+    if (!content) return e.name;
+    files.push({ rel, bytes: content.bytes });
+    return null;
+  };
+  const bad = add(entry, '');
+  return bad === null ? { name: entry.name, files } : { unreadable: bad };
+}
+
+/** Tops already read, in order, as one zip: each under its own name, a later one sharing a name numbered. */
+export function zipReadTops(tops: readonly ReadTop[]): Uint8Array {
+  const files: { path: string; bytes: Uint8Array | null }[] = [];
+  const taken = new Set<string>();
+  for (const t of tops) {
+    const base = safe(t.name);
+    let name = base;
+    for (let n = 2; taken.has(name.toLowerCase()); n++) name = numbered(base, n);
+    taken.add(name.toLowerCase());
+    for (const f of t.files) files.push({ path: name + f.rel, bytes: f.bytes });
+  }
+  return writeZip(files);
+}
+
 /**
  * Entries, each from its own image (so a selection can span disks), each at the top of the archive under its own
  * name with its subtree below it -- the rules zipEntries describes. With `limits`, a selection over either cap is
@@ -83,35 +129,14 @@ export function zipTops(
 ): ZipOutcome | { ok: false; reason: 'too_large' } {
   if (limits) {
     let entries = 0; let bytes = 0;
-    const count = (e: AdfEntry) => { entries++; if (e.kind === 'dir') e.children.forEach(count); else bytes += e.sizeBytes; };
-    tops.forEach((t) => count(t.entry));
+    for (const t of tops) { const n = tallyTop(t.entry); entries += n.entries; bytes += n.bytes; }
     if (entries > limits.maxEntries || bytes > limits.maxBytes) return { ok: false, reason: 'too_large' };
   }
-
-  const files: { path: string; bytes: Uint8Array | null }[] = [];
-  const add = (adf: Uint8Array, e: AdfEntry, path: string): string | null => {
-    if (e.kind === 'dir') {
-      files.push({ path: `${path}/`, bytes: null });
-      for (const c of e.children) {
-        const bad = add(adf, c, `${path}/${safe(c.name)}`);
-        if (bad !== null) return bad;
-      }
-      return null;
-    }
-    const content = readFile(adf, e.block);
-    if (!content) return e.name;
-    files.push({ path, bytes: content.bytes });
-    return null;
-  };
-
-  const taken = new Set<string>();
+  const read: ReadTop[] = [];
   for (const { adf, entry } of tops) {
-    const base = safe(entry.name);
-    let name = base;
-    for (let n = 2; taken.has(name.toLowerCase()); n++) name = numbered(base, n);
-    taken.add(name.toLowerCase());
-    const bad = add(adf, entry, name);
-    if (bad !== null) return { ok: false, reason: 'unreadable', name: bad };
+    const r = readTop(adf, entry);
+    if ('unreadable' in r) return { ok: false, reason: 'unreadable', name: r.unreadable };
+    read.push(r);
   }
-  return { ok: true, zip: writeZip(files) };
+  return { ok: true, zip: zipReadTops(read) };
 }

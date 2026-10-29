@@ -8,8 +8,9 @@ import { readVolume, readUsage, readFile, geometryOf, HD_GEOMETRY, type AdfEntry
 import { sameName } from '@/lib/adffs/write';
 import { findHolder, mountedReason } from '@/lib/disk-holder';
 import { isLocal } from '@/lib/remote-hidden';
-import { zipTops } from '@/lib/disk-zip';
+import { readTop, tallyTop, zipReadTops, type ReadTop } from '@/lib/disk-zip';
 import { formatPath, isWithin, type FsPath } from './path';
+import { ZIP_MAX_BYTES } from './transfer';
 import type { Crumb, DiskInfo, FsEntry, Listing } from './types';
 
 export type FsCtx = { orgId: string; userId: string | null };
@@ -146,31 +147,48 @@ export async function readLibraryFile(ctx: FsCtx, p: FsPath) {
 }
 
 /** The multi-file download's caps (spec 2026-10-29 §3.3): beyond either the answer is 413 too_large. */
-export const ZIP_LIMITS = { maxEntries: 1000, maxBytes: 64 * 1024 * 1024 };
+export const ZIP_LIMITS = { maxEntries: 1000, maxBytes: ZIP_MAX_BYTES };
 
 /**
  * Several LIBRARY: files and folders, from any disks, as one .zip: each at the top under its own name, a folder with
  * everything under it. An entry inside another selected folder of the same disk is already in the zip and is not
  * added twice. Null when any path is not a file or folder inside a disk this org has. Throws BlobUnavailableError.
+ *
+ * The disks are loaded one at a time and each is read out (its files only, at most the cap) before the next: a
+ * selection over a cap stops at the disk that crosses it, and no more than one image is held at once.
  */
 export async function zipLibraryPaths(ctx: FsCtx, paths: FsPath[]) {
-  const loaded = new Map<string, ResolvedDisk>();
-  const picked: { p: FsPath; key: string; adf: Uint8Array; entry: AdfEntry; intl: boolean }[] = [];
-  for (const p of paths) {
+  const byDisk = new Map<string, { gameId: string; diskId: string; at: { i: number; p: FsPath; names: string[] }[] }>();
+  for (const [i, p] of paths.entries()) {
     const [gameId, diskId, ...names] = p.segments;
     if (p.device !== 'LIBRARY' || !gameId || !diskId || !names.length) return null;
     const key = `${gameId}/${diskId}`;
-    let d = loaded.get(key);
-    if (!d) {
-      const got = await loadDisk(ctx, gameId, diskId);
-      if (!got) return null;
-      loaded.set(key, d = got);
-    }
-    const at = resolveInDisk(d, names);
-    if (!at?.entry) return null;
-    picked.push({ p, key, adf: d.bytes, entry: at.entry, intl: d.intl });
+    const g = byDisk.get(key) ?? { gameId, diskId, at: [] };
+    g.at.push({ i, p, names });
+    byDisk.set(key, g);
   }
-  const tops = picked.filter((a, i) => !picked.some((b, j) => j !== i && b.key === a.key
-    && (b.entry.block === a.entry.block ? j < i : isWithin(a.p, b.p, (x, y) => sameName(x, y, a.intl)))));
-  return zipTops(tops.map(({ adf, entry }) => ({ adf, entry })), ZIP_LIMITS);
+  let entries = 0; let bytes = 0;
+  const read: { i: number; top: ReadTop }[] = [];
+  for (const g of byDisk.values()) {
+    const d = await loadDisk(ctx, g.gameId, g.diskId);
+    if (!d) return null;
+    const picked: { i: number; p: FsPath; entry: AdfEntry }[] = [];
+    for (const a of g.at) {
+      const entry = resolveInDisk(d, a.names)?.entry;
+      if (!entry) return null;
+      picked.push({ i: a.i, p: a.p, entry });
+    }
+    const tops = picked.filter((a, k) => !picked.some((b, j) => j !== k
+      && (b.entry.block === a.entry.block ? j < k : isWithin(a.p, b.p, (x, y) => sameName(x, y, d.intl)))));
+    for (const t of tops) { const n = tallyTop(t.entry); entries += n.entries; bytes += n.bytes; }
+    if (entries > ZIP_LIMITS.maxEntries || bytes > ZIP_LIMITS.maxBytes) return { ok: false as const, reason: 'too_large' as const };
+    for (const t of tops) {
+      const r = readTop(d.bytes, t.entry);
+      if ('unreadable' in r) return { ok: false as const, reason: 'unreadable' as const, name: r.unreadable };
+      read.push({ i: t.i, top: r });
+    }
+  }
+  // In the order the paths came, as one zip: a later top sharing a name is the one numbered.
+  read.sort((a, b) => a.i - b.i);
+  return { ok: true as const, zip: zipReadTops(read.map((r) => r.top)) };
 }

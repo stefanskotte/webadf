@@ -211,8 +211,10 @@ test('a single file downloads with the right bytes', async ({ page }) => {
 
   await openInFiles(page, row);
   await paneRow(page, 'DATA.BIN').click();
-  const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('files-download').click()]);
-  const href = download.url();
+  // The manager fetches the download (so a refusal is words, not a saved error page) and saves it from memory.
+  const [download, res] = await Promise.all([page.waitForEvent('download'),
+    page.waitForResponse((r) => r.url().includes('/api/files/download?')), page.getByTestId('files-download').click()]);
+  const href = res.url();
   expect(href).toContain(`/api/files/download?path=${encodeURIComponent(`${diskPath(row)}/DATA.BIN`)}`);
   expect(download.suggestedFilename()).toBe('DATA.BIN');
 

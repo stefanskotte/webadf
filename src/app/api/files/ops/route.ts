@@ -3,6 +3,9 @@ import { z } from 'zod';
 import { requireOrg } from '@/lib/session';
 import { runOp, type OpRequest } from '@/lib/files/ops';
 
+// Reads (and an op writes) disk images from the store: the same 60 s every byte-touching handler sets.
+export const maxDuration = 60;
+
 const path = z.string().min(1).max(1024);
 const sources = z.array(path).min(1).max(1000);
 const name = z.string().min(1).max(64);   // the engine applies the Amiga name rules

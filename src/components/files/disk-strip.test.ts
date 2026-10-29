@@ -25,7 +25,8 @@ const board = (o: Partial<MountChoice> = {}): MountChoice => ({
 const inDf0 = board({ state: 'converged', holding: 'SysInfo — disk 1', isThisDisk: true, action: 'eject', actionLabel: 'Eject' });
 
 const data = (o: Partial<StripData> = {}): StripData => ({
-  diskId: 'd1', choices: [board()], history: [], historyUnavailable: false, headSeq: 2, color: 'red', copiedFrom: null, ...o,
+  diskId: 'd1', choices: [board()], history: [], historyUnavailable: false, headSeq: 2, color: 'red', copiedFrom: null,
+  info: disk, ...o,
 });
 
 const noop = () => {};

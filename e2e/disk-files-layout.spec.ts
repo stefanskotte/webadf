@@ -152,8 +152,10 @@ test('the button column holds the actions in the board order; Rename focuses its
   await expect(page.getByTestId('files-actions').locator('button:visible'))
     .toHaveText(['← Copy', '← Move', 'Delete', 'Rename', 'Makedir', 'Protect', 'Info', 'Download', 'Swap ⇄']);
   // One file downloads by its path (R4).
-  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('files-download').click()]);
-  expect(dl.url()).toContain(`/api/files/download?path=${encodeURIComponent(`LIBRARY:/${disk.gameId}/${disk.id}/NOTES.TXT`)}`);
+  const [dl, res] = await Promise.all([page.waitForEvent('download'),
+    page.waitForResponse((r) => r.url().includes('/api/files/download?')), page.getByTestId('files-download').click()]);
+  expect(dl.suggestedFilename()).toBe('NOTES.TXT');
+  expect(res.url()).toContain(`/api/files/download?path=${encodeURIComponent(`LIBRARY:/${disk.gameId}/${disk.id}/NOTES.TXT`)}`);
   await page.getByTestId('files-rename').click();
   await expect(page.getByTestId('files-name-input')).toBeFocused();
   await page.keyboard.press('Escape');

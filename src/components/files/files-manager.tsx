@@ -17,6 +17,7 @@ import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
 import { identityToConfirm, undoTarget, withAddedIn, type OpVersion } from '@/lib/files/edit-rules';
+import { dropBlocked, fetchDownload, reloadsBoth, stripDiskOf } from '@/lib/files/manager-rules';
 import { addedIn } from '@/lib/disk-history/added-in';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
 import { isFileDrag } from '@/components/disks/native-drop';
@@ -322,7 +323,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   // A pane that moved into a disk on the client has no strip yet: ask for it once.
   const asked = useRef(new Set<string>(Object.keys(byDisk(initial.strips))));
-  const shownDisks = [panes.left.listing?.disk?.diskId, panes.right.listing?.disk?.diskId].filter((x): x is string => !!x);
+  const shownDisks = [stripDiskOf(panes.left), stripDiskOf(panes.right)].filter((x): x is string => !!x);
   const shownKey = shownDisks.join(',');
   useEffect(() => {
     for (const id of shownKey.split(',')) {
@@ -472,7 +473,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
       if (res.status === 409 && body?.error === 'clashes' && body.clashes) return { kind: 'clashes', clashes: body.clashes };
       if (!res.ok || !body?.items) {
         toast.error(wordsFor(body?.error, body?.detail));
-        if (body?.error === 'conflict') reloadBoth();
+        if (reloadsBoth(body?.error)) reloadBoth();
         return { kind: 'refused' };
       }
       return { kind: 'done', items: body.items, versions: body.versions ?? [] };
@@ -620,13 +621,28 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
       case 'info': setDialog({ kind: 'info', side, entry: picked[0] }); return;
       case 'copyTo': setDialog({ kind: 'pick', op: 'copy', sources, start: panes[otherSide(side)].path }); return;
       case 'moveTo': setDialog({ kind: 'pick', op: 'move', sources, start: panes[otherSide(side)].path }); return;
-      case 'download': {
-        const a = document.createElement('a');
-        a.href = downloadHref(picked, folderName);
-        a.download = '';
-        document.body.appendChild(a); a.click(); a.remove();
-        return;
-      }
+      case 'download': void download(downloadHref(picked, folderName)); return;
+    }
+  }
+
+  /**
+   * Fetched, then saved from memory: a refusal (too large, gone, unreadable) is a toast in words rather than an error
+   * page saved as the file. One file is at most an HD disk's 1.76 MB and a zip at most the 4 MB cap, so memory is fine.
+   */
+  async function download(href: string) {
+    setBusy('Preparing the download…');
+    try {
+      const r = await fetchDownload(href);
+      if (!r.ok) { toast.error('words' in r ? r.words : wordsFor(r.code, r.detail)); return; }
+      const url = URL.createObjectURL(r.blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = r.name;
+      document.body.appendChild(a); a.click(); a.remove();
+      // The click has handed the bytes to the browser's download; the URL is not needed after this task.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -709,9 +725,6 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     e.dataTransfer.effectAllowed = 'copyMove';
   }
 
-  /** A drop while an operation runs is not taken; said, rather than lost without a word. */
-  const BUSY_DROP = 'Wait for the current operation to finish, then drop again.';
-
   /** The folder row a drop landed on, else the folder the pane shows. */
   function dropFolder(l: Listing, e: React.DragEvent): string {
     const row = (e.target as HTMLElement).closest?.('tr[data-testid="pane-row"]') as HTMLElement | null;
@@ -726,7 +739,9 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     const l = panes[side].listing;
     if (!l?.disk) { toast.error('Open a disk to drop files into it'); return; }
     if (!l.writable) { toast.error(readOnly(l)); return; }
-    if (busy) { toast.error(BUSY_DROP); return; }
+    // Busy, or a dialog open (the review would replace it, and whatever it was in the middle of): not taken, said.
+    const blocked = dropBlocked({ busy: busy !== null, dialogOpen: dialog !== null });
+    if (blocked) { toast.error(blocked); return; }
     activate(side);
     const disk = l.disk;
     const dest = dropFolder(l, e);
@@ -758,7 +773,8 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     let data: { from: Side; paths: string[] };
     try { data = JSON.parse(raw); } catch { return; }
     if (!Array.isArray(data.paths) || data.paths.length === 0) return;
-    if (busy) { toast.error(BUSY_DROP); return; }
+    const blocked = dropBlocked({ busy: busy !== null, dialogOpen: dialog !== null });
+    if (blocked) { toast.error(blocked); return; }
     const l = panes[side].listing;
     if (!l?.disk) { toast.error('Open a disk to drop files into it'); return; }
     if (!l.writable) { toast.error(readOnly(l)); return; }
@@ -781,8 +797,10 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   function pane(side: Side) {
     const p = panes[side];
-    const disk = p.listing?.disk ?? null;
-    const strip = disk ? strips[disk.diskId] : undefined;
+    // A disk whose image cannot be read has no listing, but still has its strip (History, Restore) from the database.
+    const stripId = stripDiskOf(p);
+    const strip = stripId ? strips[stripId] : undefined;
+    const disk = p.listing?.disk ?? strip?.info ?? null;
     return (
       // Below lg only the active side is drawn, as tall as its rows: the page scrolls, not a box inside it.
       <div className={`grid min-h-0 min-w-0 lg:grid-rows-[minmax(0,1fr)] ${active === side ? '' : 'max-lg:hidden'}`}>

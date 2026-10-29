@@ -4,6 +4,15 @@ import { requireOrg } from '@/lib/session';
 import { parsePath, type FsPath } from '@/lib/files/path';
 import { BlobUnavailableError, readLibraryFile, zipLibraryPaths, ZIP_LIMITS } from '@/lib/files/library';
 
+// Reads (and an op writes) disk images from the store: the same 60 s every byte-touching handler sets.
+export const maxDuration = 60;
+
+/** Why a selection is refused as too large, for anyone reading the 413 itself (the manager words it on its own). */
+const TOO_LARGE = {
+  error: 'too_large',
+  detail: `A download holds at most ${ZIP_LIMITS.maxBytes / (1024 * 1024)} MB or ${ZIP_LIMITS.maxEntries} files and folders at once.`,
+};
+
 /** RFC 5987 `filename*`: encodeURIComponent leaves ' ( ) * unescaped, which attr-char does not allow. */
 function attachment(name: string): string {
   return `attachment; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())}`;
@@ -33,7 +42,7 @@ export async function GET(request: Request) {
 
 async function zip(orgId: string, userId: string, q: URLSearchParams): Promise<Response> {
   const raw = q.getAll('paths');
-  if (raw.length > ZIP_LIMITS.maxEntries) return Response.json({ error: 'too_large' }, { status: 413 });
+  if (raw.length > ZIP_LIMITS.maxEntries) return Response.json(TOO_LARGE, { status: 413 });
   const paths: FsPath[] = [];
   for (const r of raw) {
     const p = parsePath(r);
@@ -46,8 +55,8 @@ async function zip(orgId: string, userId: string, q: URLSearchParams): Promise<R
     if (e instanceof BlobUnavailableError) return Response.json({ error: 'blob_unavailable' }, { status: 503 });
     throw e;
   }
-  if (!result || (!result.ok && result.reason === 'not_found')) return Response.json({ error: 'not_found' }, { status: 404 });
-  if (!result.ok && result.reason === 'too_large') return Response.json({ error: 'too_large' }, { status: 413 });
+  if (!result) return Response.json({ error: 'not_found' }, { status: 404 });
+  if (!result.ok && result.reason === 'too_large') return Response.json(TOO_LARGE, { status: 413 });
   // The same 422 the disk zip route answers for a file it cannot read.
   if (!result.ok) return Response.json({ error: 'unreadable', name: result.name }, { status: 422 });
   const name = (q.get('name') ?? '').trim().slice(0, 200) || 'Files';

@@ -53,6 +53,13 @@ describe('Pane (Files increment 1, Task 7)', () => {
     expect(attr(right, 'aria-label')).toBe('Right pane');
   });
 
+  it('draws the strip it is given above the error when the disk image could not be read (final review)', () => {
+    const strip = createElement('div', { 'data-testid': 'the-strip' });
+    const html = render({ listing: null, error: 'The disk image could not be read. Try again in a moment.', strip });
+    expect(html).toContain('data-testid="the-strip"');
+    expect(html.indexOf('the-strip')).toBeLessThan(html.indexOf('pane-left-error'));
+  });
+
   it('lists folders first, then files by the sort', () => {
     const r = rows(render());
     expect(r.map((t) => attr(t, 'data-name'))).toEqual(['Tools', 'Assign', 'List']);

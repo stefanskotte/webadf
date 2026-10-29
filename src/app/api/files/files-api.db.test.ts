@@ -51,6 +51,8 @@ const { GET: GET_LIST } = await import('./list/route');
 const { POST: POST_OPS } = await import('./ops/route');
 const { GET: GET_DL } = await import('./download/route');
 const { GET: GET_REVIEW } = await import('./drop-review/route');
+const { GET: GET_STRIP } = await import('./disk-strip/route');
+const { ZIP_LIMITS } = await import('@/lib/files/library');
 
 const { readVolume } = await import('@/lib/adffs');
 const { unzipSync, strFromU8 } = await import('fflate');
@@ -101,6 +103,12 @@ beforeAll(async () => {
     new DataView(b.buffer, b.byteOffset).setUint32(20, blockChecksum(b, 5)); }
   await seedDisk('g4', 'Evil', 'd4', evil);
   await seedDisk('g3', 'Gone', 'd3', formatVolume({ filesystem: 'OFS', volumeName: 'Gone' }), false);
+  // One HD image with a 1.6 MB file, as four titles: two zip together (3.2 MB), three are over the 4 MiB cap.
+  const big = new Uint8Array(1_600_000).map((_, i) => (i * 2654435761) >>> 24);
+  const blankHd = formatVolume({ filesystem: 'FFS', volumeName: 'Big', density: 'hd' });
+  const hv = readVolume(blankHd); if (!hv.ok) throw new Error('no volume');
+  const hd = must(addFile(blankHd, hv.rootBlock, 'Big', big));   // an HD root is block 1760, not ROOT_BLOCK
+  for (const n of [5, 6, 7, 8]) await seedDisk(`g${n}`, `Big ${n}`, `d${n}`, hd);
 });
 afterAll(async () => { await closeDb(); await admin(`drop database if exists ${DB} with (force)`); });
 
@@ -215,6 +223,43 @@ describe('/api/files', () => {
     expect([many.status, (await many.json()).error]).toEqual([413, 'too_large']);
     const gone = await dl('LIBRARY:/g3/d3/x');
     expect([gone.status, (await gone.json()).error]).toEqual([503, 'blob_unavailable']);
+  });
+  const dlMany = (...ps: string[]) => GET_DL(req('/api/files/download?' + ps.map((p) => 'paths=' + encodeURIComponent(p)).join('&')));
+  it('zip cap is 4 MiB for everyone: over it 413 too_large with words; under it a zip', async () => {
+    expect(ZIP_LIMITS).toEqual({ maxEntries: 1000, maxBytes: 4 * 1024 * 1024 });
+    const r = await dlMany('LIBRARY:/g5/d5/Big', 'LIBRARY:/g6/d6/Big', 'LIBRARY:/g7/d7/Big');
+    expect(r.status).toBe(413);
+    expect(await r.json()).toEqual({ error: 'too_large', detail: expect.stringContaining('4 MB') });
+    const two = await dlMany('LIBRARY:/g5/d5/Big', 'LIBRARY:/g6/d6/Big');
+    expect(two.status).toBe(200);
+    expect(Object.keys(unzipSync(new Uint8Array(await two.arrayBuffer()))).sort()).toEqual(['Big', 'Big (2)']);
+  });
+  it('a zip stops at the first disk over the cap: no disk after the breach is read', async () => {
+    const read = vi.spyOn(diskStore, 'read');
+    try {
+      const r = await dlMany('LIBRARY:/g5/d5/Big', 'LIBRARY:/g6/d6/Big', 'LIBRARY:/g7/d7/Big', 'LIBRARY:/g8/d8/Big');
+      expect(r.status).toBe(413);
+      expect(read).toHaveBeenCalledTimes(3);   // d7 is the breach: d8 is never loaded
+    } finally { read.mockRestore(); }
+  });
+  it('one large HD file still downloads by path', async () => {
+    const r = await GET_DL(req('/api/files/download?path=' + encodeURIComponent('LIBRARY:/g5/d5/Big')));
+    expect([r.status, r.headers.get('content-length')]).toEqual([200, '1600000']);
+  });
+  it('every Files route that reads disk images allows 60 s', async () => {
+    for (const m of [await import('./list/route'), await import('./ops/route'), await import('./download/route')]) {
+      expect((m as { maxDuration?: number }).maxDuration).toBe(60);
+    }
+  });
+  it('disk-strip: a disk whose image cannot be read still has its strip, with the disk as the database knows it', async () => {
+    const r = await GET_STRIP(req('/api/files/disk-strip?diskId=d3'));
+    expect(r.status).toBe(200);
+    const s = await r.json();
+    expect(s.diskId).toBe('d3');
+    expect(s.info).toMatchObject({ diskId: 'd3', gameId: 'g3', title: 'Gone', label: 'Disk 1', imageFormat: 'adf', hd: false,
+      volumeName: null, filesystem: null, usedBytes: null, holder: null, tosecName: null });
+    // A readable disk's strip carries the same, from the database alone.
+    expect((await (await GET_STRIP(req('/api/files/disk-strip?diskId=d1'))).json()).info).toMatchObject({ diskId: 'd1', title: 'SysInfo' });
   });
   it('a database error is not reported as blob_unavailable', async () => {
     holderSeam.fail = true;

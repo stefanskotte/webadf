@@ -3,6 +3,9 @@ import { requireOrg } from '@/lib/session';
 import { parsePath } from '@/lib/files/path';
 import { BlobUnavailableError, listLibrary } from '@/lib/files/library';
 
+// Reads (and an op writes) disk images from the store: the same 60 s every byte-touching handler sets.
+export const maxDuration = 60;
+
 export async function GET(request: Request) {
   const { orgId, userId } = await requireOrg();
   const p = parsePath(new URL(request.url).searchParams.get('path') ?? '');

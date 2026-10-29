@@ -22,7 +22,7 @@ export type PaneProps = {
   onSetSort(sort: FilesSort): void;
   onRowClick(index: number, mods: { shift: boolean; toggle: boolean }): void; onRowOpen(index: number): void;
   onDragStartRows(indexes: number[], e: React.DragEvent): void; onDropRows(e: React.DragEvent): void;
-  strip?: ReactNode;   // the disk strip when listing.disk
+  strip?: ReactNode;   // the disk strip of the disk the pane is in (also one whose image could not be read)
   errorAction?: ReactNode;   // under the error, e.g. a way back to LIBRARY: when the place is gone
 };
 
@@ -126,7 +126,8 @@ export function Pane(p: PaneProps) {
           </p>
         )}
       </div>
-      {listing?.disk && p.strip}
+      {/* The manager passes a strip only for a pane inside a disk -- also one whose image could not be read. */}
+      {p.strip}
 
       {p.error && (
         <p role="alert" data-testid={tid('error')} className="px-3.5 py-3 text-[13px]" style={{ color: 'var(--danger-fg)' }}>{p.error}</p>

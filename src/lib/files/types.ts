@@ -43,6 +43,11 @@ export type Refusal = { code: RefusalCode; detail?: string };
 export type StripData = {
   diskId: string; choices: MountChoice[]; history: HistoryVersion[]; historyUnavailable: boolean;
   headSeq: number | null; color: DiskColor; copiedFrom: string | null;
+  /**
+   * The disk as the database knows it, without reading its image (no filesystem, volume name or usage): what the
+   * strip draws when the pane's listing could not read the image, so History and Restore are still there to reach.
+   */
+  info: DiskInfo;
 };
 /**
  * A writable disk as the drop review (drop-staging.tsx) needs it (Task 9b, /api/files/drop-review): its whole tree,
