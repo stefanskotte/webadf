@@ -1,24 +1,34 @@
 'use client';
 
-import { useMemo, type ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 import type { FsEntry, Listing } from '@/lib/files/types';
-import { phoneSortAfter, sortFsEntries, type FilesSort, type FilesSortKey } from '@/lib/files/sort';
+import { phoneSortAfter, type FilesSort, type FilesSortKey } from '@/lib/files/sort';
 import type { Selection } from '@/lib/files/selection';
 import { refusalWords } from '@/lib/files/words';
 import { entryGlyph } from '@/lib/disk-files-look';
 import { ProtectionCells } from '@/components/disks/protection-cells';
 import { PANE_DEVICES } from '@/lib/files/path';
+import { paneRows, paneFoot, viewCounts, type PaneView } from '@/lib/files/view';
+import { HELP_TOPICS } from '@/lib/help/topics';
+import { HelpTip } from '@/components/help/help-tip';
+import { Switch } from '@/components/ui/switch';
 import { acceptsCopies, addToLibraryReason, holdsFiles, netBoardOf } from '@/lib/files/pane-rules';
 
 /**
  * One side of the Files manager. Presentational: the manager (files-manager.tsx) owns fetching, sort and selection
  * and is called back. EVERY row index here -- `selection`, `onRowClick`, `onRowOpen`, `onDragStartRows` -- is an
- * index into the entries AFTER `sortFsEntries(listing.entries, sort)`, the order the rows are drawn in; the manager
- * sorts the same way to map an index back to its entry.
+ * index into the entries AFTER `paneRows(listing.entries, sort, view)`, the order the rows are drawn in; the manager
+ * draws the same rows (paneRows) to map an index back to its entry.
  */
 export type PaneProps = {
   side: 'left' | 'right'; active: boolean; listing: Listing | null; loading: boolean; error: string | null;
   sort: FilesSort; selection: Selection; showComment: boolean;
+  /** This pane's filter and the shared Show .info (R6, R7). */
+  view: PaneView;
+  onFilter(text: string): void; onShowInfo(show: boolean): void;
+  /** The topic of the header's "?" (drawn once HELP_TOPICS has it). */
+  help: 'files' | 'stash-net';
+  filterRef?: Ref<HTMLInputElement>;
   onActivate(): void; onNavigate(path: string): void; onSort(key: FilesSortKey): void;
   /** Below lg: the one sort button's next order (phoneSortAfter). */
   onSetSort(sort: FilesSort): void;
@@ -73,9 +83,10 @@ function metaOf(l: Listing): string {
   return d.freeBytes === null ? fmt : `${paneSize(d.freeBytes)} free · ${fmt}`;
 }
 
-export function Pane(p: PaneProps) {
-  const { side, listing, sort, selection } = p;
-  const rows = useMemo(() => (listing ? sortFsEntries(listing.entries, sort) : []), [listing, sort]);
+export function Pane({ filterRef, ...p }: PaneProps) {
+  const { side, listing, sort, selection, view } = p;
+  const rows = listing ? paneRows(listing.entries, sort, view) : [];
+  const counts = listing ? viewCounts(listing.entries, view) : { total: 0, shown: 0, infoHidden: 0 };
   const tid = (s: string) => `pane-${side}-${s}`;
   const device = listing ? listing.path.slice(0, listing.path.indexOf(':') + 1) : 'LIBRARY:';
   const crumbs = listing?.crumbs ?? [];
@@ -87,8 +98,10 @@ export function Pane(p: PaneProps) {
   // where the eye ends up, with nothing picked.
   const dropHere = listing && !listing.disk && holdsFiles(listing) && listing.writable;
   const sendHere = netBoardOf(listing) !== null;
-  const foot = picked.length > 0 ? `${picked.length} of ${rows.length} selected · ${paneSize(pickedBytes)}`
-    : listing ? (dropHere ? `${listing.meta} · Drop files here` : sendHere ? `${listing.meta} · Drop files to send them` : listing.meta) : '';
+  const base = listing ? (dropHere ? `${listing.meta} · Drop files here` : sendHere ? `${listing.meta} · Drop files to send them` : listing.meta) : '';
+  const foot = listing ? paneFoot({ base, shown: counts.shown, total: counts.total, infoHidden: counts.infoHidden, picked: picked.length, pickedSize: paneSize(pickedBytes) }) : '';
+  const sideName = side === 'left' ? 'left' : 'right';
+  const onlyInfo = view.hideInfo && !view.filter.trim() && counts.infoHidden > 0 && counts.shown === 0;
   // Only rows that hold files drag (C2): titles and disks do not move, and nothing is copied out of NET:.
   const drags = holdsFiles(listing);
   // A STASH: folder's disk images can each go into the library from their row (R8); not inside an archive.
@@ -109,7 +122,7 @@ export function Pane(p: PaneProps) {
              className="flex min-w-0 flex-col max-lg:rounded-t-[20px]" style={{ background: 'var(--surface)' }}>
       <div className="border-b px-3.5 pt-3 pb-2.5 max-lg:rounded-t-[20px]"
            style={{ borderColor: 'var(--line)', background: p.active ? 'var(--viewing-bg)' : undefined }}>
-        <div className="mb-2 flex gap-1.5">
+        <div className="mb-2 flex items-center gap-1.5">
           {DEVICES.map((d) => (
             <button key={d} type="button" aria-pressed={device === d} data-testid={tid(`dev-${d.slice(0, -1)}`)}
                     onClick={() => p.onNavigate(d)}
@@ -118,6 +131,7 @@ export function Pane(p: PaneProps) {
               {d}
             </button>
           ))}
+          {p.help in HELP_TOPICS && <HelpTip topic={p.help as keyof typeof HELP_TOPICS} className="ml-auto" />}
         </div>
         <div className="flex min-w-0 items-center gap-1.5">
           <button type="button" aria-label="Up one level" title="Up one level" data-testid={tid('up')} disabled={!parent}
@@ -141,6 +155,23 @@ export function Pane(p: PaneProps) {
             </span>
           )}
         </div>
+        {listing && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <input ref={filterRef} type="search" data-testid={tid('filter')} aria-label={`Filter the ${sideName} pane by name`}
+                   placeholder="Filter names" value={view.filter} onChange={(e) => p.onFilter(e.target.value)}
+                   onKeyDown={(e) => { if (e.key === 'Escape' && e.currentTarget.value !== '') { p.onFilter(''); e.preventDefault(); } }}
+                   className="min-w-0 flex-1 rounded-[7px] border bg-transparent px-2 py-1 text-[13px] max-lg:min-h-11 placeholder:text-(--muted-2) focus-visible:outline-2 focus-visible:outline-(--ring)"
+                   style={{ borderColor: 'var(--line)', color: 'var(--ink)' }} />
+            {holdsFiles(listing) && (
+              <span className="flex shrink-0 items-center gap-1 text-[12px]" style={{ color: 'var(--muted)' }}>
+                <span id={tid('show-info-label')}>Show .info</span>
+                <Switch testId={tid('show-info')} checked={!view.hideInfo} onChange={(on) => p.onShowInfo(on)}
+                        aria-label="Show .info files" />
+                <span aria-hidden className="w-11" style={{ color: 'var(--ink)' }}>{view.hideInfo ? 'Hidden' : 'Shown'}</span>
+              </span>
+            )}
+          </div>
+        )}
         {listing && !listing.writable && listing.readOnlyReason && (
           <p data-testid={tid('readonly')} className="mt-1.5 text-[12px]" style={{ color: 'var(--warning-fg)' }}>
             {refusalWords('read_only', listing.readOnlyReason)}
@@ -275,7 +306,12 @@ export function Pane(p: PaneProps) {
             </tbody>
           </table>
           {rows.length === 0 && (
-            <p className="px-3.5 py-6 text-center text-[13px]" style={{ color: 'var(--muted)' }}>Nothing here.</p>
+            <p data-testid={listing.entries.length > 0 ? tid('no-match') : undefined}
+               className="px-3.5 py-6 text-center text-[13px]" style={{ color: 'var(--muted)' }}>
+              {listing.entries.length === 0 ? 'Nothing here.'
+                : onlyInfo ? 'Only .info files here — turn on Show .info to see them.'
+                : `No names match “${view.filter.trim()}”.`}
+            </p>
           )}
         </div>
       )}

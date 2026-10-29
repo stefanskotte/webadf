@@ -40,7 +40,8 @@ function render(o: Partial<PaneProps> = {}): string {
     side: 'left', active: true, listing: diskListing, loading: false, error: null,
     sort: { key: 'name', dir: 'asc' }, selection: EMPTY_SELECTION, showComment: false,
     onActivate: noop, onNavigate: noop, onSort: noop, onSetSort: noop, onRowClick: noop, onRowOpen: noop,
-    onDragStartRows: noop, onDropRows: noop, onAddToLibrary: noop, ...o,
+    onDragStartRows: noop, onDropRows: noop, onAddToLibrary: noop,
+    view: { filter: '', hideInfo: false }, onFilter: noop, onShowInfo: noop, help: 'files', ...o,
   };
   return renderToStaticMarkup(createElement(Pane, props));
 }
@@ -233,5 +234,46 @@ describe('Pane (Files increment 1, Task 7)', () => {
     expect(q).toMatch(/data-testid="pane-left-foot"[^>]*>(<[^>]*>)*1 waiting · 0\.0 of 16 MB · Drop files to send them/);
     // Elsewhere rows still drag.
     expect(attr(rows(render({ listing: stashListing }))[0], 'draggable')).toBe('true');
+  });
+});
+
+describe('the filter and Show .info (increment 4)', () => {
+  it('draws only the rows the filter keeps and says N of M in the foot', () => {
+    const h = render({ view: { filter: 'ass', hideInfo: false } });
+    expect(h).toContain('data-name="Assign"');
+    expect(h).not.toContain('data-name="List"');
+    expect(tagOf(h, 'pane-left-filter')).toMatch(/value="ass"/);
+    expect(h).toMatch(/data-testid="pane-left-foot"[^>]*>1 of 3 shown</);
+  });
+  it('says when nothing matches', () => {
+    const h = render({ view: { filter: 'zzz', hideInfo: false } });
+    expect(h).toContain('No names match “zzz”.');
+    expect(h).toContain('data-testid="pane-left-no-match"');
+  });
+  it('says when only .info files are hidden', () => {
+    const only = { ...diskListing, entries: [entry('Disk.info', 'file')] };
+    expect(render({ listing: only, view: { filter: '', hideInfo: true } })).toContain('Only .info files here — turn on Show .info to see them.');
+  });
+  it('has the Show .info switch only where files live, with its state in words', () => {
+    const on = render({ listing: { ...diskListing, disk: { diskId: 'd' } as Listing['disk'] } });
+    expect(on).toContain('data-testid="pane-left-show-info"');
+    expect(tagOf(on, 'pane-left-show-info')).toMatch(/aria-checked="true"/);
+    expect(on).toContain('Shown');
+    const off = render({ listing: stashListing, view: { filter: '', hideInfo: true } });
+    expect(tagOf(off, 'pane-left-show-info')).toMatch(/aria-checked="false"/);
+    expect(off).toContain('Hidden');
+    expect(render({ listing: rootListing })).not.toContain('data-testid="pane-left-show-info"');
+    expect(render({ listing: rootListing })).toContain('data-testid="pane-left-filter"');
+  });
+  it('hides .info rows and counts them', () => {
+    const withInfo = { ...diskListing, entries: [...diskListing.entries, entry('Assign.info', 'file')] };
+    const h = render({ listing: withInfo, view: { filter: '', hideInfo: true } });
+    expect(h).not.toContain('data-name="Assign.info"');
+    expect(h).toMatch(/3 of 4 shown · 1 \.info file hidden/);
+  });
+  it('the foot does not blame Show .info for files the filter already hides', () => {
+    const withInfo = { ...diskListing, entries: [...diskListing.entries, entry('Assign.info', 'file'), entry('Zed.info', 'file')] };
+    const h = render({ listing: withInfo, view: { filter: 'ass', hideInfo: true } });
+    expect(h).toMatch(/1 of 5 shown · 1 \.info file hidden/);
   });
 });

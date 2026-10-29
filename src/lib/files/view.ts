@@ -13,9 +13,14 @@ export type PaneView = { filter: string; hideInfo: boolean };
 /** A Workbench icon FILE: "Disk.info", "ReadMe.INFO". */
 export const isInfoName = (e: Pick<FsEntry, 'kind' | 'name'>) => e.kind === 'file' && e.name.toLowerCase().endsWith('.info');
 
-function visible(view: PaneView) {
+function matches(view: PaneView) {
   const q = view.filter.trim().toLowerCase();
-  return (e: FsEntry) => !(view.hideInfo && isInfoName(e)) && (!q || e.name.toLowerCase().includes(q));
+  return (e: FsEntry) => !q || e.name.toLowerCase().includes(q);
+}
+
+function visible(view: PaneView) {
+  const m = matches(view);
+  return (e: FsEntry) => !(view.hideInfo && isInfoName(e)) && m(e);
 }
 
 /** The rows a pane draws, in the order it draws them. */
@@ -27,7 +32,8 @@ export function viewCounts(entries: FsEntry[], view: PaneView): { total: number;
   return {
     total: entries.length,
     shown: entries.filter(visible(view)).length,
-    infoHidden: view.hideInfo ? entries.filter(isInfoName).length : 0,
+    // Only the .info files the text filter would keep: the foot never blames Show .info for what the filter hides.
+    infoHidden: view.hideInfo ? entries.filter((e) => isInfoName(e) && matches(view)(e)).length : 0,
   };
 }
 

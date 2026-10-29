@@ -1159,6 +1159,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
         <Pane side={side} active={active === side} listing={side === 'left' ? shownLeft : shownRight} loading={p.loading} error={p.error}
               // STASH: files carry comments more often than not (ruling 9): its panes show the column.
               sort={sortOf(p.listing, p.path)} selection={p.selection} showComment={deviceOf(p.listing?.path ?? p.path) === 'stash'}
+              view={{ filter: '', hideInfo: false }} onFilter={() => {}} onShowInfo={() => {}} help="files"
               onActivate={() => activate(side)} onNavigate={(path) => navigate(side, path)}
               onSort={(key) => changeSort(side, key)} onSetSort={(next) => applySort(side, next)}
               onRowClick={(i, mods) => rowClick(side, i, mods)}

@@ -43,6 +43,10 @@ describe('viewCounts', () => {
     expect(viewCounts(rows, { filter: '', hideInfo: true })).toEqual({ total: 6, shown: 3, infoHidden: 3 });
     expect(viewCounts(rows, { filter: 'read', hideInfo: false })).toEqual({ total: 6, shown: 2, infoHidden: 0 });
   });
+  it('counts as .info-hidden only the .info files that pass the filter', () => {
+    expect(viewCounts(rows, { filter: 'read', hideInfo: true })).toEqual({ total: 6, shown: 1, infoHidden: 1 });
+    expect(viewCounts(rows, { filter: 'zzz', hideInfo: true })).toEqual({ total: 6, shown: 0, infoHidden: 0 });
+  });
 });
 
 describe('remapSelection drops rows the view hides', () => {
