@@ -20,7 +20,7 @@ import {
   acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, offersUndo, placeOf,
 } from '@/lib/files/pane-rules';
 import { netPollMs, NET_MOVE_IN, NET_PICK_BOARD } from '@/lib/files/net-rules';
-import { filingReason, shelfOf, shelfOfRow, shelfReasons } from '@/lib/files/shelf-rules';
+import { COLLECTIONS_STAY, filingNoun, filingReason, shelfOf, shelfOfRow, shelfReasons } from '@/lib/files/shelf-rules';
 import { stashPollMs, trackArriving, withStalls, type ArrivingSeen } from '@/lib/files/arriving';
 import { netDropRefusal, sendToBoard } from '@/lib/files/net-send';
 import type { UserPrefs } from '@/lib/user-prefs-schema';
@@ -102,6 +102,7 @@ export type FilesManagerProps = {
 type Dialog =
   | {
     kind: 'clash'; op: 'copy' | 'move'; sources: string[]; dest: string; where: string; undo: boolean; target: string | null;
+    count?: (n: number) => string;
     clashes: Clash[]; at: number;
     choices: Record<string, ClashChoice>;
     /** Requests still to send once these clashes are answered, and the outcomes (and versions) of those already sent. */
@@ -659,6 +660,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const shelf = shelfReasons(src, picked);
   // Titles picked on LIBRARY: or in a collection: the phone's Copy to… / Move to… file them (the picker checks where).
   const filingFrom = shelfOf(src) !== null && picked.length > 0 && picked.every((e) => e.kind === 'title');
+  // A collection never leaves LIBRARY: (fix round 1): said before the picker opens.
+  const collectionPicked = shelfOf(src) !== null && picked.some((e) => e.kind === 'collection');
   const reasons = {
     copy: transferReason('copy'),
     move: transferReason('move'),
@@ -671,8 +674,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     download: outOfNet ?? sourceReason(false) ?? failedReason(picked)
       ?? (downloadHref(picked, folderName).length > DOWNLOAD_URL_MAX ? 'Too many items to download at once — download their folder instead' : null),
     // The phone's Copy to… / Move to…: the place is picked afterwards, so only the source is checked here.
-    copyTo: filingFrom ? null : outOfNet ?? sourceReason(false) ?? failedReason(picked),
-    moveTo: filingFrom ? null : outOfNet ?? sourceReason(true) ?? failedReason(picked),
+    copyTo: collectionPicked ? COLLECTIONS_STAY : filingFrom ? null : outOfNet ?? sourceReason(false) ?? failedReason(picked),
+    moveTo: collectionPicked ? COLLECTIONS_STAY : filingFrom ? null : outOfNet ?? sourceReason(true) ?? failedReason(picked),
     // Disk images in STASH: into the library (R8).
     addlib: addToLibraryReason(src, picked),
   };
@@ -736,7 +739,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    * no versions) or the toast carries its own `action` instead.
    */
   async function report(done: OpItem[], success: (n: number) => string, target: string | null, versions: OpVersion[],
-    opts: { undo?: boolean; action?: ToastAction } = {}) {
+    opts: { undo?: boolean; action?: ToastAction; count?: (n: number) => string } = {}) {
+    const count = opts.count ?? items;
     const offer = (): { action?: ToastAction } => (opts.action ? { action: opts.action } : opts.undo === false ? {} : undoAction(versions));
     const failed = done.filter((i): i is Extract<OpItem, { ok: false }> => !i.ok);
     // A clash answered Skip is neither done nor failed: said apart, never counted as moved or copied.
@@ -750,9 +754,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const head = target && ok > 0 ? await refreshStrip(target) : null;
     const seq = versions.filter((v) => v.diskId === target).at(-1)?.seq ?? head;
     const said = (n: number) => (seq === null ? success(n) : `${success(n).replace(/\.$/, '')} — saved as version ${seq}.`);
-    if (failed.length === 0) toast.success(opTitle(tally, said, items), ok > 0 ? offer() : {});
+    if (failed.length === 0) toast.success(opTitle(tally, said, count), ok > 0 ? offer() : {});
     else {
-      toast.error(opTitle(tally, said, items), {
+      toast.error(opTitle(tally, said, count), {
         ...(ok > 0 ? offer() : {}),
         description: (
           <ul data-testid="files-failures">
@@ -771,12 +775,15 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    * copy into a board's queue has queued so far (NET: never clashes, so a send is one request). `target`: the disk
    * whose version the toast names (the destination pane's disk; Files 2 R2: from the listing, not the path).
    */
-  type Run = { op: 'copy' | 'move'; dest: string; where: string; undo: boolean; target: string | null; queued?: number };
+  type Run = { op: 'copy' | 'move'; dest: string; where: string; undo: boolean; target: string | null; queued?: number;
+    /** What the toast counts: items, or for a filing titles or disks (filingNoun). */
+    count?: (n: number) => string };
 
-  function transfer(op: 'copy' | 'move', sources: string[], dest: string, where: string, target: string | null) {
+  function transfer(op: 'copy' | 'move', sources: string[], dest: string, where: string, target: string | null, count?: (n: number) => string) {
     if (busy) return;
     // R4: the Files setting's answer goes with the first request; only 'ask' (the default) can come back as clashes.
-    void runGroups({ op, dest, where, undo: offersUndo(op, sources, dest), target }, [{ onClash: prefs.files.onClash, sources }], [], []);
+    void runGroups({ op, dest, where, undo: offersUndo(op, sources, dest), target, ...(count ? { count } : {}) },
+      [{ onClash: prefs.files.onClash, sources }], [], []);
   }
 
   /**
@@ -805,8 +812,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   /** Several requests saved several versions: Undo of the last alone would undo only part of the run, so none. */
   function finishRun(run: Run, done: OpItem[], versions: OpVersion[]) {
     // A copy into a board's queue says how many FILES it queued (a folder is several): "Queued 3 files to A500 bench."
-    const said = (n: number) => (run.queued !== undefined ? `Queued ${files(run.queued)} to ${run.where}.` : `${verbs[run.op][1]} ${items(n)} to ${run.where}.`);
-    if (done.length) void report(done, said, run.target, versions, { undo: run.undo });
+    const said = (n: number) => (run.queued !== undefined ? `Queued ${files(run.queued)} to ${run.where}.` : `${verbs[run.op][1]} ${(run.count ?? items)(n)} to ${run.where}.`);
+    if (done.length) void report(done, said, run.target, versions, { undo: run.undo, ...(run.count ? { count: run.count } : {}) });
     else reloadBoth();
   }
 
@@ -840,6 +847,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   }
 
   const where = placeOf;
+  /** A copy or move onto LIBRARY: or a collection counts titles or disks (filingNoun); anywhere else, items. */
+  const filedCount = (to: Listing | null) => (shelfOf(to) ? filingNoun(src) : undefined);
 
   /**
    * Run `go` once every disk it will change has had its TOSEC-identity confirm (the Browse page's D-W-3): asked before
@@ -868,8 +877,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const side = active;
     const sources = picked.map((e) => e.path);
     switch (cmd) {
-      case 'copy': guarded([dst?.disk], () => transfer('copy', sources, dst!.path, where(dst), dst?.disk?.diskId ?? null)); return;
-      case 'move': guarded([dst?.disk, src?.disk], () => transfer('move', sources, dst!.path, where(dst), dst?.disk?.diskId ?? null)); return;
+      case 'copy': guarded([dst?.disk], () => transfer('copy', sources, dst!.path, where(dst), dst?.disk?.diskId ?? null, filedCount(dst))); return;
+      case 'move': guarded([dst?.disk, src?.disk], () => transfer('move', sources, dst!.path, where(dst), dst?.disk?.diskId ?? null, filedCount(dst))); return;
       // R2: with Ask before deleting off, a delete inside a disk runs at once (it saves a version; the toast offers
       // Undo). STASH: and NET: keep no versions, so they always ask.
       case 'delete':
@@ -953,7 +962,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       void load(side, l.path);
       window.history.pushState(null, '', urlOf(side === 'left' ? l.path : panes.left.path, side === 'right' ? l.path : panes.right.path, active));
     }
-    guarded([l.disk, d.op === 'move' ? src?.disk : null], () => transfer(d.op, d.sources, l.path, where(l), l.disk?.diskId ?? null));
+    guarded([l.disk, d.op === 'move' ? src?.disk : null], () => transfer(d.op, d.sources, l.path, where(l), l.disk?.diskId ?? null, filedCount(l)));
   }
 
   /**
@@ -1025,9 +1034,10 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const l = panes[side].listing;
     const rows = rowsOf(side);
     const paths = indexes.map((i) => rows[i]?.path).filter((p): p is string => !!p);
-    // Titles on LIBRARY: or in a collection drag, to be filed (Files 2 §3.2); disks and collections do not move.
-    const titles = shelfOf(l) !== null && indexes.every((i) => rows[i]?.kind === 'title');
-    if ((!holdsFiles(l) && !titles) || paths.length === 0) { e.preventDefault(); return; }
+    // Titles on LIBRARY: or in a collection drag, to be filed (Files 2 §3.2). A selection that holds a collection too
+    // drags as well, and its drop says why it is refused (fix round 1): never a drag that silently does not start.
+    const shelf = shelfOf(l) !== null && indexes.every((i) => rows[i]?.kind === 'title' || rows[i]?.kind === 'collection');
+    if ((!holdsFiles(l) && !shelf) || paths.length === 0) { e.preventDefault(); return; }
     activate(side);
     e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ from: side, paths }));
     e.dataTransfer.effectAllowed = 'copyMove';
@@ -1262,7 +1272,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       if (data.from === side && dest === l?.path) return;        // put back where it was picked up
       if (filing) { toast.error(filing); return; }
       activate(side);
-      transfer(op, data.paths, dest, row ? row.name : where(l), null);
+      transfer(op, data.paths, dest, row ? row.name : where(l), null, filingNoun(from));
       return;
     }
     if (!l || !acceptsCopies(l)) { toast.error(l && netReadOnly(l) ? readOnly(l) : 'Open a disk or STASH: to drop files into it'); return; }

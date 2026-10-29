@@ -52,9 +52,14 @@ export function hereLabel(op: 'copy' | 'move', l: Listing | null): string {
   return netBoardOf(l) ? 'Send here' : 'Copy here';
 }
 
-/** What can be gone into: everything but files and archives (an archive is read-only: nothing goes into it). */
+/**
+ * What can be gone into: everything but files and archives (an archive is read-only: nothing goes into it). Collections
+ * first, in the Library's order as listed (D10), then the rest by name.
+ */
 export function placesIn(l: Listing): FsEntry[] {
-  return l.entries.filter((e) => e.kind !== 'file' && e.kind !== 'archive').sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  const places = l.entries.filter((e) => e.kind !== 'file' && e.kind !== 'archive');
+  const rest = places.filter((e) => e.kind !== 'collection').sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  return [...places.filter((e) => e.kind === 'collection'), ...rest];
 }
 
 const PLACE_GLYPH: Record<string, string> = { title: 'TTL', disk: 'DSK', dir: 'DIR', board: 'BRD', collection: 'DIR' };

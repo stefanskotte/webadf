@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { collectionNameProblem, SHELF_WORDS, MAKEDIR_IN_DISK, filingReason, shelfOf, shelfOfRow, shelfReasons } from './shelf-rules';
+import { collectionNameProblem, SHELF_WORDS, MAKEDIR_IN_DISK, filingReason, shelfOf, shelfOfRow, shelfReasons, COLLECTIONS_STAY, filingNoun } from './shelf-rules';
 import type { FsEntry, Listing } from './types';
 
 describe('collection names (Files 2 R3: the Library\'s 1-80 characters, trimmed)', () => {
@@ -65,8 +65,7 @@ describe('filing (Files 2 §3.2, R5)', () => {
   it('nothing picked, or no shelf on either side: not a filing', () => {
     expect(filingReason('copy', demos, [], shelfOf(games))).toBeUndefined();
     expect(filingReason('copy', stash, [E('a', 'file', 'STASH:/a')], null)).toBeUndefined();
-    // Collections picked with nowhere to file them: the file rules answer, not "inside another".
-    expect(filingReason('copy', root, [E('Games', 'collection', 'LIBRARY:/c2')], null)).toBeUndefined();
+
   });
 });
 
@@ -81,5 +80,21 @@ describe('collection commands (§3.2)', () => {
       .toEqual({ makedir: 'Open a disk or STASH: to make a folder in it', rename: 'Rename or delete titles on the Library page', delete: 'Rename or delete titles on the Library page' });
     expect(shelfReasons(stash, [])).toBeNull();
     expect(shelfReasons(diskList, [])).toBeNull();
+  });
+});
+
+describe('fix round 1', () => {
+  it('a collection copied or moved off the shelves stays in LIBRARY:, said so; with titles too', () => {
+    expect(COLLECTIONS_STAY).toBe('Collections stay in LIBRARY:');
+    expect(SHELF_WORDS).toContain(COLLECTIONS_STAY);
+    expect(filingReason('copy', root, [E('Games', 'collection', 'LIBRARY:/c2')], null)).toBe('Collections stay in LIBRARY:');
+    expect(filingReason('move', root, [E('Games', 'collection', 'LIBRARY:/c2'), E('Loose', 'title', 'LIBRARY:/g3')], null)).toBe('Collections stay in LIBRARY:');
+    expect(filingReason('move', root, [E('Games', 'collection', 'LIBRARY:/c2'), E('Loose', 'title', 'LIBRARY:/g3')], shelfOf(demos))).toBe('A collection cannot go inside another');
+  });
+  it('a filing counts titles from a shelf, disks from STASH:', () => {
+    expect(filingNoun(demos)(1)).toBe('1 title');
+    expect(filingNoun(root)(2)).toBe('2 titles');
+    expect(filingNoun(stash)(1)).toBe('1 disk');
+    expect(filingNoun(stash)(3)).toBe('3 disks');
   });
 });

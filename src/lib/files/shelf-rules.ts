@@ -13,6 +13,8 @@ export const ONLY_TITLES_FILED = 'Only titles, and disk images from STASH:, go i
 export const FILE_ON_SHELF = 'Open LIBRARY: or a collection to file titles';
 /** Makedir in a title's disk list: folders are made on a disk or in STASH: (D13). */
 export const MAKEDIR_IN_DISK = 'Open a disk or STASH: to make a folder in it';
+/** A collection copied or moved anywhere but onto a shelf: collections are LIBRARY:'s folders and never leave it. */
+export const COLLECTIONS_STAY = 'Collections stay in LIBRARY:';
 export const COLLECTION_EXISTS = 'A collection with that name already exists';
 /** A disk image added to the library while its target collection was deleted: in the library, filed nowhere. */
 export const ADDED_UNFILED = 'The collection is gone; the disk was added to the library, in no collection';
@@ -28,7 +30,7 @@ export function collectionNameProblem(name: string): 'empty' | 'collection-too-l
 /** The refusal details that read as a sentence of their own. */
 export const SHELF_WORDS: readonly string[] = [
   TITLES_ON_LIBRARY_PAGE, IN_LIBRARY_ALREADY, NO_NESTED, NO_COLLECTION_IN_COLLECTION, ONLY_TITLES_FILED, FILE_ON_SHELF,
-  MAKEDIR_IN_DISK,
+  MAKEDIR_IN_DISK, COLLECTIONS_STAY,
 ];
 
 /** Where titles are filed: the LIBRARY: root (`null`) or a collection. */
@@ -58,9 +60,10 @@ export function filingReason(op: 'copy' | 'move', src: Listing | null, picked: F
   if (picked.length === 0) return undefined;
   const from = shelfOf(src);
   if (from) {
-    // Titles go only onto a shelf; anything else picked here with nowhere to file it is the file rules' to refuse.
-    if (!to) return picked.every(isTitle) ? FILE_ON_SHELF : undefined;
-    if (picked.some((e) => e.kind === 'collection')) return NO_COLLECTION_IN_COLLECTION;
+    const collections = picked.some((e) => e.kind === 'collection');
+    // Titles go only onto a shelf; a collection never leaves LIBRARY: and never goes inside another.
+    if (!to) return collections ? COLLECTIONS_STAY : picked.every(isTitle) ? FILE_ON_SHELF : undefined;
+    if (collections) return NO_COLLECTION_IN_COLLECTION;
     if (!picked.every(isTitle)) return undefined;
     if (to.collectionId === null) return op === 'copy' || from.collectionId === null ? IN_LIBRARY_ALREADY : null;
     return null;
@@ -79,4 +82,10 @@ export function shelfReasons(src: Listing | null, picked: FsEntry[]): { delete: 
   const rename = picked.length !== 1 ? 'Select one item to rename it' : collections ? null : TITLES_ON_LIBRARY_PAGE;
   const makedir = level === 'root' ? null : level === 'collection' ? NO_NESTED : MAKEDIR_IN_DISK;
   return { delete: del, rename, makedir };
+}
+
+/** What a filing's toast counts (fix round 1): titles from LIBRARY: or a collection, disk images from STASH:. */
+export function filingNoun(src: Listing | null): (n: number) => string {
+  const word = shelfOf(src) ? 'title' : 'disk';
+  return (n) => `${n} ${word}${n === 1 ? '' : 's'}`;
 }

@@ -52,4 +52,10 @@ describe('CopyToPicker (Files increment 1, Task 10)', () => {
     expect(pickReason('copy', root)).toBe('Open a disk or STASH: to copy into it');
     expect(pickReason('copy', null, () => 'x')).toBeNull();
   });
+
+  it('collections come first in the Library\'s order, then the rest by name (D10)', () => {
+    const c = (name: string) => ({ ...entry(name, 'collection'), path: `LIBRARY:/${name}` });
+    const l = listing({ path: 'LIBRARY:', disk: null, entries: [c('Zeta'), c('Alpha'), entry('Bravo', 'title'), entry('Able', 'title')] });
+    expect(placesIn(l).map((e) => e.name)).toEqual(['Zeta', 'Alpha', 'Able', 'Bravo']);
+  });
 });
