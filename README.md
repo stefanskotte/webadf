@@ -123,7 +123,7 @@ version in its History.*
 
 *The display editor: choose the panel, then which elements the OLED draws and where.*
 
-![The Library after adding eight disks: the Add disks button in the header, and the tray at the bottom listing each disk as Added](docs/screenshots/upload.png)
+![The Library after adding eight disks: the Add disks button in the header, and the tray at the bottom listing each disk as Added or Already in the library](docs/screenshots/upload.png)
 
 *Adding disks: drop them anywhere on the Library page, or use Add disks (Browse files, Paste a URL). The tray says
 what each one did.*
@@ -132,9 +132,13 @@ what each one did.*
 
 *Help explains the parts that are not obvious.*
 
-![Settings: Preferences, Sign-in and password with the address masked, Firmware updates, About this server and Delete account](docs/screenshots/settings.png)
+![Settings, Account tab: Preferences, the Files settings (which device each pane opens on, .info files, the comment column, asking before deleting, what to do when a name already exists), Sign-in and password with the address masked, Firmware updates and Delete account](docs/screenshots/settings.png)
 
-*Settings, About this server included.*
+*Settings has three tabs: Account (yours alone), Library (sharing) and Server.*
+
+![Settings, Server tab: About this server, with the web app's commit, hosting, platform, board firmware and the library's size](docs/screenshots/settings-server.png)
+
+*About this server, on the Server tab.*
 
 <img src="docs/screenshots/library-phone.png" width="260" alt="The library on a phone: the board's chip at the top, two columns of cards, and a bottom tab bar with Library, Devices, Files and More"> <img src="docs/screenshots/phone-more.png" width="260" alt="The same phone with More open: Remote, Help, Settings, About this server and Sign out">
 
