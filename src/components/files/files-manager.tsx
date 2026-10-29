@@ -8,12 +8,12 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { MENU_ITEM } from '@/components/ui/menu-item-look';
 import { cn } from '@/lib/utils';
 import type { DiskInfo, FsEntry, Listing, RefusalCode, StripData } from '@/lib/files/types';
-import { nextSort, sortFsEntries, type FilesSort, type FilesSortKey } from '@/lib/files/sort';
+import { nextSort, type FilesSort, type FilesSortKey } from '@/lib/files/sort';
 import { EMPTY_SELECTION, moveCursor, selectClick, togglePick, type Selection } from '@/lib/files/selection';
 import { commandFor, type FilesCommand } from '@/lib/files/keys';
 import { refusalWords } from '@/lib/files/words';
-import { remapSelection } from '@/lib/files/view';
-import { DEFAULT_LEFT, DEFAULT_RIGHT, formatPath, PANE_DEVICES, parsePath } from '@/lib/files/path';
+import { deleteAsks, paneDefaults, paneHelpTopic, paneRows, remapSelection, showsComment, type PaneView } from '@/lib/files/view';
+import { formatPath, PANE_DEVICES, parsePath } from '@/lib/files/path';
 import type { OpItem, OpRequest } from '@/lib/files/ops';
 import type { Added } from '@/lib/files/driver';
 import {
@@ -55,7 +55,9 @@ import {
  * on the page, which lists both paths on the server. (A router.push would re-render the server page on every folder
  * opened, showing loading.tsx's skeleton in place of both panes each time.)
  *
- * Selections are indexes into the SORTED rows (pane.tsx), so every index here goes through `rowsOf`.
+ * Selections are indexes into the rows a pane DRAWS -- sorted, then filtered by the pane's filter and Show .info
+ * (paneRows, as pane.tsx draws them) -- so every index here goes through `rowsOf`, and a row the view hides is never
+ * picked: a change of view remaps the picks (remapSelection), letting go of the ones it hides.
  *
  * Each pane shows STASH:, NET: or LIBRARY: (increment 2, R1; increment 3). STASH: keeps no versions, so nothing that
  * changes it offers Undo, and its delete says it cannot be undone (ruling 8). NET: lists the boards and, in each, its
@@ -72,7 +74,9 @@ import {
 
 type Side = 'left' | 'right';
 type DeviceKey = keyof UserPrefs['files']['sort'];
-type PaneState = { path: string; listing: Listing | null; loading: boolean; error: string | null; gone: boolean; selection: Selection };
+/** `filter`: the pane's name filter (R6). It belongs to the place: kept on a fresh listing of the same place and on
+ *  Swap (it travels with its pane), cleared when the pane lists another place. */
+type PaneState = { path: string; listing: Listing | null; loading: boolean; error: string | null; gone: boolean; selection: Selection; filter: string };
 
 export type FilesManagerProps = {
   initial: {
@@ -82,7 +86,8 @@ export type FilesManagerProps = {
     /** The disk strip of each pane that starts inside a disk (disk-strip-data.ts). */
     strips?: StripData[];
   };
-  prefs: { sort: UserPrefs['files']['sort'] };
+  /** The Files settings (sort, panes on opening, comments, delete confirm, clash answer) and Show .info (browse.hideInfo, R1). */
+  prefs: { files: UserPrefs['files']; hideInfo: boolean };
   /** The Send files to the Amiga zone: the boards that can receive, the one a link named, and the server's clock. */
   send: { targets: SendTarget[]; initialBoard: string | null; serverNow: number };
 };
@@ -203,7 +208,7 @@ async function fetchListing(path: string): Promise<{ listing: Listing } | { gone
 }
 
 function firstState(path: string, listing: Listing | null, error: string | undefined): PaneState {
-  return { path, listing, loading: false, error: listing ? null : error ?? GONE, gone: !listing && !error, selection: EMPTY_SELECTION };
+  return { path, listing, loading: false, error: listing ? null : error ?? GONE, gone: !listing && !error, selection: EMPTY_SELECTION, filter: '' };
 }
 
 /** The picked entries, in the order the rows are drawn. */
@@ -276,7 +281,10 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     right: firstState(initial.rightPath, initial.right, initial.rightError),
   }));
   const [active, setActive] = useState<Side>(initial.active);
-  const [sorts, setSorts] = useState(prefs.sort);
+  const [sorts, setSorts] = useState(prefs.files.sort);
+  // Show .info (R7): one setting for both panes, saved by its own saver -- a sort save must not replace a pending one.
+  const [hideInfo, setHideInfo] = useState(prefs.hideInfo);
+  const [infoSaver] = useState(latestSaver);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [opBusy, setBusy] = useState<string | null>(null);
   // Files from the computer into STASH: (the top drop zone, or a pane in STASH:) keep the manager busy as an op does.
@@ -305,12 +313,16 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     });
   }
   const rootRef = useRef<HTMLDivElement>(null);
+  const filterRefs = { left: useRef<HTMLInputElement>(null), right: useRef<HTMLInputElement>(null) };
   // A pane's newest request wins: a slow listing that lands after a newer one is dropped.
   const seq = useRef<Record<Side, number>>({ left: 0, right: 0 });
   // For the popstate listener and the NET: poll, which outlive a render.
-  const latest = useRef({ panes, active, sorts });
-  useEffect(() => { latest.current = { panes, active, sorts }; });
+  // R5: where a pane the address does not name opens (Back to a bare /files too).
+  const defaults = paneDefaults(prefs.files.panes);
+  const latest = useRef({ panes, active, sorts, hideInfo, defaults });
+  useEffect(() => { latest.current = { panes, active, sorts, hideInfo, defaults }; });
 
+  const viewOf = (p: PaneState, hide = hideInfo): PaneView => ({ filter: p.filter, hideInfo: hide });
   const sortOf = (l: Listing | null, path: string) => sorts[deviceOf(l?.path ?? path)];
   // What each pane draws: its listing with the "new in vN" marks from its disk's History (the strip carries it).
   const marksLeft = useMarks(panes.left.listing, strips);
@@ -319,14 +331,21 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const arrRight = useArriving(panes.right.listing);
   const shownLeft = useMemo(() => shown(panes.left.listing, marksLeft, arrLeft), [panes.left.listing, marksLeft, arrLeft]);
   const shownRight = useMemo(() => shown(panes.right.listing, marksRight, arrRight), [panes.right.listing, marksRight, arrRight]);
-  const rowsLeft = useMemo(() => (shownLeft ? sortFsEntries(shownLeft.entries, sorts[deviceOf(shownLeft.path)]) : []), [shownLeft, sorts]);
-  const rowsRight = useMemo(() => (shownRight ? sortFsEntries(shownRight.entries, sorts[deviceOf(shownRight.path)]) : []), [shownRight, sorts]);
+  // The rows each pane draws, in its order (paneRows: sorted, then the filter and Show .info): the only row order here.
+  const filterLeft = panes.left.filter;
+  const filterRight = panes.right.filter;
+  const rowsLeft = useMemo(() => (shownLeft ? paneRows(shownLeft.entries, sorts[deviceOf(shownLeft.path)], { filter: filterLeft, hideInfo }) : []),
+    [shownLeft, sorts, filterLeft, hideInfo]);
+  const rowsRight = useMemo(() => (shownRight ? paneRows(shownRight.entries, sorts[deviceOf(shownRight.path)], { filter: filterRight, hideInfo }) : []),
+    [shownRight, sorts, filterRight, hideInfo]);
   const rowsOf = (s: Side) => (s === 'left' ? rowsLeft : rowsRight);
 
   // ---- loading and the URL ------------------------------------------------------------------------------------
 
   /**
    * List `path` into a side. A new place keeps the old rows on screen (busy) until it lands; then nothing is picked.
+   * The filter stays when the listing that lands is of the place the pane showed (a reload after an operation), else it
+   * clears (R6) -- only once it lands, so the old rows keep the view their picks were made in while they wait.
    * A refusal with the code `stayOn` leaves the pane where it was and says so in a toast (an archive that does not
    * open: the person is still in its folder, and can download it). Resolves true when the place was listed.
    */
@@ -343,8 +362,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     setPanes((ps) => ({
       ...ps,
       [side]: 'listing' in r
-        ? { path, listing: r.listing, loading: false, error: null, gone: false, selection: EMPTY_SELECTION }
-        : { path, listing: null, loading: false, error: 'gone' in r ? GONE : r.error, gone: 'gone' in r, selection: EMPTY_SELECTION },
+        ? { path, listing: r.listing, loading: false, error: null, gone: false, selection: EMPTY_SELECTION,
+            filter: ps[side].listing?.path === r.listing.path ? ps[side].filter : '' }
+        : { path, listing: null, loading: false, error: 'gone' in r ? GONE : r.error, gone: 'gone' in r, selection: EMPTY_SELECTION, filter: '' },
     }));
     return 'listing' in r;
   }
@@ -396,8 +416,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   useEffect(() => {
     function onPop() {
       const q = new URLSearchParams(window.location.search);
-      const want = { left: pathParam(q.get('left'), DEFAULT_LEFT), right: pathParam(q.get('right'), DEFAULT_RIGHT) };
-      const { panes: cur } = latest.current;
+      const { panes: cur, defaults: d } = latest.current;
+      const want = { left: pathParam(q.get('left'), d.left), right: pathParam(q.get('right'), d.right) };
       for (const s of ['left', 'right'] as const) if (cur[s].path !== want[s]) void load(s, want[s]);
       setActive(q.get('active') === 'right' ? 'right' : 'left');
     }
@@ -422,7 +442,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       const p = ps[side];
       if (p.path !== at.path || p.loading || !p.listing) return ps;
       const sort = latest.current.sorts[deviceOf(fresh.path)];
-      return { ...ps, [side]: { ...p, listing: fresh, selection: remapSelection(sortFsEntries(p.listing.entries, sort), sortFsEntries(fresh.entries, sort), p.selection) } };
+      const view: PaneView = { filter: p.filter, hideInfo: latest.current.hideInfo };
+      return { ...ps, [side]: { ...p, listing: fresh, selection: remapSelection(paneRows(p.listing.entries, sort, view), paneRows(fresh.entries, sort, view), p.selection) } };
     });
   }
 
@@ -518,7 +539,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       for (const s of ['left', 'right'] as const) {
         const l = ps[s].listing;
         if (!l || deviceOf(l.path) !== dev) continue;
-        out[s] = { ...ps[s], selection: remapSelection(sortFsEntries(l.entries, sorts[dev]), sortFsEntries(l.entries, next), ps[s].selection) };
+        const view = viewOf(ps[s]);
+        out[s] = { ...ps[s], selection: remapSelection(paneRows(l.entries, sorts[dev], view), paneRows(l.entries, next, view), ps[s].selection) };
       }
       return out;
     });
@@ -526,6 +548,36 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const sort: { library?: FilesSort; stash?: FilesSort; net?: FilesSort } = {};
     sort[dev] = next;
     saver.save({ files: { sort } }).catch(() => toast.error("Couldn't remember this sort order for next time."));
+  }
+
+  /** The pane's filter (R6): its picks follow their entries, and a row the filter hides is let go. */
+  function setFilter(side: Side, text: string) {
+    setPanes((ps) => {
+      const p = ps[side];
+      const l = p.listing;
+      if (!l) return { ...ps, [side]: { ...p, filter: text } };
+      const sort = sorts[deviceOf(l.path)];
+      const selection = remapSelection(paneRows(l.entries, sort, viewOf(p)), paneRows(l.entries, sort, { filter: text, hideInfo }), p.selection);
+      return { ...ps, [side]: { ...p, filter: text, selection } };
+    });
+  }
+
+  /** Show .info (R7), from either pane's switch: both panes follow, hidden picks are let go, and it is remembered. */
+  function showInfo(show: boolean) {
+    const hide = !show;
+    if (hide === hideInfo) return;
+    setPanes((ps) => {
+      const out = { ...ps };
+      for (const s of ['left', 'right'] as const) {
+        const l = ps[s].listing;
+        if (!l) continue;
+        const sort = sorts[deviceOf(l.path)];
+        out[s] = { ...ps[s], selection: remapSelection(paneRows(l.entries, sort, viewOf(ps[s])), paneRows(l.entries, sort, viewOf(ps[s], hide)), ps[s].selection) };
+      }
+      return out;
+    });
+    setHideInfo(hide);
+    infoSaver.save({ browse: { hideInfo: hide } }).catch(() => toast.error("Couldn't remember Show .info for next time."));
   }
 
   /**
@@ -692,11 +744,12 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
 
   function transfer(op: 'copy' | 'move', sources: string[], dest: string, where: string) {
     if (busy) return;
-    void runGroups({ op, dest, where, undo: offersUndo(op, sources, dest) }, [{ onClash: 'ask', sources }], [], []);
+    // R4: the Files setting's answer goes with the first request; only 'ask' (the default) can come back as clashes.
+    void runGroups({ op, dest, where, undo: offersUndo(op, sources, dest) }, [{ onClash: prefs.files.onClash, sources }], [], []);
   }
 
   /**
-   * Send the groups in turn. A 409 clashes answer (always on the first 'ask'; on a resend only if the folder changed
+   * Send the groups in turn. A 409 clashes answer (on a first 'ask'; on a resend only if the folder changed
    * in between) opens the Clash dialog; the groups not yet sent wait in it with what is already done, and go on once
    * every clash has an answer. A refusal stops the run (its toast is already up); what was done is still reported.
    */
@@ -784,7 +837,12 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     switch (cmd) {
       case 'copy': guarded([dst?.disk], () => transfer('copy', sources, dst!.path, where(dst))); return;
       case 'move': guarded([dst?.disk, src?.disk], () => transfer('move', sources, dst!.path, where(dst))); return;
-      case 'delete': guarded([src?.disk], () => setDialog({ kind: 'delete', side, entries: picked })); return;
+      // R2: with Ask before deleting off, a delete inside a disk runs at once (it saves a version; the toast offers
+      // Undo). STASH: and NET: keep no versions, so they always ask.
+      case 'delete':
+        if (!deleteAsks(prefs.files.confirmDelete, src)) { const l = src!; guarded([l.disk], () => void deleteNow(l, picked)); return; }
+        guarded([src?.disk], () => setDialog({ kind: 'delete', side, entries: picked }));
+        return;
       case 'rename': guarded([src?.disk], () => setDialog({ kind: 'rename', side, entry: picked[0] })); return;
       case 'makedir': guarded([src?.disk], () => setDialog({ kind: 'makedir', side })); return;
       case 'protect': guarded([src?.disk], () => setDialog({ kind: 'protect', side, entries: picked })); return;
@@ -794,6 +852,17 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       case 'download': void download(downloadHref(picked, folderName)); return;
       case 'addlib': void addToLibrary(picked); return;
     }
+  }
+
+  /**
+   * A delete without the confirm (R2), as the confirm's Delete runs it: the versioned toast with Undo. The Delete button
+   * goes disabled while it runs, which drops its focus to <body>: the manager takes it back, as after a dialog's op.
+   */
+  async function deleteNow(l: Listing, entries: FsEntry[]) {
+    const r = await post({ op: 'delete', sources: entries.map((e) => e.path) }, `Deleting ${items(entries.length)}…`);
+    if (r.kind === 'done') void report(r.items, (n) => `Deleted ${items(n)} from ${placeName(l.disk)}.`, diskIdOf(l.path), r.versions);
+    const now = document.activeElement;
+    if (!now || now === document.body) rootRef.current?.focus({ preventScroll: true });
   }
 
   /**
@@ -888,7 +957,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
         return;
       }
       case 'switch': activate(otherSide(active)); return;
-      case 'find': return;   // Task 5: focus the active pane's filter
+      case 'find': filterRefs[active].current?.focus(); return;
       default: act(cmd);
     }
   }
@@ -899,6 +968,13 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     // React bubbles a portal's events through the component tree, so keys pressed in the More menu, a dialog or a
     // toast reach this handler although their DOM is elsewhere. Only keys from the manager's own DOM are its keys.
     if (!rootRef.current?.contains(target)) return;
+    // Escape in an empty filter box gives the keys back to the manager (R6); the Escape that cleared it was the box's
+    // own (pane.tsx prevents its default), so it never gets here.
+    if (e.key === 'Escape' && (target === filterRefs.left.current || target === filterRefs.right.current)) {
+      e.preventDefault();
+      rootRef.current.focus({ preventScroll: true });
+      return;
+    }
     const cmd = commandFor({ key: e.key, target, dialogOpen: dialog !== null, altKey: e.altKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey });
     if (!cmd) return;
     if ((cmd === 'open' || cmd === 'pick') && target.matches(CONTROL)) return;
@@ -1032,6 +1108,13 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     if (!dropped.length) return;
     const tops = [...new Set(dropped.map((i) => topOf(i.path)))];
     const clashes = tops.filter((t) => names?.some((n) => sameStashName(n, t))).map((t) => ({ source: t, name: t, dest: dir }));
+    // R4: an answer set in the Files settings is given without asking; Skip's tops are not counted as added.
+    const answer = prefs.files.onClash;
+    if (clashes.length && answer !== 'ask') {
+      void runStash(dir, [{ onClash: answer, items: dropped }], noneDone(),
+        answer === 'skip' ? new Set(clashes.map((c) => c.source.toLowerCase())) : new Set());
+      return;
+    }
     if (clashes.length) {
       setDialog({ kind: 'stash-clash', dir, items: dropped, clashes, at: 0, choices: {}, later: [], done: noneDone(), skipped: new Set() });
       return;
@@ -1157,9 +1240,10 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       // Below lg only the active side is drawn, as tall as its rows: the page scrolls, not a box inside it.
       <div className={`grid min-h-0 min-w-0 lg:grid-rows-[minmax(0,1fr)] ${active === side ? '' : 'max-lg:hidden'}`}>
         <Pane side={side} active={active === side} listing={side === 'left' ? shownLeft : shownRight} loading={p.loading} error={p.error}
-              // STASH: files carry comments more often than not (ruling 9): its panes show the column.
-              sort={sortOf(p.listing, p.path)} selection={p.selection} showComment={deviceOf(p.listing?.path ?? p.path) === 'stash'}
-              view={{ filter: '', hideInfo: false }} onFilter={() => {}} onShowInfo={() => {}} help="files"
+              // The Comment column: STASH: only by default (ruling 9), or always, or never (R3).
+              sort={sortOf(p.listing, p.path)} selection={p.selection} showComment={showsComment(prefs.files.comments, p.listing?.path ?? p.path)}
+              view={viewOf(p)} onFilter={(text) => setFilter(side, text)} onShowInfo={showInfo} filterRef={filterRefs[side]}
+              help={paneHelpTopic(p.listing?.path ?? p.path)}
               onActivate={() => activate(side)} onNavigate={(path) => navigate(side, path)}
               onSort={(key) => changeSort(side, key)} onSetSort={(next) => applySort(side, next)}
               onRowClick={(i, mods) => rowClick(side, i, mods)}

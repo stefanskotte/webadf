@@ -3,7 +3,8 @@ import { getDb } from '@/db';
 import { nowMs } from '@/lib/clock';
 import { listSendTargets } from '@/lib/send-targets';
 import { getUserPrefs } from '@/lib/user-prefs';
-import { DEFAULT_LEFT, DEFAULT_RIGHT, formatPath, PANE_DEVICES, parsePath } from '@/lib/files/path';
+import { formatPath, PANE_DEVICES, parsePath } from '@/lib/files/path';
+import { paneDefaults } from '@/lib/files/view';
 import { driverFor } from '@/lib/files/drivers';
 import { Refused } from '@/lib/files/driver';
 import { refusalWords } from '@/lib/files/words';
@@ -49,13 +50,16 @@ async function firstListing(ctx: { orgId: string; userId: string }, path: string
 export default async function FilesPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { orgId, userId } = await requireOrg();
   const sp = await searchParams;
-  const leftPath = paneParam(sp.left, DEFAULT_LEFT);
-  const rightPath = paneParam(sp.right, DEFAULT_RIGHT);
+  // R5: a pane the address does not name opens where the Files settings say (a bare /files, the top nav, Back to it).
+  const prefs = await getUserPrefs(userId);
+  const d = paneDefaults(prefs.files.panes);
+  const leftPath = paneParam(sp.left, d.left);
+  const rightPath = paneParam(sp.right, d.right);
   const active = sp.active === 'right' ? 'right' : 'left';
   const ctx = { orgId, userId };
   const now = nowMs();
-  const [left, right, prefs, targets] = await Promise.all([
-    firstListing(ctx, leftPath), firstListing(ctx, rightPath), getUserPrefs(userId), listSendTargets(getDb(), orgId, now),
+  const [left, right, targets] = await Promise.all([
+    firstListing(ctx, leftPath), firstListing(ctx, rightPath), listSendTargets(getDb(), orgId, now),
   ]);
   // A pane at NET:/<board> names the board the Send zone starts on.
   const netBoard = [leftPath, rightPath].map((p) => parsePath(p)).find((p) => p?.device === 'NET' && p.segments.length >= 1)?.segments[0] ?? null;
@@ -72,7 +76,7 @@ export default async function FilesPage({ searchParams }: { searchParams: Promis
       <div className="px-4 pb-10 sm:px-7">
         <FilesManager
           initial={{ left: left.listing, right: right.listing, leftPath, rightPath, active, leftError: left.error, rightError: right.error, strips }}
-          prefs={{ sort: prefs.files.sort }}
+          prefs={{ files: prefs.files, hideInfo: prefs.browse.hideInfo }}
           send={{ targets, initialBoard: netBoard, serverNow: now }}
         />
       </div>

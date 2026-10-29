@@ -151,7 +151,9 @@ test('at 390: one pane, the side switch, the bottom bar; Copy to… copies a fil
   await page.getByTestId('disk-strip-left').getByTestId('disk-strip-history-toggle').tap();
   const v0 = page.getByTestId('disk-strip-history').getByTestId('version-0');
   await expect(page.locator('[data-sonner-toast]')).toHaveCount(0, { timeout: 15_000 });   // the copy's toast sits there
-  await v0.scrollIntoViewIfNeeded();
+  // To the middle of the window: scrolled only "if needed" it stops at the bottom edge, under the fixed tab bar,
+  // since the pane's header grew a filter row (increment 4).
+  await v0.evaluate((el) => el.scrollIntoView({ block: 'center' }));
   const b0 = (await v0.boundingBox())!;
   expect(await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('[data-testid="version-0"]'),
     [b0.x + b0.width / 2, b0.y + b0.height / 2])).toBe(true);
