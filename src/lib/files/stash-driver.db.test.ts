@@ -56,6 +56,17 @@ beforeAll(async () => {
 afterAll(async () => { await closeDb(); await admin(`drop database if exists ${DB} with (force)`); });
 
 describe('STASH: listing', () => {
+  it("marks files dropped from the computer 'dropped', copies and folders nothing, Amiga files their board (R8)", async () => {
+    await insertStash(getDb(), 'o1', 'copy', [{ path: 'Copied.txt', kind: 'file', sha256: await put(enc('c')), sizeBytes: 1,
+      date: new Date(Date.UTC(2020, 0, 2)), protection: 0, comment: '' }]);
+    const l = (await stashDriver.list(ctx, P('STASH:')))!;
+    const marks = (n: string) => l.entries.find((e) => e.name === n)!.marks;
+    expect(marks('ReadMe')).toEqual(['dropped']);
+    expect(marks('Copied.txt')).toEqual([]);
+    expect(marks('Mods')).toEqual([]);
+    expect(marks('Broken.txt')[0]).toBe('from A500 bench');
+  });
+
   it('lists the root: folders, files and an archive, with protection, comment and the limit line', async () => {
     const l = (await stashDriver.list(ctx, P('STASH:')))!;
     expect(l.entries.map((e) => [e.kind, e.name, e.path])).toEqual(expect.arrayContaining([

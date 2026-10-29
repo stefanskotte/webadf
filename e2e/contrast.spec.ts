@@ -748,6 +748,7 @@ test('the Files STASH: pairs are legible: drop zone, marks, row buttons, Add to 
   const mark = (name: string, n: number) => `${r(name)} td:nth-child(2) > span > span.rounded-full.border:nth-of-type(${n})`;
   await expect(page.locator(mark('Hi.txt', 3))).toHaveText('from Bench');
   await expect(page.locator(mark('Moving.bin', 4))).toHaveText('arriving 81%');
+  await expect(page.locator(mark('w.zip', 3))).toHaveText('dropped');
   await legible(page, 'stash', [
     ['zone title', '#files-drop-stash-heading'],
     ['zone hint', '[data-testid="files-drop-stash-hint"]'],
@@ -756,6 +757,7 @@ test('the Files STASH: pairs are legible: drop zone, marks, row buttons, Add to 
     ['Fetch', '[data-testid="files-stash-url-fetch"]'],
     ['"from <board>" mark', mark('Hi.txt', 3)],
     ['"arriving N%" mark', mark('Moving.bin', 4)],
+    ['"dropped" mark', mark('w.zip', 3)],
     ['row Open (archive)', '[data-testid="pane-open-w.zip"]'],
     ['row Add to library', '[data-testid="pane-addlib-Game.adf"]'],
     ['Add to library (enabled)', '[data-testid="files-addlib"]'],
