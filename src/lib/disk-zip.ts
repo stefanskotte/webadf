@@ -57,13 +57,34 @@ export function zipEntries(adf: Uint8Array, root: AdfEntry[], blocks: readonly n
     if (!e) return { ok: false, reason: 'not_found' };
     if (!underSelected(root, b, selected)) tops.push(e);
   }
+  // No limits, so never too_large.
+  return zipTops(tops.map((entry) => ({ adf, entry }))) as ZipOutcome;
+}
+
+/** The Files manager's multi-file download caps (spec 2026-10-29 §3.3): entries counted with every folder. */
+export type ZipLimits = { maxEntries: number; maxBytes: number };
+
+/**
+ * Entries, each from its own image (so a selection can span disks), each at the top of the archive under its own
+ * name with its subtree below it -- the rules zipEntries describes. With `limits`, a selection over either cap is
+ * refused before any file is read.
+ */
+export function zipTops(
+  tops: readonly { adf: Uint8Array; entry: AdfEntry }[], limits?: ZipLimits,
+): ZipOutcome | { ok: false; reason: 'too_large' } {
+  if (limits) {
+    let entries = 0; let bytes = 0;
+    const count = (e: AdfEntry) => { entries++; if (e.kind === 'dir') e.children.forEach(count); else bytes += e.sizeBytes; };
+    tops.forEach((t) => count(t.entry));
+    if (entries > limits.maxEntries || bytes > limits.maxBytes) return { ok: false, reason: 'too_large' };
+  }
 
   const files: { path: string; bytes: Uint8Array | null }[] = [];
-  const add = (e: AdfEntry, path: string): string | null => {
+  const add = (adf: Uint8Array, e: AdfEntry, path: string): string | null => {
     if (e.kind === 'dir') {
       files.push({ path: `${path}/`, bytes: null });
       for (const c of e.children) {
-        const bad = add(c, `${path}/${safe(c.name)}`);
+        const bad = add(adf, c, `${path}/${safe(c.name)}`);
         if (bad !== null) return bad;
       }
       return null;
@@ -75,12 +96,12 @@ export function zipEntries(adf: Uint8Array, root: AdfEntry[], blocks: readonly n
   };
 
   const taken = new Set<string>();
-  for (const e of tops) {
-    const base = safe(e.name);
+  for (const { adf, entry } of tops) {
+    const base = safe(entry.name);
     let name = base;
     for (let n = 2; taken.has(name.toLowerCase()); n++) name = numbered(base, n);
     taken.add(name.toLowerCase());
-    const bad = add(e, name);
+    const bad = add(adf, entry, name);
     if (bad !== null) return { ok: false, reason: 'unreadable', name: bad };
   }
   return { ok: true, zip: writeZip(files) };

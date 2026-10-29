@@ -73,7 +73,9 @@ export function Pane(p: PaneProps) {
     <section data-testid={`pane-${side}`} data-active={p.active ? 'true' : 'false'}
              aria-label={side === 'left' ? 'Left pane' : 'Right pane'}
              onMouseDown={p.onActivate} onFocus={p.onActivate}
-             onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); p.onDropRows(e); }}
+             // Only a writable folder inside a disk takes a drop; anywhere else the browser shows no-drop.
+             onDragOver={(e) => { if (listing?.disk && listing.writable) e.preventDefault(); }}
+             onDrop={(e) => { e.preventDefault(); p.onDropRows(e); }}
              className="flex min-w-0 flex-col" style={{ background: 'var(--surface)' }}>
       <div className="border-b px-3.5 pt-3 pb-2.5"
            style={{ borderColor: 'var(--line)', background: p.active ? 'var(--viewing-bg)' : undefined }}>

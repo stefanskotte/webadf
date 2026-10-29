@@ -8,7 +8,8 @@ import { readVolume, readUsage, readFile, geometryOf, HD_GEOMETRY, type AdfEntry
 import { sameName } from '@/lib/adffs/write';
 import { findHolder, mountedReason } from '@/lib/disk-holder';
 import { isLocal } from '@/lib/remote-hidden';
-import { formatPath, type FsPath } from './path';
+import { zipTops } from '@/lib/disk-zip';
+import { formatPath, isWithin, type FsPath } from './path';
 import type { Crumb, DiskInfo, FsEntry, Listing } from './types';
 
 export type FsCtx = { orgId: string; userId: string | null };
@@ -122,4 +123,34 @@ export async function readLibraryFile(ctx: FsCtx, p: FsPath) {
   const f = readFile(d.bytes, at.entry.block);
   if (!f) return null;
   return { name: at.entry.name, bytes: f.bytes, date: at.entry.modifiedAt, protection: at.entry.protection, comment: at.entry.comment };
+}
+
+/** The multi-file download's caps (spec 2026-10-29 §3.3): beyond either the answer is 413 too_large. */
+export const ZIP_LIMITS = { maxEntries: 1000, maxBytes: 64 * 1024 * 1024 };
+
+/**
+ * Several LIBRARY: files and folders, from any disks, as one .zip: each at the top under its own name, a folder with
+ * everything under it. An entry inside another selected folder of the same disk is already in the zip and is not
+ * added twice. Null when any path is not a file or folder inside a disk this org has. Throws BlobUnavailableError.
+ */
+export async function zipLibraryPaths(ctx: FsCtx, paths: FsPath[]) {
+  const loaded = new Map<string, ResolvedDisk>();
+  const picked: { p: FsPath; key: string; adf: Uint8Array; entry: AdfEntry; intl: boolean }[] = [];
+  for (const p of paths) {
+    const [gameId, diskId, ...names] = p.segments;
+    if (p.device !== 'LIBRARY' || !gameId || !diskId || !names.length) return null;
+    const key = `${gameId}/${diskId}`;
+    let d = loaded.get(key);
+    if (!d) {
+      const got = await loadDisk(ctx, gameId, diskId);
+      if (!got) return null;
+      loaded.set(key, d = got);
+    }
+    const at = resolveInDisk(d, names);
+    if (!at?.entry) return null;
+    picked.push({ p, key, adf: d.bytes, entry: at.entry, intl: d.intl });
+  }
+  const tops = picked.filter((a, i) => !picked.some((b, j) => j !== i && b.key === a.key
+    && (b.entry.block === a.entry.block ? j < i : isWithin(a.p, b.p, (x, y) => sameName(x, y, a.intl)))));
+  return zipTops(tops.map(({ adf, entry }) => ({ adf, entry })), ZIP_LIMITS);
 }

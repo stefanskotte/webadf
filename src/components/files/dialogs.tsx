@@ -9,7 +9,10 @@ import type { FsEntry } from '@/lib/files/types';
 import { AMIGA_COMMENT_MAX, amigaNameProblem } from '@/lib/files/path';
 import { refusalWords } from '@/lib/files/words';
 import { PROTECTION_FLAGS, bitsFromProtection } from '@/lib/protection-bits';
+import type { ClashChoice } from '@/lib/files/transfer';
 import { paneSize } from './pane';
+
+export type { ClashChoice };
 
 /**
  * The Files manager's dialogs (spec 2026-10-29 §5), all on the shared Modal. Each is mounted only while open and
@@ -17,7 +20,6 @@ import { paneSize } from './pane';
  * put and cannot be dismissed.
  */
 
-export type ClashChoice = 'replace' | 'skip' | 'keep-both';
 export type Clash = { source: string; name: string; dest: string };
 
 const foot = 'flex w-full items-center justify-end gap-2.5';

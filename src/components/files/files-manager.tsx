@@ -12,6 +12,7 @@ import { formatPath, parsePath } from '@/lib/files/path';
 import type { OpItem, OpRequest } from '@/lib/files/ops';
 import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
+import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
 import { Pane } from './pane';
 import {
   ClashDialog, ConfirmDeleteDialog, InfoDialog, NameDialog, ProtectDialog, placeName, type Clash, type ClashChoice,
@@ -44,7 +45,12 @@ export type FilesManagerProps = {
 };
 
 type Dialog =
-  | { kind: 'clash'; op: 'copy' | 'move'; sources: string[]; dest: string; where: string; clashes: Clash[]; at: number; choices: Record<string, ClashChoice> }
+  | {
+    kind: 'clash'; op: 'copy' | 'move'; sources: string[]; dest: string; where: string; clashes: Clash[]; at: number;
+    choices: Record<string, ClashChoice>;
+    /** Requests still to send once these clashes are answered, and the outcomes of those already sent. */
+    rest: TransferGroup[]; done: OpItem[];
+  }
   | { kind: 'delete'; side: Side; entries: FsEntry[] }
   | { kind: 'makedir'; side: Side }
   | { kind: 'rename'; side: Side; entry: FsEntry }
@@ -165,9 +171,14 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     }));
   }
 
+  /**
+   * Fresh listings where the panes are NOW. Called after an operation's await, so it reads the latest state, not
+   * this render's: a pane the person moved while the operation ran stays where they took it.
+   */
   function reloadBoth() {
-    void load('left', panes.left.path);
-    void load('right', panes.right.path);
+    const { panes: cur } = latest.current;
+    void load('left', cur.left.path);
+    void load('right', cur.right.path);
   }
 
   function navigate(side: Side, path: string) {
@@ -241,6 +252,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   const src = panes[active].listing;
   const dst = panes[otherSide(active)].listing;
   const picked = pickedOf(rowsOf(active), panes[active].selection);
+  const folderName = src?.crumbs[src.crumbs.length - 1]?.label ?? 'Files';
   const readOnly = (l: Listing) => refusalWords('read_only', l.readOnlyReason ?? undefined);
 
   function sourceReason(writable: boolean): string | null {
@@ -265,10 +277,9 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     makedir: !src?.disk ? 'Open a disk to make a folder in it' : !src.writable ? readOnly(src) : null,
     protect: sourceReason(true),
     info: one(sourceReason(false), 'see its details'),
-    // R4: one file downloads by path. Several files on one disk would need the zip route's block numbers, which a
-    // Listing does not carry (yet), so a multiple selection is refused for now.
-    download: sourceReason(false) ?? (picked.length !== 1 ? 'Select one file to download it'
-      : picked[0].kind !== 'file' ? 'Select a file to download it' : null),
+    // One file by path; several, or a folder, as a .zip (spec §3.3).
+    download: sourceReason(false)
+      ?? (downloadHref(picked, folderName).length > DOWNLOAD_URL_MAX ? 'Too many items to download at once — download their folder instead' : null),
   };
 
   // ---- running an operation -----------------------------------------------------------------------------------
@@ -316,45 +327,55 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   const verbs = { copy: ['Copying', 'Copied'], move: ['Moving', 'Moved'] } as const;
 
-  async function transfer(op: 'copy' | 'move', sources: string[], dest: string, where: string) {
+  type ClashDialogState = Extract<Dialog, { kind: 'clash' }>;
+  type Run = { op: 'copy' | 'move'; dest: string; where: string };
+
+  function transfer(op: 'copy' | 'move', sources: string[], dest: string, where: string) {
     if (busy) return;
-    const r = await post({ op, sources, dest, onClash: 'ask' }, `${verbs[op][0]} ${items(sources.length)}…`);
-    if (r.kind === 'clashes') setDialog({ kind: 'clash', op, sources, dest, where, clashes: r.clashes, at: 0, choices: {} });
-    else if (r.kind === 'done') report(r.items, (n) => `${verbs[op][1]} ${items(n)} to ${where}.`);
+    void runGroups({ op, dest, where }, [{ onClash: 'ask', sources }], []);
   }
 
   /**
-   * Every clash has an answer. One answer for all is one request (one new version per disk). Mixed answers cannot
-   * be one request -- `onClash` is per operation -- so the sources go in one request per answer (skipped ones not at
-   * all), the clash-free ones with the first.
+   * Send the groups in turn. A 409 clashes answer (always on the first 'ask'; on a resend only if the folder changed
+   * in between) opens the Clash dialog; the groups not yet sent wait in it with what is already done, and go on once
+   * every clash has an answer. A refusal stops the run (its toast is already up); what was done is still reported.
    */
-  async function finishClashes(d: Extract<Dialog, { kind: 'clash' }>, choices: Record<string, ClashChoice>) {
-    setDialog(null);
-    const answers = [...new Set(d.clashes.map((c) => choices[c.source]))];
-    const groups: { onClash: ClashChoice; sources: string[] }[] = answers.length === 1
-      ? [{ onClash: answers[0], sources: d.sources }]
-      : answers.filter((a) => a !== 'skip').map((a, i) => ({
-        onClash: a, sources: d.sources.filter((s) => (choices[s] ?? (i === 0 ? a : null)) === a),
-      }));
-    const all: OpItem[] = [];
-    for (const g of groups) {
-      if (g.sources.length === 0) continue;
-      const r = await post({ op: d.op, sources: g.sources, dest: d.dest, onClash: g.onClash }, `${verbs[d.op][0]} ${items(g.sources.length)}…`);
-      if (r.kind === 'done') all.push(...r.items);
-      else if (r.kind === 'clashes') { toast.error(refusalWords('name_exists')); break; }
-      else break;
+  async function runGroups(run: Run, groups: TransferGroup[], done: OpItem[]) {
+    for (const [k, g] of groups.entries()) {
+      const r = await post({ op: run.op, sources: g.sources, dest: run.dest, onClash: g.onClash },
+        `${verbs[run.op][0]} ${items(g.sources.length)}…`);
+      if (r.kind === 'done') { done.push(...r.items); continue; }
+      if (r.kind === 'clashes') {
+        setDialog({ kind: 'clash', ...run, sources: g.sources, clashes: r.clashes, at: 0, choices: {}, rest: groups.slice(k + 1), done });
+        return;
+      }
+      break;
     }
-    if (all.length) report(all, (n) => `${verbs[d.op][1]} ${items(n)} to ${d.where}.`);
+    finishRun(run, done);
+  }
+
+  function finishRun(run: Run, done: OpItem[]) {
+    if (done.length) report(done, (n) => `${verbs[run.op][1]} ${items(n)} to ${run.where}.`);
     else reloadBoth();
   }
 
   function chooseClash(choice: ClashChoice, forAll: boolean) {
     if (dialog?.kind !== 'clash') return;
-    const choices = { ...dialog.choices };
-    const upto = forAll ? dialog.clashes.length : dialog.at + 1;
-    for (let i = dialog.at; i < upto; i++) choices[dialog.clashes[i].source] = choice;
-    if (upto < dialog.clashes.length) setDialog({ ...dialog, at: upto, choices });
-    else void finishClashes(dialog, choices);
+    const d: ClashDialogState = dialog;
+    const choices = { ...d.choices };
+    const upto = forAll ? d.clashes.length : d.at + 1;
+    for (let i = d.at; i < upto; i++) choices[d.clashes[i].source] = choice;
+    if (upto < d.clashes.length) { setDialog({ ...d, at: upto, choices }); return; }
+    setDialog(null);
+    void runGroups(d, [...clashGroups(d.sources, d.clashes.map((c) => c.source), choices), ...d.rest], [...d.done]);
+  }
+
+  /** Cancel stops the run here; anything an earlier request already did is still reported. */
+  function cancelClash() {
+    if (dialog?.kind !== 'clash') return;
+    const d: ClashDialogState = dialog;
+    setDialog(null);
+    if (d.done.length) finishRun(d, d.done);
   }
 
   const where = (l: Listing | null) => (l?.disk ? l.disk.label : 'the other side');
@@ -373,7 +394,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
       case 'info': setDialog({ kind: 'info', side, entry: picked[0] }); return;
       case 'download': {
         const a = document.createElement('a');
-        a.href = `/api/files/download?path=${encodeURIComponent(picked[0].path)}`;
+        a.href = downloadHref(picked, folderName);
         a.download = '';
         document.body.appendChild(a); a.click(); a.remove();
         return;
@@ -520,7 +541,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
       {dialog?.kind === 'clash' && (
         <ClashDialog key={dialog.at} clash={dialog.clashes[dialog.at]} remaining={dialog.clashes.length - dialog.at}
-                     busy={dialogBusy} onChoose={chooseClash} onCancel={() => setDialog(null)} />
+                     busy={dialogBusy} onChoose={chooseClash} onCancel={cancelClash} />
       )}
       {dialog?.kind === 'delete' && (
         <ConfirmDeleteDialog entries={dialog.entries} where={dialogListing?.disk ?? null} busy={dialogBusy}

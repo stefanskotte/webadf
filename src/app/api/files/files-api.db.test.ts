@@ -49,6 +49,13 @@ const { GET: GET_LIST } = await import('./list/route');
 const { POST: POST_OPS } = await import('./ops/route');
 const { GET: GET_DL } = await import('./download/route');
 
+const { readVolume } = await import('@/lib/adffs');
+const { unzipSync, strFromU8 } = await import('fflate');
+/** A root folder's block, for adding into it. */
+const resolveRoot = (adf: Uint8Array, name: string) => {
+  const v = readVolume(adf); if (!v.ok) throw new Error('no volume');
+  return v.root.find((e) => e.name === name)!.block;
+};
 const must = (r: { ok: true; adf: Uint8Array } | { ok: false; reason: string }) => { if (!r.ok) throw new Error(r.reason); return r.adf; };
 const req = (p: string) => new Request('http://localhost' + p);
 const json = (body: unknown) => new Request('http://localhost/api/files/ops', { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } });
@@ -73,6 +80,12 @@ beforeAll(async () => {
   adf = must(addFile(adf, ROOT_BLOCK, 'ReadMe', new TextEncoder().encode('hello')));
   adf = must(addFile(adf, ROOT_BLOCK, "it's(1).txt", new TextEncoder().encode('q')));
   await seedDisk('g1', 'SysInfo', 'd1', adf);
+  let other = formatVolume({ filesystem: 'OFS', volumeName: 'Other' });
+  other = must(addFile(other, ROOT_BLOCK, 'Other.txt', new TextEncoder().encode('other')));
+  other = must(makeDirectory(other, ROOT_BLOCK, 'S'));
+  const s = resolveRoot(other, 'S');
+  other = must(addFile(other, s, 'Startup', new TextEncoder().encode('echo hi')));
+  await seedDisk('g2', 'Other', 'd2', other);
   await seedDisk('g3', 'Gone', 'd3', formatVolume({ filesystem: 'OFS', volumeName: 'Gone' }), false);
 });
 afterAll(async () => { await closeDb(); await admin(`drop database if exists ${DB} with (force)`); });
@@ -133,6 +146,31 @@ describe('/api/files', () => {
       expect([o.status, (await o.json()).error]).toEqual([404, 'not_found']);
       expect((await GET_DL(req('/api/files/download?path=' + encodeURIComponent('LIBRARY:/g1/d1/ReadMe')))).status).toBe(404);
     } finally { asOrg('o1'); }
+  });
+  it('downloads several paths across disks as one zip, folders with their contents', async () => {
+    const q = ['LIBRARY:/g1/d1/ReadMe', 'LIBRARY:/g2/d2/Other.txt', 'LIBRARY:/g2/d2/S', 'LIBRARY:/g2/d2/S/Startup']
+      .map((p) => 'paths=' + encodeURIComponent(p)).join('&');
+    const r = await GET_DL(req(`/api/files/download?${q}&name=Disk%201`));
+    expect(r.status).toBe(200);
+    expect(r.headers.get('content-type')).toBe('application/zip');
+    expect(r.headers.get('content-disposition')).toContain("filename*=UTF-8''Disk%201.zip");
+    const files = unzipSync(new Uint8Array(await r.arrayBuffer()));
+    expect(Object.keys(files).sort()).toEqual(['Other.txt', 'ReadMe', 'S/', 'S/Startup']);
+    expect(strFromU8(files['ReadMe'])).toBe('hello');
+    expect(strFromU8(files['Other.txt'])).toBe('other');
+    expect(strFromU8(files['S/Startup'])).toBe('echo hi');
+  });
+  it('zip download: foreign or unknown path 404, bad path 400, too many 413, missing blob 503', async () => {
+    const dl = (...ps: string[]) => GET_DL(req('/api/files/download?' + ps.map((p) => 'paths=' + encodeURIComponent(p)).join('&')));
+    expect((await dl('LIBRARY:/g1/d1/ReadMe', 'LIBRARY:/g1/d1/Nothing')).status).toBe(404);
+    expect((await dl('LIBRARY:/g1/d1')).status).toBe(404);
+    expect((await dl('nope')).status).toBe(400);
+    asOrg('o2');
+    try { expect((await dl('LIBRARY:/g1/d1/ReadMe', 'LIBRARY:/g2/d2/Other.txt')).status).toBe(404); } finally { asOrg('o1'); }
+    const many = await dl(...Array.from({ length: 1001 }, () => 'LIBRARY:/g1/d1/ReadMe'));
+    expect([many.status, (await many.json()).error]).toEqual([413, 'too_large']);
+    const gone = await dl('LIBRARY:/g3/d3/x');
+    expect([gone.status, (await gone.json()).error]).toEqual([503, 'blob_unavailable']);
   });
   it('a database error is not reported as blob_unavailable', async () => {
     holderSeam.fail = true;
