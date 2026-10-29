@@ -70,74 +70,85 @@ async function presign(files: { sha256: string; sizeBytes: number }[]): Promise<
   return new Map((r.data?.uploads as { sha256: string; url: string }[]).map((u) => [u.sha256, u.url]));
 }
 
-export function useStashUpload() {
-  const [busy, setBusy] = useState<string | null>(null);
+/** What a top that never reached a commit says when a refusal stopped the drop before it. */
+const NOT_SENT = 'not sent — the drop stopped';
 
-  /**
-   * `items` into the STASH: folder `dir` (a path, "STASH:" or "STASH:/Mods"). With `onClash: 'ask'` a clash the server
-   * finds stops the drop before that batch: the result carries `clashes` and the items not yet written (`rest`), to be
-   * sent again with the chosen answer.
-   */
-  async function upload(dir: string, items: DroppedItem[], onClash: OnClash): Promise<StashUploadResult> {
-    const out: StashUploadResult = { items: [], renamed: [], refused: [], stopped: null };
-    const plan = planStashBatches(items);
-    out.refused.push(...plan.refused.map((r) => ({ path: r.path, why: PLAN_WORDS[r.why] })));
-    const total = plan.batches.flat().filter((i) => i.kind === 'file' && i.sizeBytes > 0).length;
-    let moved = 0;
-    const tick = () => setBusy(`Uploading ${Math.min(moved, total)} of ${total}…`);
-    const sha = new Map<DroppedItem, string>();
+/**
+ * `items` into the STASH: folder `dir` (a path, "STASH:" or "STASH:/Mods"). With `onClash: 'ask'` a clash the server
+ * finds stops the drop before that batch: the result carries `clashes` and the items not yet written (`rest`), to be
+ * sent again with the chosen answer. A refusal that stops the drop lists every top it left unwritten. `progress` hears
+ * "Uploading 3 of 12…" as files go up. The hook's work, apart from React so it can be tested with a mocked fetch.
+ */
+export async function uploadToStash(dir: string, items: DroppedItem[], onClash: OnClash, progress: (words: string) => void = () => {})
+  : Promise<StashUploadResult> {
+  const out: StashUploadResult = { items: [], renamed: [], refused: [], stopped: null };
+  const plan = planStashBatches(items);
+  out.refused.push(...plan.refused.map((r) => ({ path: r.path, why: PLAN_WORDS[r.why] })));
+  const total = plan.batches.flat().filter((i) => i.kind === 'file' && i.sizeBytes > 0).length;
+  let moved = 0;
+  const tick = () => progress(`Uploading ${Math.min(moved, total)} of ${total}…`);
+  const sha = new Map<DroppedItem, string>();
 
-    /** Hash, presign and PUT the non-empty files of `batch`; the tops whose bytes did not go up. */
-    async function send(batch: DroppedItem[], counted: boolean): Promise<Set<string>> {
-      const files = batch.filter((i): i is DroppedItem & { file: File } => i.kind === 'file' && i.sizeBytes > 0 && !!i.file);
-      await mapLimit(files, HASH_CONCURRENCY, async (i) => { if (!sha.has(i)) sha.set(i, await hashBlob(i.file)); });
-      const urls = await presign(files.map((i) => ({ sha256: sha.get(i)!, sizeBytes: i.sizeBytes })));
-      const failed = new Set<string>();
-      const sent = new Map<string, Promise<boolean>>();   // one PUT per sha-256, however many files share it
-      await mapLimit(files, UPLOAD_CONCURRENCY, async (i) => {
-        const h = sha.get(i)!;
-        const url = urls.get(h);
-        if (url && !sent.has(h)) {
-          sent.set(h, putPresigned(url, i.file, async () => (await presign([{ sha256: h, sizeBytes: i.sizeBytes }]).catch(() => null))?.get(h) ?? null)
-            .then((o) => o !== 'failed', () => false));
-        }
-        if (url && !(await sent.get(h))) failed.add(topOf(i.path).toLowerCase());
-        if (counted) { moved++; tick(); }
-      });
-      return failed;
-    }
+  /** Hash, presign and PUT the non-empty files of `batch`; the tops whose bytes did not go up. */
+  async function send(batch: DroppedItem[], counted: boolean): Promise<Set<string>> {
+    const files = batch.filter((i): i is DroppedItem & { file: File } => i.kind === 'file' && i.sizeBytes > 0 && !!i.file);
+    await mapLimit(files, HASH_CONCURRENCY, async (i) => { if (!sha.has(i)) sha.set(i, await hashBlob(i.file)); });
+    const urls = await presign(files.map((i) => ({ sha256: sha.get(i)!, sizeBytes: i.sizeBytes })));
+    const failed = new Set<string>();
+    const sent = new Map<string, Promise<boolean>>();   // one PUT per sha-256, however many files share it
+    await mapLimit(files, UPLOAD_CONCURRENCY, async (i) => {
+      const h = sha.get(i)!;
+      const url = urls.get(h);
+      if (url && !sent.has(h)) {
+        sent.set(h, putPresigned(url, i.file, async () => (await presign([{ sha256: h, sizeBytes: i.sizeBytes }]).catch(() => null))?.get(h) ?? null)
+          .then((o) => o !== 'failed', () => false));
+      }
+      if (url && !(await sent.get(h))) failed.add(topOf(i.path).toLowerCase());
+      if (counted) { moved++; tick(); }
+    });
+    return failed;
+  }
 
-    async function commit(batch: DroppedItem[], clash: OnClash) {
-      return postJson('/api/files/stash/commit', {
-        dir, onClash: clash,
-        entries: batch.map((i) => ({
-          path: i.path, kind: i.kind, sizeBytes: i.kind === 'file' ? i.sizeBytes : 0,
-          ...(i.kind === 'file' && i.sizeBytes > 0 ? { sha256: sha.get(i) } : {}),
-          ...(i.file?.lastModified ? { lastModified: i.file.lastModified } : {}),
-        })),
-      });
-    }
+  async function commit(batch: DroppedItem[], clash: OnClash) {
+    return postJson('/api/files/stash/commit', {
+      dir, onClash: clash,
+      entries: batch.map((i) => ({
+        path: i.path, kind: i.kind, sizeBytes: i.kind === 'file' ? i.sizeBytes : 0,
+        ...(i.kind === 'file' && i.sizeBytes > 0 ? { sha256: sha.get(i) } : {}),
+        ...(i.file?.lastModified ? { lastModified: i.file.lastModified } : {}),
+      })),
+    });
+  }
 
-    tick();
-    try {
-      for (const [k, batch] of plan.batches.entries()) {
-        const failed = await send(batch, true);
-        const ready = batch.filter((i) => !failed.has(topOf(i.path).toLowerCase()));
-        for (const top of new Set(batch.filter((i) => failed.has(topOf(i.path).toLowerCase())).map((i) => topOf(i.path)))) {
-          out.refused.push({ path: top, why: 'the upload failed' });
-        }
-        if (!ready.length) continue;
-        const r = await commit(ready, onClash);
-        if (r.status === 409 && r.data?.error === 'clashes') {
-          return { ...out, clashes: r.data.clashes as Clash[], rest: [...ready, ...plan.batches.slice(k + 1).flat()] };
-        }
-        if (!r.ok || !r.data?.items) { out.stopped = words(r.data?.error, r.data?.detail); break; }
-        let got = r.data.items as OpItem[];
-        out.renamed.push(...((r.data.renamed ?? []) as StashUploadResult['renamed']));
-        // The server released bytes that were not this file's (a poisoned key): those tops go up once more.
-        const again = new Set(got.filter((i) => !i.ok && i.refusal.code === 'failed' && i.refusal.detail === NOT_WHOLE)
-          .map((i) => i.source.toLowerCase()));
-        if (again.size) {
+  tick();
+  // The items of the batch in hand that have no answer yet, and the index of the next batch: what a stop leaves unwritten.
+  let pending: DroppedItem[] = [];
+  let next = 0;
+  try {
+    for (; next < plan.batches.length;) {
+      const batch = plan.batches[next++];
+      pending = batch;
+      const failed = await send(batch, true);
+      const ready = batch.filter((i) => !failed.has(topOf(i.path).toLowerCase()));
+      for (const top of new Set(batch.filter((i) => failed.has(topOf(i.path).toLowerCase())).map((i) => topOf(i.path)))) {
+        out.refused.push({ path: top, why: 'the upload failed' });
+      }
+      pending = ready;
+      if (!ready.length) continue;
+      const r = await commit(ready, onClash);
+      if (r.status === 409 && r.data?.error === 'clashes') {
+        return { ...out, clashes: r.data.clashes as Clash[], rest: [...ready, ...plan.batches.slice(next).flat()] };
+      }
+      if (!r.ok || !r.data?.items) { out.stopped = words(r.data?.error, r.data?.detail); break; }
+      let got = r.data.items as OpItem[];
+      out.renamed.push(...((r.data.renamed ?? []) as StashUploadResult['renamed']));
+      pending = [];
+      // The server released bytes that were not this file's (a poisoned key): those tops go up once more. Whatever
+      // that retry meets, the first commit's answers (written on the server) are kept.
+      const again = new Set(got.filter((i) => !i.ok && i.refusal.code === 'failed' && i.refusal.detail === NOT_WHOLE)
+        .map((i) => i.source.toLowerCase()));
+      if (again.size) {
+        try {
           const retry = ready.filter((i) => again.has(topOf(i.path).toLowerCase()));
           for (const i of retry) sha.delete(i);
           const lost = await send(retry, false);
@@ -148,15 +159,32 @@ export function useStashUpload() {
             got = got.map((i) => by.get(i.source.toLowerCase()) ?? i);
             out.renamed.push(...((r2.data.renamed ?? []) as StashUploadResult['renamed']));
           }
+        } catch (e) {
+          out.items.push(...got);
+          throw e;
         }
-        out.items.push(...got);
       }
-    } catch (e) {
-      out.stopped = e instanceof Refusal ? e.message : refusalWords('failed');
+      out.items.push(...got);
+    }
+  } catch (e) {
+    out.stopped = e instanceof Refusal ? e.message : refusalWords('failed');
+  }
+  if (out.stopped) {
+    const left = [...pending, ...plan.batches.slice(next).flat()];
+    for (const top of new Set(left.map((i) => topOf(i.path)))) out.refused.push({ path: top, why: NOT_SENT });
+  }
+  return out;
+}
+
+export function useStashUpload() {
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function upload(dir: string, items: DroppedItem[], onClash: OnClash): Promise<StashUploadResult> {
+    try {
+      return await uploadToStash(dir, items, onClash, setBusy);
     } finally {
       setBusy(null);
     }
-    return out;
   }
 
   return { busy, setBusy, upload };
