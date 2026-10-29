@@ -535,7 +535,8 @@ export const HELP_TOPICS = {
   // and open read-only), increment 3 rulings R1-R8 (NET: rows, Delete cancels or clears, no move into NET:, the key on
   // the board's row), increment 4 R8 (the "dropped" mark); stash-drop-zone.tsx (the zone's title, Paste a URL),
   // stash-driver.ts (marks: from <board>, dropped; "kept 30 days"), net-driver.ts (boards on XFER_FW, `key ABCD`),
-  // amiga-upload-limits.ts (500 files, 256 MB, 30 days, 4 MB), stash-paths.ts (20 MB), send-limits.ts (4 MB, 32, 16 MB).
+  // amiga-upload-limits.ts (500 files, 256 MB, 30 days, 4 MB), stash-paths.ts (20 MB), send-limits.ts (4 MB, 32, 16 MB);
+  // net-driver.ts remove (Delete cancels a waiting or sending row), stash url/route.ts (a pasted URL is source 'browser').
   'stash-net': {
     title: 'STASH: and NET:',
     short: 'STASH: keeps loose files for 30 days: what you drop on the Files page and what your Amiga sends. NET: holds what waits to go to each board’s Amiga.',
@@ -543,8 +544,8 @@ export const HELP_TOPICS = {
       <>
         <p>
           <strong>STASH:</strong> Drop files, folders, .lha or .zip on <em>Drop files into STASH:</em>, or paste a URL.
-          Files your Amiga sends with Transfer land here too, marked with the board; files you dropped are marked{' '}
-          <em>dropped</em>. Make folders, rename, protect and comment as on a disk.
+          Files your Amiga sends with Transfer land here too, marked with the board; files you dropped or fetched from a
+          pasted URL are marked <em>dropped</em>. Make folders, rename, protect and comment as on a disk.
         </p>
         <p>
           <strong>Archives.</strong> An .lha or .zip stays one file. <em>Open</em> shows what is inside, read-only; copy
@@ -556,7 +557,7 @@ export const HELP_TOPICS = {
         <p>
           <strong>NET:</strong> lists your boards on firmware 1.15.0 or newer. Copy files or folders into a board to send
           them to its Amiga: each waits there until Transfer takes it, marked waiting, sending, delivered or failed.
-          Delete cancels a waiting file or clears a finished one. On firmware 1.19.0 or newer a board&apos;s row shows
+          Delete cancels a file still waiting or sending, or clears a finished one. On firmware 1.19.0 or newer a board&apos;s row shows
           four digits of its key (<em>key AB12</em>), the digits Transfer shows.
         </p>
         <GoodToKnow items={[
