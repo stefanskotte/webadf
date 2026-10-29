@@ -29,7 +29,7 @@ function render(o: Partial<PaneProps> = {}): string {
   const props: PaneProps = {
     side: 'left', active: true, listing: diskListing, loading: false, error: null,
     sort: { key: 'name', dir: 'asc' }, selection: EMPTY_SELECTION, showComment: false,
-    onActivate: noop, onNavigate: noop, onSort: noop, onRowClick: noop, onRowOpen: noop,
+    onActivate: noop, onNavigate: noop, onSort: noop, onSetSort: noop, onRowClick: noop, onRowOpen: noop,
     onDragStartRows: noop, onDropRows: noop, ...o,
   };
   return renderToStaticMarkup(createElement(Pane, props));
@@ -148,5 +148,13 @@ describe('Pane (Files increment 1, Task 7)', () => {
   it('below lg the controls a finger presses are 44 px (Task 10)', () => {
     const html = render();
     for (const id of ['pane-left-dev-LIBRARY', 'pane-left-up', 'pane-left-crumb-0']) expect(tagOf(html, id), id).toContain('max-lg:min-h-11');
+  });
+
+  it('below lg one sort button says the order in force, even one no phone column shows (Task 10 fix)', () => {
+    const btn = (sort: PaneProps['sort']) => render({ sort }).match(/data-testid="pane-left-sort-phone"[^>]*>(.*?)<\/button>/)![1].replace(/<[^>]+>/g, '');
+    expect(btn({ key: 'name', dir: 'asc' })).toBe('Name▲');
+    expect(btn({ key: 'date', dir: 'desc' })).toBe('Date▼');
+    expect(btn({ key: 'size', dir: 'asc' })).toBe('Size▲');
+    expect(tagOf(render(), 'pane-left-sort-phone')).toContain('lg:hidden');
   });
 });

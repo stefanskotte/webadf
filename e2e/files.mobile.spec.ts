@@ -162,11 +162,40 @@ test('at 390: a tap on a folder row opens it; Move to… moves into a folder the
   await diskStore.put(sha256, r.adf);
   const { gameId, diskId } = await seedDisk(orgId, { title: `PhoneMv-${tag}`, diskNo: 1, sha256, writeProtected: false });
   const disk = `LIBRARY:/${gameId}/${diskId}`;
+  // A Date ▼ sort remembered from a desktop: no Date column on a phone, so the one sort button must say it.
+  expect((await page.request.patch('/api/me/prefs', { data: { files: { sort: { library: { key: 'date', dir: 'desc' } } } } })).ok()).toBe(true);
   await page.goto(`/files?left=${encodeURIComponent(disk)}&right=${encodeURIComponent(disk)}&active=right`);
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-testid="files-side-switch"]');
     return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
   });
+
+  const sortBtn = page.getByTestId('pane-right-sort-phone');
+  await expect(sortBtn).toHaveText('Date▼');
+  expect((await sortBtn.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await sortBtn.tap();
+  await expect(sortBtn).toHaveText('Date▲');
+  // Saved through the same prefs path as a desktop header click.
+  await expect.poll(async () => (await (await page.request.get('/api/me/prefs')).json()).files.sort.library)
+    .toEqual({ key: 'date', dir: 'asc' });
+  await sortBtn.tap();
+  await expect(sortBtn).toHaveText('Size▼');
+
+  // Keys pressed in the portalled More menu are the menu's, never the manager's: with ReadMe picked, Delete and F2
+  // there open no dialog (the menu does not claim them, so they would bubble to the manager through the portal).
+  await row(page, 'right', 'ReadMe').tap();
+  await page.getByTestId('files-more').tap();
+  await expect(page.getByTestId('files-more-rename')).toBeVisible();
+  await page.getByTestId('files-more-rename').focus();
+  await page.keyboard.press('Delete');
+  await page.keyboard.press('F2');
+  await page.waitForTimeout(300);   // a dialog would open on the next render; give it the chance to
+  await expect(page.getByTestId('files-delete-dialog')).toHaveCount(0);
+  await expect(page.getByTestId('files-name-dialog')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('files-more-rename')).toBeHidden();
+  await row(page, 'right', 'ReadMe').tap();   // let it go again
+  await expect(row(page, 'right', 'ReadMe')).toHaveAttribute('aria-selected', 'false');
 
   // A tap on a folder goes into it; the up button (44 px) comes back.
   await row(page, 'right', 'src').tap();

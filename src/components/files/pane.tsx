@@ -2,7 +2,7 @@
 
 import { useMemo, type ReactNode } from 'react';
 import type { FsEntry, Listing } from '@/lib/files/types';
-import { sortFsEntries, type FilesSort, type FilesSortKey } from '@/lib/files/sort';
+import { phoneSortAfter, sortFsEntries, type FilesSort, type FilesSortKey } from '@/lib/files/sort';
 import type { Selection } from '@/lib/files/selection';
 import { refusalWords } from '@/lib/files/words';
 import { entryGlyph } from '@/lib/disk-files-look';
@@ -18,6 +18,8 @@ export type PaneProps = {
   side: 'left' | 'right'; active: boolean; listing: Listing | null; loading: boolean; error: string | null;
   sort: FilesSort; selection: Selection; showComment: boolean;
   onActivate(): void; onNavigate(path: string): void; onSort(key: FilesSortKey): void;
+  /** Below lg: the one sort button's next order (phoneSortAfter). */
+  onSetSort(sort: FilesSort): void;
   onRowClick(index: number, mods: { shift: boolean; toggle: boolean }): void; onRowOpen(index: number): void;
   onDragStartRows(indexes: number[], e: React.DragEvent): void; onDropRows(e: React.DragEvent): void;
   strip?: ReactNode;   // the disk strip when listing.disk
@@ -147,10 +149,20 @@ export function Pane(p: PaneProps) {
                         aria-sort={on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
                         className={`${cell} text-[12px] font-medium ${c.key === 'name' ? 'w-full' : 'max-lg:hidden'}`}>
                       <button type="button" onClick={() => p.onSort(c.key)}
-                              className={`flex w-full items-center gap-1 rounded-[4px] ${c.right ? 'justify-end' : ''} max-lg:min-h-11 focus-visible:outline-2 focus-visible:outline-(--ring)`}>
+                              className={`flex w-full items-center gap-1 rounded-[4px] ${c.right ? 'justify-end' : ''} ${c.key === 'name' ? 'max-lg:hidden' : ''} focus-visible:outline-2 focus-visible:outline-(--ring)`}>
                         {c.label}
                         {on && <span aria-hidden="true" className="text-[9px]">{sort.dir === 'asc' ? '▲' : '▼'}</span>}
                       </button>
+                      {/* Below lg Name is the only column, so the order in force -- maybe Date or Size, remembered
+                          from a desktop -- is said here, and a tap steps to the next one. */}
+                      {c.key === 'name' && (
+                        <button type="button" data-testid={tid('sort-phone')} onClick={() => p.onSetSort(phoneSortAfter(sort))}
+                                aria-label={`Sorted by ${sort.key}, ${sort.dir === 'asc' ? 'ascending' : 'descending'}. Tap for the next order.`}
+                                className="flex min-h-11 w-full items-center gap-1 rounded-[4px] focus-visible:outline-2 focus-visible:outline-(--ring) lg:hidden">
+                          {COLUMNS.find((x) => x.key === sort.key)?.label ?? 'Name'}
+                          <span aria-hidden="true" className="text-[9px]">{sort.dir === 'asc' ? '▲' : '▼'}</span>
+                        </button>
+                      )}
                     </th>
                   );
                 })}

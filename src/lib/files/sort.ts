@@ -25,6 +25,18 @@ export function sortFsEntries(entries: FsEntry[], sort: FilesSort): FsEntry[] {
   });
 }
 
+/** The phone's one sort button (Files Task 10): below lg only Name is a column, so a tap steps through these. */
+export const PHONE_SORTS: readonly FilesSort[] = [
+  { key: 'name', dir: 'asc' }, { key: 'name', dir: 'desc' }, { key: 'date', dir: 'desc' },
+  { key: 'date', dir: 'asc' }, { key: 'size', dir: 'desc' }, { key: 'size', dir: 'asc' },
+];
+
+/** The order after `cur` in PHONE_SORTS; one not in it (Protection, set on a desktop) goes back to Name ▲. */
+export function phoneSortAfter(cur: FilesSort): FilesSort {
+  const i = PHONE_SORTS.findIndex((s) => s.key === cur.key && s.dir === cur.dir);
+  return PHONE_SORTS[i < 0 ? 0 : (i + 1) % PHONE_SORTS.length];
+}
+
 /** A header click: the same key flips; a new key starts ascending, except date and size (biggest/newest first). */
 export function nextSort(cur: FilesSort, key: FilesSortKey): FilesSort {
   if (cur.key === key) return { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' };

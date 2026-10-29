@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EntryKind, FsEntry } from './types';
-import { nextSort, sortFsEntries, type FilesSort, type FilesSortKey } from './sort';
+import { nextSort, phoneSortAfter, sortFsEntries, type FilesSort, type FilesSortKey } from './sort';
 
 const e = (name: string, kind: EntryKind, o: Partial<FsEntry> = {}): FsEntry => ({
   name, kind, path: `LIBRARY:/${name}`, size: null, date: null, protection: null, comment: null, marks: [], ...o,
@@ -71,5 +71,17 @@ describe('nextSort', () => {
     expect(nextSort(cur, 'size')).toEqual({ key: 'size', dir: 'desc' });
     expect(nextSort(cur, 'date')).toEqual({ key: 'date', dir: 'desc' });
     expect(nextSort({ key: 'size', dir: 'asc' }, 'name')).toEqual({ key: 'name', dir: 'asc' });
+  });
+});
+
+describe('phoneSortAfter', () => {
+  it('steps Name ▲ → Name ▼ → Date ▼ → Date ▲ → Size ▼ → Size ▲ and round again', () => {
+    const seen: string[] = [];
+    let cur: FilesSort = { key: 'name', dir: 'asc' };
+    for (let i = 0; i < 7; i++) { seen.push(`${cur.key} ${cur.dir}`); cur = phoneSortAfter(cur); }
+    expect(seen).toEqual(['name asc', 'name desc', 'date desc', 'date asc', 'size desc', 'size asc', 'name asc']);
+  });
+  it('a sort the phone does not offer (Protection) goes back to Name ▲', () => {
+    expect(phoneSortAfter({ key: 'protection', dir: 'desc' })).toEqual({ key: 'name', dir: 'asc' });
   });
 });

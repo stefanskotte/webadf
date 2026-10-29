@@ -352,8 +352,12 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   }
 
   function changeSort(side: Side, key: FilesSortKey) {
+    applySort(side, nextSort(sorts[deviceOf(panes[side].listing?.path ?? panes[side].path)], key));
+  }
+
+  /** `next` for the device `side` shows (a header click, or the phone's sort button), remembered for next time. */
+  function applySort(side: Side, next: FilesSort) {
     const dev = deviceOf(panes[side].listing?.path ?? panes[side].path);
-    const next = nextSort(sorts[dev], key);
     // Both panes on this device re-sort; their picks follow their entries.
     setPanes((ps) => {
       const out = { ...ps };
@@ -654,6 +658,9 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (e.defaultPrevented) return;
     const target = e.target as HTMLElement;
+    // React bubbles a portal's events through the component tree, so keys pressed in the More menu, a dialog or a
+    // toast reach this handler although their DOM is elsewhere. Only keys from the manager's own DOM are its keys.
+    if (!rootRef.current?.contains(target)) return;
     const cmd = commandFor({ key: e.key, target, dialogOpen: dialog !== null, altKey: e.altKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey });
     if (!cmd) return;
     if ((cmd === 'open' || cmd === 'pick') && target.matches(CONTROL)) return;
@@ -753,7 +760,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
         <Pane side={side} active={active === side} listing={side === 'left' ? shownLeft : shownRight} loading={p.loading} error={p.error}
               sort={sortOf(p.listing, p.path)} selection={p.selection} showComment={false}
               onActivate={() => activate(side)} onNavigate={(path) => navigate(side, path)}
-              onSort={(key) => changeSort(side, key)}
+              onSort={(key) => changeSort(side, key)} onSetSort={(next) => applySort(side, next)}
               onRowClick={(i, mods) => rowClick(side, i, mods)}
               onRowOpen={(i) => openRow(side, i)}
               onDragStartRows={(ix, e) => dragStart(side, ix, e)} onDropRows={(e) => drop(side, e)}
