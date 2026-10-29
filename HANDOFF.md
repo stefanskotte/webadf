@@ -1478,11 +1478,10 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
-**Current order (re-checked 2026-10-28).** The redesign roadmap (Phases A-C) is DONE (2026-10-23..27); library
-sharing shipped 2026-10-28. Open, in order:
-(1) **Two-pane file manager** (Directory Opus style; NET: per WiFiFloppy and STASH: pseudo devices, the two drop zones
-kept on top; replaces Browse/Upload/PaulaNET transfer pages and absorbs "Unified staging area"). Brainstorm with mock-ups
-first; memory note webadf-dual-pane-file-manager-idea.
+**Current order (re-checked 2026-10-29).** The redesign roadmap (Phases A-C) is DONE (2026-10-23..27); library
+sharing shipped 2026-10-28; **Files SHIPPED 2026-10-29** (merge ef711fb, §4-files below). Open, in order:
+(1) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there; the
+tray's "Already in the library" wording (below).
 (2) **Sharing follow-ups:** A500 bench of the first-write rule; Send to Amiga from a remote disk end to end; the one-off
 local remote-mount 404; OMV back to `latest` after the next web-* release; the sharing deferred minors.
 (3) **Web app, smaller:** "Put on a disk" from From the Amiga; .lzh dropped onto a disk in Browse; documentation for
@@ -1495,6 +1494,36 @@ next-disk button, activity LED, DF0 passthrough).
 4-7); layered disks (never designed).
 **Closed 2026-10-28 (operator):** B10 -- the board works on the A4000D too; the 128x64 setup screen was confirmed
 by a user.
+**§4-files. FILES SHIPPED — 2026-10-29 (merge ef711fb).** Spec docs/superpowers/specs/2026-10-29-files-manager-design.md,
+plans docs/superpowers/plans/2026-10-29-files-increment-{1..4}.md. A two-pane manager at /files over STASH: (the
+amiga_uploads table, migration 0051 applied to production 2026-10-29: source, kind, sent_name, device_name nullable),
+NET: (the transfers queue) and LIBRARY: (games/disks). It replaces the Upload page (/ingest now redirects to /files with
+a 307 from a route handler) and Browse ("Files…" on a disk opens STASH: left and the disk right). The Library itself takes disk drops,
+Browse files and Paste a URL (Add disks ▾, tray at the bottom). Archives in STASH: open as read-only folders. Settings ›
+Account › Files (pane defaults, Show .info, comment column, ask before deleting, name-clash answer). Help topics `files`
+and `stash-net` (21 topics).
+- **Operator decisions 2026-10-29:** retired routes DELETED (bc8072f: all /api/uploads/**, /api/transfers/[id] DELETE
+and retry; /api/transfers POST and from-disk kept; firmware only calls /api/device/*); phone marks truncate with an
+ellipsis (kept); STASH: commit of a sha another org already stored is ACCEPTED for now (same cross-org dedupe as
+library ingest; proof of possession stays deferred); README screenshots regenerated (4ecb33f).
+- **Security fix shipped with it:** storeSendBytes (src/lib/send-http.ts) re-verifies an existing blob by size+sha256 or
+overwrites it -- before, bytes planted at a presigned-but-uncommitted adf/<sha> key could be sent as another org's file.
+- **Bench (A500) owed:** a NET: batch (rows created ms apart) is received like single sends; the first-save rule for
+shared disks; Send from a shared disk end to end.
+- **Pre-existing master e2e failures (verified ON MASTER 2026-10-29, not Files):** mobile :744, library-a3 :87,
+library-table :231, drive-chips :400/:409, library-paging :161, cover-override :58/:70/:92, c8-drive-menu :232/:462/:488;
+help.spec "Enter opens the ?" fails on master, passes after Files. Flakes: library-a3 :57, nfc-fob-button :88,
+disk-sets :368/:441.
+- **Found while shooting the README (pre-existing, not fixed):** the Library tray says "Already in the library" for
+state `deduped`, which only means the bytes already exist ON THE SERVER (any org) -- a new account sees it for disks
+it never had (src/lib/library-ingest/tray.ts:30, same on master's upload-staging). Needs words like "Added (already
+stored)", or a per-org answer from /complete.
+- **Rollback hazard:** code before ef711fb does not know rows with source<>'amiga'; rolling back past 0051 shows browser
+STASH: files in old From-the-Amiga lists. Roll forward instead.
+- **Self-host:** the OMV install goes back to `latest` after the next web-* release.
+- **Deferred minors** (by increment, in the merged ledgers' summary in the 2026-10-29 session's final message): kept
+for polish, none user-blocking; the largest: Skip-only toast is a green success; move onto itself toasts "Moved";
+the '/' key relies on handler order; one extra DB round trip per /files load; 24 px pane "?" at 640-1023 px.
 **Parked/deferred by the operator:** PaulaNET compression (LZSA2, pre-encode N+1); proof of possession at ingest.
 Entries below marked SHIPPED/FIXED/FOLDED are kept for their history only.
 
