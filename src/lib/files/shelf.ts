@@ -17,7 +17,7 @@ import {
   groupBy, refuse, Refused, REMOVE_FAILED, skippedItem, type Added, type CopyMove, type FsCtx, type OpCtx, type OpItem, type Outcome,
 } from './driver';
 import {
-  collectionNameProblem, COLLECTION_EXISTS, FILE_ON_SHELF, IN_LIBRARY_ALREADY, MAKEDIR_IN_DISK, NO_COLLECTION_IN_COLLECTION,
+  ADDED_UNFILED, collectionNameProblem, COLLECTION_EXISTS, FILE_ON_SHELF, IN_LIBRARY_ALREADY, MAKEDIR_IN_DISK, NO_COLLECTION_IN_COLLECTION,
   NO_NESTED, ONLY_TITLES_FILED, TITLES_ON_LIBRARY_PAGE,
 } from './shelf-rules';
 
@@ -130,14 +130,29 @@ async function fileTitles(ctx: OpCtx, op: 'copy' | 'move', titles: Title[], to: 
   }
 }
 
+/**
+ * Each image added to the library and, onto a collection, filed there. Only an image that was added AND filed counts
+ * in `added` and leaves STASH: on a move:
+ * - the collection deleted meanwhile: not found (the disk stays in the library, in no collection; the detail says so);
+ * - an image the library already had whose title is already in the collection: skipped, as a title would be (R5).
+ */
 async function fileImages(ctx: OpCtx, op: 'copy' | 'move', sources: string[], to: string | null, results: Map<string, OpItem>): Promise<Added[]> {
   const out = await addDiskImages(ctx, sources);
   for (const it of out.items) results.set(it.source, it);
+  const already = to && out.known.size ? new Set((await getDb().select({ g: collectionGames.gameId }).from(collectionGames)
+    .where(and(eq(collectionGames.collectionId, to), inArray(collectionGames.gameId, out.added.map((a) => a.gameId))))).map((r) => r.g))
+    : new Set<string>();
+  const added: Added[] = [];
   for (const a of out.added) {
-    if (to && !(await addGameToCollection(ctx.orgId, to, a.gameId))) results.set(a.source, gone(a.source));
+    if (to && out.known.has(a.source) && already.has(a.gameId)) { results.set(a.source, skippedItem(a.source)); continue; }
+    if (to && !(await addGameToCollection(ctx.orgId, to, a.gameId))) {
+      results.set(a.source, { source: a.source, ok: false, refusal: { code: 'not_found', detail: ADDED_UNFILED } });
+      continue;
+    }
+    added.push(a);
   }
   if (op === 'move') {
-    const done = out.added.map((a) => a.source).filter((s) => results.get(s)?.ok);
+    const done = added.map((a) => a.source).filter((s) => results.get(s)?.ok);
     if (done.length) {
       try {
         const r = await driverFor('STASH')!.remove!(ctx, done);
@@ -150,5 +165,5 @@ async function fileImages(ctx: OpCtx, op: 'copy' | 'move', sources: string[], to
       }
     }
   }
-  return out.added;
+  return added;
 }

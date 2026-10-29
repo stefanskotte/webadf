@@ -25,6 +25,8 @@ const { formatVolume } = await import('@/lib/adffs/format');
 const { insertStash, listStash } = await import('@/lib/stash');
 const { addUploadToLibrary } = await import('@/lib/stash-library');
 const { runOp } = await import('./ops');
+const { ADDED_UNFILED } = await import('./shelf-rules');
+const { refusalWords } = await import('./words');
 
 const ctx = { orgId: 'o1', userId: null };
 const members = async (c: string) => (await getDb().select({ g: collectionGames.gameId }).from(collectionGames)
@@ -164,5 +166,34 @@ describe('disk images from STASH: into the library (R4)', () => {
     vi.mocked(addUploadToLibrary).mockResolvedValueOnce({ ok: true, gameId: 'g3', diskId: 'd3' });
     expect(await runOp(ctx, { op: 'move', sources: ['STASH:/Mv.adf'], dest: 'LIBRARY:', onClash: 'ask' })).toMatchObject({ kind: 'done', items: [{ ok: true }] });
     expect((await listStash(getDb(), 'o1')).some((x) => x.path === 'Mv.adf')).toBe(false);
+  });
+  it('a collection deleted meanwhile: not found, not counted as added, the STASH: file kept; the disk stays in the library unfiled', async () => {
+    await stashImage('Gone.adf');
+    vi.mocked(addUploadToLibrary).mockImplementationOnce(async () => {
+      await getDb().delete(collections).where(eq(collections.id, 'c1'));   // another tab deletes it while the disk goes in
+      return { ok: true, gameId: 'g3', diskId: 'd3' };
+    });
+    const r = await runOp(ctx, { op: 'move', sources: ['STASH:/Gone.adf'], dest: 'LIBRARY:/c1', onClash: 'ask' });
+    expect(r).toMatchObject({ kind: 'done', items: [{ ok: false, refusal: { code: 'not_found', detail: ADDED_UNFILED } }] });
+    expect(r).not.toHaveProperty('added');
+    expect((await listStash(getDb(), 'o1')).some((x) => x.path === 'Gone.adf')).toBe(true);
+    expect(refusalWords('not_found', ADDED_UNFILED)).toBe('The collection is gone; the disk was added to the library, in no collection.');
+  });
+  it('an image the library already had, whose title is already in the target: skipped, not added, the STASH: file kept', async () => {
+    await stashImage('Again.adf');
+    vi.mocked(addUploadToLibrary).mockResolvedValueOnce({ ok: true, gameId: 'g1', diskId: 'd1', existed: true });
+    const r = await runOp(ctx, { op: 'move', sources: ['STASH:/Again.adf'], dest: 'LIBRARY:/c1', onClash: 'ask' });
+    expect(r).toMatchObject({ kind: 'done', items: [{ ok: true, skipped: true }] });
+    expect(r).not.toHaveProperty('added');
+    expect(await members('c1')).toEqual(['g1']);
+    expect((await listStash(getDb(), 'o1')).some((x) => x.path === 'Again.adf')).toBe(true);
+  });
+  it('an image the library already had, whose title is elsewhere: filed and reported as added', async () => {
+    await stashImage('Known.adf');
+    vi.mocked(addUploadToLibrary).mockResolvedValueOnce({ ok: true, gameId: 'g2', diskId: 'd2', existed: true });
+    const r = await runOp(ctx, { op: 'copy', sources: ['STASH:/Known.adf'], dest: 'LIBRARY:/c1', onClash: 'ask' });
+    expect(r).toMatchObject({ kind: 'done', items: [{ ok: true }], added: [{ source: 'STASH:/Known.adf', gameId: 'g2' }] });
+    expect((r as { items: { skipped?: true }[] }).items[0].skipped).toBeUndefined();
+    expect(await members('c1')).toEqual(['g1', 'g2']);
   });
 });

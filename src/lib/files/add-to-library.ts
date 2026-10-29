@@ -6,10 +6,14 @@ import { stashEntryOf, STILL_ARRIVING } from './stash-driver';
 import { addUploadToLibrary } from '@/lib/stash-library';
 import { libraryEligible } from '@/lib/from-amiga-ui';
 
-/** Per item: a stored disk image in STASH: itself goes through addUploadToLibrary; nothing else does. */
-export async function addDiskImages(ctx: OpCtx, sources: string[]): Promise<{ items: OpItem[]; added: Added[] }> {
+/**
+ * Per item: a stored disk image in STASH: itself goes through addUploadToLibrary; nothing else does. `known`: the
+ * sources whose disk the library already had (filing onto a collection skips one whose title is there already).
+ */
+export async function addDiskImages(ctx: OpCtx, sources: string[]): Promise<{ items: OpItem[]; added: Added[]; known: Set<string> }> {
   const items: OpItem[] = [];
   const added: Added[] = [];
+  const known = new Set<string>();
   for (const source of sources) {
     try {
       const p = parsePath(source);
@@ -30,11 +34,12 @@ export async function addDiskImages(ctx: OpCtx, sources: string[]): Promise<{ it
         refuse('not_a_disk_image', 422, r.reason);
       }
       added.push({ source, gameId: r.gameId, diskId: r.diskId });
+      if (r.existed) known.add(source);
       items.push({ source, ok: true });
     } catch (e) {
       if (!(e instanceof Refused)) throw e;
       items.push({ source, ok: false, refusal: e.refusal });
     }
   }
-  return { items, added };
+  return { items, added, known };
 }

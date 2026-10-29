@@ -177,9 +177,26 @@ export async function collectionNameTaken(orgId: string, name: string, exceptId?
   return !!hit;
 }
 
+const NAME_INDEX = 'collections_org_name_uq';
+
+/**
+ * The unique index refused the name (migration 0052): a request that lost a race to another between
+ * collectionNameTaken and its own write. It gets the same 'name_exists' answer as the pre-check, never a 500.
+ * node-postgres' error carries code and constraint itself; a drizzle-wrapped one carries it as cause.
+ */
+function isNameClash(err: unknown): boolean {
+  for (const e of [err, (err as { cause?: unknown } | null)?.cause]) {
+    if (e && typeof e === 'object'
+      && (e as { code?: unknown }).code === '23505'
+      && (e as { constraint?: unknown }).constraint === NAME_INDEX) return true;
+  }
+  return false;
+}
+
 /**
  * Lands at the end of this org's list: sortKey is max(sortKey) + 1, or 0 for the first collection. 'name_exists' when
- * another of this org's collections has the name in any case (R3), with nothing written.
+ * another of this org's collections has the name in any case (R3), with nothing written -- found by the pre-check, or
+ * by the unique index when another request wrote the name in between.
  */
 export async function createCollection(orgId: string, name: string): Promise<CollectionListItem | 'name_exists'> {
   const db = getDb();
@@ -191,7 +208,12 @@ export async function createCollection(orgId: string, name: string): Promise<Col
 
   const id = randomUUID();
   const sortKey = maxSort + 1;
-  await db.insert(collections).values({ id, orgId, name, sortKey });
+  try {
+    await db.insert(collections).values({ id, orgId, name, sortKey });
+  } catch (e) {
+    if (isNameClash(e)) return 'name_exists';
+    throw e;
+  }
   return { id, name, sortKey, gameCount: 0, diskCount: 0 };
 }
 
@@ -203,7 +225,12 @@ export async function renameCollection(orgId: string, id: string, name: string):
   if (owned.length === 0) return false;
   if (await collectionNameTaken(orgId, name, id)) return 'name_exists';
 
-  await db.update(collections).set({ name }).where(eq(collections.id, id));
+  try {
+    await db.update(collections).set({ name }).where(eq(collections.id, id));
+  } catch (e) {
+    if (isNameClash(e)) return 'name_exists';
+    throw e;
+  }
   return true;
 }
 

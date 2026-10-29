@@ -1,4 +1,5 @@
-import { pgTable, text, integer, timestamp, index, primaryKey } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { pgTable, text, integer, timestamp, index, primaryKey, uniqueIndex } from 'drizzle-orm/pg-core';
 import { games } from './catalog';
 
 /**
@@ -14,7 +15,13 @@ export const collections = pgTable('collections', {
   name: text('name').notNull(),
   sortKey: integer('sort_key').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index('collections_org_sort_idx').on(t.orgId, t.sortKey)]);
+}, (t) => [
+  index('collections_org_sort_idx').on(t.orgId, t.sortKey),
+  // Names are unique per library in any case (Files 2 operator ruling R3; migration 0052 renames older duplicates
+  // first). lower(name) is the same expression collectionNameTaken compares (src/lib/collections.ts), so its pre-check
+  // and this index never disagree; the index is what makes two racing creates end in one refusal, never two rows.
+  uniqueIndex('collections_org_name_uq').on(t.orgId, sql`lower(${t.name})`),
+]);
 
 /**
  * Membership. Carries NO org_id: it is reachable only through a collection,

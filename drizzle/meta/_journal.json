@@ -365,6 +365,13 @@
       "when": 1793245052897,
       "tag": "0051_stash",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1793311490026,
+      "tag": "0052_collection_names_unique",
+      "breakpoints": true
     }
   ]
 }

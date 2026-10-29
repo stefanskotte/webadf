@@ -10,6 +10,8 @@ export const FILE_ON_SHELF = 'Open LIBRARY: or a collection to file titles';
 /** Makedir in a title's disk list: folders are made on a disk or in STASH: (D13). */
 export const MAKEDIR_IN_DISK = 'Open a disk or STASH: to make a folder in it';
 export const COLLECTION_EXISTS = 'A collection with that name already exists';
+/** A disk image added to the library while its target collection was deleted: in the library, filed nowhere. */
+export const ADDED_UNFILED = 'The collection is gone; the disk was added to the library, in no collection';
 /** The Library's own limit (`/api/collections`: trimmed, 1-80). */
 export const COLLECTION_NAME_MAX = 80;
 

@@ -2,7 +2,7 @@
 import { isMountedReason } from '../mount-wording';
 import type { RefusalCode } from './types';
 import { NET_COPY_OUT, NET_MOVE_IN, NET_PICK_BOARD } from './net-rules';
-import { COLLECTION_EXISTS, SHELF_WORDS } from './shelf-rules';
+import { ADDED_UNFILED, COLLECTION_EXISTS, SHELF_WORDS } from './shelf-rules';
 
 const REMOVE_FAILED = 'copied, but the original could not be removed';
 /** = StashBusy's message (stash.ts, server-only): a STASH: file the board has not finished sending. */
@@ -37,7 +37,7 @@ export function refusalWords(code: RefusalCode, detail?: string): string {
       if (detail === COLLECTION_EXISTS) return `${COLLECTION_EXISTS}.`;
       return 'Something with that name is already there.';
     case 'comment_too_long': return 'Comments are at most 79 characters.';
-    case 'not_found': return 'That is no longer there.';
+    case 'not_found': return detail === ADDED_UNFILED ? `${ADDED_UNFILED}.` : 'That is no longer there.';
     case 'hfe_read_only': return 'HFE disks are read-only.';
     case 'no_filesystem': return 'This disk has no AmigaDOS filesystem.';
     case 'unsupported':

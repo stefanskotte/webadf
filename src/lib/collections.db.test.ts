@@ -55,4 +55,28 @@ describe('collection names are unique per library, any case (R3)', () => {
     expect(await renameCollection('o1', 'c9', 'Anything')).toBe(false);
     expect(await renameCollection('o2', 'c9', 'Demos')).toBe(true);
   });
+
+  // A race: another request's insert is not yet committed when the pre-check runs, so the pre-check passes and the
+  // unique index (migration 0052) refuses the write. A pg client holds that insert open in a transaction, which makes
+  // the race the same every run: our write waits on the index until the other commits, then fails with 23505.
+  async function racing(stmt: string, run: () => Promise<unknown>): Promise<unknown> {
+    const c = new Client({ connectionString: process.env.DATABASE_URL }); await c.connect();
+    try {
+      await c.query('begin'); await c.query(stmt);
+      const ours = run().then((v) => v, (e: unknown) => e);
+      await new Promise((r) => setTimeout(r, 300));
+      await c.query('commit');
+      return await ours;
+    } finally { await c.end(); }
+  }
+  it('createCollection losing a race to the unique index answers name_exists, not an error', async () => {
+    const r = await racing(`insert into collections (id, org_id, name) values ('race', 'o1', 'Racers')`, () => createCollection('o1', 'RACERS'));
+    expect(r).toBe('name_exists');
+    expect(await names('o1')).toEqual(['Demos', 'Games', 'Racers']);
+  });
+  it('renameCollection losing a race to the unique index answers name_exists, not an error', async () => {
+    const r = await racing(`insert into collections (id, org_id, name) values ('race', 'o1', 'Racers')`, () => renameCollection('o1', 'c2', 'racers'));
+    expect(r).toBe('name_exists');
+    expect(await names('o1')).toEqual(['Demos', 'Games', 'Racers']);
+  });
 });

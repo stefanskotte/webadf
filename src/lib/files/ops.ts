@@ -101,7 +101,7 @@ async function dispatch(ctx: OpCtx, req: OpRequest): Promise<Outcome> {
       const d = driverOf(p);
       return (need(d, 'makedir') as NonNullable<VolumeDriver['makedir']>).call(d, ctx, p, req.name);
     }
-    case 'add-to-library': { const r = await addDiskImages(ctx, req.sources); return { kind: 'done', ...r }; }
+    case 'add-to-library': { const r = await addDiskImages(ctx, req.sources); return { kind: 'done', items: r.items, added: r.added }; }
   }
 }
 

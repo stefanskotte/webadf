@@ -170,6 +170,8 @@ describe('one op asks where a path is once per collection and title (Task 2 revi
       const sources = Array.from({ length: 100 }, () => ['LIBRARY:/c1/g1/d1/ReadMe', 'LIBRARY:/c1/g1/d1/C/Assign']).flat();
       const r = await runOp(ctx, { op: 'protect', sources, protection: 0 });
       expect(r).toMatchObject({ kind: 'done' });
+      // Above 0: a spy that sees no reads at all (getDb handing back another object) would pass the bound vacuously.
+      expect(spy.mock.calls.length).toBeGreaterThan(0);
       expect(spy.mock.calls.length).toBeLessThan(20);
     } finally { spy.mockRestore(); }
   });
