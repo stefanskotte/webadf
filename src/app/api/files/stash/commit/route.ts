@@ -18,7 +18,7 @@ const Body = z.object({
     kind: z.enum(['file', 'dir']),
     sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
     sizeBytes: z.number().int().min(0).max(STASH_FILE_MAX),
-    lastModified: z.number().int().min(0).optional(),
+    lastModified: z.number().int().min(0).max(8.64e15).optional(),   // the largest time a Date holds
   })).min(1).max(1000),
 });
 

@@ -29,18 +29,20 @@ function cleanPath(path: string): string[] | null {
 }
 
 /**
- * Whether the bytes at `sha256` are whole: the size the store holds is the size claimed, and they hash to their key.
- * Bytes that do not hash to their key are forged or broken: they are deleted unless something else names that key
- * (ruling 2, as /api/ingest/complete releases them), so a poisoned adf/<sha> never makes presign skip it for good.
+ * Whether the bytes at `sha256` are whole, checked as /api/ingest/complete verifies: they are hashed first, whatever
+ * their size. Bytes that do not hash to their key are forged or broken: they are deleted unless something else names
+ * that key (ruling 2), so a poisoned adf/<sha> never makes presign skip it for good. Bytes that do hash to it but are
+ * not the size claimed are authentic and kept; only the claim is refused. Only a blob the store does not have is "did
+ * not arrive"; any other storage error propagates.
  */
 async function arrivedWhole(sha256: string, sizeBytes: number): Promise<boolean> {
-  const stat = await diskStore.stat(sha256).catch(() => null);
-  if (!stat || stat.sizeBytes !== sizeBytes) return false;
-  let bytes: Uint8Array;
-  try { bytes = await diskStore.read(sha256); } catch { return false; }
-  if (contentHashes(bytes).sha256 === sha256) return true;
-  await releaseRefused([sha256]);
-  return false;
+  if (!(await diskStore.stat(sha256))) return false;
+  const bytes = await diskStore.read(sha256);
+  if (contentHashes(bytes).sha256 !== sha256) {
+    await releaseRefused([sha256]);
+    return false;
+  }
+  return bytes.byteLength === sizeBytes;
 }
 
 /**

@@ -95,6 +95,28 @@ describe('/api/files/stash', () => {
     expect(await rowsAt('o1', 'w.txt')).toEqual([]);
     expect(await rowsAt('o1', 'f.txt')).toEqual([]);
   });
+  it('commit: forged bytes of a different size are released too; a store error is not "did not arrive whole"', async () => {
+    const fake = 'a'.repeat(64);
+    await diskStore.put(fake, new TextEncoder().encode('a different length entirely'));
+    const r = await commit([{ path: 'g.txt', kind: 'file', sha256: fake, sizeBytes: 4 }]);
+    expect((await r.json()).items[0]).toMatchObject({ ok: false, refusal: { code: 'failed', detail: 'upload did not arrive whole' } });
+    expect(await diskStore.stat(fake)).toBeNull();
+    expect((await (await PRESIGN(json('/api/files/stash/presign', { files: [{ sha256: fake, sizeBytes: 4 }] }))).json()).uploads).toHaveLength(1);
+    const read = vi.spyOn(diskStore, 'read').mockRejectedValueOnce(new Error('store down'));
+    try {
+      await expect(commit([{ path: 'h.txt', kind: 'file', sha256: sha, sizeBytes: bytes.length }])).rejects.toThrow('store down');
+    } finally { read.mockRestore(); }
+    const stat = vi.spyOn(diskStore, 'stat').mockRejectedValueOnce(new Error('stat down'));
+    try {
+      await expect(commit([{ path: 'h.txt', kind: 'file', sha256: sha, sizeBytes: bytes.length }])).rejects.toThrow('stat down');
+    } finally { stat.mockRestore(); }
+    expect(await rowsAt('o1', 'h.txt')).toEqual([]);
+  });
+  it('commit: an absurd lastModified is a 400, not an Invalid Date', async () => {
+    for (const lastModified of [9e15, -1, 1.5]) {
+      expect((await commit([{ path: 'd.txt', kind: 'file', sha256: sha, sizeBytes: bytes.length, lastModified }])).status).toBe(400);
+    }
+  });
   it('commit: a blob never uploaded fails that item; the others in the batch are stored', async () => {
     const r = await commit([
       { path: 'Missing.txt', kind: 'file', sha256: 'e'.repeat(64), sizeBytes: 4 },
