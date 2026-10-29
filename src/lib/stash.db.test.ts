@@ -15,7 +15,7 @@ const { eq } = await import('drizzle-orm');
 const { crc32 } = await import('node:zlib');
 const { organization } = await import('@/db/schema/auth');
 const { devices } = await import('@/db/schema/devices');
-const { amigaUploads } = await import('@/db/schema/amiga-uploads');
+const { amigaUploads, amigaUploadChunks } = await import('@/db/schema/amiga-uploads');
 const { insertStash, listStash, deleteStash, moveStash, setStashMeta, STASH_FULL, StashBusy } = await import('./stash');
 const { openUpload, storeChunk, closeUpload, listUploads, clearUploads } = await import('./amiga-uploads');
 
@@ -163,5 +163,18 @@ describe('STASH: store', () => {
     expect([row.status, row.path, row.comment, row.protection]).toEqual(['stored', 'theirs.txt', '', 0]);
     await deleteStash(db(), 'o2', [x]);
     await deleteStash(db(), 'o1', (r as { ids: string[] }).ids);
+  });
+  it('replaceIds of another org\'s receiving row leaves its row and chunks alone', async () => {
+    await db().insert(devices).values({ id: 'dev2', orgId: 'o2', name: 'Other', macAddress: 'AA:BB:CC:DD:EE:02', tokenHash: 'h2' });
+    const o = await openUpload(db(), { deviceId: 'dev2', orgId: 'o2' }, { size: 20000, date: '17000.600.0', path: 'Inflight', comment: '', protection: 0 });
+    if (!o.ok) throw new Error(o.code);
+    await storeChunk(db(), 'dev2', o.id, 0, new Uint8Array(16384));
+    const r = await insertStash(db(), 'o1', 'copy', [file('z.txt')], { replaceIds: [o.id] });
+    expect(r.ok).toBe(true);
+    const chunks = await db().select().from(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, o.id));
+    const [row] = await db().select().from(amigaUploads).where(eq(amigaUploads.id, o.id));
+    expect([chunks.length, row.status]).toEqual([1, 'receiving']);
+    await deleteStash(db(), 'o1', (r as { ids: string[] }).ids);
+    await deleteStash(db(), 'o2', [o.id]);
   });
 });

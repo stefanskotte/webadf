@@ -68,8 +68,9 @@ export async function insertStash(db: Db, orgId: string, source: 'browser' | 'co
     const bytes = entries.reduce((a, e) => a + e.sizeBytes, 0);
     if (load.n + entries.length > UPLOAD_AREA_MAX_FILES || Number(load.b) + bytes > UPLOAD_AREA_MAX_BYTES) return { ok: false as const, code: 'stash_full' as const };
     if (replace.length) {
-      await tx.update(amigaUploads).set({ status: 'deleted' }).where(and(eq(amigaUploads.orgId, orgId), inArray(amigaUploads.id, replace)));
-      await tx.delete(amigaUploadChunks).where(inArray(amigaUploadChunks.uploadId, replace));
+      const gone = await tx.update(amigaUploads).set({ status: 'deleted' }).where(and(eq(amigaUploads.orgId, orgId), inArray(amigaUploads.id, replace)))
+        .returning({ id: amigaUploads.id });   // only this org's rows: their chunks go, nobody else's
+      if (gone.length) await tx.delete(amigaUploadChunks).where(inArray(amigaUploadChunks.uploadId, gone.map((g) => g.id)));
     }
     const ids: string[] = [];
     for (const e of entries) {
