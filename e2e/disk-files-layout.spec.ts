@@ -62,6 +62,14 @@ test('the disk strip and the pane header: one h1, the facts, usage words, the dr
   await expect(page.getByTestId('pane-right-crumb-2')).toHaveText(/Disk 1/);
   await expect(page.getByTestId('pane-right-meta')).toHaveText(/^\d+ KB free · FFS DD$/);
   await expect(strip.getByTestId('disk-strip-usage')).toHaveText(/^\d+ of 880 KB · \d+ KB free$/);
+  const meter = strip.getByTestId('disk-strip-meter');
+  await expect(meter).toHaveAttribute('role', 'meter');
+  await expect(meter).toHaveAttribute('aria-label', 'Disk space used');
+  await expect(meter).toHaveAttribute('aria-valuemin', '0');
+  await expect(meter).toHaveAttribute('aria-valuemax', '880');
+  await expect(meter).toHaveAttribute('aria-valuenow', /^\d+$/);
+  await expect(meter).toHaveAttribute('aria-valuetext', /^\d+ KB used of 880 KB$/);
+  await expect(strip.getByTestId('disk-strip-light')).toHaveAttribute('data-state', 'none');
   await expect(strip.getByTestId('disk-strip-drive')).toHaveText('Not in a drive');
   await expect(strip.getByTestId('disk-strip-adf')).toHaveAttribute('href', `/api/disks/${disk.id}/adf`);
   // The History opens over its own pane at every width, not in a column beside the files.
@@ -197,6 +205,9 @@ test('the edit guard: a disk a running Amiga holds has every writing button off,
   expect(mount.ok()).toBe(true);
   await openInFiles(page, disk);
   await expect(page.getByTestId('pane-right-readonly')).toContainText('mounted on');
+  // Asked for, not yet confirmed by the board: the light is not 'in' (driveLight's wording).
+  await expect(page.getByTestId('disk-strip-light')).not.toHaveAttribute('data-state', 'in');
+  await expect(page.getByTestId('disk-strip-light')).not.toHaveAttribute('data-state', 'none');
   await paneRow(page, 'HELD.TXT').click();
   for (const id of ['rename', 'move', 'protect', 'delete', 'makedir']) {
     await expect(page.getByTestId(`files-${id}`), id).toBeDisabled();

@@ -75,9 +75,21 @@ export function readOnlyReasonOf(info: DiskInfo): string | null {
     : info.imageFormat === 'hfe' ? 'hfe_read_only' : !info.filesystem ? 'no_filesystem' : null;
 }
 
+/** Files and folders under a folder, at any depth. The listing already holds the whole tree, so this reads nothing. */
+export function countInside(children: AdfEntry[]): { files: number; folders: number } {
+  let files = 0; let folders = 0;
+  for (const c of children) {
+    if (c.kind !== 'dir') { files++; continue; }
+    const sub = countInside(c.children);
+    folders += 1 + sub.folders; files += sub.files;
+  }
+  return { files, folders };
+}
+
 function toEntry(base: string[], e: AdfEntry): FsEntry {
   return { name: e.name, kind: e.kind, path: lib(...base, e.name), size: e.kind === 'file' ? e.sizeBytes : null,
-    date: e.modifiedAt?.toISOString() ?? null, protection: e.protection, comment: e.comment, marks: [] };
+    date: e.modifiedAt?.toISOString() ?? null, protection: e.protection, comment: e.comment, marks: [],
+    ...(e.kind === 'dir' ? { inside: countInside(e.children) } : {}) };
 }
 
 export async function listLibrary(ctx: FsCtx, p: FsPath): Promise<Listing | null> {

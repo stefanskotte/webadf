@@ -11,6 +11,8 @@ export type FsEntry = {
   marks: string[];
   /** The version that added this entry to its disk ("new in vN", from the disk's History); absent for none. */
   addedIn?: number;
+  /** A folder inside a disk: everything under it, at any depth (what deleting it removes as well). */
+  inside?: { files: number; folders: number };
 };
 export type DiskInfo = {
   diskId: string; gameId: string; title: string; label: string; filesystem: 'OFS' | 'FFS' | null; hd: boolean;

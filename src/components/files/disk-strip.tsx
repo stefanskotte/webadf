@@ -137,7 +137,9 @@ export function DiskStrip({ side, disk, data, onChanged }: DiskStripProps) {
       <span className="min-w-0 truncate text-[16px] font-bold" style={{ fontFamily: 'var(--font-display)', color: 'var(--ink)' }}>
         {disk.title}
       </span>
-      <span className="inline-flex items-center gap-[5px] rounded-full px-2 py-0.5 text-[11.5px] font-medium"
+      {/* data-state: the drive light as the Browse Disk card gave it ('in' | 'moving' | 'stale' | 'none'). */}
+      <span data-testid="disk-strip-light" data-state={light}
+            className="inline-flex items-center gap-[5px] rounded-full px-2 py-0.5 text-[11.5px] font-medium"
             style={light === 'in' ? { background: 'var(--success-bg)', color: 'var(--success-fg)' }
               : { background: 'var(--track)', color: light === 'stale' ? 'var(--amber-text)' : 'var(--muted)' }}>
         <span aria-hidden className="h-[7px] w-[7px] shrink-0 rounded-full" style={{ background: LIGHT[light] }} />
@@ -172,7 +174,10 @@ export function DiskStrip({ side, disk, data, onChanged }: DiskStripProps) {
       <div className="flex flex-col items-end gap-1 text-[11.5px]" style={{ color: 'var(--muted)' }}>
         <span data-testid="disk-strip-usage">{usageLine(disk)}</span>
         {pct !== null && (
-          <span aria-hidden className="block h-1.5 w-[120px] overflow-hidden rounded-[3px]" style={{ background: 'var(--track)' }}>
+          <span role="meter" aria-label="Disk space used" aria-valuemin={0}
+                aria-valuemax={Math.round(disk.totalBytes! / 1024)} aria-valuenow={Math.round(disk.usedBytes! / 1024)}
+                aria-valuetext={`${formatKb(disk.usedBytes!)} used of ${formatKb(disk.totalBytes!)}`}
+                data-testid="disk-strip-meter" className="block h-1.5 w-[120px] overflow-hidden rounded-[3px]" style={{ background: 'var(--track)' }}>
             <span className="block h-full" style={{ width: `${pct}%`, background: pct >= 90 ? 'var(--accent-amber)' : 'var(--ink)' }} />
           </span>
         )}

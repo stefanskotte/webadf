@@ -294,6 +294,8 @@ test('a disk in a drive is read-only', async ({ page, request }) => {
   const reason = 'This disk is in a drive (mounted on "Held Bench"). Eject it to change it.';
   await expect(page.getByTestId('pane-right-readonly')).toHaveText(reason);
   await expect(page.getByTestId('pane-left-readonly')).toHaveCount(0);
+  await expect(page.getByTestId('disk-strip-right').getByTestId('disk-strip-light')).toHaveAttribute('data-state', 'in');
+  await expect(page.getByTestId('disk-strip-left').getByTestId('disk-strip-light')).toHaveAttribute('data-state', 'none');
 
   // Into it: refused before anything is sent, the reason on the button.
   await row(page, 'left', 'Other').click();

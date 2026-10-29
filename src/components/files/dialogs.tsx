@@ -77,10 +77,30 @@ export function ClashDialog({ clash, remaining, busy, onChoose, onCancel }: {
   );
 }
 
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/**
+ * What a delete of `entries` removes, counting everything inside a folder (the Browse page's bulk-delete words):
+ * "“ReadMe”", "“C” and the 2 files in it", "3 files and 1 folder".
+ */
+export function deleteWhat(entries: FsEntry[]): string {
+  let files = 0; let folders = 0;
+  for (const e of entries) {
+    if (e.kind === 'file') { files++; continue; }
+    folders += 1 + (e.inside?.folders ?? 0); files += e.inside?.files ?? 0;
+  }
+  const counted = [files ? plural(files, 'file') : '', folders ? plural(folders, 'folder') : ''].filter(Boolean).join(' and ');
+  if (entries.length !== 1) return counted;
+  const e = entries[0];
+  const within = e.inside ? [e.inside.files ? plural(e.inside.files, 'file') : '', e.inside.folders ? plural(e.inside.folders, 'folder') : '']
+    .filter(Boolean).join(' and ') : '';
+  return within ? `“${e.name}” and the ${within} in it` : `“${e.name}”`;
+}
+
 export function ConfirmDeleteDialog({ entries, where, busy, onConfirm, onCancel }: {
   entries: FsEntry[]; where: { title: string; label: string } | null; busy: boolean; onConfirm(): void; onCancel(): void;
 }) {
-  const what = entries.length === 1 ? `“${entries[0].name}”` : `${entries.length} items`;
+  const what = deleteWhat(entries);
   return (
     <Modal open finalFocus={managerReturnsFocus} onOpenChange={(o) => { if (!o) onCancel(); }} width={440} testId="files-delete-dialog"
            closeTestId="files-delete-close" title={entries.length === 1 ? 'Delete this item?' : 'Delete these items?'}

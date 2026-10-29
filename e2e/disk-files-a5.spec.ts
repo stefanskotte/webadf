@@ -132,7 +132,8 @@ test('a bulk delete says what it removes, and removes it from the disk', async (
   await row(page, 'C').click();
   await row(page, 'ReadMe').click({ modifiers: ['ControlOrMeta'] });
   await page.getByTestId('files-delete').click();
-  await expect(page.getByTestId('files-delete-text')).toHaveText(/^Delete 2 items from .+\? A new version keeps the old ones\.$/);
+  // What goes, counting C's contents (C/Copy, C/Copy.info): the Browse page's own words.
+  await expect(page.getByTestId('files-delete-text')).toHaveText(/^Delete 3 files and 1 folder from .+\? A new version keeps the old ones\.$/);
   await page.getByTestId('files-delete-confirm').click();
   await expect(row(page, 'C')).toHaveCount(0, AFTER_EDIT);
   const after = await volumeOf(page, disk.id);
