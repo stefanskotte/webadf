@@ -40,6 +40,7 @@ import { MountAction } from '@/components/games/mount-action';
 import { listSendTargets } from '@/lib/send-targets';
 import { SendBoardPicker } from '@/components/send/send-button';
 import { getUserPrefs } from '@/lib/user-prefs';
+import { libraryDiskOf } from '@/lib/files/disk-strip-data';
 
 export const dynamic = 'force-dynamic';
 
@@ -88,6 +89,17 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // Same untrusted-input rule as the game page: resolved against this org's
   // own collections before its name is rendered.
   const sp = await props.searchParams;
+
+  // Files increment 1 (R3): the disk's files live in Files now. Only a `?version=` -- the History's read-only view of
+  // an earlier version -- is still this page; the bare address opens Files with the disk in the right pane. An unknown
+  // or foreign disk is a 404 as before, and an HFE (no filesystem to list) goes to its title page as before.
+  if (sp.version === undefined) {
+    const found = await libraryDiskOf(orgId, id);
+    if (!found) notFound();
+    if (found.imageFormat === 'hfe') redirect(`/games/${found.gameId}`);
+    redirect(`/files?left=LIBRARY:&right=${encodeURIComponent(`LIBRARY:/${found.gameId}/${id}`)}&active=right`);
+  }
+
   const from = typeof sp.from === 'string' ? sp.from : undefined;
   const view = parseTrailView(sp.view);
   const collections = await listCollections(orgId);

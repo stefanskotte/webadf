@@ -44,6 +44,7 @@ export async function loadDisk(ctx: FsCtx, gameId: string, diskId: string): Prom
     filesystem: vol.ok ? vol.volume.filesystem : null, hd: geometryOf(bytes)?.blockCount === HD_GEOMETRY.blockCount,
     usedBytes: usage?.usedBytes ?? null, freeBytes: usage?.freeBytes ?? null, totalBytes: usage?.totalBytes ?? null,
     holder: holder?.name ?? null, imageFormat: row.imageFormat, volumeName: vol.ok ? vol.volume.name : null, sha256: row.sha256,
+    intl: vol.ok ? vol.volume.intl : false,
   };
   return { info, bytes, root: vol.ok ? vol.root : [], rootBlock: vol.ok ? vol.rootBlock : 0, intl: vol.ok ? vol.volume.intl : false };
 }

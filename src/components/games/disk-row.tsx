@@ -9,7 +9,7 @@ import { ExtractAction } from './extract-action';
 import { WEAK_BIT_NOTICE } from '@/lib/hfe/messages';
 import { holderText, type MountChoice } from '@/lib/mount-choice';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
-import { fromQuery, libraryHref, type TrailView } from '@/lib/trail';
+import { libraryHref, type TrailView } from '@/lib/trail';
 import { FobButton, type FobDevice } from '@/components/nfc/fob-button';
 import { HdTag } from '@/components/disks/hd-tag';
 import { isHdAdf } from '@/lib/disk-format';
@@ -17,13 +17,15 @@ import { DiskIcon } from '@/components/ui/disk-icon';
 import { titleDiskColor } from '@/lib/library-look';
 import { DiskSetMenu, LoneDiskMenu, type DiskSetControls } from './disk-set-menu';
 
-export function DiskRow({ disk, choices, from, view = null, fobDevices = [], send = null, setControls, loneGameId, helpProtect, helpNfc, helpHfe, kind = null, authored = false }: {
+export function DiskRow({ disk, gameId, choices, from, view = null, fobDevices = [], send = null, setControls, loneGameId, helpProtect, helpNfc, helpHfe, kind = null, authored = false }: {
   disk: GameDetailDisk;
+  /** The title this disk is in: Files… opens the disk at LIBRARY:/<title>/<disk>. */
+  gameId: string;
   /** Per-device verdict for THIS disk -- see lib/mount-choice.ts. */
   choices: MountChoice[];
   /**
-   * The collection the person came from, carried onward to the file browser
-   * so its breadcrumb can lead back there too. Threaded rather than derived:
+   * The collection the person came from, so removing the last disk can lead
+   * back there. Threaded rather than derived:
    * a game is in many collections and nothing downstream can work out which.
    */
   from?: string;
@@ -169,14 +171,14 @@ export function DiskRow({ disk, choices, from, view = null, fobDevices = [], sen
         <a href={`/api/disks/${disk.id}/adf`} data-testid={`download-${disk.id}`} className={GHOST} style={GHOST_STYLE}>
           Download
         </a>
-        {/* Link, not <a>: an internal navigation to the file browser, client-side. */}
+        {/* Link, not <a>: an internal navigation to Files (increment 1, R1): the library on the left, this disk on the right. */}
         {isHfe ? (
           <ExtractAction diskId={disk.id} extractable={disk.extractable === true} reason={disk.extractReason}
                          help={helpHfe === true} />
         ) : (
-          <Link href={`/disks/${disk.id}/files${fromQuery(from, view)}`} data-testid={`browse-${disk.id}`}
-                className={GHOST} style={GHOST_STYLE}>
-            Browse
+          <Link href={`/files?left=LIBRARY:&right=${encodeURIComponent(`LIBRARY:/${gameId}/${disk.id}`)}&active=right`}
+                data-testid={`files-${disk.id}`} className={GHOST} style={GHOST_STYLE}>
+            Files…
           </Link>
         )}
         <MountAction diskId={disk.id} choices={choices} />

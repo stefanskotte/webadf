@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import type { FsEntry, Listing, RefusalCode } from '@/lib/files/types';
+import type { FsEntry, Listing, RefusalCode, StripData } from '@/lib/files/types';
 import { nextSort, sortFsEntries, type FilesSort, type FilesSortKey } from '@/lib/files/sort';
 import { EMPTY_SELECTION, moveCursor, selectClick, togglePick, type Selection } from '@/lib/files/selection';
 import { commandFor, type FilesCommand } from '@/lib/files/keys';
@@ -13,7 +13,12 @@ import type { OpItem, OpRequest } from '@/lib/files/ops';
 import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
+import { planComputerDrop } from '@/lib/files/computer-drop';
+import { readDroppedItems } from '@/lib/drop-reader';
+import { isFileDrag } from '@/components/disks/native-drop';
+import { describeEditError } from '@/components/disks/file-actions';
 import { Pane } from './pane';
+import { DiskStrip } from './disk-strip';
 import {
   ClashDialog, ConfirmDeleteDialog, InfoDialog, NameDialog, ProtectDialog, placeName, type Clash, type ClashChoice,
 } from './dialogs';
@@ -40,6 +45,8 @@ export type FilesManagerProps = {
     left: Listing | null; right: Listing | null; leftPath: string; rightPath: string; active: Side;
     /** Words for a pane whose first listing failed for a reason other than "gone" (an unreadable image). */
     leftError?: string; rightError?: string;
+    /** The disk strip of each pane that starts inside a disk (disk-strip-data.ts). */
+    strips?: StripData[];
   };
   prefs: { sort: UserPrefs['files']['sort'] };
 };
@@ -71,6 +78,28 @@ const otherSide = (s: Side): Side => (s === 'left' ? 'right' : 'left');
 const deviceOf = (path: string): DeviceKey => (path.startsWith('STASH:') ? 'stash' : path.startsWith('NET:') ? 'net' : 'library');
 const baseName = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 const items = (n: number) => (n === 1 ? '1 item' : `${n} items`);
+/** The disk a LIBRARY: path is in (LIBRARY:/<title>/<disk>/...), or null above the disks. */
+const diskIdOf = (path: string | undefined): string | null => (path ? parsePath(path)?.segments[1] ?? null : null);
+const byDisk = (list: StripData[] | undefined) => Object.fromEntries((list ?? []).map((d) => [d.diskId, d]));
+
+/** A strip as JSON brings it: the History's dates are strings until revived. */
+function reviveStrip(d: StripData): StripData {
+  return { ...d, history: d.history.map((v) => ({ ...v, createdAt: new Date(v.createdAt) })) };
+}
+
+async function fetchStrip(diskId: string): Promise<StripData | null> {
+  try {
+    const res = await fetch(`/api/files/disk-strip?diskId=${encodeURIComponent(diskId)}`, { cache: 'no-store' });
+    return res.ok ? reviveStrip((await res.json()) as StripData) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A refreshed server listing changes a pane only when the drive state it shows has changed (a mount, an eject). */
+function heldChanged(a: Listing, b: Listing): boolean {
+  return a.writable !== b.writable || a.readOnlyReason !== b.readOnlyReason || a.disk?.holder !== b.disk?.holder;
+}
 
 /** A query value as a pane path, as the page reads it (page.tsx): canonical, or the default. */
 function pathParam(raw: string | null): string {
@@ -143,6 +172,27 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [saver] = useState(latestSaver);
+  const [strips, setStrips] = useState<Record<string, StripData>>(() => byDisk(initial.strips));
+  // A router refresh (the live device poll, a Mount) renders the page again with fresh strips and listings. The strips
+  // replace ours; a listing is taken only where the pane is still at that place and its drive state changed, so a
+  // pane the person is working in is never reset by a refresh that changed nothing it shows.
+  const [seen, setSeen] = useState(initial);
+  if (seen !== initial) {
+    setSeen(initial);
+    setStrips((cur) => ({ ...cur, ...byDisk(initial.strips) }));
+    setPanes((ps) => {
+      let out = ps;
+      for (const s of ['left', 'right'] as const) {
+        const fresh = initial[s];
+        const cur = ps[s].listing;
+        if (fresh && cur && !ps[s].loading && fresh.path === cur.path && heldChanged(cur, fresh)) {
+          const same = fresh.entries.length === cur.entries.length && fresh.entries.every((e, i) => e.path === cur.entries[i].path);
+          out = { ...out, [s]: { ...ps[s], listing: fresh, selection: same ? ps[s].selection : EMPTY_SELECTION } };
+        }
+      }
+      return out;
+    });
+  }
   const rootRef = useRef<HTMLDivElement>(null);
   // A pane's newest request wins: a slow listing that lands after a newer one is dropped.
   const seq = useRef<Record<Side, number>>({ left: 0, right: 0 });
@@ -208,6 +258,34 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     return () => window.removeEventListener('popstate', onPop);
     // `load` only touches refs and state setters, so the listener never goes stale.
   }, []);
+
+  // ---- the disk strips ---------------------------------------------------------------------------------------
+
+  /** Fresh strip data for a disk; resolves to its current version (null when unknown or never changed). */
+  async function refreshStrip(diskId: string): Promise<number | null> {
+    const d = await fetchStrip(diskId);
+    if (d) setStrips((cur) => ({ ...cur, [diskId]: d }));
+    return d?.headSeq ?? null;
+  }
+
+  // A pane that moved into a disk on the client has no strip yet: ask for it once.
+  const asked = useRef(new Set<string>(Object.keys(byDisk(initial.strips))));
+  const shownDisks = [panes.left.listing?.disk?.diskId, panes.right.listing?.disk?.diskId].filter((x): x is string => !!x);
+  const shownKey = shownDisks.join(',');
+  useEffect(() => {
+    for (const id of shownKey.split(',')) {
+      if (!id || asked.current.has(id)) continue;
+      asked.current.add(id);
+      void refreshStrip(id);
+    }
+  }, [shownKey]);
+
+  /** After the strip changed a disk or its drive (an eject, a rename, a restore): the panes showing it and the strip. */
+  function stripChanged(diskId: string) {
+    const { panes: cur } = latest.current;
+    for (const s of ['left', 'right'] as const) if (cur[s].listing?.disk?.diskId === diskId) void load(s, cur[s].path);
+    void refreshStrip(diskId);
+  }
 
   // Keep the cursor row on screen as the arrow keys move it.
   const cursorKey = `${active}:${panes[active].selection.cursor}`;
@@ -308,13 +386,23 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     }
   }
 
-  /** The toast for a finished operation, and fresh listings on both sides (which also clears both selections). */
-  function report(done: OpItem[], success: (n: number) => string) {
+  /**
+   * The toast for a finished operation, and fresh listings on both sides (which also clears both selections). With a
+   * `target` disk the toast waits for that disk's fresh strip and says which version the change was saved as.
+   */
+  async function report(done: OpItem[], success: (n: number) => string, target: string | null = null) {
     const failed = done.filter((i): i is Extract<OpItem, { ok: false }> => !i.ok);
-    if (failed.length === 0) toast.success(success(done.length));
+    const ok = done.length - failed.length;
+    reloadBoth();
+    // Every disk on screen may have a new version (a move changes its source too); the target's is the one named.
+    const { panes: cur } = latest.current;
+    const others = [cur.left.listing?.disk?.diskId, cur.right.listing?.disk?.diskId].filter((x): x is string => !!x && x !== target);
+    for (const id of new Set(others)) void refreshStrip(id);
+    const seq = target && ok > 0 ? await refreshStrip(target) : null;
+    const said = (n: number) => (seq === null ? success(n) : `${success(n).replace(/\.$/, '')} — saved as version ${seq}.`);
+    if (failed.length === 0) toast.success(said(done.length));
     else {
-      const ok = done.length - failed.length;
-      toast.error(ok > 0 ? `${success(ok)} ${items(failed.length)} could not be done.` : `Nothing was done.`, {
+      toast.error(ok > 0 ? `${said(ok)} ${items(failed.length)} could not be done.` : `Nothing was done.`, {
         description: (
           <ul data-testid="files-failures">
             {failed.map((f) => <li key={f.source}>{baseName(f.source)}: {refusalWords(f.refusal.code, f.refusal.detail)}</li>)}
@@ -322,7 +410,6 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
         ),
       });
     }
-    reloadBoth();
   }
 
   const verbs = { copy: ['Copying', 'Copied'], move: ['Moving', 'Moved'] } as const;
@@ -355,7 +442,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   }
 
   function finishRun(run: Run, done: OpItem[]) {
-    if (done.length) report(done, (n) => `${verbs[run.op][1]} ${items(n)} to ${run.where}.`);
+    if (done.length) void report(done, (n) => `${verbs[run.op][1]} ${items(n)} to ${run.where}.`, diskIdOf(run.dest));
     else reloadBoth();
   }
 
@@ -405,7 +492,9 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   /** A dialog's operation: the dialog stays open (busy) while it runs and closes once it is done. */
   async function runFromDialog(req: OpRequest, label: string, success: (n: number) => string) {
     const r = await post(req, label);
-    if (r.kind === 'done') { setDialog(null); report(r.items, success); }
+    // The disk the operation changed: where it made the folder, else where its first source is.
+    const target = diskIdOf('dest' in req ? req.dest : 'source' in req ? req.source : req.sources[0]);
+    if (r.kind === 'done') { setDialog(null); void report(r.items, success, target); }
   }
 
   function swap() {
@@ -461,10 +550,54 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     e.dataTransfer.effectAllowed = 'copyMove';
   }
 
+  /**
+   * Files from the computer dropped on a pane (R5): into the folder the pane shows, through the Browse page's drop
+   * pipeline (computer-drop.ts, then the disk's batch route). Only a writable folder inside a disk takes them.
+   */
+  function dropFromComputer(side: Side, e: React.DragEvent) {
+    const l = panes[side].listing;
+    if (!l?.disk) { toast.error('Open a disk to drop files into it'); return; }
+    if (!l.writable) { toast.error(readOnly(l)); return; }
+    if (busy) return;
+    activate(side);
+    const disk = l.disk;
+    const parentPath = (parsePath(l.path)?.segments ?? []).slice(2).join('/');
+    const folder = l.entries.map((x) => ({ name: x.name, kind: x.kind === 'dir' ? 'dir' as const : 'file' as const }));
+    const where = l.crumbs[l.crumbs.length - 1]?.label ?? disk.label;
+    // Read synchronously, before any await: the browser empties the DataTransfer once this handler returns.
+    const reading = readDroppedItems(e.dataTransfer.items);
+    void (async () => {
+      const plan = planComputerDrop(await reading, folder, { filesystem: disk.filesystem ?? 'OFS', intl: disk.intl, freeBytes: disk.freeBytes, parentPath });
+      if (!plan.ok) { if (plan.message) toast.error(plan.message); return; }
+      const form = new FormData();
+      for (const [path, file] of plan.parts) form.set(path, file);
+      form.set('manifest', JSON.stringify(plan.manifest));
+      setBusy(`Adding ${items(plan.manifest.length)}…`);
+      try {
+        const res = await fetch(`/api/disks/${disk.diskId}/files/batch`, { method: 'POST', body: form });
+        const body = (await res.json().catch(() => null)) as { seq?: unknown; reason?: unknown; error?: unknown } | null;
+        if (!res.ok) {
+          const reason = typeof body?.reason === 'string' ? body.reason : typeof body?.error === 'string' ? body.error : `the server answered ${res.status}`;
+          toast.error('Could not add the files', { description: describeEditError(reason) });
+          return;
+        }
+        const seq = typeof body?.seq === 'number' ? body.seq : null;
+        toast.success(`Added ${items(plan.manifest.length)} to ${where}${seq === null ? '' : ` — saved as version ${seq}`}.`, {
+          description: plan.renamed.length ? `Renamed for AmigaDOS: ${plan.renamed.map(([a, b]) => `${a} → ${b}`).join(', ')}` : undefined,
+        });
+      } catch {
+        toast.error(refusalWords('failed'));
+      } finally {
+        setBusy(null);
+        stripChanged(disk.diskId);
+      }
+    })();
+  }
+
   /** Rows dropped on a pane: Copy, or Move with Shift; onto a folder row, into that folder. */
   function drop(side: Side, e: React.DragEvent) {
     const raw = e.dataTransfer.getData(DRAG_TYPE);
-    if (!raw) return;   // files from the computer: R5, the disk drop pipeline (Task 9)
+    if (!raw) { if (isFileDrag(e)) dropFromComputer(side, e); return; }
     let data: { from: Side; paths: string[] };
     try { data = JSON.parse(raw); } catch { return; }
     if (busy || !Array.isArray(data.paths) || data.paths.length === 0) return;
@@ -491,6 +624,8 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   function pane(side: Side) {
     const p = panes[side];
+    const disk = p.listing?.disk ?? null;
+    const strip = disk ? strips[disk.diskId] : undefined;
     return (
       <div className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)] max-lg:h-[460px]">
         <Pane side={side} active={active === side} listing={p.listing} loading={p.loading} error={p.error}
@@ -500,6 +635,10 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
               onRowClick={(i, mods) => { activate(side); setSelection(side, (s) => selectClick(s, i, mods)); }}
               onRowOpen={(i) => openRow(side, i)}
               onDragStartRows={(ix, e) => dragStart(side, ix, e)} onDropRows={(e) => drop(side, e)}
+              strip={disk && strip ? (
+                <DiskStrip key={`${disk.diskId}:${disk.volumeName}`} side={side} disk={disk} data={strip}
+                           onChanged={() => stripChanged(disk.diskId)} />
+              ) : undefined}
               errorAction={p.gone ? (
                 <Button variant="outline" size="sm" onClick={() => navigate(side, DEFAULT_PATH)} data-testid={`pane-${side}-home`}>
                   Go to LIBRARY:
@@ -513,6 +652,13 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   return (
     <div ref={rootRef} tabIndex={0} onKeyDown={onKeyDown} data-testid="files-manager" aria-label="File manager"
+         // Files from the computer never open in the tab: a drop the panes did not take is answered here.
+         onDragOver={(e) => { if (isFileDrag(e)) e.preventDefault(); }}
+         onDrop={(e) => {
+           if (!isFileDrag(e) || e.defaultPrevented) return;
+           e.preventDefault();
+           toast.error('Open a disk to drop files into it');
+         }}
          className="rounded-[20px] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ring)">
       <div className="grid overflow-hidden rounded-[20px] lg:h-[clamp(480px,calc(100dvh-260px),900px)] lg:grid-cols-[minmax(0,1fr)_92px_minmax(0,1fr)]"
            style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
