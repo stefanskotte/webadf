@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
-import { signUpFresh, runTag, stagingReady, openTitleMenu } from './helpers';
+import { signUpFresh, runTag, openTitleMenu } from './helpers';
 import { cleanupSeeded, seedDisk, addDisk, pairDevice, authHeader, hydrated } from './device-helpers';
 import { zoneOf } from '@/lib/set-folder';
 import { seedProduction, seedSuggestion, cleanupDemozoo } from './demozoo-helpers';
@@ -612,31 +612,35 @@ test('in a collection at 390px: a finger walked slowly into a card\'s centre lea
   expect(left).toHaveLength(2);
 });
 
-test('the Upload page puts its two drop tiles side by side at 390px, and a 200-byte saved path wraps', async ({ page, request }) => {
+// Was "the Upload page puts its two drop tiles side by side at 390px…": the Upload page retired into Files (increment 3),
+// where below lg its two zones stack, each tile spanning its row, and a send's row is in NET:/<board>.
+test('Files at 390px stacks its two drop tiles, and a 200-byte saved path in NET: scrolls nothing sideways', async ({ page, request }) => {
   await signUpFresh(page);
-  const { token } = await pairDevice(page, request, 'A board with a rather long name for a phone screen');
+  const { deviceId, token } = await pairDevice(page, request, 'A board with a rather long name for a phone screen');
   await request.post('/api/device/status', { headers: authHeader(token),
     data: { mountedSha256: null, firmwareVersion: '1.15.0+gabc1234', secondDrive: 'net', driveVersion: 0 } });
   await request.get('/api/device/poll?since=999999&xferAck=0&rx=c', { headers: authHeader(token) });
-  await page.goto('/ingest');
-  await stagingReady(page);
-  await page.getByTestId('send-file-input').setInputFiles({ name: 'p.txt', mimeType: 'text/plain', buffer: Buffer.from('x') });
-  await expect(page.locator('[data-testid="staging-row"][data-key^="send:"]')).toHaveCount(1, { timeout: 15_000 });
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: `NET:/${deviceId}`, active: 'right' })}`);
+  await hydrated(page, 'files-send-input', 'onChange');
+  await page.getByTestId('files-send-input').setInputFiles({ name: 'p.txt', mimeType: 'text/plain', buffer: Buffer.from('x') });
+  const row = page.getByTestId('pane-right').locator('[data-testid="pane-row"][data-name="p.txt"]');
+  await expect(row).toContainText('Waiting', { timeout: 15_000 });
   const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');
   const id = /^NEXT (\S+) /.exec(q)![1];
   await request.get(`/api/device/send/${id}?offset=0&length=1`, { headers: authHeader(token) });
   const long = Array.from({ length: 7 }, (_, i) => `Folder${i}${'x'.repeat(21)}`).join('/') + '/p.txt';
   expect(long.length).toBeGreaterThanOrEqual(200);
   await request.post(`/api/device/send/${id}/done`, { headers: authHeader(token), data: { ok: true, savedAs: long } });
-  await expect(page.getByTestId(`staging-status-send:${id}`)).toContainText('Delivered', { timeout: 15_000 });
-  await expect(page.locator(`[data-testid="staging-row"][data-key="send:${id}"]`)).toContainText(`saved as ${long}`);
-  // C7 (spec §7, Ruling 19): the two file labels are the board's tiles, side by side, at least 96 px tall, the URL
-  // row under them.
-  const add = (await page.getByTestId('add-browse').boundingBox())!;
-  const send = (await page.getByTestId('send-browse').boundingBox())!;
-  expect(Math.abs(add.y - send.y)).toBeLessThan(1);
-  expect(send.x).toBeGreaterThan(add.x + add.width - 1);
-  for (const t of [add, send]) expect(t.height).toBeGreaterThanOrEqual(96);
-  expect((await page.getByTestId('url-fetch-form').boundingBox())!.y).toBeGreaterThan(add.y + add.height);
+  await expect(row).toContainText(`Delivered · saved as ${long}`, { timeout: 15_000 });
+  // The mark gives way to the screen (an ellipsis) and keeps its whole words in its title.
+  await expect(row.getByTestId('pane-mark')).toHaveAttribute('title', `Delivered · saved as ${long}`);
+  expect((await row.getByTestId('pane-mark').boundingBox())!.width).toBeLessThan(390);
+  // C7 (spec §7, Ruling 19) as Files has it (spec §5.4): the two file labels are 96 px tiles, stacked, the STASH: URL
+  // row between them.
+  const stash = (await page.getByTestId('files-stash-browse').boundingBox())!;
+  const send = (await page.getByTestId('files-send-browse').boundingBox())!;
+  expect(send.y).toBeGreaterThan(stash.y + stash.height - 1);
+  for (const t of [stash, send]) expect(t.height).toBeGreaterThanOrEqual(96);
+  expect((await page.getByTestId('files-stash-url').boundingBox())!.y).toBeGreaterThan(stash.y + stash.height);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 });

@@ -8,7 +8,7 @@ import { diskStore } from '@/lib/storage';
 import { formatVolume } from '@/lib/adffs/format';
 import { readVolume } from '@/lib/adffs';
 import { HD_TRACK_DATA_BYTES } from '@/lib/adfmfm';
-import { signUpFresh, runTag, createAdf, libRows, stagingReady, openVersion } from './helpers';
+import { signUpFresh, runTag, createAdf, trayRows, browseDisks, openVersion } from './helpers';
 import { synthDrop } from './drag-drop-helpers';
 import { seedDisk, cleanupSeeded, pairDevice, authHeader } from './device-helpers';
 
@@ -52,12 +52,12 @@ async function uploadViaApi(page: Page, bytes: Buffer, filename: string) {
 
 test('an uploaded HD ADF is tagged HD, can be made writable, and opens in the file browser', async ({ page }) => {
   const { orgId } = await signUpFresh(page);
-  await page.goto('/ingest');
-  await stagingReady(page);
-  await page.getByTestId('file-input').setInputFiles({
+  // Added on the Library page (Files increment 3): the tray says Added; the HD tag is the title's and the table's.
+  await page.goto('/library');
+  await browseDisks(page, {
     name: 'HD Test (1994)(Webadf).adf', mimeType: 'application/octet-stream', buffer: hdAdf(),
   });
-  await expect(libRows(page).first().getByTestId('ingest-hd-tag')).toBeVisible();
+  await expect(trayRows(page).first()).toHaveAttribute('data-state', /^(done|deduped)$/, { timeout: 30_000 });
   await expect.poll(() => getDb().select({ id: disks.id }).from(disks).where(eq(disks.orgId, orgId)),
     { timeout: 30_000 }).toHaveLength(1);
   const [d] = await getDb().select({ id: disks.id, gameId: disks.gameId, size: disks.sizeBytes, f: disks.imageFormat })

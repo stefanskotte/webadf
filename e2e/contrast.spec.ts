@@ -507,6 +507,45 @@ test('the Files NET: pairs are legible: Send zone title, hint, board and receive
   await page.screenshot({ path: 'test-results/zz-files-net.png', fullPage: true });
 });
 
+// Task 7 review carry: the old Upload test also measured the From the Amiga side -- a failed status, the size column,
+// the Delete button and a hovered row's line. Those are STASH: rows in Files now, measured here at 1280 x 900 on this
+// test's own org. (The "from" and "arriving" marks and the STASH: zone are the STASH: block's, below.)
+test('the Files STASH: row pairs are legible: the failed mark, size, Delete, a hovered row', async ({ page, request }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  await boardUploads(request, token, 'Keep.txt', Buffer.from('kept bytes!'));
+  const moving = await boardOpens(request, token, 'Moving.bin', 20_000);
+  await boardSendsChunks(request, token, moving.id, Buffer.alloc(20_000, 1), 0, 1);
+  const bad = Buffer.from('broken');
+  const failed = await boardOpens(request, token, 'Bad.txt', bad.length);
+  await boardSendsChunks(request, token, failed.id, bad);
+  expect((await request.post(`/api/device/upload/${failed.id}/close`, { headers: authHeader(token), data: { crc32: 1 } })).status()).toBe(409);
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: 'LIBRARY:', active: 'left' })}`);
+  await hydrated(page, 'files-manager', 'onKeyDown');
+  const row = (name: string) => `[data-testid="pane-left"] [data-testid="pane-row"][data-name="${name}"]`;
+  await expect(page.locator(row('Moving.bin'))).toContainText('arriving 81%', { timeout: 15_000 });
+  await page.locator(row('Keep.txt')).click();
+  await expect(page.getByTestId('files-delete')).toBeEnabled();
+  await page.mouse.move(0, 0);
+  await legible(page, 'stash', [
+    ['"failed — …" mark', await tagMark(page, 'left', 'Bad.txt', 'failed — damaged on the way: send it again', 'fail')],
+    ['size', `${row('Moving.bin')} td:nth-child(3)`],
+    ['size on the selected row', `${row('Keep.txt')} td:nth-child(3)`],
+    ['Delete', '[data-testid="files-delete"]'],
+  ]);
+  // A hovered row sits on --surface-2: its size, date and marks still read.
+  await page.locator(row('Moving.bin')).hover();
+  await legible(page, 'stash', [
+    ['size on a hovered row', `${row('Moving.bin')} td:nth-child(3)`],
+    ['date on a hovered row', `${row('Moving.bin')} td:nth-child(5)`],
+    ['mark on a hovered row', await tagMark(page, 'left', 'Moving.bin', 'arriving 81%', 'arr')],
+  ]);
+  await page.screenshot({ path: 'test-results/zz-files-stash.png', fullPage: true });
+});
+
 // The Library's own way in (Files increment 3, R8/R9): Add disks ▾ and its menu, the drop overlay's words over the
 // scrim, and the tray (summary, Added, Already in the library, Refused — why, Open title) at 1280 x 900.
 test('the Library add pairs are legible: Add disks, its menu, the drop overlay, the tray summary and row states', async ({ page }) => {

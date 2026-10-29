@@ -1,68 +1,97 @@
-// Uploads from the Amiga (spec 2026-10-18 §10 increment 3), shown as the Staging list's "← From Amiga" rows (spec
-// 2026-10-23 §2), driven by a simulated board over its own routes (status, open, chunk, close), as
-// e2e/send-to-amiga.spec.ts drives sending.
+// Uploads from the Amiga (spec 2026-10-18 §10 increment 3), driven by a simulated board over its own routes (status,
+// open, chunk, close), as e2e/send-to-amiga.spec.ts drives sending. They were the Upload page's "← From Amiga" rows;
+// since Files increment 3 they are rows of STASH: in Files (R10), acted on by the button column. The Staging list's
+// Clear finished and Stop are retired with it: a failed or arriving file is Deleted like any other.
 import { test, expect, type Page } from '@playwright/test';
 import { crc32 } from 'node:zlib';
+import { and, eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { amigaUploads } from '@/db/schema/amiga-uploads';
 import { signUpFresh } from './helpers';
 import { formatVolume } from '@/lib/adffs/format';
+import { FAILED_ROW } from '@/lib/files/pane-rules';
 import { pairDevice, authHeader, cleanupSeeded } from './device-helpers';
-import { boardSays, boardOpens, boardSendsChunks, boardCloses, boardUploads } from './amiga-board';
+import { boardSays, boardOpens, boardSendsChunks, boardCloses, boardUploads, boardQueue } from './amiga-board';
 
 test.afterAll(async () => { await cleanupSeeded(); });
 const LIVE = 15_000;
 
-/** The Staging list's row of one file from the Amiga (key `amiga:<id>`), its status, and one of its actions. */
-const row = (page: Page, id: string) => page.locator(`[data-testid="staging-row"][data-key="amiga:${id}"]`);
-const status = (page: Page, id: string) => page.getByTestId(`staging-status-amiga:${id}`);
-const act = (page: Page, a: string, id: string) => page.getByTestId(`staging-${a}-amiga:${id}`);
+async function openFiles(page: Page, left: string, right: string, active: 'left' | 'right' = 'left') {
+  await page.goto(`/files?${new URLSearchParams({ left, right, active })}`);
+  // Hydrated, so clicks reach React's handlers.
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="files-manager"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  });
+}
+const rowAt = (page: Page, side: 'left' | 'right', name: string) =>
+  page.getByTestId(`pane-${side}`).locator(`[data-testid="pane-row"][data-name="${name}"]`);
+/** A row of the left pane, where these tests keep STASH:. */
+const row = (page: Page, name: string) => rowAt(page, 'left', name);
+const sizeOf = (r: ReturnType<Page['locator']>) => r.locator('td:nth-child(3)');
+const toast = (page: Page, text: RegExp | string) => page.locator('[data-sonner-toast]').filter({ hasText: text });
+/** One upload's status in the database (stored, receiving, failed, deleted). */
+const statusOf = async (id: string) =>
+  (await getDb().select({ s: amigaUploads.status }).from(amigaUploads).where(eq(amigaUploads.id, id)))[0]?.s;
 
-test('a file from the Amiga appears with its board, downloads as an attachment, and Delete removes it', async ({ page, request }) => {
+async function deleteRow(page: Page, name: string, text: string) {
+  await row(page, name).click();
+  await page.getByTestId('files-delete').click();
+  await expect(page.getByTestId('files-delete-text')).toHaveText(text);
+  await page.getByTestId('files-delete-confirm').click();
+}
+
+test('a file from the Amiga is in STASH: with its board, downloads as an attachment, and Delete removes it', async ({ page, request }) => {
   await signUpFresh(page);
   const { token } = await pairDevice(page, request, 'Bench');
   await boardSays(request, token);
-  await page.goto('/ingest');
-  await expect(page.getByTestId('staging-empty')).toBeVisible({ timeout: LIVE });
-  await expect(page.getByTestId('from-amiga-key')).toContainText('AB12');            // the digits Transfer shows
   const id = await boardUploads(request, token, 'Docs/Café.txt', Buffer.from('hello from the Amiga\n'));
-  await expect(row(page, id)).toHaveAttribute('data-state', 'stored', { timeout: LIVE });
-  await expect(row(page, id)).toHaveAttribute('data-kind', 'in');
-  await expect(row(page, id)).toContainText('Docs/Café.txt');
-  await expect(row(page, id)).toContainText('from Bench');
-  await expect(status(page, id)).toHaveText('Stored');
-  const [saved] = await Promise.all([page.waitForEvent('download'), act(page, 'download', id).click()]);
-  expect(saved.suggestedFilename()).toBe('Café.txt');                                  // the fetch, then a blob saved under the Amiga name
-  const dl = await page.request.get(`/api/uploads/${id}/file`);
-  expect(dl.headers()['content-disposition']).toBe("attachment; filename=\"Caf_.txt\"; filename*=UTF-8''Caf%C3%A9.txt");   // ASCII fallback, then the UTF-8 name
+  await openFiles(page, 'STASH:', 'NET:');
+  await expect(rowAt(page, 'right', 'Bench')).toContainText('key AB12');          // the digits Transfer shows
+  await row(page, 'Docs').dblclick();
+  const f = row(page, 'Café.txt');
+  await expect(f).toContainText('from Bench');
+  await expect(sizeOf(f)).toHaveText('21 B');
+  await f.click();
+  await expect(page.getByTestId('files-addlib')).toBeDisabled();                    // not a disk image
+  const [saved] = await Promise.all([page.waitForEvent('download'), page.getByTestId('files-download').click()]);
+  expect(saved.suggestedFilename()).toBe('Café.txt');                                // the fetch, then a blob saved under the Amiga name
+  const dl = await page.request.get(`/api/files/download?path=${encodeURIComponent('STASH:/Docs/Café.txt')}`);
+  expect(dl.headers()['content-disposition']).toBe("attachment; filename*=UTF-8''Caf%C3%A9.txt");
   expect(dl.headers()['x-content-type-options']).toBe('nosniff');
   expect(dl.headers()['content-type']).toBe('application/octet-stream');
   expect((await dl.body()).toString()).toBe('hello from the Amiga\n');
-  await expect(act(page, 'add', id)).toHaveCount(0);       // not a disk image
-  await act(page, 'delete', id).click();
-  await expect(page.getByTestId('staging-confirm')).toContainText('Delete Docs/Café.txt? It is the only copy.');
-  await page.getByTestId('staging-confirm-yes').click();
-  await expect(row(page, id)).toHaveCount(0, { timeout: LIVE });
+  // The CLI's route (kept, R12) still gives an ASCII fallback before the UTF-8 name.
+  const cli = await page.request.get(`/api/uploads/${id}/file`);
+  expect(cli.headers()['content-disposition']).toBe("attachment; filename=\"Caf_.txt\"; filename*=UTF-8''Caf%C3%A9.txt");
+
+  await deleteRow(page, 'Café.txt', 'Delete “Café.txt” from STASH:? This cannot be undone.');
+  await expect(f).toHaveCount(0, { timeout: LIVE });
+  expect(await statusOf(id)).toBe('deleted');
 });
 
-test('an ADF goes to the library with one click, and the row then offers Open title', async ({ page, request }) => {
+test('an ADF goes to the library with one click, and the toast then offers Open title', async ({ page, request }) => {
   test.setTimeout(120_000);   // 55 chunks of 16 KB, each one a round trip to the database
   await signUpFresh(page);
   const { token } = await pairDevice(page, request, 'Bench');
   await boardSays(request, token);
   const adf = Buffer.from(formatVolume({ filesystem: 'FFS', volumeName: 'FromAmiga' }));
-  const id = await boardUploads(request, token, 'Disks/FromAmiga.adf', adf);
-  await page.goto('/ingest');
-  await expect(status(page, id)).toHaveText('Stored · a disk image', { timeout: LIVE });
-  await act(page, 'add', id).click();
-  await expect(act(page, 'open', id)).toBeVisible({ timeout: LIVE });
-  await expect(act(page, 'add', id)).toHaveCount(0);
-  await act(page, 'open', id).click();
+  await boardUploads(request, token, 'Disks/FromAmiga.adf', adf);
+  await openFiles(page, 'STASH:', 'LIBRARY:');
+  await row(page, 'Disks').dblclick();
+  await row(page, 'FromAmiga.adf').click();
+  await page.getByTestId('files-addlib').click();
+  const added = toast(page, 'Added 1 disk to the library');
+  await expect(added).toBeVisible({ timeout: LIVE });
+  await expect(row(page, 'FromAmiga.adf')).toContainText('in the library');
+  await added.getByRole('button', { name: 'Open title' }).click();
   await expect(page).toHaveURL(/\/games\//);
 });
 
-// Was "Clear all names the count, spares a file still arriving and one that arrived during the confirm". Clear all and
-// its confirm are gone (spec 2026-10-23 decision 2): Clear finished clears the failed file only, and never a stored one
-// or one still arriving.
-test('Clear finished clears a failed file and keeps the stored ones and one still arriving', async ({ page, request }) => {
+// Was "Clear finished clears a failed file and keeps the stored ones and one still arriving". Clear finished retired
+// with the Staging list; in STASH: a failed file is Deleted like any other, and Delete on one still arriving stops it
+// (Stop's job): the part that arrived goes and the board hears gone.
+test('a failed file and one still arriving show their marks; Delete clears the failed one alone, and stops the arriving one', async ({ page, request }) => {
   await signUpFresh(page);
   const { token } = await pairDevice(page, request, 'Bench');
   await boardSays(request, token);
@@ -75,45 +104,41 @@ test('Clear finished clears a failed file and keeps the stored ones and one stil
   const { id: moving } = await boardOpens(request, token, 'Moving.bin', 20000, '1.2.3');
   expect((await request.post(`/api/device/upload/${moving}?offset=0`, {
     headers: { ...authHeader(token), 'content-type': 'application/octet-stream' }, data: Buffer.alloc(16_384, 1) })).status()).toBe(200);
-  await page.goto('/ingest');
-  await expect(status(page, moving)).toContainText('Arriving · 81 %', { timeout: LIVE });
-  await expect(page.getByTestId('staging-clear-finished')).toHaveText('Clear finished (1)');
-  const late = await boardUploads(request, token, 'Late.txt', Buffer.from('late'));   // arrives just before the click
-  await page.getByTestId('staging-clear-finished').click();
-  await expect(page.getByTestId('staging-confirm')).toHaveCount(0);                   // no confirm: nothing kept goes
-  await expect(row(page, failed)).toHaveCount(0, { timeout: LIVE });
-  await expect(row(page, a)).toBeVisible();
-  await expect(row(page, b)).toBeVisible();
-  await expect(row(page, moving)).toBeVisible();
-  await expect(row(page, late)).toBeVisible({ timeout: LIVE });
-  await expect(page.getByTestId('staging-clear-finished')).toHaveText('Clear finished (0)');
-  await expect(page.getByTestId('staging-clear-finished')).toBeDisabled();
-  // A file still arriving can be stopped (a stalled one is otherwise stuck for 24 h); the board then hears gone.
-  await act(page, 'stop', moving).click();
-  await expect(page.getByTestId('staging-confirm')).toContainText('Stop receiving Moving.bin? The part that arrived is deleted.');
-  await page.getByTestId('staging-confirm-yes').click();
-  await expect(row(page, moving)).toHaveCount(0, { timeout: LIVE });
+  await openFiles(page, 'STASH:', 'LIBRARY:');
+  await expect(row(page, 'Moving.bin')).toContainText('arriving 81%');
+  await expect(row(page, 'Bad.txt')).toContainText('failed — damaged on the way: send it again');
+
+  await deleteRow(page, 'Bad.txt', 'Delete “Bad.txt” from STASH:? This cannot be undone.');
+  await expect(row(page, 'Bad.txt')).toHaveCount(0, { timeout: LIVE });
+  await expect(row(page, 'A.txt')).toBeVisible();
+  await expect(row(page, 'B.txt')).toBeVisible();
+  await expect(row(page, 'Moving.bin')).toBeVisible();
+  expect([await statusOf(a), await statusOf(b), await statusOf(failed), await statusOf(moving)])
+    .toEqual(['stored', 'stored', 'deleted', 'receiving']);
+
+  await deleteRow(page, 'Moving.bin', 'Delete “Moving.bin” from STASH:? This cannot be undone.');
+  await expect(row(page, 'Moving.bin')).toHaveCount(0, { timeout: LIVE });
   expect((await request.post(`/api/device/upload/${moving}?offset=16384`, {
     headers: { ...authHeader(token), 'content-type': 'application/octet-stream' }, data: Buffer.alloc(3_616, 1) })).status()).toBe(404);
 });
 
-test('Send to an Amiga queues the file for another board', async ({ page, request }) => {
+// Was "Send to an Amiga queues the file for another board" (the row's board menu): a copy into that board under NET:.
+test('a file from one board is sent to another by a copy into its NET: queue', async ({ page, request }) => {
   await signUpFresh(page);
   const { token } = await pairDevice(page, request, 'Bench');
-  const { token: den } = await pairDevice(page, request, 'Den');
-  await boardSays(request, token); await boardSays(request, den, '1.19.0+gabc1234', 'cd34');
-  const id = await boardUploads(request, token, 'Docs/Note.txt', Buffer.from('note'));
-  await page.goto('/ingest');
-  // The menu names each board with its MAC in parentheses ("Den (…)", targetLabel in send-ui.ts).
-  const denOption = await act(page, 'send', id).locator('option', { hasText: /^Den \(/ }).getAttribute('value');
-  await act(page, 'send', id).selectOption(denOption!);
-  await expect(page.getByText('Queued for Den')).toBeVisible({ timeout: LIVE });
-  const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(den) })).body()).toString('latin1');
-  expect(q).toMatch(/^NEXT \S+ 4 [0-9a-f]+ 0 13:Docs\/Note\.txt /);
+  const den = await pairDevice(page, request, 'Den');
+  await boardSays(request, token); await boardSays(request, den.token, '1.19.0+gabc1234', 'cd34');
+  await boardUploads(request, token, 'Docs/Note.txt', Buffer.from('note'));
+  await openFiles(page, 'STASH:', `NET:/${den.deviceId}`);
+  await row(page, 'Docs').click();
+  await page.getByTestId('files-copy').click();
+  await expect(toast(page, 'Queued 1 file to Den.')).toBeVisible({ timeout: LIVE });
+  expect(await boardQueue(request, den.token)).toMatch(/^NEXT \S+ 4 [0-9a-f]+ 0 13:Docs\/Note\.txt /);
+  await expect(rowAt(page, 'right', 'Docs/Note.txt')).toContainText('Waiting');
 });
 
-// The board <select> is gone (spec 2026-10-23 decision 3): every board's files show, each naming its board, and the
-// device card's link (?from=) opens the list on From the Amiga.
+// The board <select> went with spec 2026-10-23 decision 3; every board's files show in STASH:, each naming its board,
+// and the device card's line opens Files on STASH: beside that board's queue.
 test("every board's files show with their board, the device card's line, and the update an older Network board needs", async ({ page, request }) => {
   await signUpFresh(page);
   const bench = await pairDevice(page, request, 'Bench');
@@ -121,130 +146,72 @@ test("every board's files show with their board, the device card's line, and the
   const old = await pairDevice(page, request, 'Old');
   await boardSays(request, bench.token); await boardSays(request, den.token, '1.19.0+gabc1234', 'cd34');
   await boardSays(request, old.token, '1.18.2+gabc1234', 'ef56');
-  const fromBench = await boardUploads(request, bench.token, 'Bench.txt', Buffer.from('b'));
-  const fromDen = await boardUploads(request, den.token, 'Den.txt', Buffer.from('d'));
-  await page.goto('/ingest');
-  await expect(row(page, fromBench)).toContainText('from Bench', { timeout: LIVE });
-  await expect(row(page, fromDen)).toContainText('from Den');
-  await expect(page.getByTestId('staging-filter-all')).toHaveAttribute('aria-checked', 'true');
+  await boardUploads(request, bench.token, 'Bench.txt', Buffer.from('b'));
+  await boardUploads(request, den.token, 'Den.txt', Buffer.from('d'));
+  await openFiles(page, 'STASH:', 'LIBRARY:');
+  await expect(row(page, 'Bench.txt')).toContainText('from Bench');
+  await expect(row(page, 'Den.txt')).toContainText('from Den');
   await page.goto('/devices');
   await expect(page.getByTestId(`device-upload-${bench.deviceId}`)).toHaveText('1 file from the Amiga');
   await expect(page.getByTestId(`device-upload-${old.deviceId}`)).toHaveText('Update to 1.19.0 to send files from the Amiga');
   await page.getByTestId(`device-upload-${bench.deviceId}`).click();
-  await expect(page).toHaveURL(new RegExp(`/ingest\\?from=${bench.deviceId}#from-amiga`));
-  await expect(page.getByTestId('staging-filter-in')).toHaveAttribute('aria-checked', 'true');
-  await expect(row(page, fromBench)).toBeVisible({ timeout: LIVE });
-  await expect(row(page, fromDen)).toBeVisible();
+  await expect.poll(() => {
+    const u = new URL(page.url());
+    return [u.pathname, u.searchParams.get('left'), u.searchParams.get('right'), u.searchParams.get('active')];
+  }).toEqual(['/files', 'STASH:', `NET:/${bench.deviceId}`, 'left']);
+  await expect(row(page, 'Bench.txt')).toBeVisible({ timeout: LIVE });
+  await expect(row(page, 'Den.txt')).toBeVisible();
 });
 
-// Was "Clear all with a board filter on spares the other board's finished file". The board filter is gone; the same
-// check now holds for the list's filter: Clear finished clears only what the filter shows (spec 2026-10-23 §2).
-test('Clear finished under From the Amiga spares a finished send to the Amiga', async ({ page, request }) => {
-  await signUpFresh(page);
-  const { deviceId, token } = await pairDevice(page, request, 'Bench');
-  await boardSays(request, token);
-  const bad = Buffer.from('broken');
-  const { id: failed } = await boardOpens(request, token, 'Bad.txt', bad.length);
-  await boardSendsChunks(request, token, failed, bad);
-  expect((await boardCloses(request, token, failed, ((crc32(bad) >>> 0) ^ 1) >>> 0)).status()).toBe(409);
-  const sent = await page.request.post(`/api/transfers?deviceId=${deviceId}&name=Out.txt`, { data: Buffer.from('o'),
-    headers: { 'content-type': 'application/octet-stream' } });
-  expect(sent.status()).toBe(201);
-  const sendId = ((await sent.json()) as { ids: string[] }).ids[0];
-  expect((await page.request.delete(`/api/transfers/${sendId}`)).status()).toBe(200);   // cancelled: finished
-  await page.goto('/ingest');
-  const sendRow = page.locator(`[data-testid="staging-row"][data-key="send:${sendId}"]`);
-  await expect(sendRow).toHaveAttribute('data-state', 'cancelled', { timeout: LIVE });
-  await expect(page.getByTestId('staging-clear-finished')).toHaveText('Clear finished (2)');
-  await page.getByTestId('staging-filter-in').click();
-  await expect(sendRow).toHaveCount(0);
-  await expect(page.getByTestId('staging-clear-finished')).toHaveText('Clear finished (1)');
-  await page.getByTestId('staging-clear-finished').click();
-  await expect(row(page, failed)).toHaveCount(0, { timeout: LIVE });
-  // The next list read after the filter click (the next poll) is the server's word: the send was not cleared.
-  const next = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/staging' && r.request().method() === 'GET',
-    { timeout: LIVE });
-  await page.getByTestId('staging-filter-all').click();
-  await expect(sendRow).toBeVisible({ timeout: LIVE });
-  await next;
-  await expect(sendRow).toBeVisible();
-  await expect(row(page, failed)).toHaveCount(0);
-});
-
-// Was the Clear all confirm's test; Clear all is gone, and the list's one confirm (Delete, Stop) keeps its behaviour.
-test('the Delete confirm focuses Cancel and Escape closes it without deleting', async ({ page, request }) => {
+test('the Delete confirm closes on Escape without deleting', async ({ page, request }) => {
   await signUpFresh(page);
   const { token } = await pairDevice(page, request, 'Bench');
   await boardSays(request, token);
   const id = await boardUploads(request, token, 'Keep.txt', Buffer.from('keep'));
-  await page.goto('/ingest');
-  await expect(row(page, id)).toBeVisible({ timeout: LIVE });
-  await act(page, 'delete', id).click();
-  await expect(page.getByRole('dialog', { name: 'Delete Keep.txt? It is the only copy.' })).toBeVisible();   // named by its question
-  await expect(page.getByTestId('staging-confirm-cancel')).toBeFocused();
+  await openFiles(page, 'STASH:', 'LIBRARY:');
+  await row(page, 'Keep.txt').click();
+  await page.getByTestId('files-delete').click();
+  await expect(page.getByRole('dialog', { name: 'Delete this item?' })).toBeVisible();
+  await expect(page.getByTestId('files-delete-text')).toHaveText('Delete “Keep.txt” from STASH:? This cannot be undone.');
   await page.keyboard.press('Escape');
-  await expect(page.getByTestId('staging-confirm')).toHaveCount(0);
-  await expect(act(page, 'delete', id)).toBeFocused();
-  await expect(row(page, id)).toBeVisible();
+  await expect(page.getByTestId('files-delete-dialog')).toHaveCount(0);
+  await expect(row(page, 'Keep.txt')).toBeVisible();
+  expect(await statusOf(id)).toBe('stored');
 });
 
 // Signed out, the fetch follows the redirect to the sign-in page: a 200 with HTML. That is not a success.
-test('an action answered by the sign-in page (200 text/html) says signed out and keeps the row', async ({ page, request }) => {
+test('an action answered by the sign-in page (200 text/html) says signed out and keeps the file', async ({ page, request }) => {
   await signUpFresh(page);
   const { token } = await pairDevice(page, request, 'Bench');
   await boardSays(request, token);
   const id = await boardUploads(request, token, 'Kept.txt', Buffer.from('kept'));
-  await page.route(`**/api/uploads/${id}`, (route) => route.request().method() === 'DELETE'
+  await page.route('**/api/files/ops', (route) => route.request().method() === 'POST'
     ? route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: '<!doctype html><title>Sign in</title>' })
     : route.continue());
-  await page.goto('/ingest');
-  await expect(row(page, id)).toBeVisible({ timeout: LIVE });
-  await act(page, 'delete', id).click();
-  await page.getByTestId('staging-confirm-yes').click();
-  await expect(page.getByText('Signed out — sign in again')).toBeVisible({ timeout: LIVE });
-  await expect(page.getByTestId('staging-confirm')).toHaveCount(0);
-  await expect(row(page, id)).toBeVisible();
-  await expect(status(page, id)).toHaveText('Stored');
-});
-
-// The file finished while the Stop confirm was open: Stop must not delete the only copy.
-test('Stop on a file that finished while the confirm was open keeps it and says so', async ({ page, request }) => {
-  await signUpFresh(page);
-  const { token } = await pairDevice(page, request, 'Bench');
-  await boardSays(request, token);
-  const data = Buffer.alloc(20_000, 1);
-  const { id } = await boardOpens(request, token, 'Late.bin', data.length, '1.2.3');
-  await boardSendsChunks(request, token, id, data, 0, 1);
-  await page.goto('/ingest');
-  await expect(status(page, id)).toContainText('Arriving · 81 %', { timeout: LIVE });
-  await act(page, 'stop', id).click();
-  await expect(page.getByRole('dialog', { name: 'Stop receiving Late.bin? The part that arrived is deleted.' })).toBeVisible();
-  await boardSendsChunks(request, token, id, data, 16_384);                 // the rest arrives meanwhile
-  expect((await boardCloses(request, token, id, crc32(data) >>> 0)).status()).toBe(200);
-  await page.getByTestId('staging-confirm-yes').click();
-  await expect(page.getByText('It finished arriving; it was kept.')).toBeVisible({ timeout: LIVE });
-  await expect(page.getByTestId('staging-confirm')).toHaveCount(0);
-  await expect(status(page, id)).toHaveText('Stored', { timeout: LIVE });
-  expect((await page.request.get(`/api/uploads/${id}/file`)).status()).toBe(200);
+  await openFiles(page, 'STASH:', 'LIBRARY:');
+  await deleteRow(page, 'Kept.txt', 'Delete “Kept.txt” from STASH:? This cannot be undone.');
+  await expect(toast(page, 'Signed out — sign in again')).toBeVisible({ timeout: LIVE });
+  await expect(row(page, 'Kept.txt')).toBeVisible();
+  expect(await statusOf(id)).toBe('stored');
 });
 
 test('a download the server answers 404 to gives a toast, not a saved file', async ({ page, request }) => {
   await signUpFresh(page);
   const { token } = await pairDevice(page, request, 'Bench');
   await boardSays(request, token);
-  const id = await boardUploads(request, token, 'Gone.txt', Buffer.from('gone'));
-  await page.route(`**/api/uploads/${id}/file`, (route) => route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"not_found"}' }));
-  await page.goto('/ingest');
-  await expect(row(page, id)).toBeVisible({ timeout: LIVE });
+  await boardUploads(request, token, 'Gone.txt', Buffer.from('gone'));
+  await page.route('**/api/files/download?**', (route) => route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"not_found"}' }));
+  await openFiles(page, 'STASH:', 'LIBRARY:');
+  await row(page, 'Gone.txt').click();
   const saved = page.waitForEvent('download', { timeout: 1500 }).then(() => true, () => false);
-  await act(page, 'download', id).click();
-  await expect(page.getByText('That file is no longer here.')).toBeVisible({ timeout: LIVE });
+  await page.getByTestId('files-download').click();
+  await expect(toast(page, 'That is no longer there.')).toBeVisible({ timeout: LIVE });
   expect(await saved).toBe(false);
 });
 
-test('a file that fails its CRC shows as failed, is neither downloadable nor addable, can be cleared, and the board hears crc', async ({ page, request }) => {
+test('a file that fails its CRC shows as failed, is neither copied, downloaded nor added, can be deleted, and the board hears crc', async ({ page, request }) => {
   await signUpFresh(page);
-  const { token } = await pairDevice(page, request, 'Bench');
+  const { deviceId, token } = await pairDevice(page, request, 'Bench');
   await boardSays(request, token);
   const data = Buffer.from(formatVolume({ filesystem: 'FFS', volumeName: 'Damaged' }).subarray(0, 40_000));
   const { id } = await boardOpens(request, token, 'Disks/Damaged.adf', data.length);
@@ -252,20 +219,27 @@ test('a file that fails its CRC shows as failed, is neither downloadable nor add
   const close = await boardCloses(request, token, id, ((crc32(data) >>> 0) ^ 1) >>> 0);
   expect(close.status()).toBe(409);
   expect(await close.json()).toEqual({ code: 'crc' });
-  await page.goto('/ingest');
-  await expect(row(page, id)).toHaveAttribute('data-state', 'failed', { timeout: LIVE });
-  await expect(status(page, id)).toContainText('Failed');
-  await expect(status(page, id)).toContainText('damaged on the way: send it again');
-  await expect(act(page, 'download', id)).toHaveCount(0);
-  await expect(act(page, 'add', id)).toHaveCount(0);
+  // The board's queue on the right: a copy there would otherwise be offered.
+  await openFiles(page, 'STASH:', `NET:/${deviceId}`);
+  await row(page, 'Disks').dblclick();
+  const f = row(page, 'Damaged.adf');
+  await expect(f).toContainText('failed — damaged on the way: send it again');
+  await f.click();
+  for (const action of ['files-copy', 'files-download']) {
+    await expect(page.getByTestId(action)).toBeDisabled();
+    await expect(page.getByTestId(action)).toHaveAttribute('title', FAILED_ROW);
+  }
+  await expect(page.getByTestId('files-addlib')).toBeDisabled();
+  expect((await page.request.get(`/api/files/download?path=${encodeURIComponent('STASH:/Disks/Damaged.adf')}`)).status()).toBe(404);
   expect((await page.request.get(`/api/uploads/${id}/file`)).status()).toBe(404);
-  // A failed file is finished: it has Clear (spec 2026-10-23 §2), where the old card offered Delete.
-  await act(page, 'clear', id).click();
-  await expect(row(page, id)).toHaveCount(0, { timeout: LIVE });
+  // A failed file had Clear on the Staging list; in STASH: it is Deleted.
+  await deleteRow(page, 'Damaged.adf', 'Delete “Damaged.adf” from STASH:? This cannot be undone.');
+  await expect(f).toHaveCount(0, { timeout: LIVE });
+  expect(await statusOf(id)).toBe('deleted');
 });
 
 test('a file the board stopped sending resumes at the next chunk and is listed once', async ({ page, request }) => {
-  await signUpFresh(page);
+  const { orgId } = await signUpFresh(page);
   const { token } = await pairDevice(page, request, 'Bench');
   await boardSays(request, token);
   const data = Buffer.alloc(20_000, 7);
@@ -276,10 +250,14 @@ test('a file the board stopped sending resumes at the next chunk and is listed o
   expect(again).toEqual({ id: first.id, offset: 16_384 });
   await boardSendsChunks(request, token, again.id, data, again.offset);
   expect((await boardCloses(request, token, again.id, crc32(data) >>> 0)).status()).toBe(200);
-  await page.goto('/ingest');
-  await expect(row(page, first.id)).toHaveAttribute('data-state', 'stored', { timeout: LIVE });
-  await expect(page.locator('[data-testid="staging-row"][data-kind="in"]')).toHaveCount(1);
-  const dl = await page.request.get(`/api/uploads/${first.id}/file`);
+  await openFiles(page, 'STASH:', 'LIBRARY:');
+  await row(page, 'Docs').dblclick();
+  await expect(page.getByTestId('pane-left').getByTestId('pane-row')).toHaveCount(1);
+  await expect(row(page, 'Big.bin')).not.toContainText('arriving');
+  await expect(sizeOf(row(page, 'Big.bin'))).toHaveText('20 KB');
+  expect((await getDb().select({ id: amigaUploads.id }).from(amigaUploads)
+    .where(and(eq(amigaUploads.orgId, orgId), eq(amigaUploads.path, 'Docs/Big.bin')))).length).toBe(1);
+  const dl = await page.request.get(`/api/files/download?path=${encodeURIComponent('STASH:/Docs/Big.bin')}`);
   expect(Buffer.from(await dl.body()).equals(data)).toBe(true);
 });
 
@@ -289,7 +267,7 @@ test('an empty file is stored and listed as 0 B', async ({ page, request }) => {
   await boardSays(request, token);
   const { id } = await boardOpens(request, token, 'Empty.txt', 0);
   expect((await boardCloses(request, token, id, 0)).status()).toBe(200);
-  await page.goto('/ingest');
-  await expect(row(page, id)).toHaveAttribute('data-state', 'stored', { timeout: LIVE });
-  await expect(row(page, id)).toContainText('0 B');
+  await openFiles(page, 'STASH:', 'LIBRARY:');
+  await expect(sizeOf(row(page, 'Empty.txt'))).toHaveText('0 B');
+  expect(await statusOf(id)).toBe('stored');
 });

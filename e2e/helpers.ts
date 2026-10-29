@@ -1,4 +1,4 @@
-import { type Page, expect } from '@playwright/test';
+import { type Page, type Locator, expect } from '@playwright/test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -154,21 +154,6 @@ export async function createAdf(page: Page, filesystem: 'FFS' | 'OFS' = 'FFS', d
   expect((await created).status()).toBe(200);
 }
 
-// ---- The Upload page's Staging list (A6, spec 2026-10-23 §4 "Test ids") ----
-
-/** The library rows ("↓ To library") of the Staging list, newest first. */
-export const libRows = (page: Page) => page.locator('[data-testid="staging-row"][data-kind="lib"]');
-
-/**
- * Waits until the Upload page has hydrated: a synthetic pick or drop on server-rendered HTML has no handler yet and
- * silently does nothing. The server render says "Reading the list…"; an empty text or a row exists only once the
- * client has run (as dropAdf in upload-staging.spec.ts does).
- */
-export async function stagingReady(page: Page) {
-  await expect(page.locator('[data-testid="staging-empty"], [data-testid="staging-row"]').first())
-    .toBeVisible({ timeout: 15_000 });
-}
-
 // ---- The Library page's Add disks ▾ and its tray (Files increment 3, R8/R9; they replace the Staging list's) ----
 
 /** The tray's rows, newest drop first; `data-state` is hashing|uploading|deduped|done|failed, as libRows' was. */
@@ -180,6 +165,15 @@ export async function libraryAddReady(page: Page) {
     const el = document.querySelector('[data-testid="library-add-disks"]');
     return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
   }, undefined, { timeout: 15_000 });
+}
+
+/**
+ * Browse files… on the Library page: the picker Add disks ▾ opens (`file-input`, always in the page, outside the menu's
+ * popup), once it has hydrated. library-add.spec.ts walks the menu itself; everything else picks straight into it.
+ */
+export async function browseDisks(page: Page, files: Parameters<Locator['setInputFiles']>[0]) {
+  await libraryAddReady(page);
+  await page.getByTestId('file-input').setInputFiles(files);
 }
 
 // ---- The library's ⋯ title menu (Phase C1, spec 2026-10-24 §2) ----
