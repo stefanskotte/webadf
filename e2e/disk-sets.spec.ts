@@ -1281,7 +1281,11 @@ test('in a collection: a drop in an empty cell after the last card moves the car
   // pointer parked in its lower half sits inside dnd-kit's auto-scroll zone (the bottom 20% of the viewport): the
   // page scrolls under the held card, the row slides up, and the pointer ends BELOW the grid -- where a drop rightly
   // does nothing. 60 px of top margin keeps the whole walk (card A's centre to the empty cell) clear of both zones.
+  // The cards stream in hidden (see box()): measured before A is revealed, its top is 0 and the scroll does nothing,
+  // so wait for it first, and for the page to have actually moved.
+  await box(card(page, title('A')));
   await card(page, title('A')).evaluate((el) => window.scrollBy(0, el.getBoundingClientRect().top - 60));
+  await expect.poll(() => page.evaluate(() => window.scrollY), 'the grid came up the page').toBeGreaterThan(0);
 
   // Five across at 1280: F and G make a partial second row. The empty cell
   // after G is in G's row, two columns right of it, under D.
