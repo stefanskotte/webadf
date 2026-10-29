@@ -1,5 +1,6 @@
 'use client';
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
+import { toast } from 'sonner';
 import { useLibraryIngest } from './use-library-ingest';
 import { diskFilesFromDrop, type DropFileItem } from '@/lib/library-ingest/drop-files';
 import { newRow, upsertLibRows, type LibRow } from '@/lib/library-ingest/rows';
@@ -13,7 +14,8 @@ type LibraryIngest = {
   /** One line per archive whose other files were left out (drop-files.ts), each with its own key: two drops of the
    *  same archive say the same words. */
   notes: { key: number; text: string }[];
-  /** A drop is being read, opened or added: the overlay takes no drop and Close is disabled. */
+  /** A drop is being read, opened, added or given its set suggestion: the overlay and Add disks ▾ take no drop and
+   *  Close is disabled. */
   busy: boolean;
   setBusy(b: boolean): void;
   suggestion: Suggestion;
@@ -27,6 +29,9 @@ type LibraryIngest = {
   menuOpen: boolean;
   setMenuOpen(open: boolean): void;
 };
+
+/** What a drop refused because another is still being added hears (the overlay says it while one is dragged). */
+export const DROP_WAIT = 'Wait for the disks being added, then drop again.';
 
 const Ctx = createContext<LibraryIngest | null>(null);
 
@@ -53,7 +58,17 @@ export function LibraryIngestProvider({ children }: { children: ReactNode }) {
   }, []);
   const ingest = useLibraryIngest({ setRows });
 
+  // One drop at a time, from its first read to its set suggestion (increment 3 final ruling): a drop let in while
+  // another was still being added or suggested for would share that one suggestion. A ref, not `busy`, so two drops
+  // within one render are serialised too; `busy` is what the overlay, the menu and Close show.
+  const running = useRef(false);
+
   async function addItems(items: DropFileItem[] | Promise<DropFileItem[]>) {
+    if (running.current) {
+      toast(DROP_WAIT);
+      return;
+    }
+    running.current = true;
     drop.current++;
     setReading(true);
     // A drop of many archives goes up a chunk at a time as they are opened (DROP_CHUNK), not all held in the tab
@@ -76,17 +91,31 @@ export function LibraryIngestProvider({ children }: { children: ReactNode }) {
       }
     } catch {
       setRows((rs) => upsertLibRows(rs, [newRow('Dropped files', 0, 'bad:drop', 'failed', 'could not be read')]));
+    }
+    try {
+      // One suggestion for the whole drop, once its last chunk is up; the next drop waits for it.
+      await ingest.endDrop();
     } finally {
+      running.current = false;
       setReading(false);
     }
-    // One suggestion for the whole drop, once its last chunk is up.
-    await ingest.endDrop();
     if (failedUpload) throw failedUpload;
   }
 
+  // Paste a URL is disabled while a drop runs; its rows are never thrown away, but a drop waits for its suggestion.
   async function addFetched(fetched: FetchedRow[], since: string) {
+    const mine = !running.current;
+    running.current = true;
     drop.current++;
-    await ingest.addFetched(fetched, since);
+    setReading(true);
+    try {
+      await ingest.addFetched(fetched, since);
+    } finally {
+      if (mine) {
+        running.current = false;
+        setReading(false);
+      }
+    }
   }
 
   const busy = reading || ingest.busy;

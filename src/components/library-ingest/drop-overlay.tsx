@@ -2,7 +2,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { isFileDrag } from '@/components/disks/native-drop';
 import { readDroppedItems } from '@/lib/drop-reader';
-import { useLibraryIngestContext } from './library-ingest-provider';
+import { toast } from 'sonner';
+import { DROP_WAIT, useLibraryIngestContext } from './library-ingest-provider';
 
 /** "Drop to add 3 disks to the library" when every dragged item is a file (a folder is one too), else no number. */
 function headline(dt: DataTransfer | null): string {
@@ -53,7 +54,8 @@ export function LibraryDropOverlay() {
       e.preventDefault();
       depth = 0;
       setShown(null);
-      if (live.current.busy || !e.dataTransfer) return;
+      if (!e.dataTransfer) return;
+      if (live.current.busy) { toast(DROP_WAIT); return; }
       // Read before this handler returns: the browser empties the DataTransfer after it (drop-reader.ts).
       const items = readDroppedItems(e.dataTransfer.items)
         .then((all) => all.map((d) => ({ name: d.path, kind: d.kind, file: d.file })));
@@ -82,7 +84,7 @@ export function LibraryDropOverlay() {
           <div className="glass-card flex max-w-[480px] flex-col items-center gap-2 rounded-2xl border-2 border-dashed px-6 py-8 text-center"
                style={{ borderColor: 'var(--line-strong)', background: 'var(--surface)', color: 'var(--ink)' }}>
             <h3 className="text-[20px] font-bold" style={{ fontFamily: 'var(--font-display)' }}>
-              {ingest.busy ? 'Wait for the disks being added, then drop again' : shown}
+              {ingest.busy ? DROP_WAIT.slice(0, -1) : shown}
             </h3>
             <p className="text-[13px]" style={{ color: 'var(--muted)' }}>ADF · DSK · ADZ · DMS · DMZ · HFE, folders, .zip / .lha of disks</p>
           </div>

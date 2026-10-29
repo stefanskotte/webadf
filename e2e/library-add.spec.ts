@@ -70,6 +70,8 @@ test('two dropped ADFs are added, the tray says so, and the grid shows them', as
   await expect(summary(page)).toHaveText('2 added', { timeout: 30_000 });
   await expect(rowOf(page, `lib:${sha(a)}`)).toHaveAttribute('data-state', 'done');
   await expect(rowOf(page, `lib:${sha(b)}`)).toContainText('Added');
+  // A DD disk carries no HD tag (hd-disks.spec.ts checks an HD one has it).
+  await expect(page.getByTestId('library-tray-hd')).toHaveCount(0);
   await expect(card(page, `LibAdd Alpha ${tag}`)).toHaveCount(1);
   await expect(card(page, `LibAdd Beta ${tag}`)).toHaveCount(1);
   // The overlay was a drag's, and is gone with the drop.
@@ -181,6 +183,51 @@ test('an ADF already in the library says so, newest drop first', async ({ page }
   // The second drop's rows lead, in the order they were dropped.
   await expect(page.getByTestId('library-tray-row')).toHaveCount(2);
   await expect(page.getByTestId('library-tray-row').first()).toHaveAttribute('data-key', `lib:${sha(b)}`);
+});
+
+test('one drop at a time: until a drop has its set suggestion, Add disks waits and a second drop is refused in words', async ({ page }) => {
+  const tag = runTag();
+  await signUpFresh(page);
+  // Hold the first drop at its set suggestion: its disks are up, but the drop is not finished until that is answered,
+  // and a drop let in meanwhile would share the one suggestion (increment 3 final ruling).
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  await page.route('**/api/disk-sets/suggest', async (route) => {
+    await held;
+    await route.fulfill({ json: { suggestion: null } });
+  });
+  await page.goto('/library');
+  const a = fakeAdf(`one-${tag}`);
+  const b = fakeAdf(`two-${tag}`);
+  const c = fakeAdf(`three-${tag}`);
+  await synthDrop(page, [
+    { name: `LibAdd One ${tag} (1990)(X).adf`, kind: 'file', bytes: bytes(a) },
+    { name: `LibAdd Two ${tag} (1990)(X).adf`, kind: 'file', bytes: bytes(b) },
+  ], TARGET);
+  await expect(summary(page)).toHaveText('2 added', { timeout: 30_000 });
+
+  // Still adding: the menu says so and takes nothing; Close waits too.
+  await expect(page.getByTestId('library-add-disks')).toContainText('Adding…');
+  await expect(page.getByTestId('library-tray-close')).toBeDisabled();
+  await page.getByTestId('library-add-disks').click();
+  await expect(page.getByTestId('library-add-hint')).toHaveText('Adding disks — wait for them, then add more');
+  await expect(page.getByTestId('library-add-browse')).toHaveAttribute('data-disabled', '');
+  await expect(page.getByTestId('library-add-url')).toHaveAttribute('data-disabled', '');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('library-add-disks-panel')).toHaveCount(0);
+
+  // A second drop now is refused in words and adds nothing.
+  const third = { name: `LibAdd Three ${tag} (1990)(X).adf`, kind: 'file' as const, bytes: bytes(c) };
+  await synthDrop(page, [third], TARGET);
+  await expect(page.getByText('Wait for the disks being added, then drop again.')).toBeVisible();
+  await expect(page.getByTestId('library-tray-row')).toHaveCount(2);
+
+  // Once the first drop is answered, the next one is taken.
+  release();
+  await expect(page.getByTestId('library-add-disks')).not.toContainText('Adding…');
+  await synthDrop(page, [third], TARGET);
+  await expect(rowOf(page, `lib:${sha(c)}`)).toHaveAttribute('data-state', 'done', { timeout: 30_000 });
+  await expect(page.getByTestId('library-tray-row')).toHaveCount(3);
 });
 
 test('Add disks ▾ → Browse files… adds the picked disk; the menu says the page takes a drop', async ({ page }) => {

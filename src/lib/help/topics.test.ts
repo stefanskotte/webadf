@@ -376,7 +376,8 @@ describe('Files help (increment 4)', () => {
     const b = HELP_TOPICS['stash-net'].short + bodyText('stash-net').replace(/\s+/g, ' ');
     for (const w of ['30 days', '500 files', '256 MB', '20 MB', '4 MB', '32 files', '16 MB', 'read-only', 'Add to library',
       'dropped', 'marked with the board', '1.15.0', 'Delete cancels', 'key AB12', 'cannot be undone', 'paste a URL',
-      'Nothing is copied out of NET:']) expect(b).toContain(w);
+      'Nothing is copied out of NET:', 'On firmware 1.19.0 or newer a board s row shows four digits of its key'])
+      expect(b).toContain(w);
   });
   it('library says Add disks takes a URL', () => {
     expect(bodyText('library').replace(/\s+/g, ' ')).toContain('Add disks , which also takes a URL');

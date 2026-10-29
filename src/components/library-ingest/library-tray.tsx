@@ -2,6 +2,8 @@
 import Link from 'next/link';
 import { XIcon } from 'lucide-react';
 import { SetSuggestion } from '@/components/ingest/set-suggestion';
+import { HdTag } from '@/components/disks/hd-tag';
+import { adfDensity, isHfeFilename } from '@/lib/disk-format';
 import { traySummary, trayState } from '@/lib/library-ingest/tray';
 import { useLibraryIngestContext } from './library-ingest-provider';
 
@@ -48,11 +50,16 @@ export function LibraryTray() {
             const s = trayState(r);
             const sha = r.key.slice('lib:'.length);
             const landed = r.state === 'done' || r.state === 'deduped';
+            // As the Upload page's Staging row said it: an ADF of HD size (an HFE is never "HD" here).
+            const hd = !isHfeFilename(r.name) && adfDensity(r.sizeBytes) === 'hd';
             return (
               <li key={r.key} data-testid="library-tray-row" data-key={r.key} data-state={r.state}
                   className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-0.5 border-b py-1.5 text-[13px] last:border-b-0"
                   style={{ borderColor: 'var(--line)' }}>
-                <span className="min-w-0 flex-1 basis-[140px] truncate font-medium" title={r.name}>{r.name}</span>
+                <span className="flex min-w-0 flex-1 basis-[140px] items-center gap-1.5">
+                  <span className="min-w-0 truncate font-medium" title={r.name}>{r.name}</span>
+                  {hd && <HdTag testId="library-tray-hd" />}
+                </span>
                 <span data-testid="library-tray-state" className="min-w-0 text-[12.5px]" style={{ color: TONE[s.tone] }}>
                   {s.word}
                   {r.state !== 'failed' && r.note && <span style={{ color: 'var(--muted-2)' }}> · {r.note}</span>}

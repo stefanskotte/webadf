@@ -556,8 +556,8 @@ export const HELP_TOPICS = {
         <p>
           <strong>NET:</strong> lists your boards on firmware 1.15.0 or newer. Copy files or folders into a board to send
           them to its Amiga: each waits there until Transfer takes it, marked waiting, sending, delivered or failed.
-          Delete cancels a waiting file or clears a finished one. A board&apos;s row shows four digits of its key
-          (<em>key AB12</em>), the digits Transfer shows.
+          Delete cancels a waiting file or clears a finished one. On firmware 1.19.0 or newer a board&apos;s row shows
+          four digits of its key (<em>key AB12</em>), the digits Transfer shows.
         </p>
         <GoodToKnow items={[
           'STASH: holds up to 500 files or 256 MB for your organization, and keeps each file 30 days. A file can be 20 MB from your computer, 4 MB from the Amiga.',

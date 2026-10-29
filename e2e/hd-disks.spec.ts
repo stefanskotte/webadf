@@ -52,12 +52,14 @@ async function uploadViaApi(page: Page, bytes: Buffer, filename: string) {
 
 test('an uploaded HD ADF is tagged HD, can be made writable, and opens in the file browser', async ({ page }) => {
   const { orgId } = await signUpFresh(page);
-  // Added on the Library page (Files increment 3): the tray says Added; the HD tag is the title's and the table's.
+  // Added on the Library page (Files increment 3): the tray says Added and HD; the HD tag is the title's and the table's too.
   await page.goto('/library');
   await browseDisks(page, {
     name: 'HD Test (1994)(Webadf).adf', mimeType: 'application/octet-stream', buffer: hdAdf(),
   });
   await expect(trayRows(page).first()).toHaveAttribute('data-state', /^(done|deduped)$/, { timeout: 30_000 });
+  // The tray's row says HD beside the name, as the Upload page's Staging row did.
+  await expect(trayRows(page).first().getByTestId('library-tray-hd')).toHaveText('HD');
   await expect.poll(() => getDb().select({ id: disks.id }).from(disks).where(eq(disks.orgId, orgId)),
     { timeout: 30_000 }).toHaveLength(1);
   const [d] = await getDb().select({ id: disks.id, gameId: disks.gameId, size: disks.sizeBytes, f: disks.imageFormat })

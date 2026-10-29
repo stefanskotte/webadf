@@ -77,7 +77,7 @@ export function AddDisksMenu() {
           <DropdownMenuItem disabled data-testid="library-add-hint"
                             className="h-auto px-2.5 py-1.5 text-[12px] data-disabled:opacity-100"
                             style={{ color: 'var(--muted-2)' }}>
-            or drop disks anywhere on this page
+            {ingest.busy ? 'Adding disks — wait for them, then add more' : 'or drop disks anywhere on this page'}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
