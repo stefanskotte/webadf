@@ -795,6 +795,101 @@ test('the Files STASH: pairs are legible: drop zone, marks, row buttons, Add to 
   await page.screenshot({ path: 'test-results/zz-files-stash.png', fullPage: true });
 });
 
+// Files increment 4 (Task 9): the filter box (typed text and its placeholder, which no selector reaches: its colour is
+// read from ::placeholder and rasterised as probe() does), the Show .info label and its Shown / Hidden words, the foot's
+// "N of M shown", and the Files settings card -- row labels, hints, and both switches' state words on and off.
+// (The STASH: "dropped" mark is measured in the STASH: block above.)
+test('the Files filter and Files settings pairs are legible: filter and placeholder, Show .info, N of M shown, the card', async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const u = await signUpFresh(page);
+  const adf = formatVolume({ filesystem: 'FFS', volumeName: `Flt ${runTag().slice(-8)}` });
+  const sha256 = createHash('sha256').update(adf).digest('hex');
+  await diskStore.put(sha256, adf);
+  const d = await seedDisk(u.orgId, { title: `Contrast F ${runTag().slice(-6)}`, diskNo: 1, sha256, writeProtected: false });
+  for (const name of ['Prog', 'Prog.info', 'Notes.txt']) {
+    expect((await page.request.post(`/api/disks/${d.diskId}/files`, { multipart: { parentBlock: '880', name,
+      file: { name, mimeType: 'application/octet-stream', buffer: Buffer.from(name) } } })).status()).toBe(200);
+  }
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: `LIBRARY:/${d.gameId}/${d.diskId}`, active: 'right' })}`);
+  await hydrated(page, 'files-manager', 'onKeyDown');
+  await page.mouse.move(0, 0);
+
+  // The placeholder, on the empty box.
+  const ph = await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="pane-right-filter"]') as HTMLInputElement;
+    const ctx = document.createElement('canvas').getContext('2d')!;
+    ctx.fillStyle = getComputedStyle(el, '::placeholder').color;
+    ctx.fillRect(0, 0, 1, 1);
+    const p = ctx.getImageData(0, 0, 1, 1).data;
+    return { fg: [p[0], p[1], p[2], p[3] / 255], text: el.placeholder };
+  });
+  const box = await probe(page, '[data-testid="pane-right-filter"]');
+  expect(box, 'filter box not found or transparent').toBeTruthy();
+  const phr = ratio(ph.fg, box!.bg);
+  console.log(`filter    ${'placeholder'.padEnd(36)} ${phr.toFixed(2)}:1  "${ph.text}"`);
+  expect(phr, 'filter: placeholder').toBeGreaterThan(4.5);
+
+  const infoWords = '[data-testid="pane-right-show-info"] + span';
+  await expect(page.locator(infoWords)).toHaveText('Shown');
+  await page.getByTestId('pane-right-filter').fill('n');
+  await expect(page.getByTestId('pane-right-foot')).toHaveText('2 of 3 shown');
+  await page.mouse.move(0, 0);
+  await legible(page, 'filter', [
+    ['filter text (typed)', '[data-testid="pane-right-filter"]'],
+    ['Show .info label', '#pane-right-show-info-label'],
+    ['Show .info "Shown"', infoWords],
+    ['foot "N of M shown"', '[data-testid="pane-right-foot"]'],
+  ]);
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'),
+    page.getByTestId('pane-right-show-info').click(),
+  ]);
+  await expect(page.locator(infoWords)).toHaveText('Hidden');
+  await page.mouse.move(0, 0);
+  await legible(page, 'filter', [
+    ['Show .info "Hidden"', infoWords],
+    ['foot "N of M shown · .info hidden"', '[data-testid="pane-right-foot"]'],
+  ]);
+
+  // The Files settings card: Show .info now off, Ask before deleting on; then each the other way.
+  await page.goto('/settings');
+  await hydrated(page, 'pref-files-left', 'onKeyDown');
+  await page.getByTestId('files-settings').scrollIntoViewIfNeeded();
+  await page.mouse.move(0, 0);
+  const labelOf = async (id: string) => `[id="${await page.getByTestId(id).getAttribute('aria-labelledby')}"]`;
+  const hintOf = async (id: string) => `[id="${(await page.getByTestId(id).getAttribute('aria-describedby'))!.split(' ').pop()}"]`;
+  await expect(page.getByTestId('pref-files-show-info-state')).toHaveText('Hidden');
+  await expect(page.getByTestId('pref-files-confirm-delete-state')).toHaveText('Asks');
+  await legible(page, 'files set', [
+    ['heading', '#files-heading'],
+    ['intro', '[data-testid="files-settings"] > p'],
+    ['save line', '[data-testid="files-prefs-state"]'],
+    ['row label', await labelOf('pref-files-left')],
+    ['row hint', await hintOf('pref-files-left')],
+    ['switch row label', await labelOf('pref-files-confirm-delete')],
+    ['switch row hint', await hintOf('pref-files-confirm-delete')],
+    ['checked radio', '[data-testid="pref-files-left-STASH"]'],
+    ['unchecked radio', '[data-testid="pref-files-left-NET"]'],
+    ['switch words (off) "Hidden"', '[data-testid="pref-files-show-info-state"]'],
+    ['switch words (on) "Asks"', '[data-testid="pref-files-confirm-delete-state"]'],
+  ]);
+  for (const id of ['pref-files-show-info', 'pref-files-confirm-delete']) {
+    await Promise.all([
+      page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'),
+      page.getByTestId(id).click(),
+    ]);
+  }
+  await expect(page.getByTestId('pref-files-show-info-state')).toHaveText('Shown');
+  await expect(page.getByTestId('pref-files-confirm-delete-state')).toHaveText("Doesn't ask");
+  await page.mouse.move(0, 0);
+  await legible(page, 'files set', [
+    ['switch words (on) "Shown"', '[data-testid="pref-files-show-info-state"]'],
+    ['switch words (off) "Doesn\'t ask"', '[data-testid="pref-files-confirm-delete-state"]'],
+  ]);
+  await page.screenshot({ path: 'test-results/zz-files-settings.png', fullPage: true });
+});
+
 // Phase C5 spec §11: the "?" and its open popover (the ink card).
 test('the "?" and its open popover are legible: glyph on the track, title, text and link on ink', async ({ page }) => {
   await signUpFresh(page);

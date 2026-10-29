@@ -299,6 +299,34 @@ test('at 390 a double tap on a file opens no Info: each tap picks or lets go, In
   await expect(page.getByTestId('files-info-dialog')).toBeVisible();
 });
 
+test('at 390 the filter fits a phone and filters the one pane', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  await openPhoneDisk(page, orgId, `PhoneFlt-${runTag()}`);
+  const filter = page.getByTestId('pane-right-filter');
+  const info = page.getByTestId('pane-right-show-info');
+  await expect(filter).toBeVisible();
+  await expect(info).toBeVisible();
+  await expect(page.getByTestId('pane-left-filter')).toBeHidden();
+  // A finger's height each (the filter box and the Show .info switch), and nothing runs off the side.
+  expect((await filter.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  expect((await info.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await onScreen(page, ['pane-right-filter', 'pane-right-show-info']);
+  await noSideways(page);
+
+  await filter.tap();
+  await filter.fill('rea');
+  await expect(row(page, 'right', 'README')).toBeVisible();
+  await expect(row(page, 'right', 'DOOMED')).toHaveCount(0);
+  await expect(page.getByTestId('pane-right').getByTestId('pane-row')).toHaveCount(1);
+  await expect(page.getByTestId('pane-right-foot')).toHaveText('1 of 3 shown');
+  await noSideways(page);
+
+  // The other side has its own box, empty.
+  await page.getByTestId('files-side-left').tap();
+  await expect(page.getByTestId('pane-left-filter')).toBeVisible();
+  await expect(page.getByTestId('pane-left-filter')).toHaveValue('');
+});
+
 test('at 390: Makedir, Rename and Delete dialogs fit a phone, and their edits land on the disk', async ({ page }) => {
   test.setTimeout(90_000);
   const { orgId } = await signUpFresh(page);
