@@ -334,3 +334,43 @@ test('at 390: the drop review fits a phone, staged list and all', async ({ page 
   // (The Browse page's press-and-hold drag of an entry onto a folder has no Files counterpart on a phone by design:
   // a phone moves files with Move to…, which the second test above covers.)
 });
+
+// Files increment 2 (Task 9): STASH: on a phone.
+test('at 390: the STASH: drop zone stacks above the switch; Copy to… copies a STASH: file into a disk', async ({ page }) => {
+  test.setTimeout(90_000);
+  const { orgId } = await signUpFresh(page);
+  const to = await seedRealDisk(orgId, `PhoneStash-${runTag()}`, false);
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: `LIBRARY:/${to.gameId}/${to.diskId}`, active: 'left' })}`);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="files-side-switch"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  });
+
+  // The zone first, then the Left | Right switch, then the pane: one column, nothing side by side. On a phone the
+  // card is display: contents (its tile, hint and URL field are items of the zone's grid), so the grid is measured.
+  await expect(page.getByTestId('files-stash-browse')).toBeVisible();
+  await expect(page.getByTestId('files-stash-url-input')).toBeVisible();
+  const zone = (await page.getByTestId('files-drop-stash').locator('xpath=..').boundingBox())!;
+  const sw = (await page.getByTestId('files-side-switch').boundingBox())!;
+  expect(zone.y + zone.height).toBeLessThanOrEqual(sw.y);
+  expect(zone.x).toBeGreaterThanOrEqual(0);
+  expect(zone.x + zone.width).toBeLessThanOrEqual(390);
+  await noSideways(page);
+
+  await page.getByTestId('files-stash-input').setInputFiles([{ name: 'a.txt', mimeType: 'text/plain', buffer: Buffer.from('from the phone') }]);
+  await expect(row(page, 'left', 'a.txt')).toBeVisible({ timeout: 15_000 });
+  await row(page, 'left', 'a.txt').tap();
+  await expect(row(page, 'left', 'a.txt')).toHaveAttribute('aria-selected', 'true');
+
+  // Copy to… opens on the other pane's place, the disk; Copy here.
+  await page.getByTestId('files-phone-copy').tap();
+  const picker = page.getByTestId('files-copy-to');
+  await expect(picker.getByTestId('files-copy-to-here')).toHaveText('Copy here');
+  await noSideways(page);
+  await picker.getByTestId('files-copy-to-here').tap();
+  await expect(picker).toBeHidden({ timeout: 15_000 });
+  await expect(page.locator('[data-sonner-toast]').filter({ hasText: /Copied 1 item to .*Disk 1.* — saved as version 1\./ }))
+    .toBeVisible({ timeout: 15_000 });
+  expect(await storedNames(to.diskId)).toEqual(['a.txt']);
+  await noSideways(page);
+});

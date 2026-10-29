@@ -1,7 +1,7 @@
 import { Bone, PageSkeleton } from '@/components/shell/skeleton';
 
 // Files while it loads (Files spec §5.1): the page header's bones, then the manager's own card -- left pane, the
-// 92 px button column, right pane -- in the grid files-manager.tsx draws, so nothing jumps when the page lands.
+// 128 px button column, right pane -- in the grid files-manager.tsx draws, so nothing jumps when the page lands.
 // Below lg the manager stacks, and so do these.
 function PaneBone() {
   return (
@@ -19,7 +19,7 @@ export default function FilesLoading() {
   return (
     <PageSkeleton testId="files-skeleton">
       <div className="px-4 pb-10 sm:px-7">
-        <div className="grid overflow-hidden rounded-[20px] lg:h-[clamp(480px,calc(100dvh-260px),900px)] lg:grid-cols-[minmax(0,1fr)_92px_minmax(0,1fr)]"
+        <div className="grid overflow-hidden rounded-[20px] lg:h-[clamp(440px,calc(100dvh-420px),900px)] lg:grid-cols-[minmax(0,1fr)_128px_minmax(0,1fr)]"
              style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
           <PaneBone />
           <div data-skeleton-actions className="flex flex-wrap gap-[7px] px-2 py-4 lg:flex-col"

@@ -37,6 +37,8 @@ import { transfers } from '@/db/schema/transfers';
 import { eq, inArray } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { signInAsSuperAdmin, SUPERADMIN_EMAIL, gotoAdminUserRow } from './admin-helpers';
+import { boardSays, boardOpens, boardSendsChunks, boardUploads } from './amiga-board';
+import { zipSync } from 'fflate';
 
 // Upload test rows: all belong to that test's own fresh org; amiga_uploads are removed by id here (the org's other
 // rows go with its teardown), transfers cascade with the paired device in cleanupSeeded().
@@ -639,6 +641,83 @@ test('the Files pairs are legible: pane headers, selected row, buttons, sort hea
     ['banner text', '[data-testid="version-banner"] > span'],
     ['viewed version time', '[data-testid="version-toggle-1"] .font-mono'],
   ]);
+});
+
+// Files increment 2 (Task 9): the STASH: pairs at 1280 x 900 -- the drop zone (title, hint, Browse files, the URL
+// field), the row marks ("from <board>", "arriving N%", "can't open — …": one style, each measured), the row buttons
+// Open and Add to library (--accent-blue at 11.5 px), the column's Add to library enabled and disabled, and an
+// archive's read-only line. Every row belongs to this test's own org (its teardown removes them).
+test('the Files STASH: pairs are legible: drop zone, marks, row buttons, Add to library, archive read-only line', async ({ page, request }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  await boardUploads(request, token, 'Hi.txt', Buffer.from('hi'));
+  const { id: moving } = await boardOpens(request, token, 'Moving.bin', 20_000);
+  await boardSendsChunks(request, token, moving, Buffer.alloc(20_000, 1), 0, 1);   // 16 KB of 20: arriving 81%
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: 'LIBRARY:', active: 'left' })}`);
+  await hydrated(page, 'files-manager', 'onKeyDown');
+  // A disk image (Add to library on its row) and a zip with one member whose name cannot be a STASH: name.
+  const zip = zipSync({ 'ok.txt': new TextEncoder().encode('ok'), 'bad\u0001name.txt': new TextEncoder().encode('x') });
+  await page.getByTestId('files-stash-input').setInputFiles([
+    { name: 'Game.adf', mimeType: 'application/octet-stream', buffer: Buffer.from(formatVolume({ filesystem: 'FFS', volumeName: `C${runTag().slice(-8)}` })) },
+    { name: 'w.zip', mimeType: 'application/zip', buffer: Buffer.from(zip) },
+  ]);
+  const r = (name: string) => `[data-testid="pane-left"] [data-testid="pane-row"][data-name="${name}"]`;
+  await expect(page.locator(r('w.zip'))).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(r('Moving.bin'))).toContainText('arriving 81%');
+  await page.getByTestId('files-stash-url-input').fill('https://example.org/demo.lha');   // typed, never fetched
+  await page.locator(r('Game.adf')).click();
+  await expect(page.getByTestId('files-addlib')).toBeEnabled();
+  await page.mouse.move(0, 0);
+  // The marks are the row's last spans: Moving.bin's "from Bench" then "arriving 81%".
+  const mark = (name: string, n: number) => `${r(name)} td:nth-child(2) > span > span.rounded-full.border:nth-of-type(${n})`;
+  await expect(page.locator(mark('Hi.txt', 3))).toHaveText('from Bench');
+  await expect(page.locator(mark('Moving.bin', 4))).toHaveText('arriving 81%');
+  await legible(page, 'stash', [
+    ['zone title', '#files-drop-stash-heading'],
+    ['zone hint', '[data-testid="files-drop-stash-hint"]'],
+    ['Browse files', '[data-testid="files-stash-browse"] > span'],
+    ['URL field (typed)', '[data-testid="files-stash-url-input"]'],
+    ['Fetch', '[data-testid="files-stash-url-fetch"]'],
+    ['"from <board>" mark', mark('Hi.txt', 3)],
+    ['"arriving N%" mark', mark('Moving.bin', 4)],
+    ['row Open (archive)', '[data-testid="pane-open-w.zip"]'],
+    ['row Add to library', '[data-testid="pane-addlib-Game.adf"]'],
+    ['Add to library (enabled)', '[data-testid="files-addlib"]'],
+  ]);
+  // The row buttons on a hovered row (surface-2).
+  await page.locator(r('w.zip')).hover();
+  await legible(page, 'stash', [['row Open on a hovered row', '[data-testid="pane-open-w.zip"]']]);
+
+  // Add to library off (a text file picked): exempt, as every disabled button here, and says why.
+  await page.locator(r('Hi.txt')).click();
+  await expect(page.getByTestId('files-addlib')).toBeDisabled();
+  await page.mouse.move(0, 0);
+  // Polled: the button fades to its disabled opacity (transition-all), and mid-fade it reads lighter than it lands.
+  const opacity = () => page.evaluate(() => {
+    let a = 1;
+    for (let n: Element | null = document.querySelector('[data-testid="files-addlib"]'); n; n = n.parentElement) a *= Number(getComputedStyle(n).opacity);
+    return a;
+  });
+  await expect.poll(opacity).toBeLessThanOrEqual(0.5);
+  const off = await opacity();
+  const lib = await probe(page, '[data-testid="files-addlib"]');
+  const blend = lib!.fg.slice(0, 3).map((v, i) => v * off + lib!.bg[i] * (1 - off));
+  console.log(`stash     ${'Add to library (disabled, exempt)'.padEnd(36)} ${ratio(blend, lib!.bg).toFixed(2)}:1  at opacity ${off}`);
+  await expect(page.getByTestId('files-addlib')).toHaveAttribute('title', /disk image/);
+
+  // Inside the archive: the read-only line in the active pane, and a member it cannot open.
+  await page.locator(r('w.zip')).dblclick();
+  await expect(page.getByTestId('pane-left-readonly')).toHaveText('Archives are read-only — copy files out of them.');
+  await expect(page.locator(r('bad_name.txt'))).toContainText("can't open — bad name");
+  await page.mouse.move(0, 0);
+  await legible(page, 'stash', [
+    ['archive read-only line (active)', '[data-testid="pane-left-readonly"]'],
+    ['"can\'t open — …" mark', `${r('bad_name.txt')} td:nth-child(2) span.rounded-full.border`],
+  ]);
+  await page.screenshot({ path: 'test-results/zz-files-stash.png', fullPage: true });
 });
 
 // Phase C5 spec §11: the "?" and its open popover (the ink card).

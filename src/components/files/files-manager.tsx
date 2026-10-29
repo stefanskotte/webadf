@@ -212,8 +212,9 @@ function ActionButton({ id, label, reason, busy, onClick, primary = false }: {
   id: string; label: string; reason: string | null; busy: boolean; onClick(): void; primary?: boolean;
 }) {
   return (
-    <span title={reason ?? undefined} className="flex max-lg:hidden">
-      <Button variant={primary ? 'default' : 'outline'} size="sm" className="w-full" onClick={onClick}
+    // min-w-0 and a label that may wrap: a button is never wider than the column, so it never runs into the right pane.
+    <span title={reason ?? undefined} className="flex min-w-0 max-lg:hidden">
+      <Button variant={primary ? 'default' : 'outline'} size="sm" className="h-auto min-h-7 w-full py-1 leading-tight whitespace-normal" onClick={onClick}
               disabled={reason !== null || busy} title={reason ?? undefined} data-testid={`files-${id}`}>
         {label}
       </Button>
@@ -1069,8 +1070,11 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
         ))}
       </div>
       {/* Below lg nothing clips: a clip would cut off the strip's History over a short pane, and `hidden` would make
-          this a scroll box the phone bar could not stick out of. The pane's top and the bar round their own corners. */}
-      <div className="grid rounded-[20px] lg:overflow-hidden max-lg:grid-cols-[minmax(0,1fr)] lg:h-[clamp(480px,calc(100dvh-260px),900px)] lg:grid-cols-[minmax(0,1fr)_92px_minmax(0,1fr)]"
+          this a scroll box the phone bar could not stick out of. The pane's top and the bar round their own corners.
+          From lg the manager fills the window under the header and the drop zone (about 420 px of them): at 1280 x 800
+          the whole button column is on screen without a page scroll, and 440 px keeps it (and the busy line) whole.
+          The column is 128 px: its widest label, Add to library, fits on one line at every width (Task 9). */}
+      <div className="grid rounded-[20px] lg:overflow-hidden max-lg:grid-cols-[minmax(0,1fr)] lg:h-[clamp(440px,calc(100dvh-420px),900px)] lg:grid-cols-[minmax(0,1fr)_128px_minmax(0,1fr)]"
            style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
         {pane('left')}
         <div data-testid="files-actions" role="group" aria-label="File actions"
