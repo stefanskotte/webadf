@@ -21,6 +21,7 @@ export type PaneProps = {
   onRowClick(index: number, mods: { shift: boolean; toggle: boolean }): void; onRowOpen(index: number): void;
   onDragStartRows(indexes: number[], e: React.DragEvent): void; onDropRows(e: React.DragEvent): void;
   strip?: ReactNode;   // the disk strip when listing.disk
+  errorAction?: ReactNode;   // under the error, e.g. a way back to LIBRARY: when the place is gone
 };
 
 /** Increment 1 has one device (R1); STASH: and NET: join later. */
@@ -119,6 +120,7 @@ export function Pane(p: PaneProps) {
       {p.error && (
         <p role="alert" data-testid={tid('error')} className="px-3.5 py-3 text-[13px]" style={{ color: 'var(--danger-fg)' }}>{p.error}</p>
       )}
+      {p.error && p.errorAction && <div className="px-3.5 pb-3">{p.errorAction}</div>}
       {p.loading && !listing && (
         <p data-testid={tid('loading')} className="px-3.5 py-3 text-[13px]" style={{ color: 'var(--muted)' }}>Loading…</p>
       )}
