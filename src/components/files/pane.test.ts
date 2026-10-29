@@ -129,10 +129,10 @@ describe('Pane (Files increment 1, Task 7)', () => {
     expect(tagOf(root, 'pane-left-crumb-1')).toBeUndefined();
   });
 
-  it('the STASH: and LIBRARY: device buttons, the one shown pressed (increment 2 R1)', () => {
+  it('the STASH:, NET: and LIBRARY: device buttons, the one shown pressed (increment 2 R1, increment 3)', () => {
     const html = render();
     const devs = [...html.matchAll(/data-testid="pane-left-dev-([^"]+)"/g)].map((m) => m[1]);
-    expect(devs).toEqual(['STASH', 'LIBRARY']);
+    expect(devs).toEqual(['STASH', 'NET', 'LIBRARY']);
     expect(attr(tagOf(html, 'pane-left-dev-LIBRARY')!, 'aria-pressed')).toBe('true');
     expect(attr(tagOf(html, 'pane-left-dev-STASH')!, 'aria-pressed')).toBe('false');
     const stash = render({ listing: stashListing });
@@ -205,5 +205,33 @@ describe('Pane (Files increment 1, Task 7)', () => {
     expect(btn({ key: 'date', dir: 'desc' })).toBe('Date▼');
     expect(btn({ key: 'size', dir: 'asc' })).toBe('Size▲');
     expect(tagOf(render(), 'pane-left-sort-phone')).toContain('lg:hidden');
+  });
+
+  it('NET: lists boards as BRD rows with their marks; NET:/<board> its queue, rows that do not drag (increment 3, Task 2)', () => {
+    const boards: Listing = {
+      path: 'NET:', crumbs: [{ label: 'NET:', path: 'NET:' }], writable: false, readOnlyReason: 'Open a board to send files to it', disk: null, meta: '1 board',
+      entries: [entry('A500 bench', 'board', { path: 'NET:/b1', size: null, date: null, protection: null, marks: ['online', '2 waiting', 'key AB12'] })],
+    };
+    const html = render({ listing: boards });
+    const r = rows(html);
+    expect(r.map((t) => attr(t, 'data-kind'))).toEqual(['board']);
+    expect(html).toMatch(/>BRD<\/span><span class="truncate font-semibold"[^>]*>A500 bench</);
+    expect(html).toContain('>key AB12<');
+    expect(attr(tagOf(html, 'pane-left-dev-NET')!, 'aria-pressed')).toBe('true');
+    expect(html).not.toContain('Drop files');
+
+    const queue: Listing = {
+      path: 'NET:/b1', crumbs: [{ label: 'NET:', path: 'NET:' }, { label: 'A500 bench', path: 'NET:/b1' }], writable: true, readOnlyReason: null, disk: null,
+      meta: '1 waiting · 0.0 of 16 MB', queue: { deviceId: 'b1', files: 1, bytes: 5 },
+      // C17: two rows may share a name, and a name may hold a /.
+      entries: [entry('Mods/a.mod', 'file', { path: 'NET:/b1/t1', marks: ['Waiting'] }), entry('Mods/a.mod', 'file', { path: 'NET:/b1/t2', marks: ['Delivered · saved as a_2.mod'] })],
+    };
+    const q = render({ listing: queue });
+    expect(rows(q)).toHaveLength(2);
+    for (const t of rows(q)) expect(attr(t, 'draggable')).toBe('false');
+    expect(q).toContain('>Delivered · saved as a_2.mod<');
+    expect(q).toMatch(/data-testid="pane-left-foot"[^>]*>(<[^>]*>)*1 waiting · 0\.0 of 16 MB · Drop files to send them/);
+    // Elsewhere rows still drag.
+    expect(attr(rows(render({ listing: stashListing }))[0], 'draggable')).toBe('true');
   });
 });

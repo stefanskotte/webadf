@@ -1,6 +1,7 @@
 // Files (spec 2026-10-29 §3.1): every place a pane can point at. CLIENT-SAFE: no imports.
 // LIBRARY:/<gameId>/<diskId>/<dir>/<file>: titles and disks by id, so two titles with one name never collide; inside a
-// disk, AmigaDOS names. STASH:/<folder>/<file>: by name (increment 2). NET: arrives in increment 3.
+// disk, AmigaDOS names. STASH:/<folder>/<file>: by name (increment 2). NET:/<deviceId>/<transferId>: boards and their
+// queue rows by id (increment 3, R1).
 
 export type Device = 'STASH' | 'NET' | 'LIBRARY';
 export type FsPath = { device: Device; segments: string[] };
@@ -34,8 +35,8 @@ export function formatPath(p: FsPath): string {
   return p.segments.length ? `${p.device}:/${p.segments.join('/')}` : `${p.device}:`;
 }
 
-/** The devices a pane's buttons offer, in order (increment 2, R1); increment 3 inserts NET. */
-export const PANE_DEVICES: readonly Device[] = ['STASH', 'LIBRARY'];
+/** The devices a pane's buttons offer, in order (increment 2, R1; NET: since increment 3). */
+export const PANE_DEVICES: readonly Device[] = ['STASH', 'NET', 'LIBRARY'];
 /** Where the panes start when the URL names no place (increment 2, R1). */
 export const DEFAULT_LEFT = 'STASH:';
 export const DEFAULT_RIGHT = 'LIBRARY:';

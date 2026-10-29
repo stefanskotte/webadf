@@ -5,15 +5,17 @@ import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
 import type { FsEntry, Listing } from '@/lib/files/types';
 import { refusalWords } from '@/lib/files/words';
-import { holdsFiles } from '@/lib/files/pane-rules';
+import { acceptsCopies, netBoardOf } from '@/lib/files/pane-rules';
+import { NET_MOVE_IN, NET_PICK_BOARD } from '@/lib/files/net-rules';
 import { PANE_DEVICES } from '@/lib/files/path';
 import { managerReturnsFocus } from './dialogs';
 
 /**
  * Copy to… / Move to… on a phone (Files increment 1, Task 10): where the desktop copies into the other pane, a phone
- * shows one pane, so this picks the place instead. It starts at the other pane's location and walks STASH: and LIBRARY:
- * through /api/files/list (`list`, the manager's own fetch) -- the device chips, crumbs back up, the folders, titles and
- * disks to go into -- and hands back the listing it ends at; the manager runs the copy or move as the desktop does.
+ * shows one pane, so this picks the place instead. It starts at the other pane's location and walks STASH:, NET: and
+ * LIBRARY: through /api/files/list (`list`, the manager's own fetch) -- the device chips, crumbs back up, the folders,
+ * titles, disks and boards to go into -- and hands back the listing it ends at; the manager runs the copy or move as the
+ * desktop does. Inside a board (increment 3) a copy is a send: its button reads Send here, and Move is refused.
  */
 export type ListResult = { listing: Listing } | { gone: true } | { error: string };
 
@@ -23,12 +25,23 @@ export type CopyToPickerProps = {
   onPick(listing: Listing): void; onCancel(): void;
 };
 
-/** Why the place shown cannot take the copy, or null when it can: a writable folder inside a disk or in STASH:. */
+/**
+ * Why the place shown cannot take the copy, or null when it can: a writable folder inside a disk or in STASH:, or a
+ * board's queue for a copy (C16: a move into NET: is refused; NET: itself says to open a board).
+ */
 export function pickReason(op: 'copy' | 'move', l: Listing | null): string | null {
   if (!l) return null;
-  if (!holdsFiles(l)) return `Open a disk or STASH: to ${op} into it`;
+  if (l.path === 'NET:') return NET_PICK_BOARD;
+  if (!acceptsCopies(l)) return `Open a disk or STASH: to ${op} into it`;
   if (!l.writable) return refusalWords('read_only', l.readOnlyReason ?? undefined);
+  if (op === 'move' && netBoardOf(l)) return NET_MOVE_IN;
   return null;
+}
+
+/** The picker's button: a copy into a board's queue is a send. */
+export function hereLabel(op: 'copy' | 'move', l: Listing | null): string {
+  if (op === 'move') return 'Move here';
+  return netBoardOf(l) ? 'Send here' : 'Copy here';
 }
 
 /** What can be gone into: everything but files and archives (an archive is read-only: nothing goes into it). */
@@ -36,7 +49,7 @@ export function placesIn(l: Listing): FsEntry[] {
   return l.entries.filter((e) => e.kind !== 'file' && e.kind !== 'archive').sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }
 
-const PLACE_GLYPH: Record<string, string> = { title: 'TTL', disk: 'DSK', dir: 'DIR' };
+const PLACE_GLYPH: Record<string, string> = { title: 'TTL', disk: 'DSK', dir: 'DIR', board: 'BRD' };
 
 export function CopyToPicker({ op, count, start, busy, list, onPick, onCancel }: CopyToPickerProps) {
   const [path, setPath] = useState(start);
@@ -69,7 +82,7 @@ export function CopyToPicker({ op, count, start, busy, list, onPick, onCancel }:
                <Button variant="outline" onClick={onCancel} disabled={busy}>Cancel</Button>
                <Button onClick={() => shown && onPick(shown)} disabled={busy || !shown || reason !== null}
                        data-testid="files-copy-to-here">
-                 {op === 'copy' ? 'Copy here' : 'Move here'}
+                 {hereLabel(op, shown)}
                </Button>
              </div>
            )}>
@@ -111,7 +124,8 @@ export function CopyToPicker({ op, count, start, busy, list, onPick, onCancel }:
                 </button>
               </li>
             ))}
-            {placesIn(shown).length === 0 && (
+            {/* A board's queue has no places in it: it is where a send lands, not a folder. */}
+            {placesIn(shown).length === 0 && !netBoardOf(shown) && (
               <li className="px-3 py-3 text-[13px]" style={{ color: 'var(--muted)' }}>No folders here.</li>
             )}
           </ul>

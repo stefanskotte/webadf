@@ -29,3 +29,10 @@ describe('deleteText (increment 2 ruling 8)', () => {
     expect(deleteText([file('a')], 'STASH:')).toBe('Delete “a” from STASH:? This cannot be undone.');
   });
 });
+
+describe('deleteText in NET: (increment 3, Task 2)', () => {
+  it('says what is cancelled and what is cleared, with no promise of versions', () => {
+    const row = (marks: string[]): FsEntry => ({ ...file('a.txt'), path: 'NET:/b1/t', marks });
+    expect(deleteText([row(['Waiting']), row(['Delivered · saved as a.txt'])], 'NET:')).toBe('Cancel 1 waiting file and clear 1 finished?');
+  });
+});

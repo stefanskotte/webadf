@@ -8,7 +8,7 @@ import { refusalWords } from '@/lib/files/words';
 import { entryGlyph } from '@/lib/disk-files-look';
 import { ProtectionCells } from '@/components/disks/protection-cells';
 import { PANE_DEVICES } from '@/lib/files/path';
-import { addToLibraryReason, holdsFiles } from '@/lib/files/pane-rules';
+import { acceptsCopies, addToLibraryReason, holdsFiles, netBoardOf } from '@/lib/files/pane-rules';
 
 /**
  * One side of the Files manager. Presentational: the manager (files-manager.tsx) owns fetching, sort and selection
@@ -30,7 +30,7 @@ export type PaneProps = {
   errorAction?: ReactNode;   // under the error, e.g. a way back to LIBRARY: when the place is gone
 };
 
-/** The device buttons (increment 2, R1): STASH: and LIBRARY:; NET: joins in increment 3. */
+/** The device buttons (increment 2, R1): STASH:, NET: (increment 3) and LIBRARY:. */
 const DEVICES = PANE_DEVICES.map((d) => `${d}:`);
 
 /** Below lg only Name is a column: the size and date go on a second line under the name (no sideways scroll). */
@@ -50,8 +50,8 @@ export function paneSize(bytes: number): string {
 function glyphOf(e: FsEntry): { label: string; bg: string; fg: string } {
   if (e.kind === 'title') return { label: 'TTL', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
   if (e.kind === 'disk') return { label: 'DSK', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
-  // A board under NET: opens as its queue, so it is a folder here too (increment 3; Task 2 dresses NET: panes).
-  if (e.kind === 'board') return { label: 'NET', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
+  // A board under NET: opens as its queue, so it is a folder here too (increment 3).
+  if (e.kind === 'board') return { label: 'BRD', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
   // An archive is a file to the glyph (its name picks it: LHA, ZIP) and to the row's look (ruling 7); its Open says more.
   return entryGlyph({ kind: e.kind === 'archive' ? 'file' : e.kind, name: e.name });
 }
@@ -83,10 +83,14 @@ export function Pane(p: PaneProps) {
 
   const picked = [...selection.picked].filter((i) => i < rows.length).sort((a, b) => a - b);
   const pickedBytes = picked.reduce((n, i) => n + (rows[i].size ?? 0), 0);
-  // A writable STASH: folder takes files from the computer: said where the eye ends up, with nothing picked.
+  // A writable STASH: folder takes files from the computer, and a board's queue sends them (increment 3, C2): said
+  // where the eye ends up, with nothing picked.
   const dropHere = listing && !listing.disk && holdsFiles(listing) && listing.writable;
+  const sendHere = netBoardOf(listing) !== null;
   const foot = picked.length > 0 ? `${picked.length} of ${rows.length} selected · ${paneSize(pickedBytes)}`
-    : listing ? (dropHere ? `${listing.meta} · Drop files here` : listing.meta) : '';
+    : listing ? (dropHere ? `${listing.meta} · Drop files here` : sendHere ? `${listing.meta} · Drop files to send them` : listing.meta) : '';
+  // Only rows that hold files drag (C2): titles and disks do not move, and nothing is copied out of NET:.
+  const drags = holdsFiles(listing);
   // A STASH: folder's disk images can each go into the library from their row (R8); not inside an archive.
   const addable = (e: FsEntry) => !!listing && !e.marks.includes('in the library') && addToLibraryReason(listing, [e]) === null;
   const rowAct = 'shrink-0 rounded-[4px] text-[11.5px] underline underline-offset-2 max-lg:min-h-11 max-lg:px-1 focus-visible:outline-2 focus-visible:outline-(--ring)';
@@ -98,8 +102,9 @@ export function Pane(p: PaneProps) {
     <section data-testid={`pane-${side}`} data-active={p.active ? 'true' : 'false'}
              aria-label={side === 'left' ? 'Left pane' : 'Right pane'}
              onMouseDown={p.onActivate} onFocus={p.onActivate}
-             // Only a writable folder inside a disk or in STASH: takes a drop; anywhere else the browser shows no-drop.
-             onDragOver={(e) => { if (holdsFiles(listing) && listing!.writable) e.preventDefault(); }}
+             // Only a writable folder inside a disk or in STASH:, or a board's queue, takes a drop; anywhere else the
+             // browser shows no-drop.
+             onDragOver={(e) => { if (acceptsCopies(listing) && listing!.writable) e.preventDefault(); }}
              onDrop={(e) => { e.preventDefault(); p.onDropRows(e); }}
              className="flex min-w-0 flex-col max-lg:rounded-t-[20px]" style={{ background: 'var(--surface)' }}>
       <div className="border-b px-3.5 pt-3 pb-2.5 max-lg:rounded-t-[20px]"
@@ -196,7 +201,7 @@ export function Pane(p: PaneProps) {
                 return (
                   <tr key={e.path} data-testid="pane-row" data-name={e.name} data-kind={e.kind} aria-selected={sel}
                       data-cursor={p.active && selection.cursor === i ? 'true' : undefined}
-                      draggable
+                      draggable={drags}
                       onDragStart={(ev) => p.onDragStartRows(sel ? picked : [i], ev)}
                       onClick={(ev) => p.onRowClick(i, { shift: ev.shiftKey, toggle: ev.metaKey || ev.ctrlKey })}
                       onDoubleClick={() => p.onRowOpen(i)}

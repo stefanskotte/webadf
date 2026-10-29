@@ -10,9 +10,12 @@ import { AMIGA_COMMENT_MAX, amigaNameProblem } from '@/lib/files/path';
 import { refusalWords } from '@/lib/files/words';
 import { PROTECTION_FLAGS, bitsFromProtection } from '@/lib/protection-bits';
 import type { ClashChoice } from '@/lib/files/transfer';
+import { deleteText, type DeleteWhere } from '@/lib/files/pane-rules';
 import { paneSize } from './pane';
 
 export type { ClashChoice };
+// The delete words are pure and live with the pane rules (increment 3); the dialogs' callers and tests import them here.
+export { deleteText, deleteWhat, placeName } from '@/lib/files/pane-rules';
 
 /**
  * The Files manager's dialogs (spec 2026-10-29 §5), all on the shared Modal. Each is mounted only while open and
@@ -32,11 +35,6 @@ export const managerReturnsFocus = () => false;
 const foot = 'flex w-full items-center justify-end gap-2.5';
 const body = 'flex flex-col gap-3 px-6 py-5 text-[14px]';
 const ink = { color: 'var(--ink)' } as const;
-
-/** "Disk 1" or "SysInfo · Disk 1": the place a disk-side dialog names. */
-export function placeName(where: { title: string; label: string } | null): string {
-  return where ? `${where.title} · ${where.label}` : 'this disk';
-}
 
 /**
  * One clash at a time: Replace, Skip or Keep both, with "Do this for all" when more are waiting. Each answer goes
@@ -77,50 +75,25 @@ export function ClashDialog({ clash, remaining, busy, onChoose, onCancel }: {
   );
 }
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
-
 /**
- * What a delete of `entries` removes, counting everything inside a folder (the Browse page's bulk-delete words):
- * "“ReadMe”", "“C” and the 2 files in it", "3 files and 1 folder".
+ * The delete confirm. In NET: (R4) it cancels what waits and clears what finished: its title and button say that
+ * instead, and the way out reads Keep, so it is never two buttons that both say Cancel.
  */
-export function deleteWhat(entries: FsEntry[]): string {
-  let files = 0; let folders = 0;
-  for (const e of entries) {
-    if (e.kind === 'file') { files++; continue; }
-    folders += 1 + (e.inside?.folders ?? 0); files += e.inside?.files ?? 0;
-  }
-  const counted = [files ? plural(files, 'file') : '', folders ? plural(folders, 'folder') : ''].filter(Boolean).join(' and ');
-  if (entries.length !== 1) return counted;
-  const e = entries[0];
-  const within = e.inside ? [e.inside.files ? plural(e.inside.files, 'file') : '', e.inside.folders ? plural(e.inside.folders, 'folder') : '']
-    .filter(Boolean).join(' and ') : '';
-  return within ? `“${e.name}” and the ${within} in it` : `“${e.name}”`;
-}
-
-/**
- * The delete confirm's sentence. A disk keeps every version, so its delete can be undone from History; STASH: keeps no
- * versions (ruling 8), so it says so and counts the items picked (a STASH: folder does not say what it holds).
- */
-export function deleteText(entries: FsEntry[], where: { title: string; label: string } | 'STASH:' | null): string {
-  if (where === 'STASH:') {
-    const what = entries.length === 1 ? `“${entries[0].name}”` : `${entries.length} items`;
-    return `Delete ${what} from STASH:? This cannot be undone.`;
-  }
-  return `Delete ${deleteWhat(entries)} from ${placeName(where)}? A new version keeps the old ones.`;
-}
-
 export function ConfirmDeleteDialog({ entries, where, busy, onConfirm, onCancel }: {
-  entries: FsEntry[]; where: { title: string; label: string } | 'STASH:' | null; busy: boolean; onConfirm(): void; onCancel(): void;
+  entries: FsEntry[]; where: DeleteWhere; busy: boolean; onConfirm(): void; onCancel(): void;
 }) {
+  const net = where === 'NET:';
+  const title = net ? (entries.length === 1 ? 'Take this file off the queue?' : 'Take these files off the queue?')
+    : entries.length === 1 ? 'Delete this item?' : 'Delete these items?';
   return (
     <Modal open finalFocus={managerReturnsFocus} onOpenChange={(o) => { if (!o) onCancel(); }} width={440} testId="files-delete-dialog"
-           closeTestId="files-delete-close" title={entries.length === 1 ? 'Delete this item?' : 'Delete these items?'}
+           closeTestId="files-delete-close" title={title}
            dismissible={!busy}
            footer={(
              <div className={foot}>
-               <Button variant="outline" onClick={onCancel} disabled={busy}>Cancel</Button>
+               <Button variant="outline" onClick={onCancel} disabled={busy}>{net ? 'Keep' : 'Cancel'}</Button>
                <Button variant="destructive" onClick={onConfirm} disabled={busy} data-testid="files-delete-confirm">
-                 {busy ? 'Deleting…' : 'Delete'}
+                 {net ? (busy ? 'Working…' : 'Cancel / clear') : busy ? 'Deleting…' : 'Delete'}
                </Button>
              </div>
            )}>

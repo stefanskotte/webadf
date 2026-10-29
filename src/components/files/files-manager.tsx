@@ -15,7 +15,11 @@ import { refusalWords } from '@/lib/files/words';
 import { DEFAULT_LEFT, DEFAULT_RIGHT, formatPath, PANE_DEVICES, parsePath } from '@/lib/files/path';
 import type { OpItem, OpRequest } from '@/lib/files/ops';
 import type { Added } from '@/lib/files/driver';
-import { addToLibraryReason, holdsFiles, offersUndo, placeOf } from '@/lib/files/pane-rules';
+import {
+  acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, holdsFiles, netBoardOf, netReadOnly, offersUndo, placeOf,
+} from '@/lib/files/pane-rules';
+import { netPollMs, NET_MOVE_IN, NET_PICK_BOARD } from '@/lib/files/net-rules';
+import { netDropRefusal, sendToBoard } from '@/lib/files/net-send';
 import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
@@ -48,8 +52,11 @@ import {
  *
  * Selections are indexes into the SORTED rows (pane.tsx), so every index here goes through `rowsOf`.
  *
- * Each pane shows STASH: or LIBRARY: (increment 2, R1). STASH: keeps no versions, so nothing that changes it offers
- * Undo, and its delete says it cannot be undone (ruling 8).
+ * Each pane shows STASH:, NET: or LIBRARY: (increment 2, R1; increment 3). STASH: keeps no versions, so nothing that
+ * changes it offers Undo, and its delete says it cannot be undone (ruling 8). NET: lists the boards and, in each, its
+ * queue (increment 3): Copy into a board queues files for its Amiga (no Undo; Move is refused, C16), files from the
+ * computer dropped on it are sent the same way (C2), nothing comes out of it (R5), Delete cancels or clears (R4), and
+ * a pane showing a queue re-reads it every few seconds while the tab is visible.
  *
  * Below lg (the C7 phone convention) only the ACTIVE pane is drawn, under a Left | Right switch; the button column is
  * a bar at the bottom with Copy to… · Move to… · Delete · More, and Copy to… / Move to… pick the place in a dialog
@@ -107,8 +114,10 @@ const DRAG_TYPE = 'application/x-webfloppy-files';
 const KNOWN_CODES: ReadonlySet<string> = new Set<RefusalCode>([
   'not_found', 'read_only', 'mounted', 'disk_full', 'name_exists', 'bad_name', 'comment_too_long', 'cycle',
   'no_filesystem', 'hfe_read_only', 'conflict', 'unsupported', 'blob_unavailable', 'failed',
-  'stash_full', 'too_large', 'archive_unreadable', 'not_a_disk_image',
+  'stash_full', 'too_large', 'archive_unreadable', 'not_a_disk_image', 'queue_full',
 ]);
+/** What Rename, Makedir and Protect say in NET:, where the rows are queue rows. */
+const NOT_IN_NET = 'Not in NET:';
 /** Enter and Space belong to a focused control; the manager must not open or pick a row as well. */
 const CONTROL = 'button, a, [role="button"], [role="checkbox"]';
 
@@ -121,6 +130,7 @@ const topOf = (path: string) => path.split('/').filter(Boolean)[0] ?? path;
 const noneDone = (): StashUploadResult => ({ items: [], renamed: [], refused: [], stopped: null });
 const items = (n: number) => (n === 1 ? '1 item' : `${n} items`);
 const disks = (n: number) => (n === 1 ? '1 disk' : `${n} disks`);
+const files = (n: number) => (n === 1 ? '1 file' : `${n} files`);
 /** The disk a LIBRARY: path is in (LIBRARY:/<title>/<disk>/...), or null above the disks and anywhere else. */
 function diskIdOf(path: string | undefined): string | null {
   const p = path ? parsePath(path) : null;
@@ -276,9 +286,9 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   // A pane's newest request wins: a slow listing that lands after a newer one is dropped.
   const seq = useRef<Record<Side, number>>({ left: 0, right: 0 });
-  // For the popstate listener, which outlives a render.
-  const latest = useRef({ panes, active });
-  useEffect(() => { latest.current = { panes, active }; });
+  // For the popstate listener and the NET: poll, which outlive a render.
+  const latest = useRef({ panes, active, sorts });
+  useEffect(() => { latest.current = { panes, active, sorts }; });
 
   const sortOf = (l: Listing | null, path: string) => sorts[deviceOf(l?.path ?? path)];
   // What each pane draws: its listing with the "new in vN" marks from its disk's History (the strip carries it).
@@ -366,6 +376,39 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     return () => window.removeEventListener('popstate', onPop);
     // `load` only touches refs and state setters, so the listener never goes stale.
   }, []);
+
+  /**
+   * The NET: poll (increment 3): a fresh listing of the place a pane already shows, in place -- no busy line, and the
+   * picked rows follow their entries. An answer is dropped when a navigation (or a reload) began since it was asked
+   * (the `seq` guard) or the pane is loading; a failed read changes nothing, and the next one tries again.
+   */
+  async function refresh(side: Side) {
+    const at = latest.current.panes[side];
+    if (at.loading || !at.listing) return;
+    const n = seq.current[side];
+    const r = await fetchListing(at.path);
+    if (n !== seq.current[side] || !('listing' in r)) return;
+    const fresh = r.listing;
+    setPanes((ps) => {
+      const p = ps[side];
+      if (p.path !== at.path || p.loading || !p.listing) return ps;
+      const sort = latest.current.sorts[deviceOf(fresh.path)];
+      return { ...ps, [side]: { ...p, listing: fresh, selection: remapSelection(sortFsEntries(p.listing.entries, sort), sortFsEntries(fresh.entries, sort), p.selection) } };
+    });
+  }
+
+  // A pane showing a board's queue re-reads it: every 3 s while anything waits or sends, else every 10 s (netPollMs),
+  // and only while the tab is visible.
+  const pollLeft = netPollMs(panes.left.listing);
+  const pollRight = netPollMs(panes.right.listing);
+  useEffect(() => {
+    const timers = (['left', 'right'] as const).flatMap((s) => {
+      const ms = s === 'left' ? pollLeft : pollRight;
+      return ms ? [setInterval(() => { if (document.visibilityState === 'visible') void refresh(s); }, ms)] : [];
+    });
+    return () => timers.forEach(clearInterval);
+    // `refresh` reads refs and state setters only.
+  }, [pollLeft, pollRight]);
 
   // ---- the disk strips ---------------------------------------------------------------------------------------
 
@@ -486,18 +529,25 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   const folderName = src?.crumbs[src.crumbs.length - 1]?.label ?? 'Files';
   const readOnly = (l: Listing) => refusalWords('read_only', l.readOnlyReason ?? undefined);
 
-  // Only a place that holds files (inside a disk, or STASH:) has rows to act on and room to take them (ruling 8).
+  // Only a place that holds files (inside a disk, or STASH:) has rows to act on and room to take them (ruling 8). A
+  // board's queue under NET: has rows too: Delete cancels or clears them and Info shows them; nothing else acts there.
+  const inNet = netReadOnly(src);
+  const board = netBoardOf(src);
   function sourceReason(writable: boolean): string | null {
     if (picked.length === 0) return 'Select something first';
+    if (inNet) return board ? null : 'Open a board to see what waits for it';
     if (!holdsFiles(src)) return 'Only files and folders on a disk or in STASH: can be changed here — open one first';
     if (writable && !src!.writable) return readOnly(src!);
     return null;
   }
+  // R5: nothing leaves NET:, said before anything else.
+  const outOfNet = copyOutReason(src);
   function transferReason(op: 'copy' | 'move'): string | null {
-    const r = sourceReason(op === 'move');
+    const r = outOfNet ?? sourceReason(op === 'move');
     if (r) return r;
-    if (!holdsFiles(dst)) return 'Open a disk or STASH: on the other side';
+    if (!acceptsCopies(dst)) return dst && netReadOnly(dst) ? readOnly(dst) : 'Open a disk or STASH: on the other side';
     if (!dst!.writable) return readOnly(dst!);
+    if (op === 'move' && netBoardOf(dst)) return NET_MOVE_IN;   // C16: a send never takes the original away
     return null;
   }
   const one = (r: string | null, what: string) => r ?? (picked.length !== 1 ? `Select one item to ${what}` : null);
@@ -505,16 +555,16 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     copy: transferReason('copy'),
     move: transferReason('move'),
     delete: sourceReason(true),
-    rename: one(sourceReason(true), 'rename it'),
-    makedir: !holdsFiles(src) ? 'Open a disk or STASH: to make a folder in it' : !src!.writable ? readOnly(src!) : null,
-    protect: sourceReason(true),
-    info: one(sourceReason(false), 'see its details'),
+    rename: inNet ? NOT_IN_NET : one(sourceReason(true), 'rename it'),
+    makedir: inNet ? NOT_IN_NET : !holdsFiles(src) ? 'Open a disk or STASH: to make a folder in it' : !src!.writable ? readOnly(src!) : null,
+    protect: inNet ? NOT_IN_NET : sourceReason(true),
+    info: inNet && !board ? NOT_IN_NET : one(sourceReason(false), 'see its details'),
     // One file by path; several, or a folder, as a .zip (spec §3.3).
-    download: sourceReason(false)
+    download: outOfNet ?? sourceReason(false)
       ?? (downloadHref(picked, folderName).length > DOWNLOAD_URL_MAX ? 'Too many items to download at once — download their folder instead' : null),
     // The phone's Copy to… / Move to…: the place is picked afterwards, so only the source is checked here.
-    copyTo: sourceReason(false),
-    moveTo: sourceReason(true),
+    copyTo: outOfNet ?? sourceReason(false),
+    moveTo: outOfNet ?? sourceReason(true),
     // Disk images in STASH: into the library (R8).
     addlib: addToLibraryReason(src, picked),
   };
@@ -523,7 +573,8 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   // ---- running an operation -----------------------------------------------------------------------------------
 
-  type Outcome = { kind: 'done'; items: OpItem[]; versions: OpVersion[]; added: Added[] } | { kind: 'clashes'; clashes: Clash[] } | { kind: 'refused' };
+  /** `queued`: how many files a copy into a board's queue queued (C3), a folder being several. */
+  type Outcome = { kind: 'done'; items: OpItem[]; versions: OpVersion[]; added: Added[]; queued?: number } | { kind: 'clashes'; clashes: Clash[] } | { kind: 'refused' };
 
   async function post(req: OpRequest, label: string): Promise<Outcome> {
     setBusy(label);
@@ -532,7 +583,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req),
       });
       const body = (await res.json().catch(() => null)) as {
-        items?: OpItem[]; versions?: OpVersion[]; added?: Added[]; error?: unknown; detail?: unknown; clashes?: Clash[];
+        items?: OpItem[]; versions?: OpVersion[]; added?: Added[]; queued?: number; error?: unknown; detail?: unknown; clashes?: Clash[];
       } | null;
       if (res.status === 409 && body?.error === 'clashes' && body.clashes) return { kind: 'clashes', clashes: body.clashes };
       if (!res.ok || !body?.items) {
@@ -540,7 +591,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
         if (reloadsBoth(body?.error)) reloadBoth();
         return { kind: 'refused' };
       }
-      return { kind: 'done', items: body.items, versions: body.versions ?? [], added: body.added ?? [] };
+      return { kind: 'done', items: body.items, versions: body.versions ?? [], added: body.added ?? [], ...(body.queued !== undefined ? { queued: body.queued } : {}) };
     } catch {
       toast.error(refusalWords('failed'));
       return { kind: 'refused' };
@@ -600,8 +651,11 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   const verbs = { copy: ['Copying', 'Copied'], move: ['Moving', 'Moved'] } as const;
 
   type ClashDialogState = Extract<Dialog, { kind: 'clash' }>;
-  /** `undo`: whether the run may offer Undo (offersUndo: not when it changes STASH:). */
-  type Run = { op: 'copy' | 'move'; dest: string; where: string; undo: boolean };
+  /**
+   * `undo`: whether the run may offer Undo (offersUndo: not when it changes STASH: or sends). `queued`: the files a
+   * copy into a board's queue has queued so far (NET: never clashes, so a send is one request).
+   */
+  type Run = { op: 'copy' | 'move'; dest: string; where: string; undo: boolean; queued?: number };
 
   function transfer(op: 'copy' | 'move', sources: string[], dest: string, where: string) {
     if (busy) return;
@@ -617,7 +671,11 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     for (const [k, g] of groups.entries()) {
       const r = await post({ op: run.op, sources: g.sources, dest: run.dest, onClash: g.onClash },
         `${verbs[run.op][0]} ${items(g.sources.length)}…`);
-      if (r.kind === 'done') { done.push(...r.items); versions.push(...r.versions); continue; }
+      if (r.kind === 'done') {
+        done.push(...r.items); versions.push(...r.versions);
+        if (r.queued !== undefined) run.queued = (run.queued ?? 0) + r.queued;
+        continue;
+      }
       if (r.kind === 'clashes') {
         setDialog({ kind: 'clash', ...run, sources: g.sources, clashes: r.clashes, at: 0, choices: {}, rest: groups.slice(k + 1), done, versions });
         return;
@@ -629,7 +687,9 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   /** Several requests saved several versions: Undo of the last alone would undo only part of the run, so none. */
   function finishRun(run: Run, done: OpItem[], versions: OpVersion[]) {
-    if (done.length) void report(done, (n) => `${verbs[run.op][1]} ${items(n)} to ${run.where}.`, diskIdOf(run.dest), versions, { undo: run.undo });
+    // A copy into a board's queue says how many FILES it queued (a folder is several): "Queued 3 files to A500 bench."
+    const said = (n: number) => (run.queued !== undefined ? `Queued ${files(run.queued)} to ${run.where}.` : `${verbs[run.op][1]} ${items(n)} to ${run.where}.`);
+    if (done.length) void report(done, said, diskIdOf(run.dest), versions, { undo: run.undo });
     else reloadBoth();
   }
 
@@ -838,6 +898,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   function dropFromComputer(side: Side, e: React.DragEvent) {
     const l = panes[side].listing;
     if (l && !l.disk && holdsFiles(l)) { dropIntoStash(side, l, e); return; }
+    if (l && netReadOnly(l)) { dropOnBoard(side, l, e); return; }
     if (!l?.disk) { toast.error('Open a disk to drop files into it'); return; }
     if (!l.writable) { toast.error(readOnly(l)); return; }
     // Busy, or a dialog open (the review would replace it, and whatever it was in the middle of): not taken, said.
@@ -865,6 +926,41 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     const dest = dropFolder(l, e);
     // Read synchronously, before any await: the browser empties the DataTransfer once this handler returns.
     void storeDrop(dest, readDroppedItems(e.dataTransfer.items));
+  }
+
+  /**
+   * Files from the computer dropped on a board's queue (C2): sent to that board, as Send to the Amiga sends them --
+   * checked whole against the queue and the 4 MB cap first, then one upload a file. On NET: itself, a board is asked for.
+   */
+  function dropOnBoard(side: Side, l: Listing, e: React.DragEvent) {
+    const id = netBoardOf(l);
+    if (!id || !l.queue) { toast.error(refusalWords('read_only', NET_PICK_BOARD)); return; }
+    const blocked = dropBlocked({ busy: busy !== null, dialogOpen: dialog !== null });
+    if (blocked) { toast.error(blocked); return; }
+    activate(side);
+    // Read synchronously, before any await: the browser empties the DataTransfer once this handler returns.
+    void sendDrop(id, placeOf(l), l.queue, readDroppedItems(e.dataTransfer.items));
+  }
+
+  async function sendDrop(id: string, boardName: string, queue: { files: number; bytes: number }, reading: Promise<DroppedItem[]>) {
+    setBusy('Reading the drop…');
+    try {
+      let dropped: DroppedItem[];
+      try { dropped = await reading; } catch { toast.error('The dropped files could not be read.'); return; }
+      // NET: has no folders: a folder's files go by their path inside the drop (R1).
+      const sending = dropped.filter((i) => i.kind === 'file' && i.file).map((i) => ({ path: i.path, file: i.file!, size: i.sizeBytes }));
+      const refusal = netDropRefusal(sending, queue);
+      if (refusal) { toast.error(refusal); return; }
+      setBusy(`Sending ${files(sending.length)}…`);
+      const r = await sendToBoard(id, sending);
+      reloadBoth();
+      const lines = [...r.failed.map((f) => `${f.path}: ${f.why}`), ...(r.stopped ? [r.stopped] : [])];
+      const title = r.queued > 0 ? `Queued ${files(r.queued)} to ${boardName}.` : 'Nothing was queued.';
+      if (lines.length) toast.error(title, { description: <ul data-testid="files-send-report">{lines.map((x, i) => <li key={i}>{x}</li>)}</ul> });
+      else toast.success(title);
+    } finally {
+      setBusy(null);
+    }
   }
 
   /** The top drop zone's files (or Browse files): into the STASH: root (R1). */
@@ -990,12 +1086,13 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
     const blocked = dropBlocked({ busy: busy !== null, dialogOpen: dialog !== null });
     if (blocked) { toast.error(blocked); return; }
     const l = panes[side].listing;
-    if (!l || !holdsFiles(l)) { toast.error('Open a disk or STASH: to drop files into it'); return; }
+    if (!l || !acceptsCopies(l)) { toast.error(l && netReadOnly(l) ? readOnly(l) : 'Open a disk or STASH: to drop files into it'); return; }
     if (!l.writable) { toast.error(readOnly(l)); return; }
     const dest = dropFolder(l, e);
     if (data.paths.includes(dest)) return;                       // a folder dropped on itself
     if (data.from === side && dest === l.path) return;           // put back where it was picked up
     const op = e.shiftKey ? 'move' : 'copy';
+    if (op === 'move' && netBoardOf(l)) { toast.error(`${NET_MOVE_IN}.`); return; }   // C16
     const from = panes[data.from]?.listing;
     if (op === 'move' && from && !from.writable) { toast.error(readOnly(from)); return; }
     activate(side);
@@ -1008,8 +1105,10 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
   const arrow = active === 'left';
   const dialogBusy = busy !== null;
   const dialogListing = dialog && 'side' in dialog ? panes[dialog.side].listing : null;
-  // What a delete names: the disk, or STASH: (whose delete cannot be undone: ruling 8).
-  const deleteWhere = dialogListing && deviceOf(dialogListing.path) === 'stash' ? 'STASH:' as const : dialogListing?.disk ?? null;
+  // What a delete names: the disk, STASH: (whose delete cannot be undone: ruling 8), or NET: (it cancels or clears, R4).
+  const deleteWhere = deleteWhereOf(dialogListing);
+  const deletedFrom = (n: number) => (deleteWhere === 'NET:' ? `Cancelled or cleared ${items(n)} on ${placeOf(dialogListing)}.`
+    : `Deleted ${items(n)} from ${deleteWhere === 'STASH:' ? deleteWhere : placeName(deleteWhere)}.`);
 
   function pane(side: Side) {
     const p = panes[side];
@@ -1046,7 +1145,7 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
 
   return (
     <>
-    {/* The top drop zones (R1): Drop files into STASH:; the right cell waits for increment 3's Send files to the Amiga. */}
+    {/* The top drop zones (R1): Drop files into STASH:; the right cell waits for increment 3's Send files to the Amiga (Task 3). */}
     <div className="mb-5 grid grid-cols-2 gap-x-2.5 gap-y-2 sm:grid-cols-1 sm:gap-5 lg:grid-cols-2 lg:items-stretch">
       <StashDropZone busy={stash.busy} onItems={dropOnZone} onFetched={() => reloadBoth()} />
     </div>
@@ -1134,8 +1233,8 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
         <ConfirmDeleteDialog entries={dialog.entries} where={deleteWhere} busy={dialogBusy}
                              onCancel={() => setDialog(null)}
                              onConfirm={() => void runFromDialog({ op: 'delete', sources: dialog.entries.map((e) => e.path) },
-                               `Deleting ${items(dialog.entries.length)}…`,
-                               (n) => `Deleted ${items(n)} from ${deleteWhere === 'STASH:' ? deleteWhere : placeName(deleteWhere)}.`)} />
+                               deleteWhere === 'NET:' ? `Cancelling or clearing ${items(dialog.entries.length)}…` : `Deleting ${items(dialog.entries.length)}…`,
+                               deletedFrom)} />
       )}
       {(dialog?.kind === 'makedir' || dialog?.kind === 'rename') && (
         <NameDialog mode={dialog.kind} initial={dialog.kind === 'rename' ? dialog.entry.name : ''}
@@ -1151,7 +1250,8 @@ export function FilesManager({ initial, prefs }: FilesManagerProps) {
                          'Setting protection…', (n) => `Protection set on ${items(n)}.`)} />
       )}
       {dialog?.kind === 'info' && (
-        <InfoDialog entry={dialog.entry} writable={!!dialogListing?.writable} busy={dialogBusy} onClose={() => setDialog(null)}
+        // A queue row's Info only reads: its comment travels with the send and is not edited in NET:.
+        <InfoDialog entry={dialog.entry} writable={!!dialogListing?.writable && !netReadOnly(dialogListing)} busy={dialogBusy} onClose={() => setDialog(null)}
                     onSaveComment={(comment) => {
                       const entry = dialog.entry;
                       guarded([dialogListing?.disk], () => void runFromDialog({ op: 'comment', source: entry.path, comment },

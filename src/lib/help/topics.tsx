@@ -537,7 +537,7 @@ export const HELP_TOPICS = {
         <p>
           <strong>Your board, and only yours.</strong> Transfer trusts the first board it meets: it saves that
           board&apos;s key and shows four of its digits, such as <em>Trusted board AB12</em>. The same four digits appear
-          under the Staging list on the Upload page, so check they match your board. Transfer sends only to that board; if another one connects it
+          on your board&apos;s row under NET: in Files (<em>key AB12</em>), so check they match your board. Transfer sends only to that board; if another one connects it
           stops, and <em>Trust this board</em> (or <em>TRUST</em> in the Shell) accepts the new one.
         </p>
         <p>

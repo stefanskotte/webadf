@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { FsEntry, Listing } from '@/lib/files/types';
-import { pickReason, placesIn } from './copy-to-picker';
+import { hereLabel, pickReason, placesIn } from './copy-to-picker';
 
 const entry = (name: string, kind: FsEntry['kind']): FsEntry => ({
   name, kind, path: `LIBRARY:/g/d/${name}`, size: kind === 'file' ? 10 : null, date: null, protection: null, comment: null, marks: [],
@@ -31,4 +31,16 @@ describe('CopyToPicker (Files increment 1, Task 10)', () => {
     expect(placesIn(l).map((e) => e.name)).toEqual(['Alpha', 'Disk 2', 'zeta']);
   });
 
+  it('NET: boards are places; inside one, Copy sends and Move is refused (increment 3, Task 2)', () => {
+    const board = listing({ path: 'NET:/b1', disk: null, queue: { deviceId: 'b1', files: 0, bytes: 0 } });
+    expect(pickReason('copy', board)).toBeNull();
+    expect(pickReason('move', board)).toBe('Files sent to the Amiga stay where they are — use Copy');
+    expect(pickReason('copy', listing({ path: 'NET:', disk: null, writable: false, readOnlyReason: 'Open a board to send files to it' })))
+      .toBe('Open a board to send files to it');
+    const boards = listing({ path: 'NET:', disk: null, entries: [{ ...entry('A500', 'board'), path: 'NET:/b1' }] });
+    expect(placesIn(boards).map((e) => e.kind)).toEqual(['board']);
+    expect(hereLabel('copy', board)).toBe('Send here');
+    expect(hereLabel('copy', listing({}))).toBe('Copy here');
+    expect(hereLabel('move', listing({}))).toBe('Move here');
+  });
 });

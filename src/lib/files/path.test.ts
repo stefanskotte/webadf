@@ -89,9 +89,9 @@ describe('filesHrefForDisk (Task 9; increment 2 R1)', () => {
   });
 });
 
-describe('the panes\' devices (increment 2 R1)', () => {
-  it('STASH: and LIBRARY:, STASH: on the left and LIBRARY: on the right by default', () => {
-    expect(PANE_DEVICES).toEqual(['STASH', 'LIBRARY']);
+describe('the panes\' devices (increment 2 R1, increment 3)', () => {
+  it('STASH:, NET: and LIBRARY:, STASH: on the left and LIBRARY: on the right by default', () => {
+    expect(PANE_DEVICES).toEqual(['STASH', 'NET', 'LIBRARY']);
     expect([DEFAULT_LEFT, DEFAULT_RIGHT]).toEqual(['STASH:', 'LIBRARY:']);
   });
 });

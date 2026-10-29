@@ -66,6 +66,9 @@ describe('help topics say what the app really does', () => {
     const b = bodyText('from-amiga');
     expect(b).toMatch(/first board/);
     expect(b).toMatch(/four digits/);
+    // Plan-writer ruling 8 (Files increment 3): the digits moved from the Staging footer to the board's row under NET:.
+    expect(b).toMatch(/board s row under NET: in Files/);
+    expect(b).not.toMatch(/digits appear under the Staging list/);
   });
   it('library describes the table: folders, the way up, the card controls, filing by drag, and the default view (2026-10-21)', () => {
     const b = HELP_TOPICS.library.short + bodyText('library');
