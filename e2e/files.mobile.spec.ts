@@ -81,11 +81,11 @@ test('at 390: one pane, the side switch, the bottom bar; Copy to… copies a fil
   await expect(readme).toContainText('6 B');
   await noSideways(page);
   // Every button in the manager -- device, up, crumbs, the Name sort, the strip's -- is a finger's height (C7-09a's
-  // measure, here on a disk with rows).
+  // measure, here on a disk with rows). A pane's "?" is 24 px drawn with a 40 px hit area around it, and C7-09a skips it too.
   expect(await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('[data-testid="files-manager"] button')]
     .filter((el) => {
       const r = el.getBoundingClientRect();
-      return r.width >= 2 && r.height >= 2 && !el.closest('p, [aria-hidden="true"]') && r.height < 43.5;
+      return r.width >= 2 && r.height >= 2 && !el.matches('[data-testid^="help-tip-"]') && !el.closest('p, [aria-hidden="true"]') && r.height < 43.5;
     })
     .map((el) => el.dataset.testid ?? (el.textContent ?? '').trim()))).toEqual([]);
 
