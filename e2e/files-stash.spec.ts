@@ -181,7 +181,17 @@ test('the bank sits under both panes; at 1280 x 800 its last row is on screen (R
   for (const [width, height] of [[1024, 800], [1280, 800], [1366, 768], [1440, 900], [1920, 1080]]) {
     await page.setViewportSize({ width, height });
     await openStash(page);
-    // From 1440 x 900 up the whole manager is on screen as the page opens, without a scroll.
+    // At 1280 x 800 the grid's last row and the status row are on screen as the page opens, panes at least 300 px
+    // tall (controller ruling, Task 8 round 1); from 1440 x 900 up the whole manager is.
+    if (width === 1280 && height === 800) {
+      expect(await page.evaluate(() => window.scrollY)).toBe(0);
+      const del = (await page.getByTestId('files-delete').boundingBox())!;
+      const busy = (await page.getByTestId('files-busy').boundingBox())!;
+      const pane = (await page.getByTestId('pane-left').boundingBox())!;
+      expect(del.y + del.height, `${width} x ${height}: the grid's last row, unscrolled`).toBeLessThanOrEqual(height);
+      expect(busy.y + busy.height, `${width} x ${height}: the status row, unscrolled`).toBeLessThanOrEqual(height);
+      expect(pane.height, `${width} x ${height}: the pane, unscrolled`).toBeGreaterThanOrEqual(300);
+    }
     if (width >= 1440) {
       const bottom = await page.evaluate(() => window.scrollY + document.querySelector('[data-testid="files-busy"]')!.getBoundingClientRect().bottom);
       expect(bottom, `${width} x ${height}: the whole manager`).toBeLessThanOrEqual(height);

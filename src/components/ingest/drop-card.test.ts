@@ -39,9 +39,19 @@ describe('DropCard below sm (C7 spec §7, Ruling 19)', () => {
   it('the 34 px disk sits in the tile cell of its column, under the label (no pointer events)', () => {
     expect(render({ tileCol: 2 })).toMatch(/<span aria-hidden="true" class="[^"]*pointer-events-none[^"]*max-sm:col-start-2 max-sm:row-start-1[^"]*sm:hidden"/);
   });
-  it('a phone keeps the first sentence of the hint; the rest is there from sm', () => {
+  it('a phone keeps the first sentence of the hint; the rest is there from sm, and only for a screen reader from lg', () => {
     const html = render();
     expect(html).toContain('data-testid="dropzone-hint"');
-    expect(html).toContain('A hint.<span class="max-sm:hidden"> A second sentence.</span>');
+    expect(html).toContain('A hint.<span class="max-sm:hidden lg:sr-only"> A second sentence.</span>');
+  });
+});
+
+describe('DropCard from lg: a compact strip (Files 2 §2, the approved mock-up; Task 8 round 1)', () => {
+  it('drops the 84 px disk, tightens the card and the heading, and puts the controls beside the words', () => {
+    const html = render();
+    expect(html).toMatch(/<section[^>]*class="[^"]*lg:px-4 lg:py-2/);
+    expect(html).toContain('<span class="hidden shrink-0 sm:block lg:hidden">');
+    expect(html).toMatch(/<h2 id="add-heading" class="[^"]*lg:text-\[16px\]/);
+    expect(html).toMatch(/class="flex min-w-0 flex-1 flex-col gap-2 max-sm:contents lg:flex-row/);
   });
 });

@@ -8,7 +8,7 @@ import { splitHint } from '@/lib/drop-hint';
  * The shared look of Browse files and Choose files (C3 spec §2.1, §2.2): an ink pill around a hidden file input. The
  * colours are classes, not an inline style, so that below sm the same label can be the board's tile (C7 Ruling 19).
  */
-export const INK_LABEL = 'inline-flex h-[38px] shrink-0 cursor-pointer items-center rounded-[10px] bg-(--ink) px-3.5 text-[13px] font-semibold text-(--surface) has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-offset-2 has-[:disabled]:cursor-default has-[:disabled]:opacity-50';
+export const INK_LABEL = 'inline-flex h-[38px] lg:h-8 shrink-0 cursor-pointer items-center rounded-[10px] bg-(--ink) px-3.5 text-[13px] font-semibold text-(--surface) has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-offset-2 has-[:disabled]:cursor-default has-[:disabled]:opacity-50';
 export const INK_STYLE = { '--tw-ring-color': 'var(--ring)' } as React.CSSProperties;
 
 /** Below sm a tile's grid cell: column 1 (Add) or 2 (Send) of the page's first row. */
@@ -30,6 +30,11 @@ export const TILE_LOOK = 'max-sm:h-24 max-sm:w-full max-sm:flex-col max-sm:justi
  * drop; its controls open the picker. Below sm
  * (C7 Plan ruling, Task 7) the section is display:contents, so its children are items of the page's two-column grid:
  * the file label is the tile, the 34 px disk sits on it, the hint and the controls go under both tiles.
+ *
+ * From lg (Files 2 §2, the approved mock-up) the card is a compact strip: no big disk, the title over the hint's first
+ * sentence on the left (the rest is still read to a screen reader, and the "?" tells it all), the controls on one
+ * line to the right, so the panes and the button bank get the height. A line the controls add (a status, a warning,
+ * a board list) wraps under the strip only while it says something.
  */
 export function DropCard({ testId, headingId, title, help, hint, disk, tileCol, disabled, onFiles, onItems, children }: {
   testId: string; headingId: string; title: string; help?: React.ReactNode; hint: React.ReactNode;
@@ -50,19 +55,21 @@ export function DropCard({ testId, headingId, title, help, hint, disk, tileCol, 
       onDragOver={(e) => { if (!hasFiles(e)) return; e.preventDefault(); if (drop && !over) setOver(true); }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false); }}
       onDrop={(e) => { if (!hasFiles(e)) return; e.preventDefault(); setOver(false); if (!drop) return; if (onItems) onItems(e.dataTransfer.items); else onFiles!(e.dataTransfer.files); }}
-      className="group relative flex min-w-0 items-center gap-4 rounded-[20px] border-[1.5px] border-dashed border-[var(--dash)] bg-[var(--surface)] p-5 hover:border-[var(--ink)] data-[over=true]:border-[var(--ink)] data-[over=true]:bg-[var(--surface-2)] max-sm:contents sm:gap-5 sm:p-6">
+      className="group relative flex min-w-0 items-center gap-4 rounded-[20px] border-[1.5px] border-dashed border-[var(--dash)] bg-[var(--surface)] p-5 hover:border-[var(--ink)] data-[over=true]:border-[var(--ink)] data-[over=true]:bg-[var(--surface-2)] max-sm:contents sm:gap-5 sm:p-6 lg:gap-3 lg:rounded-[14px] lg:px-4 lg:py-2">
       <span aria-hidden="true" className={`pointer-events-none z-10 mt-[18px] self-start justify-self-center ${TILE[tileCol]} sm:hidden`}>
         <DiskIcon color={disk.color} size={34} />
       </span>
-      <span className="hidden shrink-0 sm:block"><DiskIcon color={disk.color} size={84} set={disk.set} title={disk.title} /></span>
-      <div className="flex min-w-0 flex-1 flex-col gap-2 max-sm:contents">
-        <div className="flex items-center gap-1 max-sm:contents">
-          <h2 id={headingId} className="text-[20px] font-bold max-sm:sr-only sm:text-[22px]"
-              style={{ fontFamily: 'var(--font-display)', color: 'var(--ink)' }}>{title}</h2>
-          {help}
-        </div>
-        <div data-testid={`${testId}-hint`} className="text-[13px] max-sm:order-1 max-sm:col-span-2 max-sm:text-[12px]" style={{ color: 'var(--muted)' }}>
-          {h ? <>{h.first}{h.rest && <span className="max-sm:hidden">{` ${h.rest}`}</span>}</> : hint}
+      <span className="hidden shrink-0 sm:block lg:hidden"><DiskIcon color={disk.color} size={84} set={disk.set} title={disk.title} /></span>
+      <div className="flex min-w-0 flex-1 flex-col gap-2 max-sm:contents lg:flex-row lg:flex-wrap lg:items-center lg:gap-x-3 lg:gap-y-1">
+        <div className="flex min-w-0 flex-col gap-2 max-sm:contents lg:shrink lg:gap-0">
+          <div className="flex items-center gap-1 max-sm:contents">
+            <h2 id={headingId} className="text-[20px] font-bold max-sm:sr-only sm:text-[22px] lg:text-[16px] lg:leading-tight"
+                style={{ fontFamily: 'var(--font-display)', color: 'var(--ink)' }}>{title}</h2>
+            {help}
+          </div>
+          <div data-testid={`${testId}-hint`} className="text-[13px] max-sm:order-1 max-sm:col-span-2 max-sm:text-[12px] lg:text-[12px] lg:leading-snug" style={{ color: 'var(--muted)' }}>
+            {h ? <>{h.first}{h.rest && <span className="max-sm:hidden lg:sr-only">{` ${h.rest}`}</span>}</> : hint}
+          </div>
         </div>
         {children}
       </div>

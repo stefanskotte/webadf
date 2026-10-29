@@ -1023,8 +1023,11 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     else if (r.kind === 'refused' && r.words !== undefined) inline?.refused(r.words);
   }
 
-  /** A bank command, on the source (active) pane. */
+  /** A bank command, on the source (active) pane. One that cannot apply says why (its button is aria-disabled, §2.3). */
   function bank(cmd: BankCommand) {
+    if (busy) return;
+    const reason = bankReasons[cmd];
+    if (reason) { toast.error(reason); return; }
     switch (cmd) {
       case 'all': setSelection(active, () => selectAll(rowsOf(active).length)); return;
       case 'none': setSelection(active, () => EMPTY_SELECTION); return;
@@ -1435,11 +1438,12 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       {/* Below lg nothing clips: a clip would cut off the strip's History over a short pane, and `hidden` would make
           this a scroll box the phone bar could not stick out of. The pane's top and the bar round their own corners.
           From lg (Files 2 §2): the two panes, a 1 px line between them and nothing else, then the bank under both and
-          one status row. The manager fills the window under the header and the drop zones (about 400 px of them): from
-          1440 x 900 up the whole manager is on screen without a page scroll. 500 px is the floor: a pane inside a disk
-          (title bar, filter row, strip, foot) keeps about four rows over the bank (93 px) and the status row. Below
-          1440 x 900 the page scrolls to the bank (at 1280 x 800 by about 70 px). */}
-      <div className="grid rounded-[20px] lg:overflow-hidden max-lg:grid-cols-[minmax(0,1fr)] lg:h-[clamp(500px,calc(100dvh-400px),1000px)] lg:grid-rows-[minmax(0,1fr)_auto_auto]"
+          one status row. The manager fills the window under the header and the compact drop zones (about 260-300 px
+          of them): at 1280 x 800 the whole manager -- the bank's last row and the status row too -- is on screen as the
+          page opens, each pane about 385 px tall; from 1366 x 768 up likewise. 500 px is the floor: a pane inside a
+          disk (title bar, filter row, strip, foot: about 280 px) keeps room for a few rows, so on a shorter window the
+          page scrolls rather than squeezing them out. */}
+      <div className="grid rounded-[20px] lg:overflow-hidden max-lg:grid-cols-[minmax(0,1fr)] lg:h-[clamp(500px,calc(100dvh-300px),1000px)] lg:grid-rows-[minmax(0,1fr)_auto_auto]"
            style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
         <div className="grid min-h-0 max-lg:contents lg:grid-cols-[minmax(0,1fr)_1px_minmax(0,1fr)]">
           {pane('left')}

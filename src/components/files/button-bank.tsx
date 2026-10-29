@@ -7,8 +7,10 @@ import { PANE_DEVICES, type Device } from '@/lib/files/path';
 /**
  * The bank under both panes (Files 2 §2.3): the device column (STASH:, LIBRARY:, NET: only -- never a board's volumes,
  * spec D1) and the six-by-three grid. Presentational: the manager decides every reason and runs every command. A
- * command that cannot apply is disabled with its reason as its tooltip (on a wrapper too: a disabled button takes no
- * pointer events). The device column comes first in the tab order. From lg only; below lg the pane's chips and the
+ * command that cannot apply is aria-disabled, not `disabled` (spec §2.3): it stays focusable, its reason is its tooltip
+ * and its description (a visually hidden line a screen reader reads), and a click or Enter still reaches the manager,
+ * which says the reason in a toast as the phone's More menu does. While an operation runs nothing is sent. The device
+ * column comes first in the tab order. From lg only; below lg the pane's chips and the
  * phone bar do this. 24 px rows (WCAG 2.2's target size, the mock-up's height), so the bank takes little from the panes.
  */
 export function ButtonBank(p: {
@@ -29,17 +31,24 @@ export function ButtonBank(p: {
         ))}
       </div>
       <div role="group" aria-label="File actions" data-testid="files-grid" className="grid grid-cols-6 gap-1 p-1.5">
-        {BANK_GRID.map((cmd, i) => (cmd === null ? <span key={`gap-${i}`} aria-hidden /> : (
-          <span key={cmd} title={p.reasons[cmd] ?? undefined} className="flex min-w-0">
-            <Button size="sm" data-testid={`files-${cmd}`} onClick={() => p.onCommand(cmd)}
-                    variant={cmd === 'delete' ? 'destructive' : cmd === 'copy' && p.primaryCopy ? 'default' : 'outline'}
-                    disabled={p.reasons[cmd] !== null || p.busy} title={p.reasons[cmd] ?? undefined}
-                    aria-pressed={cmd === 'showinfo' ? p.showInfo : undefined}
-                    className="h-auto min-h-6 w-full py-0.5 leading-tight whitespace-normal">
-              {BANK_LABEL[cmd]}
-            </Button>
-          </span>
-        )))}
+        {BANK_GRID.map((cmd, i) => {
+          if (cmd === null) return <span key={`gap-${i}`} aria-hidden />;
+          const reason = p.reasons[cmd];
+          const off = reason !== null || p.busy;
+          return (
+            <span key={cmd} className="flex min-w-0">
+              <Button size="sm" data-testid={`files-${cmd}`} onClick={() => { if (!p.busy) p.onCommand(cmd); }}
+                      variant={cmd === 'delete' ? 'destructive' : cmd === 'copy' && p.primaryCopy ? 'default' : 'outline'}
+                      aria-disabled={off || undefined} title={reason ?? undefined}
+                      aria-describedby={reason !== null ? `files-why-${cmd}` : undefined}
+                      aria-pressed={cmd === 'showinfo' ? p.showInfo : undefined}
+                      className="h-auto min-h-6 w-full py-0.5 leading-tight whitespace-normal aria-disabled:cursor-default aria-disabled:opacity-50">
+                {BANK_LABEL[cmd]}
+              </Button>
+              {reason !== null && <span id={`files-why-${cmd}`} className="sr-only">{reason}</span>}
+            </span>
+          );
+        })}
       </div>
     </div>
   );

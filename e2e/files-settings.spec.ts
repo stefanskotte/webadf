@@ -395,7 +395,7 @@ test('Comment column: Always shows it on a disk, Never hides it in STASH:', asyn
   await expect(page.getByTestId('pane-right-col-comment')).toHaveCount(0);
 });
 
-test('at 1280×800 the busy line is on screen, under the bank', async ({ page }) => {
+test('at 1280×800 the busy line is on screen without a scroll, under the bank', async ({ page }) => {
   await signUpFresh(page);
   await page.setViewportSize({ width: 1280, height: 800 });
   // Hold the drop's upload so the busy words stay up to be measured.
@@ -406,8 +406,8 @@ test('at 1280×800 the busy line is on screen, under the bank', async ({ page })
   await page.getByTestId('files-stash-input').setInputFiles([{ name: 'Busy.txt', mimeType: 'text/plain', buffer: Buffer.from('busy') }]);
   const busy = page.getByTestId('files-busy');
   await expect(busy).toHaveText(/Reading 1 of 1…/);
-  // The one status row under the bank (Files 2 §2.3): on screen with the manager scrolled to the top of the window.
-  await page.getByTestId('files-manager').evaluate((el) => el.scrollIntoView({ block: 'start' }));
+  // The one status row under the bank (Files 2 §2.3): on screen as the page opens, without a scroll.
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
   const box = (await busy.boundingBox())!;
   expect(box.y + box.height).toBeLessThanOrEqual(800);
   const del = (await page.getByTestId('files-delete').boundingBox())!;
