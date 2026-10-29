@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { FsEntry } from '@/lib/files/types';
-import { deleteText, deleteWhat } from './dialogs';
+import { deleteText, deleteWhat, nameDialogWords, nameProblem } from './dialogs';
 
 const file = (name: string): FsEntry => ({ name, kind: 'file', path: `LIBRARY:/g/d/${name}`, size: 1, date: null,
   protection: '----rwed', comment: null, marks: [] });
@@ -34,5 +34,34 @@ describe('deleteText in NET: (increment 3, Task 2)', () => {
   it('says what is cancelled and what is cleared, with no promise of versions', () => {
     const row = (marks: string[]): FsEntry => ({ ...file('a.txt'), path: 'NET:/b1/t', marks });
     expect(deleteText([row(['Waiting']), row(['Delivered · saved as a.txt'])], 'NET:')).toBe('Cancel 1 waiting file and clear 1 finished?');
+  });
+});
+
+describe('the name dialog in collection mode (Files 2 §3.2, R3)', () => {
+  const base = { rules: 'collection' as const, initial: '', taken: ['Demos'], refused: null };
+  it('says New collection and Make collection; a folder keeps its words', () => {
+    expect(nameDialogWords('collection', 'makedir', false, '')).toEqual({ title: 'New collection', save: 'Make collection' });
+    expect(nameDialogWords('collection', 'makedir', true, '')).toEqual({ title: 'New collection', save: 'Making…' });
+    expect(nameDialogWords('collection', 'rename', false, 'Demos')).toEqual({ title: 'Rename Demos', save: 'Rename' });
+    expect(nameDialogWords('amiga', 'makedir', false, '')).toEqual({ title: 'New folder', save: 'Make folder' });
+  });
+  it('takes 80 characters with spaces and any punctuation, not 81; an AmigaDOS name stays at 30', () => {
+    expect(nameProblem({ ...base, name: 'x'.repeat(80) })).toBeNull();
+    expect(nameProblem({ ...base, name: 'Demos: 1993/94' })).toBeNull();
+    expect(nameProblem({ ...base, name: 'x'.repeat(81) })).toBe('Collection names are at most 80 characters.');
+    expect(nameProblem({ ...base, name: '   ' })).toBe('Type a name.');
+    expect(nameProblem({ ...base, rules: 'amiga', name: 'x'.repeat(31) })).toBe('AmigaDOS names are at most 30 characters.');
+  });
+  it('a name another collection has, in any case and with spaces around it, is refused in the Library\'s words', () => {
+    expect(nameProblem({ ...base, name: ' dEMOS ' })).toBe('A collection with that name already exists.');
+    expect(nameProblem({ ...base, rules: 'amiga', name: 'demos' })).toBe('Something with that name is already there.');
+    // Renaming a collection to its own name in another case is allowed.
+    expect(nameProblem({ ...base, initial: 'Demos', name: 'DEMOS' })).toBeNull();
+  });
+  it('the server\'s name_exists stays under the field while it holds that name', () => {
+    const refused = { name: 'Games', words: 'A collection with that name already exists.' };
+    expect(nameProblem({ ...base, refused, name: 'Games' })).toBe('A collection with that name already exists.');
+    expect(nameProblem({ ...base, refused, name: ' Games ' })).toBe('A collection with that name already exists.');
+    expect(nameProblem({ ...base, refused, name: 'Games 2' })).toBeNull();
   });
 });

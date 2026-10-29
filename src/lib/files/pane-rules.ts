@@ -54,11 +54,12 @@ export function failedReason(picked: FsEntry[]): string | null {
 }
 
 /** Add to library takes stored disk images in STASH: itself (R8), never members of an archive. */
-export function addToLibraryReason(l: Listing | null, picked: FsEntry[]): string | null {
+/** `filing`: Copy or Move onto LIBRARY: (Files 2 R4), which also files a disk image the library already has. */
+export function addToLibraryReason(l: Listing | null, picked: FsEntry[], opts: { filing?: boolean } = {}): string | null {
   if (!l || !inStash(l.path)) return 'Open STASH: to add its disk images to the library';
   if (picked.length === 0) return 'Select something first';
   if (l.readOnlyReason === 'archive') return 'Copy it out of the archive first';
-  if (picked.some((e) => e.marks.includes('in the library'))) return 'Already in the library';
+  if (!opts.filing && picked.some((e) => e.marks.includes('in the library'))) return 'Already in the library';
   const image = (e: FsEntry) => (e.kind === 'file' || e.kind === 'archive') && !unfinished(e) && libraryEligible(e.name, e.size ?? 0);
   return picked.every(image) ? null : 'Select disk images (ADF, ADZ, DMS, DMZ, HFE) to add them';
 }
@@ -74,9 +75,13 @@ export function offersUndo(op: 'copy' | 'move', sources: readonly string[], dest
   return op === 'copy' || !sources.some(inStash);
 }
 
-/** The place a toast names: the disk's label, STASH:, a board by its name (the last crumb), else "the other side". */
+/**
+ * The place a toast names: the disk's label, a LIBRARY: shelf or title by its last crumb ("Demos", "LIBRARY:"),
+ * STASH:, a board by its name (the last crumb), else "the other side".
+ */
 export function placeOf(l: Listing | null): string {
   if (l?.disk) return l.disk.label;
+  if (l?.library) return l.crumbs.at(-1)?.label ?? 'LIBRARY:';
   if (netBoardOf(l)) return l!.crumbs.at(-1)?.label ?? 'the board';
   return l && inStash(l.path) ? 'STASH:' : 'the other side';
 }
@@ -120,11 +125,16 @@ function netDeleteText(entries: FsEntry[]): string {
 /**
  * The delete confirm's sentence. A disk keeps every version, so its delete can be undone from History; STASH: keeps no
  * versions (ruling 8), so it says so and counts the items picked (a STASH: folder does not say what it holds); NET:
- * cancels or clears.
+ * cancels or clears; LIBRARY: above the disks deletes collections, never their titles.
  */
-export type DeleteWhere = { title: string; label: string } | 'STASH:' | 'NET:' | null;
+export type DeleteWhere = { title: string; label: string } | 'STASH:' | 'NET:' | 'LIBRARY:' | null;
 
 export function deleteText(entries: FsEntry[], where: DeleteWhere): string {
+  // Above the disks only collections are deleted (Files 2 §3.2): their titles stay.
+  if (where === 'LIBRARY:') {
+    return entries.length === 1 ? `Delete the collection “${entries[0].name}”? Its titles stay in the library.`
+      : `Delete ${entries.length} collections? Their titles stay in the library.`;
+  }
   if (where === 'NET:') return netDeleteText(entries);
   if (where === 'STASH:') {
     const what = entries.length === 1 ? `“${entries[0].name}”` : `${entries.length} items`;
@@ -137,6 +147,7 @@ export function deleteText(entries: FsEntry[], where: DeleteWhere): string {
 export function deleteWhere(l: Listing | null): DeleteWhere {
   if (!l) return null;
   if (inNet(l.path)) return 'NET:';
+  if (l.library && !l.disk) return 'LIBRARY:';
   return inStash(l.path) ? 'STASH:' : l.disk;
 }
 

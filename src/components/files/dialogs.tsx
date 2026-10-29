@@ -8,6 +8,7 @@ import { ProtectionCells } from '@/components/disks/protection-cells';
 import type { FsEntry } from '@/lib/files/types';
 import { AMIGA_COMMENT_MAX, amigaNameProblem } from '@/lib/files/path';
 import { refusalWords } from '@/lib/files/words';
+import { collectionNameProblem, COLLECTION_EXISTS } from '@/lib/files/shelf-rules';
 import { PROTECTION_FLAGS, bitsFromProtection } from '@/lib/protection-bits';
 import type { ClashChoice } from '@/lib/files/transfer';
 import { deleteText, type DeleteWhere } from '@/lib/files/pane-rules';
@@ -106,36 +107,64 @@ export function ConfirmDeleteDialog({ entries, where, busy, onConfirm, onCancel 
   );
 }
 
+/** Which rules a name follows: an AmigaDOS name on a disk or in STASH:, or a Library collection's (Files 2 §3.2). */
+export type NameRules = 'amiga' | 'collection';
+
+/** The name dialog's title and Save button. */
+export function nameDialogWords(rules: NameRules, mode: 'makedir' | 'rename', busy: boolean, initial: string): { title: string; save: string } {
+  const title = mode === 'rename' ? `Rename ${initial}` : rules === 'collection' ? 'New collection' : 'New folder';
+  const save = mode === 'rename' ? (busy ? 'Renaming…' : 'Rename') : busy ? 'Making…' : rules === 'collection' ? 'Make collection' : 'Make folder';
+  return { title, save };
+}
+
 /**
- * Makedir and Rename: one name, checked as it is typed against the AmigaDOS rules and the names already in the
- * folder (`taken`, compared case-insensitively as AmigaDOS does; the server has the last word).
+ * What is wrong with `name`, in words, or null. A collection name is the Library's (trimmed, 1-80 characters, any
+ * characters) and clashes with another collection's in any case (R3); an AmigaDOS name has its 30 characters and its
+ * case-insensitive clash. `refused`: the server's answer for a name (a clash the listing did not know), said while the
+ * field still holds that name.
  */
-export function NameDialog({ mode, initial, taken, busy, onSave, onCancel }: {
+export function nameProblem({ rules, name, initial, taken, refused }: {
+  rules: NameRules; name: string; initial: string; taken: string[]; refused: { name: string; words: string } | null;
+}): string | null {
+  const norm = (n: string) => (rules === 'collection' ? n.trim() : n).toLowerCase();
+  const problem = rules === 'collection' ? collectionNameProblem(name) : amigaNameProblem(name);
+  if (problem) return refusalWords('bad_name', problem);
+  if (norm(name) !== norm(initial) && taken.some((t) => norm(t) === norm(name))) {
+    return refusalWords('name_exists', rules === 'collection' ? COLLECTION_EXISTS : undefined);
+  }
+  return refused && norm(refused.name) === norm(name) ? refused.words : null;
+}
+
+/**
+ * Makedir and Rename: one name, checked as it is typed against the AmigaDOS rules (or a collection's, `rules`) and the
+ * names already there (`taken`; the server has the last word, and a clash it finds comes back as `refused`).
+ */
+export function NameDialog({ mode, initial, taken, busy, onSave, onCancel, rules = 'amiga', refused = null }: {
   mode: 'makedir' | 'rename'; initial: string; taken: string[]; busy: boolean;
   onSave(name: string): void; onCancel(): void;
+  rules?: NameRules; refused?: { name: string; words: string } | null;
 }) {
   const [name, setName] = useState(initial);
   const formId = useId();
-  const problem = amigaNameProblem(name);
-  const clashes = !problem && name.toLowerCase() !== initial.toLowerCase()
-    && taken.some((t) => t.toLowerCase() === name.toLowerCase());
-  const unchanged = mode === 'rename' && name === initial;
-  const message = problem ? refusalWords('bad_name', problem) : clashes ? refusalWords('name_exists') : null;
-  const ready = !problem && !clashes && !unchanged && !busy;
+  const saved = rules === 'collection' ? name.trim() : name;
+  const message = nameProblem({ rules, name, initial, taken, refused });
+  const unchanged = mode === 'rename' && saved === initial;
+  const ready = !message && !unchanged && !busy;
+  const words = nameDialogWords(rules, mode, busy, initial);
   return (
     <Modal open finalFocus={managerReturnsFocus} onOpenChange={(o) => { if (!o) onCancel(); }} width={440} testId="files-name-dialog"
-           closeTestId="files-name-close" title={mode === 'makedir' ? 'New folder' : `Rename ${initial}`}
+           closeTestId="files-name-close" title={words.title}
            dismissible={!busy}
            footer={(
              <div className={foot}>
                <Button variant="outline" onClick={onCancel} disabled={busy}>Cancel</Button>
                <Button type="submit" form={formId} disabled={!ready} data-testid="files-name-save">
-                 {mode === 'makedir' ? (busy ? 'Making…' : 'Make folder') : (busy ? 'Renaming…' : 'Rename')}
+                 {words.save}
                </Button>
              </div>
            )}>
       <form id={formId} className={body} style={ink}
-            onSubmit={(e) => { e.preventDefault(); if (ready) onSave(name); }}>
+            onSubmit={(e) => { e.preventDefault(); if (ready) onSave(saved); }}>
         <label className="flex flex-col gap-1.5 text-[13px] font-medium">
           Name
           <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} data-testid="files-name-input"

@@ -23,14 +23,22 @@ export type CopyToPickerProps = {
   op: 'copy' | 'move'; count: number; start: string; busy: boolean;
   list(path: string): Promise<ListResult>;
   onPick(listing: Listing): void; onCancel(): void;
+  /**
+   * Files 2: the manager's filing rule (filingReason) for a place -- null when what is picked may be filed there, the
+   * words when not, undefined when it is no filing and the file rules below decide.
+   */
+  filing?(l: Listing): string | null | undefined;
 };
 
 /**
  * Why the place shown cannot take the copy, or null when it can: a writable folder inside a disk or in STASH:, or a
- * board's queue for a copy (C16: a move into NET: is refused; NET: itself says to open a board).
+ * board's queue for a copy (C16: a move into NET: is refused; NET: itself says to open a board). A filing onto LIBRARY:
+ * or a collection follows `filing` (Files 2).
  */
-export function pickReason(op: 'copy' | 'move', l: Listing | null): string | null {
+export function pickReason(op: 'copy' | 'move', l: Listing | null, filing?: (l: Listing) => string | null | undefined): string | null {
   if (!l) return null;
+  const f = filing?.(l);
+  if (f !== undefined) return f;
   if (l.path === 'NET:') return NET_PICK_BOARD;
   if (!acceptsCopies(l)) return `Open a disk or STASH: to ${op} into it`;
   if (!l.writable) return refusalWords('read_only', l.readOnlyReason ?? undefined);
@@ -51,7 +59,7 @@ export function placesIn(l: Listing): FsEntry[] {
 
 const PLACE_GLYPH: Record<string, string> = { title: 'TTL', disk: 'DSK', dir: 'DIR', board: 'BRD', collection: 'DIR' };
 
-export function CopyToPicker({ op, count, start, busy, list, onPick, onCancel }: CopyToPickerProps) {
+export function CopyToPicker({ op, count, start, busy, list, onPick, onCancel, filing }: CopyToPickerProps) {
   const [path, setPath] = useState(start);
   const [listing, setListing] = useState<Listing | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +76,7 @@ export function CopyToPicker({ op, count, start, busy, list, onPick, onCancel }:
   }, [list, path]);
 
   const shown = listing && listing.path === path ? listing : null;
-  const reason = pickReason(op, shown);
+  const reason = pickReason(op, shown, filing);
   const what = count === 1 ? '1 item' : `${count} items`;
   const crumbs = listing?.crumbs ?? [];
   const tap = 'max-lg:min-h-11 focus-visible:outline-2 focus-visible:outline-(--ring)';

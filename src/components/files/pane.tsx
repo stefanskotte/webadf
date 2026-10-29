@@ -13,6 +13,7 @@ import type { HelpTopicId } from '@/lib/help/topics';
 import { HelpTip } from '@/components/help/help-tip';
 import { Switch } from '@/components/ui/switch';
 import { acceptsCopies, addToLibraryReason, holdsFiles, netBoardOf } from '@/lib/files/pane-rules';
+import { shelfOf } from '@/lib/files/shelf-rules';
 
 /**
  * One side of the Files manager. Presentational: the manager (files-manager.tsx) owns fetching, sort and selection
@@ -103,8 +104,10 @@ export function Pane({ filterRef, ...p }: PaneProps) {
   const foot = listing ? paneFoot({ base, shown: counts.shown, total: counts.total, infoHidden: counts.infoHidden, picked: picked.length, pickedSize: paneSize(pickedBytes) }) : '';
   const sideName = side === 'left' ? 'left' : 'right';
   const onlyInfo = view.hideInfo && !view.filter.trim() && counts.infoHidden > 0 && counts.shown === 0;
-  // Only rows that hold files drag (C2): titles and disks do not move, and nothing is copied out of NET:.
-  const drags = holdsFiles(listing);
+  // Rows that hold files drag (C2), and titles on LIBRARY: or in a collection, to be filed (Files 2 §3.2); disks and
+  // collections do not move, and nothing is copied out of NET:.
+  const shelf = shelfOf(listing) !== null;
+  const drags = holdsFiles(listing) || shelf;
   // A STASH: folder's disk images can each go into the library from their row (R8); not inside an archive.
   const addable = (e: FsEntry) => !!listing && !e.marks.includes('in the library') && addToLibraryReason(listing, [e]) === null;
   const rowAct = 'shrink-0 rounded-[4px] text-[11.5px] underline underline-offset-2 max-lg:min-h-11 max-lg:px-1 focus-visible:outline-2 focus-visible:outline-(--ring)';
@@ -116,9 +119,9 @@ export function Pane({ filterRef, ...p }: PaneProps) {
     <section data-testid={`pane-${side}`} data-active={p.active ? 'true' : 'false'}
              aria-label={side === 'left' ? 'Left pane' : 'Right pane'}
              onMouseDown={p.onActivate} onFocus={p.onActivate}
-             // Only a writable folder inside a disk or in STASH:, or a board's queue, takes a drop; anywhere else the
-             // browser shows no-drop.
-             onDragOver={(e) => { if (acceptsCopies(listing) && listing!.writable) e.preventDefault(); }}
+             // Only a writable folder inside a disk or in STASH:, a board's queue, or LIBRARY: and a collection (where
+             // titles and disk images are filed) take a drop; anywhere else the browser shows no-drop.
+             onDragOver={(e) => { if ((acceptsCopies(listing) && listing!.writable) || shelf) e.preventDefault(); }}
              onDrop={(e) => { e.preventDefault(); p.onDropRows(e); }}
              className="flex min-w-0 flex-col max-lg:rounded-t-[20px]" style={{ background: 'var(--surface)' }}>
       <div className="border-b px-3.5 pt-3 pb-2.5 max-lg:rounded-t-[20px]"
@@ -233,7 +236,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
                 return (
                   <tr key={e.path} data-testid="pane-row" data-name={e.name} data-kind={e.kind} aria-selected={sel}
                       data-cursor={p.active && selection.cursor === i ? 'true' : undefined}
-                      draggable={drags}
+                      draggable={drags && e.kind !== 'collection'}
                       onDragStart={(ev) => p.onDragStartRows(sel ? picked : [i], ev)}
                       onClick={(ev) => p.onRowClick(i, { shift: ev.shiftKey, toggle: ev.metaKey || ev.ctrlKey })}
                       onDoubleClick={() => p.onRowOpen(i, 'dblclick')}

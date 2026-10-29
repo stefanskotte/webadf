@@ -107,7 +107,7 @@ test('at 390: one pane, the side switch, the bottom bar; Copy to… copies a fil
   await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'Select something first' })).toBeVisible();
 
   // A tap picks a file; Copy to… opens the picker at the other pane's place (STASH:), which takes files. Its LIBRARY:
-  // chip goes to the library, which is not a disk.
+  // chip goes to the library, which is not a disk: only titles, and disk images from STASH:, are filed there (Files 2).
   await readme.tap();
   await expect(readme).toHaveAttribute('aria-selected', 'true');
   await bar.getByTestId('files-phone-copy').tap();
@@ -121,7 +121,7 @@ test('at 390: one pane, the side switch, the bottom bar; Copy to… copies a fil
   await expect(picker.getByTestId('files-copy-to-crumb-0')).toHaveText('LIBRARY:');
   await expect(picker.getByTestId('files-copy-to-dev-LIBRARY')).toHaveAttribute('aria-pressed', 'true');
   await expect(picker.getByTestId('files-copy-to-here')).toBeDisabled();
-  await expect(picker.getByTestId('files-copy-to-reason')).toHaveText('Open a disk or STASH: to copy into it');
+  await expect(picker.getByTestId('files-copy-to-reason')).toHaveText('Only titles, and disk images from STASH:, go into the library here');
   await noSideways(page);
 
   // Drill into the other title, then its disk; "Copy here".
