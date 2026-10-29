@@ -96,7 +96,7 @@ test('a file dragged over the page lights it up, counting the disks; a drag that
 
   await fire('dragenter', 3);
   await expect(page.getByTestId('library-drop-overlay')).toContainText('Drop to add 3 disks to the library');
-  await expect(page.getByTestId('library-drop-overlay')).toContainText('ADF · ADZ · DMS · DMZ · HFE, folders, .zip / .lha of disks');
+  await expect(page.getByTestId('library-drop-overlay')).toContainText('ADF · DSK · ADZ · DMS · DMZ · HFE, folders, .zip / .lha of disks');
   await fire('dragleave', 3);
   await expect(page.getByTestId('library-drop-overlay')).toHaveCount(0);
 });

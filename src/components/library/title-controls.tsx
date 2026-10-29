@@ -33,7 +33,7 @@ const EMPTY_TEXT = {
   },
   collection: {
     set: 'Empty', title: 'New box', heading: 'Nothing in this collection yet',
-    body: 'Drag titles here, or move them from a title\u2019s \u22EF menu.', action: 'Upload disks',
+    body: 'Drag titles here, or move them from a title\u2019s \u22EF menu.', action: 'Add disks',
   },
 } as const;
 

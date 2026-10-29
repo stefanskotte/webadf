@@ -84,7 +84,7 @@ export function LibraryDropOverlay() {
             <h3 className="text-[20px] font-bold" style={{ fontFamily: 'var(--font-display)' }}>
               {ingest.busy ? 'Wait for the disks being added, then drop again' : shown}
             </h3>
-            <p className="text-[13px]" style={{ color: 'var(--muted)' }}>ADF · ADZ · DMS · DMZ · HFE, folders, .zip / .lha of disks</p>
+            <p className="text-[13px]" style={{ color: 'var(--muted)' }}>ADF · DSK · ADZ · DMS · DMZ · HFE, folders, .zip / .lha of disks</p>
           </div>
         </div>
       )}

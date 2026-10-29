@@ -35,7 +35,7 @@ describe('EmptyLibrary', () => {
     expect(card).not.toContain('webadf push');
   });
 
-  it('the collection variant: the "Empty / New box" disk, its own words and an Upload disks link', () => {
+  it('the collection variant: the "Empty / New box" disk, its own words and an Add disks link', () => {
     const { open, card } = render({ testId: 'game-grid', variant: 'collection' });
     expect(open).toContain('data-testid="game-grid"');
     expect(open).toContain('data-empty="collection"');
@@ -46,7 +46,8 @@ describe('EmptyLibrary', () => {
     expect(card.indexOf('Drag titles here, or move them from a title’s ⋯ menu.'))
       .toBeGreaterThan(card.indexOf('Nothing in this collection yet'));
     expect(card).toContain('href="/library#add-disks"');
-    expect(card.indexOf('Upload disks')).toBeGreaterThan(card.indexOf('menu.'));
+    expect(card.indexOf('Add disks')).toBeGreaterThan(card.indexOf('menu.'));
+    expect(card).not.toContain('Upload disks');
     expect(card).not.toContain('No disks yet');
   });
 
