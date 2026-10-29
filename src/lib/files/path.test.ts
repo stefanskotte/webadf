@@ -87,6 +87,10 @@ describe('filesHrefForDisk (Task 9; increment 2 R1)', () => {
     expect([q.get('left'), q.get('right'), q.get('active')]).toEqual(['STASH:', 'LIBRARY:/g1/d1', 'right']);
     expect(filesHrefForDisk('g1', 'd1', true)).toBe(`${href}#disk-history`);
   });
+  it('opens a filed title\'s disk inside its collection (Files 2 §3.1)', () => {
+    expect(filesHrefForDisk('g', 'd', false, 'c')).toBe(`/files?left=STASH:&right=${encodeURIComponent('LIBRARY:/c/g/d')}&active=right`);
+    expect(filesHrefForDisk('g', 'd', true, null)).toBe(`/files?left=STASH:&right=${encodeURIComponent('LIBRARY:/g/d')}&active=right#disk-history`);
+  });
 });
 
 describe('the panes\' devices (increment 2 R1, increment 3)', () => {

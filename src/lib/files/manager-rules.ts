@@ -1,21 +1,18 @@
 // The Files manager's small decisions, out of the component so they can be tested (final review of increment 1).
 // CLIENT-SAFE: no database import.
 import { SIGNED_OUT_TEXT } from '@/lib/signed-out';
-import { parsePath } from './path';
 import { ZIP_MAX_BYTES, type ClashChoice } from './transfer';
 import type { Listing } from './types';
 import type { OpItem } from './driver';
 
 /**
- * The disk whose strip a pane shows: the disk its listing is inside, else -- when the listing failed because the
- * image could not be read, not because the place is gone -- the disk its path names. The strip needs no image, and
- * its History and Restore are how such a disk is mended. Null above the disks.
+ * The disk whose strip a pane shows: the disk its listing is inside, else -- when the listing failed because the image
+ * could not be read -- the disk the refusal named (`errorDisk`, the blob_unavailable detail; Files 2 R2: never parsed
+ * from the path, which may run through a collection). The strip needs no image; its History and Restore are how such a
+ * disk is mended. Null above the disks.
  */
-export function stripDiskOf(p: { path: string; listing: Listing | null; error: string | null; gone: boolean }): string | null {
-  if (p.listing) return p.listing.disk?.diskId ?? null;
-  if (!p.error || p.gone) return null;
-  const at = parsePath(p.path);
-  return at && at.device === 'LIBRARY' ? at.segments[1] ?? null : null;
+export function stripDiskOf(p: { listing: Listing | null; errorDisk: string | null }): string | null {
+  return p.listing ? p.listing.disk?.diskId ?? null : p.errorDisk;
 }
 
 /** A drop while an operation runs is not taken; said, rather than lost without a word. */

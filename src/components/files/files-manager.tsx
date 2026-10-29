@@ -25,7 +25,7 @@ import { netDropRefusal, sendToBoard } from '@/lib/files/net-send';
 import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
-import { identityToConfirm, undoTarget, withAddedIn, type OpVersion } from '@/lib/files/edit-rules';
+import { diskRelative, identityToConfirm, undoTarget, withAddedIn, type OpVersion } from '@/lib/files/edit-rules';
 import { dropBlocked, fetchDownload, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
 import { addedIn } from '@/lib/disk-history/added-in';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
@@ -76,13 +76,19 @@ type Side = 'left' | 'right';
 type DeviceKey = keyof UserPrefs['files']['sort'];
 /** `filter`: the pane's name filter (R6). It belongs to the place: kept on a fresh listing of the same place and on
  *  Swap (it travels with its pane), cleared when the pane lists another place. */
-type PaneState = { path: string; listing: Listing | null; loading: boolean; error: string | null; gone: boolean; selection: Selection; filter: string };
+/** `errorDisk`: the disk a failed listing's refusal named (blob_unavailable), whose strip still shows (stripDiskOf). */
+type PaneState = {
+  path: string; listing: Listing | null; loading: boolean; error: string | null; gone: boolean; errorDisk: string | null;
+  selection: Selection; filter: string;
+};
 
 export type FilesManagerProps = {
   initial: {
     left: Listing | null; right: Listing | null; leftPath: string; rightPath: string; active: Side;
     /** Words for a pane whose first listing failed for a reason other than "gone" (an unreadable image). */
     leftError?: string; rightError?: string;
+    /** The disk an unreadable image's refusal named, for its strip (Files 2 R2: never read from the path). */
+    leftErrorDisk?: string; rightErrorDisk?: string;
     /** The disk strip of each pane that starts inside a disk (disk-strip-data.ts). */
     strips?: StripData[];
   };
@@ -94,7 +100,8 @@ export type FilesManagerProps = {
 
 type Dialog =
   | {
-    kind: 'clash'; op: 'copy' | 'move'; sources: string[]; dest: string; where: string; undo: boolean; clashes: Clash[]; at: number;
+    kind: 'clash'; op: 'copy' | 'move'; sources: string[]; dest: string; where: string; undo: boolean; target: string | null;
+    clashes: Clash[]; at: number;
     choices: Record<string, ClashChoice>;
     /** Requests still to send once these clashes are answered, and the outcomes (and versions) of those already sent. */
     rest: TransferGroup[]; done: OpItem[]; versions: OpVersion[];
@@ -143,11 +150,6 @@ const noneDone = (): StashUploadResult => ({ items: [], renamed: [], refused: []
 const items = (n: number) => (n === 1 ? '1 item' : `${n} items`);
 const disks = (n: number) => (n === 1 ? '1 disk' : `${n} disks`);
 const files = (n: number) => (n === 1 ? '1 file' : `${n} files`);
-/** The disk a LIBRARY: path is in (LIBRARY:/<title>/<disk>/...), or null above the disks and anywhere else. */
-function diskIdOf(path: string | undefined): string | null {
-  const p = path ? parsePath(path) : null;
-  return p?.device === 'LIBRARY' ? p.segments[1] ?? null : null;
-}
 /** The root of the device a path is on ("STASH:"), for a pane whose place is gone. */
 const deviceRoot = (path: string) => `${parsePath(path)?.device ?? 'LIBRARY'}:`;
 const byDisk = (list: StripData[] | undefined) => Object.fromEntries((list ?? []).map((d) => [d.diskId, d]));
@@ -190,8 +192,11 @@ function wordsFor(code: unknown, detail: unknown): string {
 /** When each listing was read in this tab: an arriving STASH: row's stall clock runs on it. The server's first has none. */
 const readAt = new WeakMap<Listing, number>();
 
-/** `code`: the refusal's own code, for a caller that answers one differently (an archive that does not open). */
-async function fetchListing(path: string): Promise<{ listing: Listing } | { gone: true } | { error: string; code?: unknown }> {
+/**
+ * `code`: the refusal's own code, for a caller that answers one differently (an archive that does not open); `detail`:
+ * its detail (blob_unavailable names the disk).
+ */
+async function fetchListing(path: string): Promise<{ listing: Listing } | { gone: true } | { error: string; code?: unknown; detail?: unknown }> {
   try {
     const res = await fetch(`/api/files/list?path=${encodeURIComponent(path)}`, { cache: 'no-store' });
     if (res.ok) {
@@ -201,15 +206,22 @@ async function fetchListing(path: string): Promise<{ listing: Listing } | { gone
     }
     if (res.status === 404 || res.status === 400) return { gone: true };
     const body = (await res.json().catch(() => null)) as { error?: unknown; detail?: unknown } | null;
-    return { error: wordsFor(body?.error, body?.detail), code: body?.error };
+    return { error: wordsFor(body?.error, body?.detail), code: body?.error, detail: body?.detail };
   } catch {
     return { error: refusalWords('failed') };
   }
 }
 
-function firstState(path: string, listing: Listing | null, error: string | undefined): PaneState {
-  return { path, listing, loading: false, error: listing ? null : error ?? GONE, gone: !listing && !error, selection: EMPTY_SELECTION, filter: '' };
+function firstState(path: string, listing: Listing | null, error: string | undefined, errorDisk?: string): PaneState {
+  return {
+    path, listing, loading: false, error: listing ? null : error ?? GONE, gone: !listing && !error,
+    errorDisk: listing ? null : errorDisk ?? null, selection: EMPTY_SELECTION, filter: '',
+  };
 }
+
+/** The disk a failed listing names: an unreadable image's refusal carries its disk id (Files 2 R2). */
+const errorDiskOf = (r: { code?: unknown; detail?: unknown }) =>
+  (r.code === 'blob_unavailable' && typeof r.detail === 'string' ? r.detail : null);
 
 /** The picked entries, in the order the rows are drawn. */
 function pickedOf(rows: FsEntry[], sel: Selection): FsEntry[] {
@@ -238,7 +250,7 @@ function useArriving(l: Listing | null): { seen: ArrivingSeen; at: number } {
 /** What a pane draws: the "new in vN" marks, and a stopped arriving row's words in place of its percentage. */
 function shown(l: Listing | null, marks: ReadonlyMap<string, number>, arr: { seen: ArrivingSeen; at: number }): Listing | null {
   if (!l) return l;
-  const entries = withStalls(marks.size ? withAddedIn(l.entries, marks) : l.entries, arr.seen, arr.at);
+  const entries = withStalls(marks.size ? withAddedIn(l.entries, marks, l.diskBase) : l.entries, arr.seen, arr.at);
   return entries === l.entries ? l : { ...l, entries };
 }
 
@@ -277,8 +289,8 @@ function PhoneButton({ id, label, reason, busy, onClick, primary = false }: {
 export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const router = useRouter();
   const [panes, setPanes] = useState<Record<Side, PaneState>>(() => ({
-    left: firstState(initial.leftPath, initial.left, initial.leftError),
-    right: firstState(initial.rightPath, initial.right, initial.rightError),
+    left: firstState(initial.leftPath, initial.left, initial.leftError, initial.leftErrorDisk),
+    right: firstState(initial.rightPath, initial.right, initial.rightError, initial.rightErrorDisk),
   }));
   const [active, setActive] = useState<Side>(initial.active);
   const [sorts, setSorts] = useState(prefs.files.sort);
@@ -362,9 +374,10 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     setPanes((ps) => ({
       ...ps,
       [side]: 'listing' in r
-        ? { path, listing: r.listing, loading: false, error: null, gone: false, selection: EMPTY_SELECTION,
+        ? { path, listing: r.listing, loading: false, error: null, gone: false, errorDisk: null, selection: EMPTY_SELECTION,
             filter: ps[side].listing?.path === r.listing.path ? ps[side].filter : '' }
-        : { path, listing: null, loading: false, error: 'gone' in r ? GONE : r.error, gone: 'gone' in r, selection: EMPTY_SELECTION, filter: '' },
+        : { path, listing: null, loading: false, error: 'gone' in r ? GONE : r.error, gone: 'gone' in r,
+            errorDisk: 'gone' in r ? null : errorDiskOf(r), selection: EMPTY_SELECTION, filter: '' },
     }));
     return 'listing' in r;
   }
@@ -742,14 +755,15 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   type ClashDialogState = Extract<Dialog, { kind: 'clash' }>;
   /**
    * `undo`: whether the run may offer Undo (offersUndo: not when it changes STASH: or sends). `queued`: the files a
-   * copy into a board's queue has queued so far (NET: never clashes, so a send is one request).
+   * copy into a board's queue has queued so far (NET: never clashes, so a send is one request). `target`: the disk
+   * whose version the toast names (the destination pane's disk; Files 2 R2: from the listing, not the path).
    */
-  type Run = { op: 'copy' | 'move'; dest: string; where: string; undo: boolean; queued?: number };
+  type Run = { op: 'copy' | 'move'; dest: string; where: string; undo: boolean; target: string | null; queued?: number };
 
-  function transfer(op: 'copy' | 'move', sources: string[], dest: string, where: string) {
+  function transfer(op: 'copy' | 'move', sources: string[], dest: string, where: string, target: string | null) {
     if (busy) return;
     // R4: the Files setting's answer goes with the first request; only 'ask' (the default) can come back as clashes.
-    void runGroups({ op, dest, where, undo: offersUndo(op, sources, dest) }, [{ onClash: prefs.files.onClash, sources }], [], []);
+    void runGroups({ op, dest, where, undo: offersUndo(op, sources, dest), target }, [{ onClash: prefs.files.onClash, sources }], [], []);
   }
 
   /**
@@ -779,7 +793,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   function finishRun(run: Run, done: OpItem[], versions: OpVersion[]) {
     // A copy into a board's queue says how many FILES it queued (a folder is several): "Queued 3 files to A500 bench."
     const said = (n: number) => (run.queued !== undefined ? `Queued ${files(run.queued)} to ${run.where}.` : `${verbs[run.op][1]} ${items(n)} to ${run.where}.`);
-    if (done.length) void report(done, said, diskIdOf(run.dest), versions, { undo: run.undo });
+    if (done.length) void report(done, said, run.target, versions, { undo: run.undo });
     else reloadBoth();
   }
 
@@ -841,8 +855,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const side = active;
     const sources = picked.map((e) => e.path);
     switch (cmd) {
-      case 'copy': guarded([dst?.disk], () => transfer('copy', sources, dst!.path, where(dst))); return;
-      case 'move': guarded([dst?.disk, src?.disk], () => transfer('move', sources, dst!.path, where(dst))); return;
+      case 'copy': guarded([dst?.disk], () => transfer('copy', sources, dst!.path, where(dst), dst?.disk?.diskId ?? null)); return;
+      case 'move': guarded([dst?.disk, src?.disk], () => transfer('move', sources, dst!.path, where(dst), dst?.disk?.diskId ?? null)); return;
       // R2: with Ask before deleting off, a delete inside a disk runs at once (it saves a version; the toast offers
       // Undo). STASH: and NET: keep no versions, so they always ask.
       case 'delete':
@@ -866,7 +880,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    */
   async function deleteNow(l: Listing, entries: FsEntry[]) {
     const r = await post({ op: 'delete', sources: entries.map((e) => e.path) }, `Deleting ${items(entries.length)}…`);
-    if (r.kind === 'done') void report(r.items, (n) => `Deleted ${items(n)} from ${placeName(l.disk)}.`, diskIdOf(l.path), r.versions);
+    if (r.kind === 'done') void report(r.items, (n) => `Deleted ${items(n)} from ${placeName(l.disk)}.`, l.disk?.diskId ?? null, r.versions);
     const now = document.activeElement;
     if (!now || now === document.body) rootRef.current?.focus({ preventScroll: true });
   }
@@ -926,14 +940,15 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       void load(side, l.path);
       window.history.pushState(null, '', urlOf(side === 'left' ? l.path : panes.left.path, side === 'right' ? l.path : panes.right.path, active));
     }
-    guarded([l.disk, d.op === 'move' ? src?.disk : null], () => transfer(d.op, d.sources, l.path, where(l)));
+    guarded([l.disk, d.op === 'move' ? src?.disk : null], () => transfer(d.op, d.sources, l.path, where(l), l.disk?.diskId ?? null));
   }
 
-  /** A dialog's operation: the dialog stays open (busy) while it runs and closes once it is done. */
-  async function runFromDialog(req: OpRequest, label: string, success: (n: number) => string) {
+  /**
+   * A dialog's operation: the dialog stays open (busy) while it runs and closes once it is done. `target`: the disk it
+   * changes -- the dialog's pane's disk, where it makes the folder or its sources are (Files 2 R2: from the listing).
+   */
+  async function runFromDialog(req: OpRequest, label: string, success: (n: number) => string, target: string | null) {
     const r = await post(req, label);
-    // The disk the operation changed: where it made the folder, else where its first source is.
-    const target = diskIdOf('dest' in req ? req.dest : 'source' in req ? req.source : req.sources[0]);
     if (r.kind === 'done') { ranOp.current = true; setDialog(null); void report(r.items, success, target, r.versions); }
   }
 
@@ -1023,7 +1038,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     activate(side);
     const disk = l.disk;
     const dest = dropFolder(l, e);
-    const folder = (parsePath(dest)?.segments ?? []).slice(2).join('/');
+    // The folder's place on the disk, under the listing's diskBase (Files 2 R2: a collection adds a segment).
+    const folder = diskRelative(dest, l.diskBase) ?? '';
     const where = dest === l.path ? l.crumbs[l.crumbs.length - 1]?.label ?? disk.label : baseName(dest);
     // Read synchronously, before any await or confirm: the browser empties the DataTransfer once this handler returns.
     const reading = readDroppedItems(e.dataTransfer.items);
@@ -1229,7 +1245,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     if (op === 'move' && from && !from.writable) { toast.error(readOnly(from)); return; }
     activate(side);
     const label = where(l);
-    guarded([l.disk, op === 'move' ? from?.disk : null], () => transfer(op, data.paths, dest, label));
+    guarded([l.disk, op === 'move' ? from?.disk : null], () => transfer(op, data.paths, dest, label, l.disk?.diskId ?? null));
   }
 
   // ---- drawing ------------------------------------------------------------------------------------------------
@@ -1237,6 +1253,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const arrow = active === 'left';
   const dialogBusy = busy !== null;
   const dialogListing = dialog && 'side' in dialog ? panes[dialog.side].listing : null;
+  // The disk a dialog's operation changes, whose version its toast names.
+  const dialogTarget = dialogListing?.disk?.diskId ?? null;
   // What a delete names: the disk, STASH: (whose delete cannot be undone: ruling 8), or NET: (it cancels or clears, R4).
   const deleteWhere = deleteWhereOf(dialogListing);
   const deletedFrom = (n: number) => (deleteWhere === 'NET:' ? `Cancelled or cleared ${items(n)} on ${placeOf(dialogListing)}.`
@@ -1376,20 +1394,20 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
                              onCancel={() => setDialog(null)}
                              onConfirm={() => void runFromDialog({ op: 'delete', sources: dialog.entries.map((e) => e.path) },
                                deleteWhere === 'NET:' ? `Cancelling or clearing ${items(dialog.entries.length)}…` : `Deleting ${items(dialog.entries.length)}…`,
-                               deletedFrom)} />
+                               deletedFrom, dialogTarget)} />
       )}
       {(dialog?.kind === 'makedir' || dialog?.kind === 'rename') && (
         <NameDialog mode={dialog.kind} initial={dialog.kind === 'rename' ? dialog.entry.name : ''}
                     taken={dialogListing?.entries.map((e) => e.name) ?? []} busy={dialogBusy}
                     onCancel={() => setDialog(null)}
                     onSave={(name) => void (dialog.kind === 'rename'
-                      ? runFromDialog({ op: 'rename', source: dialog.entry.path, name }, 'Renaming…', () => `Renamed ${dialog.entry.name} to ${name}.`)
-                      : runFromDialog({ op: 'makedir', dest: dialogListing!.path, name }, 'Making the folder…', () => `Made the folder ${name}.`))} />
+                      ? runFromDialog({ op: 'rename', source: dialog.entry.path, name }, 'Renaming…', () => `Renamed ${dialog.entry.name} to ${name}.`, dialogTarget)
+                      : runFromDialog({ op: 'makedir', dest: dialogListing!.path, name }, 'Making the folder…', () => `Made the folder ${name}.`, dialogTarget))} />
       )}
       {dialog?.kind === 'protect' && (
         <ProtectDialog entries={dialog.entries} busy={dialogBusy} onCancel={() => setDialog(null)}
                        onSave={(protection) => void runFromDialog({ op: 'protect', sources: dialog.entries.map((e) => e.path), protection },
-                         'Setting protection…', (n) => `Protection set on ${items(n)}.`)} />
+                         'Setting protection…', (n) => `Protection set on ${items(n)}.`, dialogTarget)} />
       )}
       {dialog?.kind === 'info' && (
         // A queue row's Info only reads: its comment travels with the send and is not edited in NET:.
@@ -1397,7 +1415,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
                     onSaveComment={(comment) => {
                       const entry = dialog.entry;
                       guarded([dialogListing?.disk], () => void runFromDialog({ op: 'comment', source: entry.path, comment },
-                        'Saving the comment…', () => `Comment saved on ${entry.name}.`));
+                        'Saving the comment…', () => `Comment saved on ${entry.name}.`, dialogTarget));
                     }} />
       )}
       {dialog?.kind === 'pick' && (

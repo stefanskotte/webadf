@@ -12,7 +12,7 @@ import { ejectMessage, mountedReason } from '@/lib/mount-wording';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
 import { readVolume, readUsage, DD_GEOMETRY } from '@/lib/adffs';
-import { listCollections } from '@/lib/collections';
+import { firstCollectionOf, listCollections } from '@/lib/collections';
 import { listDevices } from '@/lib/queries';
 import { mountChoices, holderText } from '@/lib/mount-choice';
 import { kindFromSetName, pickKind } from '@/lib/game-kind';
@@ -68,7 +68,8 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
     const found = await libraryDiskOf(orgId, id);
     if (!found) notFound();
     if (found.imageFormat === 'hfe') redirect(`/games/${found.gameId}`);
-    redirect(filesHrefForDisk(found.gameId, id));
+    // Inside the title's first collection when it is filed in one (Files 2 §3.1).
+    redirect(filesHrefForDisk(found.gameId, id, false, await firstCollectionOf(orgId, found.gameId)));
   }
 
   const from = typeof sp.from === 'string' ? sp.from : undefined;

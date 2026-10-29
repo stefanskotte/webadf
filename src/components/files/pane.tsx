@@ -70,9 +70,9 @@ function glyphOf(e: FsEntry): { label: string; bg: string; fg: string } {
 /** A file, or an archive (a file that also opens as a folder): the rows that have a size. */
 const sized = (e: FsEntry) => (e.kind === 'file' || e.kind === 'archive') && e.size !== null;
 
-/** Below lg, the line under a row's name: what the Size and Date columns say at lg ("6 B · 2019-08-14"). */
+/** Below lg, the line under a row's name: what the Size and Date columns say at lg ("6 B · 2019-08-14", "12 titles"). */
 export function subLine(e: FsEntry): string {
-  return [sized(e) ? paneSize(e.size!) : null, e.date ? e.date.slice(0, 10) : null]
+  return [sized(e) ? paneSize(e.size!) : e.sizeText ?? null, e.date ? e.date.slice(0, 10) : null]
     .filter((x): x is string => x !== null).join(' · ');
 }
 
@@ -287,7 +287,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
                       )}
                     </td>
                     <td className={`${cell} text-right font-mono text-[12px] max-lg:hidden`} style={{ ...cellStyle, color: 'var(--muted)' }}>
-                      {sized(e) ? paneSize(e.size!) : '—'}
+                      {sized(e) ? paneSize(e.size!) : e.sizeText ?? '—'}
                     </td>
                     <td className={`${cell} font-mono text-[11px] font-semibold max-lg:hidden`} style={cellStyle}>
                       {e.protection ? <span className="flex gap-0.5"><ProtectionCells protection={e.protection} /></span>

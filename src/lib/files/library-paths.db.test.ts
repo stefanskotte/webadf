@@ -124,6 +124,16 @@ describe('LIBRARY: as the Library (Files 2 §3.1)', () => {
   });
 });
 
+describe('firstCollectionOf (Files 2 §3.1: where Files… opens a disk)', () => {
+  it('the first of the org\'s collections, in collection order, the title is filed in; null when in none or foreign', async () => {
+    const { firstCollectionOf } = await import('@/lib/collections');
+    expect(await firstCollectionOf('o1', 'g1')).toBe('c1');   // in c2 (sortKey 1) and c1 (sortKey 0)
+    expect(await firstCollectionOf('o1', 'g2')).toBe('c1');
+    expect(await firstCollectionOf('o1', 'g3')).toBeNull();
+    expect(await firstCollectionOf('o2', 'g1')).toBeNull();
+  });
+});
+
 describe('ops through a collection prefix are prefix-blind', () => {
   it('a copy out of a disk reached through a collection writes one version of the destination', async () => {
     const r = await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/c1/g1/d1/ReadMe'], dest: 'LIBRARY:/g2/d2', onClash: 'ask' });

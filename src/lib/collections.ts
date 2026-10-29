@@ -337,3 +337,16 @@ export async function moveGamesToCollection(
     return { added: added.length, alreadyThere: ownedIds.length - added.length, removedFrom, missing };
   });
 }
+
+/**
+ * The first of this org's collections (in the Library's collection order: sortKey, then id, as listCollections) the
+ * title is filed in, or null (Files 2 §3.1): where "Files…" opens the title's disk. Scoped through `collections`, since
+ * collection_games carries no org_id (D-4-5).
+ */
+export async function firstCollectionOf(orgId: string, gameId: string): Promise<string | null> {
+  const [row] = await getDb().select({ id: collections.id }).from(collectionGames)
+    .innerJoin(collections, and(eq(collections.id, collectionGames.collectionId), eq(collections.orgId, orgId)))
+    .where(eq(collectionGames.gameId, gameId))
+    .orderBy(collections.sortKey, collections.id).limit(1);
+  return row?.id ?? null;
+}

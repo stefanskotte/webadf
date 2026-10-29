@@ -38,18 +38,25 @@ describe('identityToConfirm (Files Task 9b)', () => {
   });
 });
 
-describe('diskRelative and withAddedIn (Files Task 9b)', () => {
-  it('a LIBRARY: path inside a disk, from the disk root; above the disks, null', () => {
-    expect(diskRelative('LIBRARY:/g/d/Docs/Read me')).toBe('Docs/Read me');
-    expect(diskRelative('LIBRARY:/g/d')).toBe('');
-    expect(diskRelative('LIBRARY:/g')).toBeNull();
+describe('diskRelative and withAddedIn (Files Task 9b; Files 2 R2: read under the listing\'s diskBase)', () => {
+  it('a path inside the disk, from the disk root, also through a collection', () => {
+    expect(diskRelative('LIBRARY:/g/d/Docs/Read me', 'LIBRARY:/g/d')).toBe('Docs/Read me');
+    expect(diskRelative('LIBRARY:/c1/g1/d1/C/Assign', 'LIBRARY:/c1/g1/d1')).toBe('C/Assign');
+    expect(diskRelative('LIBRARY:/c1/g1/d1', 'LIBRARY:/c1/g1/d1')).toBe('');
   });
-  it('marks the entries the History says a version added, by their path on the disk', () => {
-    const out = withAddedIn([entry('LIBRARY:/g/d/Docs/A'), entry('LIBRARY:/g/d/Docs/B')], new Map([['Docs/B', 2], ['A', 1]]));
+  it('null outside the disk, without a base, and for a sibling whose name starts the same', () => {
+    expect(diskRelative('LIBRARY:/g1/d10/x', 'LIBRARY:/g1/d1')).toBeNull();
+    expect(diskRelative('LIBRARY:/g1/d1/x', null)).toBeNull();
+    expect(diskRelative('LIBRARY:/g1/d1/x', undefined)).toBeNull();
+    expect(diskRelative('STASH:/x', 'LIBRARY:/g1/d1')).toBeNull();
+  });
+  it('marks the entries the History says a version added, by their path under the base', () => {
+    const out = withAddedIn([entry('LIBRARY:/g/d/Docs/A'), entry('LIBRARY:/g/d/Docs/B')], new Map([['Docs/B', 2], ['A', 1]]), 'LIBRARY:/g/d');
     expect(out.map((e) => e.addedIn ?? null)).toEqual([null, 2]);
+    expect(withAddedIn([entry('LIBRARY:/c1/g1/d1/C/Assign')], new Map([['C/Assign', 3]]), 'LIBRARY:/c1/g1/d1')[0].addedIn).toBe(3);
   });
   it('no marks leaves the entries as they were', () => {
     const list = [entry('LIBRARY:/g/d/A')];
-    expect(withAddedIn(list, new Map())).toBe(list);
+    expect(withAddedIn(list, new Map(), 'LIBRARY:/g/d')).toBe(list);
   });
 });

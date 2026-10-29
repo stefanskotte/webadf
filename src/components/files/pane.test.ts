@@ -71,6 +71,14 @@ describe('Pane (Files increment 1, Task 7)', () => {
     expect(html.indexOf('the-strip')).toBeLessThan(html.indexOf('pane-left-error'));
   });
 
+  it('a collection row is a folder with its title count in the Size cell, first at the root (Files 2 §3.1)', () => {
+    const l: Listing = { ...rootListing, entries: [...rootListing.entries, entry('Demos', 'collection', { path: 'LIBRARY:/c1', size: null, sizeText: '12 titles', protection: null, date: null })] };
+    const html = render({ listing: l });
+    expect(rows(html).map((t) => attr(t, 'data-name'))).toEqual(['Demos', 'SysInfo']);
+    expect(html).toContain('12 titles');
+    expect(attr(rows(html)[0], 'data-kind')).toBe('collection');
+    expect(subLine(l.entries[1])).toBe('12 titles');
+  });
   it('lists folders first, then files by the sort', () => {
     const r = rows(render());
     expect(r.map((t) => attr(t, 'data-name'))).toEqual(['Tools', 'Assign', 'List']);

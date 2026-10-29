@@ -10,15 +10,14 @@ const listing = (diskId: string | null): Listing => ({
   disk: diskId === null ? null : { diskId } as Listing['disk'],
 });
 
-describe('stripDiskOf (final review: an unreadable disk keeps its strip)', () => {
-  it('the listed disk, else the disk the path is in when its image could not be read', () => {
-    expect(stripDiskOf({ path: 'LIBRARY:/g/d', listing: listing('d'), error: null, gone: false })).toBe('d');
-    expect(stripDiskOf({ path: 'LIBRARY:/g/d/C', listing: null, error: 'The disk image could not be read.', gone: false })).toBe('d');
+describe('stripDiskOf (an unreadable disk keeps its strip; Files 2 R2: by id, not by path)', () => {
+  it('the listing\'s disk, else the id the refusal named', () => {
+    expect(stripDiskOf({ listing: listing('d'), errorDisk: null })).toBe('d');
+    expect(stripDiskOf({ listing: null, errorDisk: 'd4' })).toBe('d4');
   });
-  it('none above the disks, and none for a place that is gone', () => {
-    expect(stripDiskOf({ path: 'LIBRARY:/g', listing: listing(null), error: null, gone: false })).toBeNull();
-    expect(stripDiskOf({ path: 'LIBRARY:/g', listing: null, error: 'x', gone: false })).toBeNull();
-    expect(stripDiskOf({ path: 'LIBRARY:/g/d', listing: null, error: 'This place no longer exists.', gone: true })).toBeNull();
+  it('none above the disks, and none for a failure that named no disk', () => {
+    expect(stripDiskOf({ listing: listing(null), errorDisk: null })).toBeNull();
+    expect(stripDiskOf({ listing: null, errorDisk: null })).toBeNull();
   });
 });
 

@@ -17,6 +17,12 @@ const mixed: FsEntry[] = [
 const isFolder = (x: FsEntry) => x.kind !== 'file';
 
 describe('sortFsEntries', () => {
+  it('collections come first, in the server\'s order whatever the key; only the titles after them sort (Files 2 D10)', () => {
+    const rows = [e('Alpha', 'title'), e('Zeta', 'collection'), e('Beta', 'collection'), e('Aardvark', 'title')];
+    expect(sortFsEntries(rows, { key: 'name', dir: 'asc' }).map((x) => x.name)).toEqual(['Zeta', 'Beta', 'Aardvark', 'Alpha']);
+    expect(sortFsEntries(rows, { key: 'name', dir: 'desc' }).map((x) => x.name)).toEqual(['Zeta', 'Beta', 'Alpha', 'Aardvark']);
+    expect(sortFsEntries(rows, { key: 'size', dir: 'desc' }).map((x) => x.name).slice(0, 2)).toEqual(['Zeta', 'Beta']);
+  });
   const keys: FilesSortKey[] = ['name', 'size', 'protection', 'date'];
   for (const key of keys) for (const dir of ['asc', 'desc'] as const) {
     it(`folders first under ${key} ${dir}`, () => {

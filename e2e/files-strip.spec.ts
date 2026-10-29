@@ -152,3 +152,51 @@ test('a disk in a drive: the chip says which, Eject to edit replaces Mount, and 
   const [row] = await getDb().select().from(devices).where(eq(devices.id, deviceId));
   expect(row.desiredDiskId).toBeNull();
 });
+
+/** A new collection of this org with `gameIds` filed in it (the Library's own routes); its id. */
+async function fileIn(page: Page, name: string, gameIds: string[]): Promise<string> {
+  const created = await page.request.post('/api/collections', { data: { name } });
+  expect(created.ok()).toBe(true);
+  const { id } = (await created.json()) as { id: string };
+  for (const gameId of gameIds) expect((await page.request.post(`/api/collections/${id}/games`, { data: { gameId } })).ok()).toBe(true);
+  return id;
+}
+
+test('a filed title: Files… opens its disk inside its first collection, and the strip, a drop and its mark follow the prefixed path (Files 2 §3.1)', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const tag = runTag();
+  const { gameId, diskId } = await seedRealDisk(orgId, tag);
+  const lost = await seedDisk(orgId, {
+    title: `Lost-${tag}`, diskNo: 1, sha256: createHash('sha256').update(`never-stored-${tag}`).digest('hex'), writeProtected: false,
+  });
+  const first = await fileIn(page, `First ${tag}`, [gameId, lost.gameId]);
+  try {
+    await page.goto(`/games/${gameId}`);
+    await page.getByTestId(`files-${diskId}`).click();
+    await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe(`LIBRARY:/${first}/${gameId}/${diskId}`);
+    const strip = page.getByTestId('disk-strip-right');
+    await expect(strip).toContainText(`Strip-${tag}`);
+    await managerReady(page);
+
+    // Dropped at the disk's root: it lands there (not in a folder named after the disk), and is marked new in v1.
+    await synthDrop(page, [{ name: 'Notes.txt', kind: 'file', content: 'through a collection' }], '[data-testid="pane-right"]');
+    const review = page.getByTestId('files-drop-review');
+    await review.getByTestId('drop-commit').click();
+    await expect(page.getByText(/^Added 1 item to .+ — saved as version 1\.$/)).toBeVisible({ timeout: 15_000 });
+    const row = page.getByTestId('pane-right').getByTestId('pane-row').filter({ hasText: 'Notes.txt' });
+    await expect(row.getByTestId('pane-new-Notes.txt')).toHaveText('new in v1');
+    await expect(strip.getByTestId('disk-strip-history-toggle')).toHaveText('History · v1');
+
+    // An unreadable disk reached through the collection keeps its strip, on load and on arriving.
+    await page.goto(`/files?${new URLSearchParams({ left: `LIBRARY:/${first}/${lost.gameId}/${lost.diskId}`, right: 'LIBRARY:', active: 'left' })}`);
+    await expect(page.getByTestId('pane-left-error')).toHaveText('The disk image could not be read. Try again in a moment.');
+    await expect(page.getByTestId('disk-strip-left')).toContainText(`Lost-${tag}`);
+    await page.goto(`/files?${new URLSearchParams({ left: `LIBRARY:/${first}/${lost.gameId}`, right: 'LIBRARY:', active: 'left' })}`);
+    await managerReady(page);
+    await page.getByTestId('pane-left').locator('[data-testid="pane-row"][data-kind="disk"]').dblclick();
+    await expect(page.getByTestId('pane-left-error')).toBeVisible();
+    await expect(page.getByTestId('disk-strip-left').getByTestId('disk-strip-history-toggle')).toBeVisible();
+  } finally {
+    await page.request.delete(`/api/collections/${first}`);
+  }
+});
