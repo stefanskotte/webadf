@@ -1547,7 +1547,7 @@ Spec docs/superpowers/specs/2026-10-30-net-volumes-design.md, plan docs/superpow
 NET:/<board> lists the Amiga's volumes (Transfer's order, "DH1: · 41.0 MB free") then **Queue** -- the send queue moved
 to NET:/<board>/Queue (old NET:/<board>/<transferId> paths and every filesHrefForBoard link still land there). A volume
 or drawer is read through a remote request (remote_requests, **migration 0053 -- NOT yet applied to production: apply
-it at the merge**; devices.req_version/rx_proto/browse_on): board routes GET /api/device/req and POST
+0053 to production BEFORE pushing master (the new code reads devices.req_version/rx_proto/browse_on)**): board routes GET /api/device/req and POST
 /api/device/req/<rid>; an answer is remembered 2 minutes ("read 40 s ago"), Refresh (bank row 3 col 5, Ctrl/Cmd-R, the
 phone's More sheet) asks afresh; the pane gives up after 20 s ("A500 didn't answer — Refresh to try again"). Copy out
 of a volume to STASH: or LIBRARY: is one GET per file, the board's upload carrying `request`, progress on the status
@@ -1566,6 +1566,13 @@ row and Queue alone.
 - **Help:** `files` gains "Browsing the Amiga" (needs, a few seconds a drawer, the 2-minute memory, Refresh/Ctrl-R, the
   Queue folder, read-only for now); `stash-net` points to it. `files` alone may run to 360 words (topics.test.ts; it is
   at 355), every other topic keeps 280 (controller ruling, Task 9 fix round 1).
+- **Final review rulings (2026-10-30, fixed on the branch):** Transfer sends PLAIN volume names; the server labels a
+  duplicate (and a volume named Queue) "Name (DF1:)" and sends a path through it as the device's path ("DF1:c") -- the
+  Transfer 2.3 plan must not implement the suffix form (spec §2.2 amended). A take of GET /api/device/req hands out
+  listings before gets and bumps req_version again while any wait (a copy of >8 files no longer stalls; the fake board
+  now fetches only when req_version moves). Refresh after the 20 s give-up asks again. A refused upload open fails its
+  get with why; a NET: notfound shows its words on in-app navigation; a drawer onto LIBRARY: is refused as a folder
+  before the walk.
 - **Owed:** Transfer 2.3 and firmware 1.22 plans; the A500 bench (spec §7: browsable, drawer two levels down, copies to
   STASH:/LIBRARY: and a drawer, a >1000-entry drawer's cut row, browsing off with Queue still sending, Quit Transfer
   mid-listing).
