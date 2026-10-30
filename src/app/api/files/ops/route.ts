@@ -8,7 +8,7 @@ export const maxDuration = 60;
 
 const path = z.string().min(1).max(1024);
 const sources = z.array(path).min(1).max(1000);
-const name = z.string().min(1).max(64);   // the engine applies the Amiga name rules
+const name = z.string().min(1).max(80);   // AmigaDOS rules on disks and in STASH:, collection rules on LIBRARY: (the engine applies them)
 const Body = z.discriminatedUnion('op', [
   z.object({ op: z.enum(['copy', 'move']), sources, dest: path, onClash: z.enum(['ask', 'replace', 'skip', 'keep-both']) }),
   z.object({ op: z.literal('delete'), sources }),
@@ -17,6 +17,8 @@ const Body = z.discriminatedUnion('op', [
   z.object({ op: z.literal('protect'), sources, protection: z.number().int().min(0).max(255) }),
   z.object({ op: z.literal('comment'), source: path, comment: z.string().max(200) }),
   z.object({ op: z.literal('add-to-library'), sources }),
+  z.object({ op: z.literal('create-adf'), dest: path, name, filesystem: z.enum(['OFS', 'FFS']), density: z.enum(['dd', 'hd']),
+    onClash: z.enum(['ask', 'replace', 'skip', 'keep-both']) }),
 ]);
 
 export async function POST(request: Request) {

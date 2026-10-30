@@ -198,6 +198,52 @@ test('a collection is created, renamed and deleted from the rail, and its games 
   expect(surviving).toHaveLength(2);
 });
 
+test('a name another collection has, in any case, is refused inline and the typed text is kept', async ({ page }) => {
+  // Collection names are unique per library, any case (Files 2 operator ruling R3, migration 0052).
+  const run = runTag();
+  await signUpFresh(page);
+  const demos = await apiCreateCollection(page, `Demos ${run}`);
+  const gamesId = await apiCreateCollection(page, `Games ${run}`);
+  await page.goto('/library');
+  await expect(railRow(page, demos)).toHaveCount(1);
+
+  // New collection: the field keeps what was typed and says why, without a toast; typing clears the line.
+  const create = page.getByTestId('collection-create');
+  await create.fill(`DEMOS ${run}`);
+  await create.press('Enter');
+  const createError = page.getByTestId('collection-create-error');
+  await expect(createError).toHaveText('A collection with that name already exists.');
+  await expect(create).toHaveValue(`DEMOS ${run}`);
+  await expect(page.getByTestId('collection-row')).toHaveCount(2);
+  await create.fill(`Intros ${run}`);
+  await expect(createError).toHaveCount(0);
+
+  // Rename onto the other's name: the field stays open with the typed text and says why; Escape leaves the name as it was.
+  await page.getByTestId(`collection-menu-${gamesId}`).click();
+  await page.getByTestId(`collection-rename-${gamesId}`).click();
+  const input = railRow(page, gamesId).locator('input');
+  await expect(input).toBeVisible();
+  const patches: string[] = [];
+  page.on('request', (r) => { if (r.method() === 'PATCH' && r.url().includes(`/api/collections/${gamesId}`)) patches.push(r.url()); });
+  await input.fill(`demos ${run}`);
+  await input.press('Enter');
+  await expect(page.getByTestId('collection-rename-error')).toHaveText('A collection with that name already exists.');
+  await expect(input).toHaveValue(`demos ${run}`);
+  // After a clash, clicking elsewhere (a blur) with the same text sends nothing and leaves the field open with the
+  // message; only Enter (or a changed name) tries again.
+  await input.evaluate((el) => (el as HTMLInputElement).blur());
+  await expect(input).toBeVisible();
+  await expect(page.getByTestId('collection-rename-error')).toBeVisible();
+  await page.waitForTimeout(300);
+  expect(patches.length).toBe(1);
+  await input.focus();
+  await input.press('Enter');
+  await expect.poll(() => patches.length).toBe(2);
+  await input.press('Escape');
+  await expect(railRow(page, gamesId).getByTestId('collection-name')).toHaveText(`Games ${run}`);
+  expect((await getDb().select().from(collections).where(eq(collections.id, gamesId)))[0].name).toBe(`Games ${run}`);
+});
+
 test('filtering to a collection shows exactly its games', async ({ page }) => {
   const run = runTag();
   const u = await signUpFresh(page);

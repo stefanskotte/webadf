@@ -45,7 +45,7 @@ export const HELP_TOPICS = {
         <p>
           <strong>Folders.</strong> In the table, the library&apos;s first page lists each collection as a folder,
           before the titles that are in no collection. Open a folder to
-          see its titles; <em>↑ Library</em> takes you back. <em>All titles</em> has the same way back.
+          see its titles; <em>↑ Library</em> takes you back. <em>All titles</em> does too. Collection names must differ, ignoring case.
         </p>
         <p>
           <strong>Pages.</strong> 48 titles to a page, unless you change <em>Per page</em> or{' '}
@@ -76,42 +76,42 @@ export const HELP_TOPICS = {
   // phone's Left/Right and Copy to…/Move to…, a drag copies and Shift at the drop moves -- Chromium reads Shift only once
   // the drag has begun, increment-1 ledger Task 11), disk-strip.tsx (drive chip, Mount or Eject to edit, History, ⬇ ADF),
   // dialogs.tsx (Replace, Skip, Keep both), keys.ts (the keys), view.ts (filter, Show .info, folders copied whole).
+  // Files 2 (spec 2026-10-29-files-2-design.md): button-bank.tsx, bank.ts, shelf.ts/shelf-rules.ts, create-adf-dialog.tsx.
   files: {
     title: 'Files',
-    short: 'Two panes for every file that is not a whole disk: STASH:, NET: and the disks in LIBRARY:. Pick files on one side and copy or move them to the other.',
+    short: 'Two panes for every file that is not a whole disk: STASH:, NET: and LIBRARY:. Pick files in the source pane and copy or move them to the other.',
     body: (
       <>
         <p>
-          <strong>Three places.</strong> <em>STASH:</em> holds loose files: what you drop on the page and what your
-          Amiga sends. <em>NET:</em> lists your boards; copying into one sends the files to its Amiga.{' '}
-          <em>LIBRARY:</em> opens a title, then a disk, then its folders.
+          <strong>Three places.</strong> <em>STASH:</em> holds loose files you drop here or your Amiga sends.{' '}
+          <em>NET:</em> lists your boards; copying into one sends to its Amiga. <em>LIBRARY:</em> shows your collections as
+          folders, then the titles in none.
         </p>
         <p>
-          <strong>Copy and move.</strong> Pick files in a pane (Shift-click for a range,
-          Ctrl- or ⌘-click for one more), then press <em>Copy</em> or <em>Move</em> in the middle column. Dragging rows
-          onto the other pane copies them; to move them instead, hold Shift after the drag has started, until you drop.
-          When a name is already there, choose Replace, Skip or Keep both.
+          <strong>Source and destination.</strong> The pane you last clicked is the source, with the dark title bar. <em>Copy</em> and <em>Move</em> go to the other pane; the device column takes it to
+          STASH:, LIBRARY: or NET:. Dragging rows across copies; to move, hold Shift after the drag has started. When a
+          name is already there, choose Replace, Skip or Keep both.
         </p>
         <p>
-          <strong>Inside a disk.</strong> The strip above the files shows which drive holds the disk, the free space,{' '}
-          <em>Mount</em>, <em>History</em> and <em>⬇ ADF</em>. Each change saves one new version, with
-          Undo. A disk in a drive cannot be changed until you eject it with <em>Eject to edit</em>.{' '}
-          <em>Protect</em> sets protection bits; <em>Info</em> shows a file&apos;s details and comment.
+          <strong>Filing.</strong> Move a title onto a collection to file it there and out of the one it was in (one already there is
+          skipped); Copy files it in both. Move to LIBRARY: takes it out of its collection. Makedir on LIBRARY: makes a collection. Disk
+          images copied from STASH: join the library. <em>Create ADF…</em> makes a blank disk.
         </p>
         <p>
-          <strong>Finding files.</strong> Type in a pane&apos;s filter box to see only names that contain it;{' '}
-          <em>Show .info</em> hides or shows icon files. Copying or deleting a folder still takes everything in it.
+          <strong>Inside a disk.</strong> The strip shows the drive, <em>Mount</em>, <em>History</em> and{' '}
+          <em>⬇ ADF</em>. Each change saves one new version, with Undo; <em>Eject to edit</em> a disk in a drive.{' '}
+          <em>Protect</em> sets bits; <em>Info</em> shows details. Type in a filter box; <em>Show .info</em> hides or shows icon files.
         </p>
         <p>
           <strong>Keys.</strong> ↑ and ↓ move, Space picks, Enter opens, Backspace goes up, Tab switches pane, / filters,
           F5 copies, F6 moves, F7 makes a folder, F2 renames, Delete deletes.
         </p>
         <p>
-          <strong>On a phone.</strong> One pane at a time: <em>Left</em> and <em>Right</em> at the top switch.{' '}
+          <strong>On a phone.</strong> One pane at a time: <em>Left</em> and <em>Right</em> switch.{' '}
           <em>Copy to…</em> and <em>Move to…</em> ask where.
         </p>
         <GoodToKnow items={[
-          'Settings › Account › Files sets the panes Files opens with, .info files, the Comment column, whether Delete asks first, and the answer when a name is already there.',
+          'Settings › Account › Files sets the opening panes, .info files, the Comment column, the delete confirm and the answer when a name is already there.',
         ]} />
       </>
     ),

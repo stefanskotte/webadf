@@ -372,6 +372,15 @@ describe('Files help (increment 4)', () => {
       'one new version', 'Undo', 'Eject to edit', 'Protect', 'Info', 'filter box', 'Show .info', 'F5', 'F6', 'F7', 'F2', '/ filters',
       'Space', 'Backspace', 'Tab', 'Left', 'Right', 'Copy to…', 'Move to…', 'Settings › Account › Files']) expect(b).toContain(w);
   });
+  it('files names the source and destination, the device column, filing into collections and Create ADF (Files 2 §6)', () => {
+    const b = bodyText('files').replace(/\s+/g, ' ');
+    for (const w of ['source', 'dark title bar', 'device column', 'collections as folders', 'Move a title onto a collection',
+      'Copy files it in both', 'Makedir on LIBRARY: makes a collection', 'Create ADF…', 'STASH: join the library']) expect(b).toContain(w);
+    expect(b).not.toMatch(/→|←|middle column/);
+  });
+  it('library never says a disk was already in the library (a disk it had reads Added like any other, spec §5)', () => {
+    expect(bodyText('library').replace(/\s+/g, ' ')).not.toMatch(/already in the library/i);
+  });
   it('stash-net names the limits, archives, Add to library, the marks, sending by copy and the key digits', () => {
     const b = HELP_TOPICS['stash-net'].short + bodyText('stash-net').replace(/\s+/g, ' ');
     for (const w of ['30 days', '500 files', '256 MB', '20 MB', '4 MB', '32 files', '16 MB', 'read-only', 'Add to library',
@@ -384,5 +393,13 @@ describe('Files help (increment 4)', () => {
   });
   it('the new topics never say drive in their title or short (the help filter test pins drive to four topics)', () => {
     for (const id of ['files', 'stash-net'] as const) expect(HELP_TOPICS[id].title + HELP_TOPICS[id].short).not.toMatch(/drive/i);
+  });
+
+  it('files says a title already in the target collection is skipped and stays put', () => {
+    expect(bodyText('files').replace(/\s+/g, ' ')).toMatch(/already (there|in it)[^.]*skipped|skipped[^.]*already/i);
+  });
+
+  it('library says collection names must differ, ignoring case', () => {
+    expect(bodyText('library').replace(/\s+/g, ' ')).toMatch(/names? must differ[^.]*case/i);
   });
 });

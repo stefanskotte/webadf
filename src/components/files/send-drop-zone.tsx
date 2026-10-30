@@ -137,9 +137,9 @@ export function SendDropZone({ targets, initialBoard, serverNow, paneQueues = []
       hint="Any file up to 4 MB, or a folder. It waits in NET: until Transfer on the Amiga takes it."
       // Read before this handler returns: the browser empties the DataTransfer after it (drop-reader.ts).
       onItems={(items) => void send(fromItems(readDroppedItems(items)))}>
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 max-sm:contents">
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 max-sm:contents lg:flex-1 lg:justify-end lg:gap-y-1">
         <label htmlFor="files-send-input" data-testid="files-send-browse" data-tile={busy ? 'Working…' : 'Send to Amiga'}
-               className={`${INK_LABEL} ${TILE_LOOK} ${TILE.full}`} style={INK_STYLE}>
+               className={`${INK_LABEL} ${TILE_LOOK} ${TILE.full} lg:order-2`} style={INK_STYLE}>
           <span className="max-sm:hidden">{busy ? 'Working…' : 'Choose files'}</span>
           <input id="files-send-input" type="file" multiple aria-label="Choose files to send" className="sr-only" data-testid="files-send-input"
                  disabled={busy !== null}
@@ -150,24 +150,24 @@ export function SendDropZone({ targets, initialBoard, serverNow, paneQueues = []
                  }} />
         </label>
         {single && (
-          <span className="text-[13px] max-sm:order-3 max-sm:col-span-2" data-testid="files-send-board" style={{ color: 'var(--muted)' }}>
+          <span className="text-[13px] max-sm:order-3 max-sm:col-span-2 lg:order-1 lg:text-[12px]" data-testid="files-send-board" style={{ color: 'var(--muted)' }}>
             To <strong className="font-semibold" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>{single.name}</strong> · {targetState(single, serverNow)}
           </span>
         )}
         {line && (
           <span role="status" data-testid="files-send-receiver" data-ok={String(line.ok)}
-                className="text-[13px] font-medium max-sm:order-3 max-sm:col-span-2"
+                className="text-[13px] font-medium max-sm:order-3 max-sm:col-span-2 lg:order-3 lg:basis-full lg:text-right lg:text-[12px]"
                 style={{ color: line.ok ? 'var(--success-fg)' : 'var(--warning-fg)' }}>
             {line.ok ? '✓ ' : '• '}{line.text}
           </span>
         )}
         <p role="status" aria-live="polite" data-testid="files-send-progress"
-           className="basis-full text-[12px] empty:hidden max-sm:order-3 max-sm:col-span-2" style={{ color: 'var(--muted)' }}>
+           className="basis-full text-[12px] empty:hidden max-sm:order-3 max-sm:col-span-2 lg:order-4 lg:text-right" style={{ color: 'var(--muted)' }}>
           {busy ?? ''}
         </p>
       </div>
       {!single && (
-        <fieldset className="flex flex-col gap-1 rounded-[12px] p-2.5 max-sm:order-4 max-sm:col-span-2" data-testid="files-send-board-picker"
+        <fieldset className="flex flex-col gap-1 rounded-[12px] p-2.5 max-sm:order-4 max-sm:col-span-2 lg:basis-full lg:py-1.5" data-testid="files-send-board-picker"
                   style={{ background: 'var(--surface-2)' }}>
           <legend className="sr-only">Board to send to</legend>
           {shown.map((t) => (

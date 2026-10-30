@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { holdsFiles, addToLibraryReason, offersUndo, placeOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly, failedReason, FAILED_ROW } from './pane-rules';
+import { holdsFiles, addToLibraryReason, offersUndo, placeOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly, failedReason, FAILED_ROW, deleteText, deleteWhere } from './pane-rules';
 import type { FsEntry, Listing } from './types';
 
 const L = (path: string, extra: Partial<Listing> = {}): Listing => ({ path, crumbs: [], entries: [], writable: true, readOnlyReason: null, disk: null, meta: '', ...extra });
@@ -116,5 +116,21 @@ describe('NET: in the panes (increment 3, Task 2)', () => {
   it('netReadOnly: nothing in NET: is renamed, protected or commented', () => {
     expect(netReadOnly(board())).toBe(true);
     expect(netReadOnly(L('STASH:'))).toBe(false);
+  });
+});
+
+describe('LIBRARY: above the disks (Files 2 §3.2)', () => {
+  it('deleting collections says their titles stay; a shelf is named by its crumb', () => {
+    const c = (n: string) => E(n, 'collection');
+    expect(deleteText([c('Demos')], 'LIBRARY:')).toBe('Delete the collection “Demos”? Its titles stay in the library.');
+    expect(deleteText([c('Demos'), c('Games')], 'LIBRARY:')).toBe('Delete 2 collections? Their titles stay in the library.');
+    expect(deleteWhere({ ...L('LIBRARY:'), library: { level: 'root', collectionId: null } })).toBe('LIBRARY:');
+    expect(deleteWhere({ ...L('LIBRARY:/g1/d1', { disk }), library: { level: 'disk', collectionId: null } })).toBe(disk);
+    expect(placeOf({ ...L('LIBRARY:/c1'), crumbs: [{ label: 'LIBRARY:', path: 'LIBRARY:' }, { label: 'Demos', path: 'LIBRARY:/c1' }], library: { level: 'collection', collectionId: 'c1' } })).toBe('Demos');
+    expect(placeOf({ ...L('LIBRARY:'), crumbs: [{ label: 'LIBRARY:', path: 'LIBRARY:' }], library: { level: 'root', collectionId: null } })).toBe('LIBRARY:');
+  });
+  it('filing may take a disk image the library already has (R4); Add to library still says so', () => {
+    expect(addToLibraryReason(L('STASH:'), [E('Old.adf', 'file', { marks: ['in the library'] })], { filing: true })).toBeNull();
+    expect(addToLibraryReason(L('STASH:'), [E('Old.adf', 'file', { marks: ['in the library'] })])).toBe('Already in the library');
   });
 });

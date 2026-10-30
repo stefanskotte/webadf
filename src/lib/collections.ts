@@ -11,7 +11,7 @@
 // comment on orgFilter makes the same point about an empty org id).
 
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, ne, sql } from 'drizzle-orm';
 import { atomic } from '@/db/atomic';
 import { getDb } from '@/db';
 import { games } from '@/db/schema/catalog';
@@ -162,9 +162,45 @@ export async function countUncategorized(orgId: string): Promise<number> {
   return row?.n ?? 0;
 }
 
-/** Lands at the end of this org's list: sortKey is max(sortKey) + 1, or 0 for the first collection. */
-export async function createCollection(orgId: string, name: string): Promise<CollectionListItem> {
+/**
+ * Another of this org's collections already has the name, in any case (Files 2 operator ruling R3: names are unique per
+ * library). Compared trimmed and with Postgres's lower(), the same expression the unique index uses (migration 0052,
+ * Task 4b), so this pre-check and the index never disagree. `exceptId`: the collection being renamed, which may take
+ * its own name in another case.
+ */
+export async function collectionNameTaken(orgId: string, name: string, exceptId?: string): Promise<boolean> {
+  const [hit] = await getDb().select({ id: collections.id }).from(collections)
+    .where(orgFilter(collections, orgId, and(
+      sql`lower(${collections.name}) = lower(${name.trim()})`,
+      exceptId === undefined ? undefined : ne(collections.id, exceptId),
+    ))).limit(1);
+  return !!hit;
+}
+
+const NAME_INDEX = 'collections_org_name_uq';
+
+/**
+ * The unique index refused the name (migration 0052): a request that lost a race to another between
+ * collectionNameTaken and its own write. It gets the same 'name_exists' answer as the pre-check, never a 500.
+ * node-postgres' error carries code and constraint itself; a drizzle-wrapped one carries it as cause.
+ */
+function isNameClash(err: unknown): boolean {
+  for (const e of [err, (err as { cause?: unknown } | null)?.cause]) {
+    if (e && typeof e === 'object'
+      && (e as { code?: unknown }).code === '23505'
+      && (e as { constraint?: unknown }).constraint === NAME_INDEX) return true;
+  }
+  return false;
+}
+
+/**
+ * Lands at the end of this org's list: sortKey is max(sortKey) + 1, or 0 for the first collection. 'name_exists' when
+ * another of this org's collections has the name in any case (R3), with nothing written -- found by the pre-check, or
+ * by the unique index when another request wrote the name in between.
+ */
+export async function createCollection(orgId: string, name: string): Promise<CollectionListItem | 'name_exists'> {
   const db = getDb();
+  if (await collectionNameTaken(orgId, name)) return 'name_exists';
   const [{ maxSort }] = await db
     .select({ maxSort: sql<number>`coalesce(max(${collections.sortKey}), -1)::int` })
     .from(collections)
@@ -172,17 +208,29 @@ export async function createCollection(orgId: string, name: string): Promise<Col
 
   const id = randomUUID();
   const sortKey = maxSort + 1;
-  await db.insert(collections).values({ id, orgId, name, sortKey });
+  try {
+    await db.insert(collections).values({ id, orgId, name, sortKey });
+  } catch (e) {
+    if (isNameClash(e)) return 'name_exists';
+    throw e;
+  }
   return { id, name, sortKey, gameCount: 0, diskCount: 0 };
 }
 
-export async function renameCollection(orgId: string, id: string, name: string): Promise<boolean> {
+/** false: not this org's collection. 'name_exists': another of this org's collections has the name, any case (R3). */
+export async function renameCollection(orgId: string, id: string, name: string): Promise<boolean | 'name_exists'> {
   const db = getDb();
   const owned = await db.select({ id: collections.id }).from(collections)
     .where(orgFilter(collections, orgId, eq(collections.id, id))).limit(1);
   if (owned.length === 0) return false;
+  if (await collectionNameTaken(orgId, name, id)) return 'name_exists';
 
-  await db.update(collections).set({ name }).where(eq(collections.id, id));
+  try {
+    await db.update(collections).set({ name }).where(eq(collections.id, id));
+  } catch (e) {
+    if (isNameClash(e)) return 'name_exists';
+    throw e;
+  }
   return true;
 }
 
@@ -336,4 +384,17 @@ export async function moveGamesToCollection(
     }
     return { added: added.length, alreadyThere: ownedIds.length - added.length, removedFrom, missing };
   });
+}
+
+/**
+ * The first of this org's collections (in the Library's collection order: sortKey, then id, as listCollections) the
+ * title is filed in, or null (Files 2 §3.1): where "Files…" opens the title's disk. Scoped through `collections`, since
+ * collection_games carries no org_id (D-4-5).
+ */
+export async function firstCollectionOf(orgId: string, gameId: string): Promise<string | null> {
+  const [row] = await getDb().select({ id: collections.id }).from(collectionGames)
+    .innerJoin(collections, and(eq(collections.id, collectionGames.collectionId), eq(collections.orgId, orgId)))
+    .where(eq(collectionGames.gameId, gameId))
+    .orderBy(collections.sortKey, collections.id).limit(1);
+  return row?.id ?? null;
 }

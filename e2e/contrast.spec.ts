@@ -547,7 +547,7 @@ test('the Files STASH: row pairs are legible: the failed mark, size, Delete, a h
 });
 
 // The Library's own way in (Files increment 3, R8/R9): Add disks ▾ and its menu, the drop overlay's words over the
-// scrim, and the tray (summary, Added, Already in the library, Refused — why, Open title) at 1280 x 900.
+// scrim, and the tray (summary, Added, Refused — why, Open title) at 1280 x 900.
 test('the Library add pairs are legible: Add disks, its menu, the drop overlay, the tray summary and row states', async ({ page }) => {
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -582,7 +582,7 @@ test('the Library add pairs are legible: Add disks, its menu, the drop overlay, 
   });
   await expect(page.getByTestId('library-drop-overlay')).toHaveCount(0);
 
-  // The tray: one added, then the same again (already in the library) beside a refused text file.
+  // The tray: one added, then the same again (a disk the library already held) beside a refused text file.
   const adf = Buffer.alloc(901_120);
   adf.write(`DOS\0contrast-${runTag()}`, 0);
   const sha = createHash('sha256').update(adf).digest('hex');
@@ -595,11 +595,11 @@ test('the Library add pairs are legible: Add disks, its menu, the drop overlay, 
     ['tray Open title', `[data-testid="library-tray-open-${sha}"]`],
   ]);
   await pick([{ name: 'Contrast (1990)(X).adf', buffer: adf }, { name: 'notes.txt', buffer: Buffer.from('not a disk') }]);
-  await expect(page.getByTestId('library-tray-summary')).toHaveText(/already in the library/, { timeout: 30_000 });
+  await expect(page.getByTestId('library-tray-summary')).toHaveText('1 added · 1 refused', { timeout: 30_000 });
   await page.mouse.move(0, 0);
   await legible(page, 'library', [
     ['tray summary', '[data-testid="library-tray-summary"]'],
-    ['tray "Already in the library"', '[data-testid="library-tray-row"][data-state="deduped"] [data-testid="library-tray-state"]'],
+    ['tray "Added" (a disk already held)', '[data-testid="library-tray-row"][data-state="deduped"] [data-testid="library-tray-state"]'],
     ['tray "Refused — why"', '[data-testid="library-tray-row"][data-state="failed"] [data-testid="library-tray-state"]'],
   ]);
   await page.screenshot({ path: 'test-results/zz-library-add.png', fullPage: true });
@@ -646,11 +646,12 @@ test('the Files pairs are legible: pane headers, selected row, buttons, sort hea
   await page.mouse.move(0, 0);
   const sel = '[data-testid="pane-left"] [data-testid="pane-row"][aria-selected="true"]';
   await legible(page, 'files', [
-    ['active header crumb', '[data-testid="pane-left"][data-active="true"] [data-testid="pane-left-crumb-2"]'],
-    ['active header meta', '[data-testid="pane-left-meta"]'],
-    ['inactive header crumb', '[data-testid="pane-right"][data-active="false"] [data-testid="pane-right-crumb-2"]'],
-    ['inactive header meta', '[data-testid="pane-right-meta"]'],
-    ['device button (current)', '[data-testid="pane-left-dev-LIBRARY"]'],
+    ['source title bar crumb', '[data-testid="pane-left-title"][data-role="source"] [data-testid="pane-left-crumb-2"]'],
+    ['source meta', '[data-testid="pane-left-title"] [data-testid="pane-left-meta"]'],
+    ['destination title bar crumb', '[data-testid="pane-right-title"][data-role="destination"] [data-testid="pane-right-crumb-2"]'],
+    ['destination meta', '[data-testid="pane-right-title"] [data-testid="pane-right-meta"]'],
+    ['device button (current)', '[data-testid="files-dev-LIBRARY"]'],
+    ['device (not current)', '[data-testid="files-dev-STASH"]'],
     ['selected row name', `${sel} td:nth-child(2) span.truncate`],
     ['selected row size', `${sel} td:nth-child(3)`],
     ['selected row date', `${sel} td:nth-child(5)`],
@@ -663,13 +664,25 @@ test('the Files pairs are legible: pane headers, selected row, buttons, sort hea
     ['sort head (current)', '[data-testid="pane-left-sort-name"] button'],
     ['sort head', '[data-testid="pane-left-sort-size"] button'],
     ['foot (selection)', '[data-testid="pane-left-foot"]'],
-    ['button (enabled)', '[data-testid="files-delete"]'],
+    ['grid button', '[data-testid="files-info"]'],
+    ['Delete', '[data-testid="files-delete"]'],
     ['button (Swap)', '[data-testid="files-swap"]'],
     ['drive chip', '[data-testid="disk-strip-left"] [data-testid="disk-strip-drive"]'],
     ['drive chip (held)', '[data-testid="disk-strip-right"] [data-testid="disk-strip-drive"]'],
     ['strip usage', '[data-testid="disk-strip-left"] [data-testid="disk-strip-usage"]'],
     ['read-only line (inactive pane)', '[data-testid="pane-right-readonly"]'],
   ]);
+  // The "?" on the dark source bar, open: its glyph legible on the on-ink fill, and the circle told from the ink bar by
+  // its outline (Task 8 review: ink on ink merged into the bar).
+  const tip = page.getByTestId('pane-left-title').getByTestId('help-tip-files');
+  await tip.click();
+  await expect(tip).toHaveAttribute('data-popup-open', '');
+  await legible(page, 'files', [['"?" on the source bar (open)', '[data-testid="pane-left-title"] [data-testid="help-tip-files"] > span']]);
+  const ring = await tip.evaluate((el) => ({ bg: getComputedStyle(el).backgroundColor, bar: getComputedStyle(el.parentElement!).backgroundColor, shadow: getComputedStyle(el).boxShadow }));
+  expect(ring.bg).not.toBe(ring.bar);
+  expect(ring.shadow).not.toBe('none');
+  await page.keyboard.press('Escape');
+  await page.mouse.move(0, 0);
   // A disabled button is exempt (WCAG 1.4.3, inactive controls) and drawn at half opacity: measured with that
   // opacity, logged, and required to say why it is off.
   const off = await page.evaluate(() => {
@@ -685,13 +698,13 @@ test('the Files pairs are legible: pane headers, selected row, buttons, sort hea
   await page.getByTestId('pane-left').locator('[data-testid="pane-row"][data-name="Prog"]').hover();
   await legible(page, 'files', [['size on a hovered row', '[data-testid="pane-left"] [data-testid="pane-row"][data-name="Prog"] td:nth-child(3)']]);
 
-  // The right pane active: its read-only line and header on --viewing-bg.
+  // The right pane the source: its crumb on the dark title bar, its read-only line under it on --surface.
   await page.getByTestId('pane-right-foot').click();
   await expect(page.getByTestId('pane-right')).toHaveAttribute('data-active', 'true');
   await page.mouse.move(0, 0);
   await legible(page, 'files', [
     ['read-only line (active pane)', '[data-testid="pane-right-readonly"]'],
-    ['active header crumb (held)', '[data-testid="pane-right-crumb-2"]'],
+    ['source title bar crumb (held)', '[data-testid="pane-right-title"][data-role="source"] [data-testid="pane-right-crumb-2"]'],
   ]);
 
   // The strip's History over the left pane: Current, a version's time, the +N chip, Restore… on a hovered version.
@@ -714,6 +727,84 @@ test('the Files pairs are legible: pane headers, selected row, buttons, sort hea
     ['banner text', '[data-testid="version-banner"] > span'],
     ['viewed version time', '[data-testid="version-toggle-1"] .font-mono'],
   ]);
+});
+
+// Files 2 (Task 11): what the Directory Opus layout and LIBRARY:'s collections added -- the destination title bar on
+// --viewing-bg over LIBRARY:, the source bar's "?" at rest, a collection row's size ("1 title"), the new grid cells
+// (All, Create ADF…, Show .info pressed and not), and the Create ADF dialog's labels, hints and inline problem.
+test('the Files 2 pairs are legible: title bars over LIBRARY:, a collection row, the new grid cells, the Create ADF dialog', async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const u = await signUpFresh(page);
+  const tag = runTag();
+  const adf = formatVolume({ filesystem: 'FFS', volumeName: `F2 ${tag.slice(-8)}` });
+  const sha256 = createHash('sha256').update(adf).digest('hex');
+  await diskStore.put(sha256, adf);
+  const t = await seedDisk(u.orgId, { title: `Contrast F2 ${tag.slice(-6)}`, diskNo: 1, sha256, writeProtected: false });
+  const made = await page.request.post('/api/collections', { data: { name: 'Demos' } });
+  expect(made.ok()).toBe(true);
+  const demos = (await made.json()).id as string;
+  expect((await page.request.post(`/api/collections/${demos}/games`, { data: { gameId: t.gameId } })).ok()).toBe(true);
+
+  // Left STASH: the source; right LIBRARY: the destination, with Demos (1 title) as its first row.
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: 'LIBRARY:', active: 'left' })}`);
+  await hydrated(page, 'files-manager', 'onKeyDown');
+  const demosRow = '[data-testid="pane-right"] [data-testid="pane-row"][data-name="Demos"]';
+  await expect(page.locator(`${demosRow} td:nth-child(3)`)).toHaveText('1 title');
+  await expect(page.getByTestId('files-showinfo')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('files-createadf')).toBeEnabled();
+  await page.mouse.move(0, 0);
+  await legible(page, 'files2', [
+    ['destination crumb (LIBRARY:)', '[data-testid="pane-right-title"][data-role="destination"] [data-testid="pane-right-crumb-0"]'],
+    ['destination meta (LIBRARY:)', '[data-testid="pane-right-title"] [data-testid="pane-right-meta"]'],
+    ['source crumb (STASH:)', '[data-testid="pane-left-title"][data-role="source"] [data-testid="pane-left-crumb-0"]'],
+    ['"?" on the source bar (at rest)', '[data-testid="pane-left-title"] [data-testid="help-tip-stash-net"] > span'],
+    ['"?" on the destination bar', '[data-testid="pane-right-title"] [data-testid="help-tip-files"] > span'],
+    ['collection row name', `${demosRow} td:nth-child(2) span.truncate`],
+    ['collection row size ("1 title")', `${demosRow} td:nth-child(3)`],
+    ['collection glyph', `${demosRow} td:nth-child(2) span[aria-hidden]`],
+    ['All', '[data-testid="files-all"]'],
+    ['Create ADF…', '[data-testid="files-createadf"]'],
+    ['Show .info (pressed)', '[data-testid="files-showinfo"]'],
+  ]);
+  const look = () => page.getByTestId('files-showinfo').evaluate((el) => { const c = getComputedStyle(el); return `${c.backgroundColor}|${c.color}`; });
+  const pressedLook = await look();
+  await page.getByTestId('files-showinfo').click();
+  await expect(page.getByTestId('files-showinfo')).toHaveAttribute('aria-pressed', 'false');
+  await page.mouse.move(0, 0);
+  expect(await look(), 'pressed and not pressed must look different').not.toBe(pressedLook);
+  await legible(page, 'files2', [['Show .info (not pressed)', '[data-testid="files-showinfo"]']]);
+  await page.getByTestId('files-showinfo').click();   // back as it was: the setting is the account's
+
+  // The right pane the source: its LIBRARY: crumb and meta on the ink bar.
+  await page.getByTestId('pane-right-foot').click();
+  await expect(page.getByTestId('pane-right-title')).toHaveAttribute('data-role', 'source');
+  await page.mouse.move(0, 0);
+  await legible(page, 'files2', [
+    ['source crumb (LIBRARY:)', '[data-testid="pane-right-title"][data-role="source"] [data-testid="pane-right-crumb-0"]'],
+    ['source meta (LIBRARY:)', '[data-testid="pane-right-title"] [data-testid="pane-right-meta"]'],
+    ['destination crumb (STASH:)', '[data-testid="pane-left-title"][data-role="destination"] [data-testid="pane-left-crumb-0"]'],
+  ]);
+
+  // Create ADF… on LIBRARY:: the Name label, the two choice labels and their hints, the chosen and the other choice,
+  // and the inline problem under the Name.
+  await page.getByTestId('files-createadf').click();
+  const dlg = '[data-testid="files-create-adf"]';
+  await expect(page.locator(dlg)).toBeVisible();
+  await page.getByTestId('files-create-adf-name').fill('a:b');
+  await expect(page.getByTestId('files-create-adf-problem')).toBeVisible();
+  await page.mouse.move(0, 0);
+  await legible(page, 'createadf', [
+    ['Name label', `${dlg} form > label`],
+    ['Size label', `${dlg} form > div:nth-of-type(1) > div:first-child`],
+    ['Size hint', `${dlg} form > div:nth-of-type(1) > div:last-child`],
+    ['Filesystem label', `${dlg} form > div:nth-of-type(2) > div:first-child`],
+    ['Filesystem hint', `${dlg} form > div:nth-of-type(2) > div:last-child`],
+    ['chosen choice (880 KB)', '[data-testid="files-create-adf-size-dd"]'],
+    ['other choice (1.76 MB)', '[data-testid="files-create-adf-size-hd"]'],
+    ['inline problem', '[data-testid="files-create-adf-problem"]'],
+  ]);
+  await page.screenshot({ path: 'test-results/zz-files-2.png', fullPage: true });
 });
 
 // Files increment 2 (Task 9): the STASH: pairs at 1280 x 900 -- the drop zone (title, hint, Browse files, the URL

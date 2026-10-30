@@ -2,7 +2,7 @@ import { nowMs } from '@/lib/clock';
 import { notFound } from 'next/navigation';
 import { requireOrg } from '@/lib/session';
 import { getGameDetail, listDevices } from '@/lib/queries';
-import { listCollections } from '@/lib/collections';
+import { firstCollectionOf, listCollections } from '@/lib/collections';
 import { resolveFrom, libraryTrail, parseTrailView } from '@/lib/trail';
 import { mountChoices } from '@/lib/mount-choice';
 import { copiedFromText } from '@/lib/remote/copy';
@@ -33,12 +33,14 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
   // The library's grid or table, carried back to it by the breadcrumb (library table final review M1).
   const view = parseTrailView(sp.view);
 
-  const [game, devices, collections, readers, sendTargets] = await Promise.all([
+  const [game, devices, collections, readers, sendTargets, filesCollection] = await Promise.all([
     getGameDetail(orgId, id), listDevices(orgId), listCollections(orgId),
     // The fob button's boards: empty means the button is not drawn.
     listNfcReaders(orgId),
     // Send .adf to Amiga: the boards that can take files; none = no button.
     listSendTargets(getDb(), orgId),
+    // Files… opens a filed title's disks inside its first collection (Files 2 §3.1).
+    firstCollectionOf(orgId, id),
   ]);
   // Null covers "does not exist" and "belongs to another organization"
   // indistinguishably, so an id from another tenant reveals nothing.
@@ -95,7 +97,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
           // gaining a ⋯ menu. A client component, so the mount choices are computed here and handed over as data.
           <DiskSetSection
             gameId={game.id} title={game.title} from={from} view={view} fobDevices={readers} send={send}
-            kind={game.kind} authored={game.authored} sendPicker={<SendBoardPicker ctx={send} />}
+            kind={game.kind} authored={game.authored} sendPicker={<SendBoardPicker ctx={send} />} filesCollectionId={filesCollection}
             entries={game.disks.map((disk) => ({
               disk, choices: mountChoices(devices, disk, now),
             }))}
@@ -122,7 +124,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
                    helpHfe={disk.id === game.disks.find((d) => d.imageFormat === 'hfe')?.id}
                    choices={mountChoices(devices, disk, now)}
                    // A lone disk: its ⋯ menu offers "Add to a disk set…".
-                   loneGameId={game.id} kind={game.kind} authored={game.authored} />
+                   loneGameId={game.id} kind={game.kind} authored={game.authored} filesCollectionId={filesCollection} />
             ))}
           </>
         )}

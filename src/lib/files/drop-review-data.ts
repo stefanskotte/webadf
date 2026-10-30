@@ -2,6 +2,7 @@
 import { readUsage } from '@/lib/adffs';
 import { existingNamesByDir } from '@/lib/staging';
 import { loadDisk, readOnlyReasonOf, type FsCtx } from './library';
+import { placeInLibrary } from './library-paths';
 import type { FsPath } from './path';
 import type { DropReviewData, RefusalCode } from './types';
 
@@ -11,9 +12,9 @@ import type { DropReviewData, RefusalCode } from './types';
  */
 export async function dropReviewData(ctx: FsCtx, p: FsPath):
   Promise<DropReviewData | { refused: RefusalCode; detail: string } | null> {
-  const [gameId, diskId] = p.segments;
-  if (p.device !== 'LIBRARY' || !gameId || !diskId) return null;
-  const d = await loadDisk(ctx, gameId, diskId);
+  const at = p.device === 'LIBRARY' ? await placeInLibrary(ctx, p.segments) : null;
+  if (!at || at.level !== 'disk') return null;
+  const d = await loadDisk(ctx, at.gameId, at.diskId);
   if (!d) return null;
   const why = readOnlyReasonOf(d.info);
   if (why || !d.info.filesystem) return { refused: 'read_only', detail: why ?? 'no_filesystem' };

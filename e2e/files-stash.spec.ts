@@ -176,38 +176,53 @@ async function browse(page: Page, files: { name: string; buffer: Buffer }[]) {
   await page.getByTestId('files-stash-input').setInputFiles(files.map((f) => ({ ...f, mimeType: 'application/octet-stream' })));
 }
 
-test('the button column never runs into the right pane, and at 1280 x 800 it is all on screen', async ({ page }) => {
+test('the bank sits under both panes; at 1280 x 800 its last row is on screen (R9)', async ({ page }) => {
   await signUpFresh(page);
-  for (const [width, height] of [[1024, 800], [1280, 800], [1440, 900], [1920, 1080]]) {
+  for (const [width, height] of [[1024, 800], [1280, 800], [1366, 768], [1440, 900], [1920, 1080]]) {
     await page.setViewportSize({ width, height });
-    // STASH: active: the column holds Add to library, its widest label.
     await openStash(page);
-    await expect(page.getByTestId('files-addlib')).toBeVisible();
+    // At 1280 x 800 the grid's last row and the status row are on screen as the page opens, panes at least 300 px
+    // tall (controller ruling, Task 8 round 1); from 1440 x 900 up the whole manager is.
+    if (width === 1280 && height === 800) {
+      expect(await page.evaluate(() => window.scrollY)).toBe(0);
+      const del = (await page.getByTestId('files-delete').boundingBox())!;
+      const busy = (await page.getByTestId('files-busy').boundingBox())!;
+      const pane = (await page.getByTestId('pane-left').boundingBox())!;
+      expect(del.y + del.height, `${width} x ${height}: the grid's last row, unscrolled`).toBeLessThanOrEqual(height);
+      expect(busy.y + busy.height, `${width} x ${height}: the status row, unscrolled`).toBeLessThanOrEqual(height);
+      expect(pane.height, `${width} x ${height}: the pane, unscrolled`).toBeGreaterThanOrEqual(300);
+    }
+    if (width >= 1440) {
+      const bottom = await page.evaluate(() => window.scrollY + document.querySelector('[data-testid="files-busy"]')!.getBoundingClientRect().bottom);
+      expect(bottom, `${width} x ${height}: the whole manager`).toBeLessThanOrEqual(height);
+    }
+    await page.getByTestId('files-manager').evaluate((el) => el.scrollIntoView({ block: 'start' }));
     const g = await page.evaluate(() => {
       const box = (el: Element) => el.getBoundingClientRect();
-      const buttons = [...document.querySelectorAll('[data-testid="files-actions"] button')].filter((b) => box(b).width > 0);
+      const buttons = [...document.querySelectorAll('[data-testid="files-grid"] button')];
       return {
-        column: box(document.querySelector('[data-testid="files-actions"]')!),
-        rightPane: box(document.querySelector('[data-testid="pane-right"]')!).left,
-        leftPane: box(document.querySelector('[data-testid="pane-left"]')!),
-        widest: Math.max(...buttons.map((b) => box(b).right)),
-        lowest: Math.max(...buttons.map((b) => box(b).bottom)),
+        bank: box(document.querySelector('[data-testid="files-bank"]')!),
+        busy: box(document.querySelector('[data-testid="files-busy"]')!),
+        left: box(document.querySelector('[data-testid="pane-left"]')!), right: box(document.querySelector('[data-testid="pane-right"]')!),
         overflowing: buttons.filter((b) => b.scrollWidth > b.clientWidth).map((b) => b.getAttribute('data-testid')),
-        scrollY: window.scrollY,
+        cols: new Set(buttons.map((b) => Math.round(box(b).left))).size,
+        lowest: Math.max(...buttons.map((b) => box(b).bottom)),
       };
     });
     const at = `${width} x ${height}`;
-    expect(g.column.right, `${at}: the column`).toBeLessThanOrEqual(g.rightPane);
-    expect(g.widest, `${at}: a button`).toBeLessThanOrEqual(g.rightPane);
-    expect(g.overflowing, `${at}: a label wider than its button`).toEqual([]);
-    // Panes a person can work in under the drop zone.
-    expect(g.leftPane.height, `${at}: the pane's height`).toBeGreaterThanOrEqual(400);
-    if (width === 1280 && height === 800) {
-      // Every button of the column on screen without a page scroll.
-      expect(g.scrollY).toBe(0);
-      expect(g.lowest, `${at}: the column's last button`).toBeLessThanOrEqual(height);
+    expect(g.bank.top, `${at}: the bank under the panes`).toBeGreaterThanOrEqual(Math.max(g.left.bottom, g.right.bottom) - 1);
+    expect(g.busy.top, `${at}: the status row under the bank`).toBeGreaterThanOrEqual(g.bank.bottom - 1);
+    expect(g.lowest, `${at}: the grid inside the bank`).toBeLessThanOrEqual(g.bank.bottom);
+    expect(g.cols, `${at}: six columns`).toBe(6);
+    expect(g.overflowing, `${at}: a label wider than its cell`).toEqual([]);
+    expect(g.left.height, `${at}: the pane's height`).toBeGreaterThanOrEqual(300);
+    if (width === 1280 && height === 800) expect(g.bank.bottom, `${at}: the bank's last row`).toBeLessThanOrEqual(height);
+    // 1366 x 768: the page may scroll, but the grid's last row is reachable and on screen once it has.
+    if (width === 1366 && height === 768) {
+      await page.getByTestId('files-delete').scrollIntoViewIfNeeded();
+      const del = await page.getByTestId('files-delete').boundingBox();
+      expect(del!.y + del!.height, `${at}: the grid's last row`).toBeLessThanOrEqual(height);
     }
-    if (width === 1440 && height === 900) expect(g.column.bottom, `${at}: the whole manager`).toBeLessThanOrEqual(height);
   }
 });
 
@@ -228,9 +243,10 @@ test('copy STASH: → disk and back keeps the comment', async ({ page }) => {
   await expect(info).toHaveCount(0, { timeout: 15_000 });
   await expect(rowAt(page, 'left', 'a.txt')).toContainText('bench');   // STASH: shows the Comment column
 
-  // Copy → into the disk: the comment goes with it.
+  // Copy into the disk (STASH: is the source): the comment goes with it.
   await rowAt(page, 'left', 'a.txt').click();
-  await expect(page.getByTestId('files-copy')).toHaveText('Copy →');
+  await expect(page.getByTestId('files-copy')).toHaveText('Copy');
+  await expect(page.getByTestId('pane-left-title')).toHaveAttribute('data-role', 'source');
   await page.getByTestId('files-copy').click();
   await expect(toast(page, /^Copied 1 item to .* — saved as version 1\./)).toBeVisible({ timeout: 15_000 });
   await rowAt(page, 'right', 'a.txt').dblclick();
@@ -239,9 +255,10 @@ test('copy STASH: → disk and back keeps the comment', async ({ page }) => {
   await expect(page.getByTestId('files-info-dialog')).toHaveCount(0);
   expect(at(await storedRoot(d.diskId), 'a.txt')!.comment).toBe('bench');
 
-  // ← Copy the folder C from the disk into STASH:: Assign keeps its comment there.
+  // Copy the folder C from the disk (now the source) into STASH:: Assign keeps its comment there.
   await rowAt(page, 'right', 'C').click();
-  await expect(page.getByTestId('files-copy')).toHaveText('← Copy');
+  await expect(page.getByTestId('files-copy')).toHaveText('Copy');
+  await expect(page.getByTestId('pane-right-title')).toHaveAttribute('data-role', 'source');
   await page.getByTestId('files-copy').click();
   await expect(toast(page, /^Copied 1 item to STASH:/)).toBeVisible({ timeout: 15_000 });
   await rowAt(page, 'left', 'C').dblclick();

@@ -1,8 +1,10 @@
 // src/lib/files/library.ts
 // LIBRARY: (spec 2026-10-29 §4.1): titles → disks → a disk's AmigaDOS folders. SERVER ONLY.
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { blobs, disks, entitlements, games } from '@/db/schema/catalog';
+import { collectionGames } from '@/db/schema/collections';
+import { listCollections } from '@/lib/collections';
 import { diskStore } from '@/lib/storage';
 import { readVolume, readUsage, readFile, geometryOf, HD_GEOMETRY, type AdfEntry } from '@/lib/adffs';
 import { sameName } from '@/lib/adffs/write';
@@ -11,6 +13,7 @@ import { isLocal } from '@/lib/remote-hidden';
 import { readTop, tallyTop, zipReadTops, type ReadTop } from '@/lib/disk-zip';
 import { formatPath, isWithin, type FsPath } from './path';
 import { ZIP_MAX_BYTES } from './transfer';
+import { placeInLibrary, libPath, type Shelved } from './library-paths';
 import type { FsCtx } from './driver';
 import type { Crumb, DiskInfo, FsEntry, Listing } from './types';
 
@@ -18,14 +21,14 @@ export type { FsCtx };
 export type ResolvedDisk = { info: DiskInfo; bytes: Uint8Array; root: AdfEntry[]; rootBlock: number; intl: boolean };
 
 const ROOT: Crumb = { label: 'LIBRARY:', path: 'LIBRARY:' };
-const lib = (...segs: string[]) => formatPath({ device: 'LIBRARY', segments: segs });
+const lib = libPath;
 const diskName = (d: { label: string | null; diskNo: number }) => d.label ?? `Disk ${d.diskNo}`;
 /** "1 folder", "2 folders": the listing's meta line counts in words. */
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** The disk's row exists but its image cannot be read from the store: the one failure the routes call blob_unavailable. */
 export class BlobUnavailableError extends Error {
-  constructor(readonly sha256: string, cause: unknown) { super(`disk image ${sha256} is unavailable`, { cause }); }
+  constructor(readonly sha256: string, cause: unknown, readonly diskId?: string) { super(`disk image ${sha256} is unavailable`, { cause }); }
 }
 
 export async function loadDisk(ctx: FsCtx, gameId: string, diskId: string): Promise<ResolvedDisk | null> {
@@ -41,7 +44,7 @@ export async function loadDisk(ctx: FsCtx, gameId: string, diskId: string): Prom
     .where(and(eq(disks.id, diskId), eq(disks.gameId, gameId), eq(disks.orgId, ctx.orgId), isLocal(disks)))
     .limit(1);
   if (!row) return null;
-  const bytes = await diskStore.read(row.sha256).catch((e) => { throw new BlobUnavailableError(row.sha256, e); });
+  const bytes = await diskStore.read(row.sha256).catch((e) => { throw new BlobUnavailableError(row.sha256, e, row.id); });
   const vol = readVolume(bytes);
   const usage = vol.ok ? readUsage(bytes) : null;
   const holder = await findHolder(db, ctx.orgId, row.sha256);
@@ -94,21 +97,59 @@ function toEntry(base: string[], e: AdfEntry): FsEntry {
     ...(e.kind === 'dir' ? { inside: countInside(e.children) } : {}) };
 }
 
+const titleRow = (g: { id: string; title: string }, prefix: string[]): FsEntry =>
+  ({ name: g.title, kind: 'title', path: lib(...prefix, g.id), size: null, date: null, protection: null, comment: null, marks: [] });
+
+/**
+ * LIBRARY: itself (Files 2 §3.1): the org's collections as folders, in the Library's collection order (sortKey), then
+ * the titles in no collection, in the Library's title order.
+ */
+async function listRoot(ctx: FsCtx): Promise<Listing> {
+  const shelves = await listCollections(ctx.orgId);
+  const loose = await getDb().select({ id: games.id, title: games.title }).from(games)
+    .where(and(eq(games.orgId, ctx.orgId), isLocal(games), sql`not exists (
+      select 1 from collection_games cg join collections co on co.id = cg.collection_id
+      where cg.game_id = ${games.id} and co.org_id = ${ctx.orgId})`))
+    .orderBy(asc(games.sortTitle), asc(games.id));
+  const entries: FsEntry[] = [
+    ...shelves.map((c): FsEntry => ({ name: c.name, kind: 'collection', path: lib(c.id), size: null, sizeText: count(c.gameCount, 'title'),
+      date: null, protection: null, comment: null, marks: [] })),
+    ...loose.map((g) => titleRow(g, [])),
+  ];
+  return { path: 'LIBRARY:', crumbs: [ROOT], entries, writable: false, readOnlyReason: null, disk: null,
+    meta: [shelves.length ? count(shelves.length, 'collection') : null, count(loose.length, 'title')].filter(Boolean).join(' · '),
+    library: { level: 'root', collectionId: null } };
+}
+
+/** One collection: its titles in its own hand-made order. `c` was resolved through this org. */
+async function listCollection(ctx: FsCtx, c: Shelved): Promise<Listing> {
+  const rows = await getDb().select({ id: games.id, title: games.title }).from(collectionGames)
+    .innerJoin(games, and(eq(games.id, collectionGames.gameId), eq(games.orgId, ctx.orgId), isLocal(games)))
+    .where(eq(collectionGames.collectionId, c.id))
+    .orderBy(asc(collectionGames.sortKey), asc(collectionGames.gameId));
+  return { path: lib(c.id), crumbs: [ROOT, { label: c.name, path: lib(c.id) }], entries: rows.map((g) => titleRow(g, [c.id])),
+    writable: false, readOnlyReason: null, disk: null, meta: count(rows.length, 'title'), library: { level: 'collection', collectionId: c.id } };
+}
+
+/**
+ * A LIBRARY: path (Files 2 §3.1): the root, a collection, a title's disks or a folder on a disk. A path that came
+ * through a collection keeps that collection in every path, crumb and `diskBase` it answers.
+ */
 export async function listLibrary(ctx: FsCtx, p: FsPath): Promise<Listing | null> {
+  const at = await placeInLibrary(ctx, p.segments);
+  if (!at) return null;
+  if (at.level === 'root') return listRoot(ctx);
+  if (at.level === 'collection') return listCollection(ctx, at.collection);
   const db = getDb();
-  const [gameId, diskId, ...names] = p.segments;
-  if (!gameId) {
-    const rows = await db.select({ id: games.id, title: games.title }).from(games)
-      .where(and(eq(games.orgId, ctx.orgId), isLocal(games))).orderBy(asc(games.sortTitle), asc(games.id));
-    return { path: 'LIBRARY:', crumbs: [ROOT], writable: false, readOnlyReason: null, disk: null,
-      meta: count(rows.length, 'title'),
-      entries: rows.map((g) => ({ name: g.title, kind: 'title', path: lib(g.id), size: null, date: null, protection: null, comment: null, marks: [] })) };
-  }
+  const pre = at.prefix;
+  const head: Crumb[] = at.collection ? [ROOT, { label: at.collection.name, path: lib(at.collection.id) }] : [ROOT];
+  const collectionId = at.collection?.id ?? null;
+  const gameId = at.gameId;
   const [game] = await db.select({ title: games.title }).from(games)
     .where(and(eq(games.id, gameId), eq(games.orgId, ctx.orgId), isLocal(games))).limit(1);
   if (!game) return null;
-  const titleCrumb = { label: game.title, path: lib(gameId) };
-  if (!diskId) {
+  const titleCrumb = { label: game.title, path: lib(...pre, gameId) };
+  if (at.level === 'title') {
     const rows = await db.select({ id: disks.id, diskNo: disks.diskNo, label: disks.label, sizeBytes: disks.sizeBytes, sha256: disks.sha256 })
       .from(disks)
       .innerJoin(entitlements, and(eq(entitlements.orgId, disks.orgId), eq(entitlements.sha256, disks.sha256)))
@@ -116,29 +157,32 @@ export async function listLibrary(ctx: FsCtx, p: FsPath): Promise<Listing | null
     const entries: FsEntry[] = [];
     for (const d of rows) {
       const holder = await findHolder(db, ctx.orgId, d.sha256);
-      entries.push({ name: diskName(d), kind: 'disk', path: lib(gameId, d.id), size: d.sizeBytes, date: null, protection: null,
+      entries.push({ name: diskName(d), kind: 'disk', path: lib(...pre, gameId, d.id), size: d.sizeBytes, date: null, protection: null,
         comment: null, marks: holder ? [`in a drive of ${holder.name}`] : [] });
     }
-    return { path: lib(gameId), crumbs: [ROOT, titleCrumb], entries, writable: false, readOnlyReason: null, disk: null,
-      meta: count(rows.length, 'disk') };
+    return { path: lib(...pre, gameId), crumbs: [...head, titleCrumb], entries, writable: false, readOnlyReason: null, disk: null,
+      meta: count(rows.length, 'disk'), library: { level: 'title', collectionId } };
   }
+  const { diskId, names } = at;
   const d = await loadDisk(ctx, gameId, diskId);
   if (!d) return null;
-  const at = resolveInDisk(d, names);
-  if (!at || (at.entry && at.entry.kind !== 'dir')) return null;
-  const children = at.entry ? at.entry.children : d.root;
-  const base = [gameId, diskId, ...(names.length ? names : [])];
+  const hit = resolveInDisk(d, names);
+  if (!hit || (hit.entry && hit.entry.kind !== 'dir')) return null;
+  const children = hit.entry ? hit.entry.children : d.root;
+  const base = [...pre, gameId, diskId, ...names];
   const readOnlyReason = readOnlyReasonOf(d.info);
   const dirs = children.filter((c) => c.kind === 'dir').length;
-  const crumbs: Crumb[] = [ROOT, titleCrumb, { label: d.info.label, path: lib(gameId, diskId) }];
-  names.forEach((_, i) => crumbs.push({ label: resolveInDisk(d, names.slice(0, i + 1))!.entry!.name, path: lib(gameId, diskId, ...names.slice(0, i + 1)) }));
+  const crumbs: Crumb[] = [...head, titleCrumb, { label: d.info.label, path: lib(...pre, gameId, diskId) }];
+  names.forEach((_, i) => crumbs.push({ label: resolveInDisk(d, names.slice(0, i + 1))!.entry!.name, path: lib(...pre, gameId, diskId, ...names.slice(0, i + 1)) }));
   return { path: formatPath(p), crumbs, entries: children.map((c) => toEntry(base, c)), writable: readOnlyReason === null,
-    readOnlyReason, disk: d.info, meta: `${count(dirs, 'folder')} · ${count(children.length - dirs, 'file')}` };
+    readOnlyReason, disk: d.info, meta: `${count(dirs, 'folder')} · ${count(children.length - dirs, 'file')}`,
+    library: { level: 'disk', collectionId }, diskBase: lib(...pre, gameId, diskId) };
 }
 
 export async function readLibraryFile(ctx: FsCtx, p: FsPath) {
-  const [gameId, diskId, ...names] = p.segments;
-  if (!gameId || !diskId || !names.length) return null;
+  const place = await placeInLibrary(ctx, p.segments);
+  if (!place || place.level !== 'disk' || !place.names.length) return null;
+  const { gameId, diskId, names } = place;
   const d = await loadDisk(ctx, gameId, diskId);
   const at = d && resolveInDisk(d, names);
   if (!d || !at?.entry || at.entry.kind !== 'file') return null;
@@ -161,11 +205,13 @@ export const ZIP_LIMITS = { maxEntries: 1000, maxBytes: ZIP_MAX_BYTES };
 export async function zipLibraryPaths(ctx: FsCtx, paths: FsPath[]) {
   const byDisk = new Map<string, { gameId: string; diskId: string; at: { i: number; p: FsPath; names: string[] }[] }>();
   for (const [i, p] of paths.entries()) {
-    const [gameId, diskId, ...names] = p.segments;
-    if (p.device !== 'LIBRARY' || !gameId || !diskId || !names.length) return null;
+    const at = p.device === 'LIBRARY' ? await placeInLibrary(ctx, p.segments) : null;
+    if (!at || at.level !== 'disk' || !at.names.length) return null;
+    const { gameId, diskId, names } = at;
     const key = `${gameId}/${diskId}`;
     const g = byDisk.get(key) ?? { gameId, diskId, at: [] };
-    g.at.push({ i, p, names });
+    // The path without its collection prefix: two forms of one entry are one entry to the de-duplication below.
+    g.at.push({ i, p: { device: 'LIBRARY', segments: [gameId, diskId, ...names] }, names });
     byDisk.set(key, g);
   }
   let entries = 0; let bytes = 0;

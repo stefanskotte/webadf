@@ -108,7 +108,8 @@ test('copy a file between disks makes one version', async ({ page }) => {
   await expect(row(page, 'right', 'ReadMe')).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByTestId('pane-right-foot')).toHaveText('1 of 3 selected · 6 B');
   const copy = page.getByTestId('files-copy');
-  await expect(copy).toHaveText('← Copy');
+  await expect(copy).toHaveText('Copy');
+  await expect(page.getByTestId('pane-right-title')).toHaveAttribute('data-role', 'source');
   await copy.click();
   await expect(toast(page, /^Copied 1 item to .*Disk 1.* — saved as version 1\./)).toBeVisible({ timeout: 15_000 });
   await expect(row(page, 'left', 'ReadMe')).toHaveCount(1);
@@ -265,9 +266,12 @@ test('keyboard: arrows, Space, F5, Tab, Enter, Backspace', async ({ page }) => {
   await manager.focus();
   await page.keyboard.press('Tab');
   await expect(page.getByTestId('pane-left')).toHaveAttribute('data-active', 'true');
+  await expect(page.getByTestId('pane-left-title')).toHaveAttribute('data-role', 'source');
+  await expect(page.getByTestId('pane-right-title')).toHaveAttribute('data-role', 'destination');
   await expect.poll(() => new URL(page.url()).searchParams.get('active')).toBe('left');
   await page.keyboard.press('Tab');
   await expect(page.getByTestId('pane-right')).toHaveAttribute('data-active', 'true');
+  await expect(page.getByTestId('pane-right-title')).toHaveAttribute('data-role', 'source');
 
   // Enter opens the folder under the cursor (C, the first row); Backspace goes back up.
   await expect(row(page, 'right', 'C')).toHaveAttribute('data-cursor', 'true');
@@ -303,7 +307,8 @@ test('a disk in a drive is read-only', async ({ page, request }) => {
   // Into it: refused before anything is sent, the reason on the button.
   await row(page, 'left', 'Other').click();
   const copy = page.getByTestId('files-copy');
-  await expect(copy).toHaveText('Copy →');
+  await expect(copy).toHaveText('Copy');
+  await expect(page.getByTestId('pane-left-title')).toHaveAttribute('data-role', 'source');
   await expect(copy).toBeDisabled();
   await expect(copy).toHaveAttribute('title', reason);
   await expect(page.getByTestId('files-move')).toBeDisabled();
@@ -317,7 +322,8 @@ test('a disk in a drive is read-only', async ({ page, request }) => {
   await expect(page.getByTestId('files-download')).toBeEnabled();
 
   // Out of it: a copy works, and the held disk is unchanged.
-  await expect(copy).toHaveText('← Copy');
+  await expect(copy).toHaveText('Copy');
+  await expect(page.getByTestId('pane-right-title')).toHaveAttribute('data-role', 'source');
   await expect(copy).toBeEnabled();
   await copy.click();
   await expect(toast(page, /^Copied 1 item to .* — saved as version 1\./)).toBeVisible({ timeout: 15_000 });
@@ -392,3 +398,54 @@ test('a download over the cap says so in words and saves nothing; a smaller one 
   const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('files-download').click()]);
   expect(dl.suggestedFilename()).toMatch(/\.zip$/);
 });
+
+test('while an operation runs the bank says what runs: each command is described by the status row, a click toasts it (Task 8 review)', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const tag = runTag();
+  const a = await seedTitle(orgId, `BusyA-${tag}`);
+  const b = await seedTitle(orgId, `BusyB-${tag}`, []);
+  await openFiles(page, b.path, a.path, 'right');
+  // The copy is held at the server's door until the checks are done.
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  await page.route('**/api/files/ops', async (route) => { await held; await route.continue(); });
+  await row(page, 'right', 'ReadMe').click();
+  await page.getByTestId('files-copy').click();
+  const status = page.getByTestId('files-busy');
+  await expect(status).not.toHaveText('');
+  const words = (await status.textContent())!;
+  const info = page.getByTestId('files-info');
+  await expect(info).toHaveAttribute('aria-disabled', 'true');
+  await expect(info).toHaveAttribute('aria-describedby', /\bfiles-busy\b/);
+  await expect(info).toHaveAccessibleDescription(words);
+  await info.click({ force: true });   // aria-disabled: Playwright would wait for it to be enabled
+  await expect(toast(page, words)).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  // Enter on a focused command says it too, never silently nothing.
+  await page.getByTestId('files-rename').focus();
+  await page.keyboard.press('Enter');
+  // One toast: a repeat replaces it rather than stacking. Counted once, after the repeat has had time to draw: a
+  // retrying count would also pass once the first of two stacked toasts timed out.
+  await page.waitForTimeout(500);
+  expect(await toast(page, words).count()).toBe(1);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  release();
+  await expect(toast(page, /^Copied 1 item/)).toBeVisible({ timeout: 15_000 });
+  await expect(info).not.toHaveAttribute('aria-describedby', /files-busy/);
+  await page.unroute('**/api/files/ops');
+});
+
+test('a pane showing an error still goes up: Parent and Root from its path (Task 8 review)', async ({ page }) => {
+  await signUpFresh(page);
+  await openFiles(page, 'STASH:/Nope/Deeper', 'LIBRARY:', 'left');
+  await expect(page.getByTestId('pane-left-error')).toBeVisible();
+  await expect(page.getByTestId('files-parent')).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(page.getByTestId('files-root')).not.toHaveAttribute('aria-disabled', 'true');
+  await page.getByTestId('files-parent').click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('left')).toBe('STASH:/Nope');
+  await expect(page.getByTestId('pane-left-error')).toBeVisible();
+  await page.getByTestId('files-root').click();
+  await expect(page.getByTestId('pane-left-crumb-0')).toHaveText('STASH:');
+  await expect(page.getByTestId('pane-left-error')).toHaveCount(0);
+});
+

@@ -9,7 +9,8 @@ import { MENU_ITEM } from '@/components/ui/menu-item-look';
 import { cn } from '@/lib/utils';
 import type { DiskInfo, FsEntry, Listing, RefusalCode, StripData } from '@/lib/files/types';
 import { nextSort, type FilesSort, type FilesSortKey } from '@/lib/files/sort';
-import { EMPTY_SELECTION, moveCursor, selectClick, togglePick, type Selection } from '@/lib/files/selection';
+import { EMPTY_SELECTION, moveCursor, selectAll, selectClick, togglePick, type Selection } from '@/lib/files/selection';
+import type { BankCommand } from '@/lib/files/bank';
 import { commandFor, type FilesCommand } from '@/lib/files/keys';
 import { refusalWords } from '@/lib/files/words';
 import { deleteAsks, paneDefaults, paneHelpTopic, paneRows, remapSelection, showsComment, type PaneView } from '@/lib/files/view';
@@ -20,18 +21,20 @@ import {
   acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, offersUndo, placeOf,
 } from '@/lib/files/pane-rules';
 import { netPollMs, NET_MOVE_IN, NET_PICK_BOARD } from '@/lib/files/net-rules';
+import { COLLECTIONS_STAY, createAdfReason, filingNoun, filingReason, shelfOf, shelfOfRow, shelfReasons } from '@/lib/files/shelf-rules';
 import { stashPollMs, trackArriving, withStalls, type ArrivingSeen } from '@/lib/files/arriving';
 import { netDropRefusal, sendToBoard } from '@/lib/files/net-send';
 import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
-import { identityToConfirm, undoTarget, withAddedIn, type OpVersion } from '@/lib/files/edit-rules';
-import { dropBlocked, fetchDownload, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
+import { diskRelative, identityToConfirm, undoTarget, withAddedIn, type OpVersion } from '@/lib/files/edit-rules';
+import { createClosesDialog, dropBlocked, fetchDownload, navTargets, oneAtATime, opTitle, reloadsBoth, skippedItems, skippedWords, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
 import { addedIn } from '@/lib/disk-history/added-in';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
 import { isFileDrag } from '@/components/disks/native-drop';
 import { IdentityConfirmDialog, requestUndo } from '@/components/disks/file-actions';
 import { Pane } from './pane';
+import { ButtonBank } from './button-bank';
 import { DiskStrip } from './disk-strip';
 import { DropReview } from './drop-review';
 import { CopyToPicker } from './copy-to-picker';
@@ -44,10 +47,13 @@ import { isSignedOutAnswer, SIGNED_OUT_TEXT } from '@/lib/signed-out';
 import {
   ClashDialog, ConfirmDeleteDialog, InfoDialog, NameDialog, ProtectDialog, placeName, type Clash, type ClashChoice,
 } from './dialogs';
+import { CreateAdfDialog } from './create-adf-dialog';
 
 /**
- * The Files manager (spec 2026-10-29 §5): two panes with the button column between them. It owns everything the
- * panes only draw -- each side's listing, sort and selection -- and the URL (`?left&right&active`).
+ * The Files manager (spec 2026-10-29 §5; Files 2 §2): two panes side by side and, from lg, the button bank under both
+ * (button-bank.tsx: the device column and the six-by-three grid). The active pane is the SOURCE (its title bar is
+ * dark), the other the destination: every bank command acts on the source, Copy and Move go source → destination. It
+ * owns everything the panes only draw -- each side's listing, sort and selection -- and the URL (`?left&right&active`).
  *
  * Navigation fetches /api/files/list and records the new place with the NATIVE history API, which Next.js keeps in
  * step with its router: `pushState` when a pane moves (so Back walks back through folders), `replaceState` when only
@@ -76,13 +82,19 @@ type Side = 'left' | 'right';
 type DeviceKey = keyof UserPrefs['files']['sort'];
 /** `filter`: the pane's name filter (R6). It belongs to the place: kept on a fresh listing of the same place and on
  *  Swap (it travels with its pane), cleared when the pane lists another place. */
-type PaneState = { path: string; listing: Listing | null; loading: boolean; error: string | null; gone: boolean; selection: Selection; filter: string };
+/** `errorDisk`: the disk a failed listing's refusal named (blob_unavailable), whose strip still shows (stripDiskOf). */
+type PaneState = {
+  path: string; listing: Listing | null; loading: boolean; error: string | null; gone: boolean; errorDisk: string | null;
+  selection: Selection; filter: string;
+};
 
 export type FilesManagerProps = {
   initial: {
     left: Listing | null; right: Listing | null; leftPath: string; rightPath: string; active: Side;
     /** Words for a pane whose first listing failed for a reason other than "gone" (an unreadable image). */
     leftError?: string; rightError?: string;
+    /** The disk an unreadable image's refusal named, for its strip (Files 2 R2: never read from the path). */
+    leftErrorDisk?: string; rightErrorDisk?: string;
     /** The disk strip of each pane that starts inside a disk (disk-strip-data.ts). */
     strips?: StripData[];
   };
@@ -94,16 +106,21 @@ export type FilesManagerProps = {
 
 type Dialog =
   | {
-    kind: 'clash'; op: 'copy' | 'move'; sources: string[]; dest: string; where: string; undo: boolean; clashes: Clash[]; at: number;
+    kind: 'clash'; op: 'copy' | 'move'; sources: string[]; dest: string; where: string; undo: boolean; target: string | null;
+    count?: (n: number) => string;
+    clashes: Clash[]; at: number;
     choices: Record<string, ClashChoice>;
     /** Requests still to send once these clashes are answered, and the outcomes (and versions) of those already sent. */
     rest: TransferGroup[]; done: OpItem[]; versions: OpVersion[];
   }
   | { kind: 'delete'; side: Side; entries: FsEntry[] }
-  | { kind: 'makedir'; side: Side }
-  | { kind: 'rename'; side: Side; entry: FsEntry }
+  /** `refused`: a collection name the server found taken (R3), said under the field while it holds that name. */
+  | { kind: 'makedir'; side: Side; refused?: { name: string; words: string } }
+  | { kind: 'rename'; side: Side; entry: FsEntry; refused?: { name: string; words: string } }
   | { kind: 'protect'; side: Side; entries: FsEntry[] }
   | { kind: 'info'; side: Side; entry: FsEntry }
+  /** Create ADF… (Files 2 §4): a blank disk in the `side` pane's place. */
+  | { kind: 'create'; side: Side }
   /** Copy to… / Move to… on a phone: `sources` from the active pane, the picker starting at the other pane's place. */
   | { kind: 'pick'; op: 'copy' | 'move'; sources: string[]; start: string }
   /** The TOSEC-identity confirm before the first write to `disk` this visit; `next` goes on once it is confirmed. */
@@ -143,11 +160,6 @@ const noneDone = (): StashUploadResult => ({ items: [], renamed: [], refused: []
 const items = (n: number) => (n === 1 ? '1 item' : `${n} items`);
 const disks = (n: number) => (n === 1 ? '1 disk' : `${n} disks`);
 const files = (n: number) => (n === 1 ? '1 file' : `${n} files`);
-/** The disk a LIBRARY: path is in (LIBRARY:/<title>/<disk>/...), or null above the disks and anywhere else. */
-function diskIdOf(path: string | undefined): string | null {
-  const p = path ? parsePath(path) : null;
-  return p?.device === 'LIBRARY' ? p.segments[1] ?? null : null;
-}
 /** The root of the device a path is on ("STASH:"), for a pane whose place is gone. */
 const deviceRoot = (path: string) => `${parsePath(path)?.device ?? 'LIBRARY'}:`;
 const byDisk = (list: StripData[] | undefined) => Object.fromEntries((list ?? []).map((d) => [d.diskId, d]));
@@ -190,8 +202,11 @@ function wordsFor(code: unknown, detail: unknown): string {
 /** When each listing was read in this tab: an arriving STASH: row's stall clock runs on it. The server's first has none. */
 const readAt = new WeakMap<Listing, number>();
 
-/** `code`: the refusal's own code, for a caller that answers one differently (an archive that does not open). */
-async function fetchListing(path: string): Promise<{ listing: Listing } | { gone: true } | { error: string; code?: unknown }> {
+/**
+ * `code`: the refusal's own code, for a caller that answers one differently (an archive that does not open); `detail`:
+ * its detail (blob_unavailable names the disk).
+ */
+async function fetchListing(path: string): Promise<{ listing: Listing } | { gone: true } | { error: string; code?: unknown; detail?: unknown }> {
   try {
     const res = await fetch(`/api/files/list?path=${encodeURIComponent(path)}`, { cache: 'no-store' });
     if (res.ok) {
@@ -201,15 +216,22 @@ async function fetchListing(path: string): Promise<{ listing: Listing } | { gone
     }
     if (res.status === 404 || res.status === 400) return { gone: true };
     const body = (await res.json().catch(() => null)) as { error?: unknown; detail?: unknown } | null;
-    return { error: wordsFor(body?.error, body?.detail), code: body?.error };
+    return { error: wordsFor(body?.error, body?.detail), code: body?.error, detail: body?.detail };
   } catch {
     return { error: refusalWords('failed') };
   }
 }
 
-function firstState(path: string, listing: Listing | null, error: string | undefined): PaneState {
-  return { path, listing, loading: false, error: listing ? null : error ?? GONE, gone: !listing && !error, selection: EMPTY_SELECTION, filter: '' };
+function firstState(path: string, listing: Listing | null, error: string | undefined, errorDisk?: string): PaneState {
+  return {
+    path, listing, loading: false, error: listing ? null : error ?? GONE, gone: !listing && !error,
+    errorDisk: listing ? null : errorDisk ?? null, selection: EMPTY_SELECTION, filter: '',
+  };
 }
+
+/** The disk a failed listing names: an unreadable image's refusal carries its disk id (Files 2 R2). */
+const errorDiskOf = (r: { code?: unknown; detail?: unknown }) =>
+  (r.code === 'blob_unavailable' && typeof r.detail === 'string' ? r.detail : null);
 
 /** The picked entries, in the order the rows are drawn. */
 function pickedOf(rows: FsEntry[], sel: Selection): FsEntry[] {
@@ -238,36 +260,21 @@ function useArriving(l: Listing | null): { seen: ArrivingSeen; at: number } {
 /** What a pane draws: the "new in vN" marks, and a stopped arriving row's words in place of its percentage. */
 function shown(l: Listing | null, marks: ReadonlyMap<string, number>, arr: { seen: ArrivingSeen; at: number }): Listing | null {
   if (!l) return l;
-  const entries = withStalls(marks.size ? withAddedIn(l.entries, marks) : l.entries, arr.seen, arr.at);
+  const entries = withStalls(marks.size ? withAddedIn(l.entries, marks, l.diskBase) : l.entries, arr.seen, arr.at);
   return entries === l.entries ? l : { ...l, entries };
-}
-
-/** One button of the column. The reason sits on a wrapper too: a disabled button takes no pointer events, so its
- *  own title never shows. */
-function ActionButton({ id, label, reason, busy, onClick, primary = false }: {
-  id: string; label: string; reason: string | null; busy: boolean; onClick(): void; primary?: boolean;
-}) {
-  return (
-    // min-w-0 and a label that may wrap: a button is never wider than the column, so it never runs into the right pane.
-    <span title={reason ?? undefined} className="flex min-w-0 max-lg:hidden">
-      <Button variant={primary ? 'default' : 'outline'} size="sm" className="h-auto min-h-7 w-full py-1 leading-tight whitespace-normal" onClick={onClick}
-              disabled={reason !== null || busy} title={reason ?? undefined} data-testid={`files-${id}`}>
-        {label}
-      </Button>
-    </span>
-  );
 }
 
 /**
  * One button of the phone bar. A finger gets no tooltip, so a button that cannot act now is not `disabled`: it looks
- * dimmed (aria-disabled) and a tap says why (act() toasts the reason).
+ * dimmed (aria-disabled) and a tap says why (act() toasts the reason). While an operation runs it is described by the
+ * status row, and a tap toasts what runs.
  */
 function PhoneButton({ id, label, reason, busy, onClick, primary = false }: {
   id: string; label: string; reason: string | null; busy: boolean; onClick(): void; primary?: boolean;
 }) {
   return (
     <Button variant={primary ? 'default' : 'outline'} onClick={onClick} data-testid={`files-phone-${id}`}
-            aria-disabled={reason !== null || busy || undefined}
+            aria-disabled={reason !== null || busy || undefined} aria-describedby={busy ? 'files-busy' : undefined}
             className="min-h-11 min-w-0 flex-1 px-1.5 aria-disabled:opacity-50 lg:hidden">
       {label}
     </Button>
@@ -277,8 +284,8 @@ function PhoneButton({ id, label, reason, busy, onClick, primary = false }: {
 export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const router = useRouter();
   const [panes, setPanes] = useState<Record<Side, PaneState>>(() => ({
-    left: firstState(initial.leftPath, initial.left, initial.leftError),
-    right: firstState(initial.rightPath, initial.right, initial.rightError),
+    left: firstState(initial.leftPath, initial.left, initial.leftError, initial.leftErrorDisk),
+    right: firstState(initial.rightPath, initial.right, initial.rightError, initial.rightErrorDisk),
   }));
   const [active, setActive] = useState<Side>(initial.active);
   const [sorts, setSorts] = useState(prefs.files.sort);
@@ -313,6 +320,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     });
   }
   const rootRef = useRef<HTMLDivElement>(null);
+  /** Create ADF…'s submit, one at a time: Enter and a click in the same moment make one disk (Task 7 review). */
+  const createOnce = useRef(oneAtATime());
   const filterRefs = { left: useRef<HTMLInputElement>(null), right: useRef<HTMLInputElement>(null) };
   // A pane's newest request wins: a slow listing that lands after a newer one is dropped.
   const seq = useRef<Record<Side, number>>({ left: 0, right: 0 });
@@ -347,9 +356,11 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    * The filter stays when the listing that lands is of the place the pane showed (a reload after an operation), else it
    * clears (R6) -- only once it lands, so the old rows keep the view their picks were made in while they wait.
    * A refusal with the code `stayOn` leaves the pane where it was and says so in a toast (an archive that does not
-   * open: the person is still in its folder, and can download it). Resolves true when the place was listed.
+   * open: the person is still in its folder, and can download it). `select`: the path of a row to pick once the
+   * listing lands (a disk just made, §4); the filter then clears so the row is drawn. Resolves true when the place was listed.
    */
-  async function load(side: Side, path: string, stayOn?: RefusalCode): Promise<boolean> {
+  async function load(side: Side, path: string, opts: { stayOn?: RefusalCode; select?: string } = {}): Promise<boolean> {
+    const { stayOn } = opts;
     const n = ++seq.current[side];
     setPanes((ps) => ({ ...ps, [side]: { ...ps[side], path: stayOn ? ps[side].path : path, loading: true } }));
     const r = await fetchListing(path);
@@ -359,12 +370,19 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       setPanes((ps) => ({ ...ps, [side]: { ...ps[side], loading: false } }));
       return false;
     }
+    let selection: Selection = EMPTY_SELECTION;
+    if ('listing' in r && opts.select) {
+      const drawn = paneRows(r.listing.entries, latest.current.sorts[deviceOf(r.listing.path)], { filter: '', hideInfo: latest.current.hideInfo });
+      const i = drawn.findIndex((x) => x.path === opts.select);
+      if (i >= 0) selection = { anchor: i, cursor: i, picked: new Set([i]) };
+    }
     setPanes((ps) => ({
       ...ps,
       [side]: 'listing' in r
-        ? { path, listing: r.listing, loading: false, error: null, gone: false, selection: EMPTY_SELECTION,
-            filter: ps[side].listing?.path === r.listing.path ? ps[side].filter : '' }
-        : { path, listing: null, loading: false, error: 'gone' in r ? GONE : r.error, gone: 'gone' in r, selection: EMPTY_SELECTION, filter: '' },
+        ? { path, listing: r.listing, loading: false, error: null, gone: false, errorDisk: null, selection,
+            filter: !opts.select && ps[side].listing?.path === r.listing.path ? ps[side].filter : '' }
+        : { path, listing: null, loading: false, error: 'gone' in r ? GONE : r.error, gone: 'gone' in r,
+            errorDisk: 'gone' in r ? null : errorDiskOf(r), selection: EMPTY_SELECTION, filter: '' },
     }));
     return 'listing' in r;
   }
@@ -399,7 +417,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    */
   function openArchive(side: Side, path: string) {
     if (active !== side) setActive(side);
-    void load(side, path, 'archive_unreadable').then((ok) => {
+    void load(side, path, { stayOn: 'archive_unreadable' }).then((ok) => {
       if (!ok) return;
       const { panes: cur } = latest.current;
       window.history.pushState(null, '', urlOf(side === 'left' ? path : cur.left.path, side === 'right' ? path : cur.right.path, side));
@@ -627,8 +645,12 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   // R5: nothing leaves NET:, said before anything else.
   const outOfNet = copyOutReason(src);
   function transferReason(op: 'copy' | 'move'): string | null {
+    if (outOfNet) return outOfNet;
+    // Titles, or disk images from STASH:, onto LIBRARY: or a collection (Files 2 §3.2): the filing rules decide.
+    const filing = filingReason(op, src, picked, shelfOf(dst));
+    if (filing !== undefined) return filing;
     // A STASH: file that failed to arrive holds no bytes: a copy would skip it and still say done.
-    const r = outOfNet ?? sourceReason(op === 'move') ?? failedReason(picked);
+    const r = sourceReason(op === 'move') ?? failedReason(picked);
     if (r) return r;
     if (!acceptsCopies(dst)) return dst && netReadOnly(dst) ? readOnly(dst) : 'Open a disk or STASH: on the other side';
     if (!dst!.writable) return readOnly(dst!);
@@ -636,32 +658,57 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     return null;
   }
   const one = (r: string | null, what: string) => r ?? (picked.length !== 1 ? `Select one item to ${what}` : null);
+  // Above the disks (Files 2 §3.2): Makedir makes a collection on LIBRARY:, Rename and Delete act on collections only.
+  const shelf = shelfReasons(src, picked);
+  // Titles picked on LIBRARY: or in a collection: the phone's Copy to… / Move to… file them (the picker checks where).
+  const filingFrom = shelfOf(src) !== null && picked.length > 0 && picked.every((e) => e.kind === 'title');
+  // A collection never leaves LIBRARY: (fix round 1): said before the picker opens.
+  const collectionPicked = shelfOf(src) !== null && picked.some((e) => e.kind === 'collection');
   const reasons = {
     copy: transferReason('copy'),
     move: transferReason('move'),
-    delete: sourceReason(true),
-    rename: inNet ? NOT_IN_NET : one(sourceReason(true), 'rename it'),
-    makedir: inNet ? NOT_IN_NET : !holdsFiles(src) ? 'Open a disk or STASH: to make a folder in it' : !src!.writable ? readOnly(src!) : null,
+    delete: shelf ? shelf.delete : sourceReason(true),
+    rename: shelf ? shelf.rename : inNet ? NOT_IN_NET : one(sourceReason(true), 'rename it'),
+    makedir: shelf ? shelf.makedir : inNet ? NOT_IN_NET : !holdsFiles(src) ? 'Open a disk or STASH: to make a folder in it' : !src!.writable ? readOnly(src!) : null,
     protect: inNet ? NOT_IN_NET : sourceReason(true),
     info: inNet && !board ? NOT_IN_NET : one(sourceReason(false), 'see its details'),
     // One file by path; several, or a folder, as a .zip (spec §3.3).
     download: outOfNet ?? sourceReason(false) ?? failedReason(picked)
       ?? (downloadHref(picked, folderName).length > DOWNLOAD_URL_MAX ? 'Too many items to download at once — download their folder instead' : null),
     // The phone's Copy to… / Move to…: the place is picked afterwards, so only the source is checked here.
-    copyTo: outOfNet ?? sourceReason(false) ?? failedReason(picked),
-    moveTo: outOfNet ?? sourceReason(true) ?? failedReason(picked),
+    copyTo: collectionPicked ? COLLECTIONS_STAY : filingFrom ? null : outOfNet ?? sourceReason(false) ?? failedReason(picked),
+    moveTo: collectionPicked ? COLLECTIONS_STAY : filingFrom ? null : outOfNet ?? sourceReason(true) ?? failedReason(picked),
     // Disk images in STASH: into the library (R8).
     addlib: addToLibraryReason(src, picked),
+    // A blank disk in STASH:, or a new title on LIBRARY: or in a collection (§4).
+    createadf: createAdfReason(src),
   };
   /** Add to library is offered only while the active pane is in STASH: (R8). */
   const inStash = !!src && deviceOf(src.path) === 'stash';
 
+  // The bank's grid (Files 2 §2.3): the commands above, plus the ones that pick, move about and show.
+  // A pane showing an error has no listing: Parent and Root then go up from its path (Task 8 review).
+  const nav = navTargets(src, panes[active].path);
+  const bankReasons: Record<BankCommand, string | null> = {
+    copy: reasons.copy, move: reasons.move, delete: reasons.delete, rename: reasons.rename, makedir: reasons.makedir,
+    protect: reasons.protect, info: reasons.info, download: reasons.download, addlib: reasons.addlib, createadf: reasons.createadf,
+    all: rowsOf(active).length === 0 ? 'Nothing here to select' : null,
+    none: picked.length === 0 ? 'Nothing is selected' : null,
+    parent: nav.parent ? null : 'Already at the top',
+    root: nav.root ? null : 'Already at the top',
+    swap: null,
+    filter: src ? null : 'Nothing is listed here',
+    showinfo: holdsFiles(src) ? null : 'Open a disk or STASH: to show or hide .info files',
+  };
+
   // ---- running an operation -----------------------------------------------------------------------------------
 
   /** `queued`: how many files a copy into a board's queue queued (C3), a folder being several. */
-  type Outcome = { kind: 'done'; items: OpItem[]; versions: OpVersion[]; added: Added[]; queued?: number } | { kind: 'clashes'; clashes: Clash[] } | { kind: 'refused' };
+  type Outcome = { kind: 'done'; items: OpItem[]; versions: OpVersion[]; added: Added[]; queued?: number } | { kind: 'clashes'; clashes: Clash[] }
+    | { kind: 'refused'; words?: string };
 
-  async function post(req: OpRequest, label: string): Promise<Outcome> {
+  /** `inline`: a refusal code the caller says itself (a collection name clash, under the field): no toast for it. */
+  async function post(req: OpRequest, label: string, inline?: RefusalCode): Promise<Outcome> {
     setBusy(label);
     try {
       const res = await fetch('/api/files/ops', {
@@ -674,6 +721,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       } | null;
       if (res.status === 409 && body?.error === 'clashes' && body.clashes) return { kind: 'clashes', clashes: body.clashes };
       if (!res.ok || !body?.items) {
+        if (inline && body?.error === inline) return { kind: 'refused', words: wordsFor(body.error, body.detail) };
         toast.error(wordsFor(body?.error, body?.detail));
         if (reloadsBoth(body?.error)) reloadBoth();
         return { kind: 'refused' };
@@ -710,7 +758,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    * no versions) or the toast carries its own `action` instead.
    */
   async function report(done: OpItem[], success: (n: number) => string, target: string | null, versions: OpVersion[],
-    opts: { undo?: boolean; action?: ToastAction } = {}) {
+    opts: { undo?: boolean; action?: ToastAction; count?: (n: number) => string } = {}) {
+    const count = opts.count ?? items;
     const offer = (): { action?: ToastAction } => (opts.action ? { action: opts.action } : opts.undo === false ? {} : undoAction(versions));
     const failed = done.filter((i): i is Extract<OpItem, { ok: false }> => !i.ok);
     // A clash answered Skip is neither done nor failed: said apart, never counted as moved or copied.
@@ -724,9 +773,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const head = target && ok > 0 ? await refreshStrip(target) : null;
     const seq = versions.filter((v) => v.diskId === target).at(-1)?.seq ?? head;
     const said = (n: number) => (seq === null ? success(n) : `${success(n).replace(/\.$/, '')} — saved as version ${seq}.`);
-    if (failed.length === 0) toast.success(opTitle(tally, said, items), ok > 0 ? offer() : {});
+    if (failed.length === 0) toast.success(opTitle(tally, said, count), ok > 0 ? offer() : {});
     else {
-      toast.error(opTitle(tally, said, items), {
+      toast.error(opTitle(tally, said, count), {
         ...(ok > 0 ? offer() : {}),
         description: (
           <ul data-testid="files-failures">
@@ -742,14 +791,18 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   type ClashDialogState = Extract<Dialog, { kind: 'clash' }>;
   /**
    * `undo`: whether the run may offer Undo (offersUndo: not when it changes STASH: or sends). `queued`: the files a
-   * copy into a board's queue has queued so far (NET: never clashes, so a send is one request).
+   * copy into a board's queue has queued so far (NET: never clashes, so a send is one request). `target`: the disk
+   * whose version the toast names (the destination pane's disk; Files 2 R2: from the listing, not the path).
    */
-  type Run = { op: 'copy' | 'move'; dest: string; where: string; undo: boolean; queued?: number };
+  type Run = { op: 'copy' | 'move'; dest: string; where: string; undo: boolean; target: string | null; queued?: number;
+    /** What the toast counts: items, or for a filing titles or disks (filingNoun). */
+    count?: (n: number) => string };
 
-  function transfer(op: 'copy' | 'move', sources: string[], dest: string, where: string) {
+  function transfer(op: 'copy' | 'move', sources: string[], dest: string, where: string, target: string | null, count?: (n: number) => string) {
     if (busy) return;
     // R4: the Files setting's answer goes with the first request; only 'ask' (the default) can come back as clashes.
-    void runGroups({ op, dest, where, undo: offersUndo(op, sources, dest) }, [{ onClash: prefs.files.onClash, sources }], [], []);
+    void runGroups({ op, dest, where, undo: offersUndo(op, sources, dest), target, ...(count ? { count } : {}) },
+      [{ onClash: prefs.files.onClash, sources }], [], []);
   }
 
   /**
@@ -778,8 +831,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   /** Several requests saved several versions: Undo of the last alone would undo only part of the run, so none. */
   function finishRun(run: Run, done: OpItem[], versions: OpVersion[]) {
     // A copy into a board's queue says how many FILES it queued (a folder is several): "Queued 3 files to A500 bench."
-    const said = (n: number) => (run.queued !== undefined ? `Queued ${files(run.queued)} to ${run.where}.` : `${verbs[run.op][1]} ${items(n)} to ${run.where}.`);
-    if (done.length) void report(done, said, diskIdOf(run.dest), versions, { undo: run.undo });
+    const said = (n: number) => (run.queued !== undefined ? `Queued ${files(run.queued)} to ${run.where}.` : `${verbs[run.op][1]} ${(run.count ?? items)(n)} to ${run.where}.`);
+    if (done.length) void report(done, said, run.target, versions, { undo: run.undo, ...(run.count ? { count: run.count } : {}) });
     else reloadBoth();
   }
 
@@ -813,6 +866,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   }
 
   const where = placeOf;
+  /** A copy or move onto LIBRARY: or a collection counts titles or disks (filingNoun); anywhere else, items. */
+  const filedCount = (to: Listing | null) => (shelfOf(to) ? filingNoun(src) : undefined);
 
   /**
    * Run `go` once every disk it will change has had its TOSEC-identity confirm (the Browse page's D-W-3): asked before
@@ -834,15 +889,16 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     next();
   }
 
-  function act(cmd: 'copy' | 'move' | 'delete' | 'rename' | 'makedir' | 'protect' | 'info' | 'download' | 'copyTo' | 'moveTo' | 'addlib') {
-    if (busy) return;
+  function act(cmd: Exclude<BankCommand, 'all' | 'none' | 'parent' | 'root' | 'swap' | 'filter' | 'showinfo'> | 'copyTo' | 'moveTo') {
+    // While an operation runs a press says what runs (the status row's words), never silently nothing (Task 8 review).
+    if (busy) { toast(busy, { id: 'files-busy' }); return; }
     const reason = reasons[cmd];
     if (reason) { toast.error(reason); return; }
     const side = active;
     const sources = picked.map((e) => e.path);
     switch (cmd) {
-      case 'copy': guarded([dst?.disk], () => transfer('copy', sources, dst!.path, where(dst))); return;
-      case 'move': guarded([dst?.disk, src?.disk], () => transfer('move', sources, dst!.path, where(dst))); return;
+      case 'copy': guarded([dst?.disk], () => transfer('copy', sources, dst!.path, where(dst), dst?.disk?.diskId ?? null, filedCount(dst))); return;
+      case 'move': guarded([dst?.disk, src?.disk], () => transfer('move', sources, dst!.path, where(dst), dst?.disk?.diskId ?? null, filedCount(dst))); return;
       // R2: with Ask before deleting off, a delete inside a disk runs at once (it saves a version; the toast offers
       // Undo). STASH: and NET: keep no versions, so they always ask.
       case 'delete':
@@ -857,7 +913,36 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       case 'moveTo': setDialog({ kind: 'pick', op: 'move', sources, start: panes[otherSide(side)].path }); return;
       case 'download': void download(downloadHref(picked, folderName)); return;
       case 'addlib': void addToLibrary(picked); return;
+      case 'createadf': setDialog({ kind: 'create', side }); return;
     }
+  }
+
+  /**
+   * Create ADF… (§4): one op into the `side` pane's place; the toast names what was made (a title on LIBRARY: offers
+   * Open title), and the pane reloads with the new disk picked. The other pane reloads too when it shows the same place.
+   */
+  async function createDisk(side: Side, v: { name: string; filesystem: 'FFS' | 'OFS'; density: 'dd' | 'hd' }) {
+    const l = panes[side].listing;
+    if (!l) return;
+    const r = await post({ op: 'create-adf', dest: l.path, ...v, onClash: prefs.files.onClash }, 'Creating the disk…');
+    if (r.kind === 'clashes') { toast.error(refusalWords('name_exists')); return; }   // a race with the dialog's own check
+    if (r.kind !== 'done') return;
+    const made = r.items[0];
+    // A refused disk keeps the dialog open with the typed name, to be changed and tried again (Task 7 review).
+    if (!createClosesDialog(r)) {
+      if (made && !made.ok) toast.error(refusalWords(made.refusal.code, made.refusal.detail));
+      return;
+    }
+    ranOp.current = true;
+    setDialog(null);
+    const first = r.added[0];
+    if (!made?.ok) return;
+    if (made.skipped) toast.success(skippedWords(1));
+    else toast.success(`Made ${first ? v.name : `${v.name}.adf`} in ${placeOf(l)}.`,
+      first ? { action: { label: 'Open title', onClick: () => router.push(`/games/${first.gameId}`) } } : {});
+    void load(side, l.path, { select: made.skipped ? undefined : made.source });
+    const other = otherSide(side);
+    if (latest.current.panes[other].path === l.path) void load(other, l.path);
   }
 
   /**
@@ -866,7 +951,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    */
   async function deleteNow(l: Listing, entries: FsEntry[]) {
     const r = await post({ op: 'delete', sources: entries.map((e) => e.path) }, `Deleting ${items(entries.length)}…`);
-    if (r.kind === 'done') void report(r.items, (n) => `Deleted ${items(n)} from ${placeName(l.disk)}.`, diskIdOf(l.path), r.versions);
+    if (r.kind === 'done') void report(r.items, (n) => `Deleted ${items(n)} from ${placeName(l.disk)}.`, l.disk?.diskId ?? null, r.versions);
     const now = document.activeElement;
     if (!now || now === document.body) rootRef.current?.focus({ preventScroll: true });
   }
@@ -926,15 +1011,35 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       void load(side, l.path);
       window.history.pushState(null, '', urlOf(side === 'left' ? l.path : panes.left.path, side === 'right' ? l.path : panes.right.path, active));
     }
-    guarded([l.disk, d.op === 'move' ? src?.disk : null], () => transfer(d.op, d.sources, l.path, where(l)));
+    guarded([l.disk, d.op === 'move' ? src?.disk : null], () => transfer(d.op, d.sources, l.path, where(l), l.disk?.diskId ?? null, filedCount(l)));
   }
 
-  /** A dialog's operation: the dialog stays open (busy) while it runs and closes once it is done. */
-  async function runFromDialog(req: OpRequest, label: string, success: (n: number) => string) {
-    const r = await post(req, label);
-    // The disk the operation changed: where it made the folder, else where its first source is.
-    const target = diskIdOf('dest' in req ? req.dest : 'source' in req ? req.source : req.sources[0]);
+  /**
+   * A dialog's operation: the dialog stays open (busy) while it runs and closes once it is done. `target`: the disk it
+   * changes -- the dialog's pane's disk, where it makes the folder or its sources are (Files 2 R2: from the listing).
+   */
+  async function runFromDialog(req: OpRequest, label: string, success: (n: number) => string, target: string | null,
+    inline?: { code: RefusalCode; refused(words: string): void }) {
+    const r = await post(req, label, inline?.code);
     if (r.kind === 'done') { ranOp.current = true; setDialog(null); void report(r.items, success, target, r.versions); }
+    else if (r.kind === 'refused' && r.words !== undefined) inline?.refused(r.words);
+  }
+
+  /** A bank command, on the source (active) pane. One that cannot apply says why (its button is aria-disabled, §2.3). */
+  function bank(cmd: BankCommand) {
+    if (busy) { toast(busy, { id: 'files-busy' }); return; }
+    const reason = bankReasons[cmd];
+    if (reason) { toast.error(reason); return; }
+    switch (cmd) {
+      case 'all': setSelection(active, () => selectAll(rowsOf(active).length)); return;
+      case 'none': setSelection(active, () => EMPTY_SELECTION); return;
+      case 'parent': command('parent', false); return;
+      case 'root': if (nav.root) navigate(active, nav.root); return;
+      case 'swap': swap(); return;
+      case 'filter': filterRefs[active].current?.focus(); return;
+      case 'showinfo': showInfo(hideInfo); return;   // hidden now → show
+      default: act(cmd);
+    }
   }
 
   function swap() {
@@ -957,11 +1062,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       case 'down': setSelection(active, (s) => moveCursor(s, 1, count, shift)); return;
       case 'pick': if (count) setSelection(active, (s) => togglePick(s, s.cursor)); return;
       case 'open': if (count) openRow(active, sel.cursor); return;
-      case 'parent': {
-        const crumbs = src?.crumbs ?? [];
-        if (crumbs.length > 1) navigate(active, crumbs[crumbs.length - 2].path);
-        return;
-      }
+      case 'parent': if (nav.parent) navigate(active, nav.parent); return;
       case 'switch': activate(otherSide(active)); return;
       case 'find': filterRefs[active].current?.focus(); return;
       default: act(cmd);
@@ -995,16 +1096,21 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const l = panes[side].listing;
     const rows = rowsOf(side);
     const paths = indexes.map((i) => rows[i]?.path).filter((p): p is string => !!p);
-    if (!holdsFiles(l) || paths.length === 0) { e.preventDefault(); return; }   // titles and disks do not move
+    // Titles on LIBRARY: or in a collection drag, to be filed (Files 2 §3.2). A selection that holds a collection too
+    // drags as well, and its drop says why it is refused (fix round 1): never a drag that silently does not start.
+    const shelf = shelfOf(l) !== null && indexes.every((i) => rows[i]?.kind === 'title' || rows[i]?.kind === 'collection');
+    if ((!holdsFiles(l) && !shelf) || paths.length === 0) { e.preventDefault(); return; }
     activate(side);
     e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ from: side, paths }));
     e.dataTransfer.effectAllowed = 'copyMove';
   }
 
-  /** The folder row a drop landed on, else the folder the pane shows. */
+  /** The folder (or collection) row a drop landed on, else the folder the pane shows. */
   function dropFolder(l: Listing, e: React.DragEvent): string {
     const row = (e.target as HTMLElement).closest?.('tr[data-testid="pane-row"]') as HTMLElement | null;
-    return row?.dataset.kind === 'dir' ? l.entries.find((x) => x.name === row.dataset.name)?.path ?? l.path : l.path;
+    const kind = row?.dataset.kind;
+    return kind === 'dir' || kind === 'collection'
+      ? l.entries.find((x) => x.name === row!.dataset.name && x.kind === kind)?.path ?? l.path : l.path;
   }
 
   /**
@@ -1023,7 +1129,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     activate(side);
     const disk = l.disk;
     const dest = dropFolder(l, e);
-    const folder = (parsePath(dest)?.segments ?? []).slice(2).join('/');
+    // The folder's place on the disk, under the listing's diskBase (Files 2 R2: a collection adds a segment).
+    const folder = diskRelative(dest, l.diskBase) ?? '';
     const where = dest === l.path ? l.crumbs[l.crumbs.length - 1]?.label ?? disk.label : baseName(dest);
     // Read synchronously, before any await or confirm: the browser empties the DataTransfer once this handler returns.
     const reading = readDroppedItems(e.dataTransfer.items);
@@ -1215,32 +1322,50 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const blocked = dropBlocked({ busy: busy !== null, dialogOpen: dialog !== null });
     if (blocked) { toast.error(blocked); return; }
     const l = panes[side].listing;
+    const from = panes[data.from]?.listing ?? null;
+    const dest = l ? dropFolder(l, e) : '';
+    const op = e.shiftKey ? 'move' : 'copy';
+    const pickedHere = from?.entries.filter((x) => data.paths.includes(x.path)) ?? [];
+    // Onto LIBRARY:, a collection, or a collection row (Files 2 §3.2): titles, or disk images from STASH:, are filed.
+    const row = l?.entries.find((x) => x.path === dest) ?? null;
+    const to = row ? shelfOfRow(row) : shelfOf(l);
+    const filing = filingReason(op, from, pickedHere, to);
+    if (filing !== undefined) {
+      if (data.from === side && dest === l?.path) return;        // put back where it was picked up
+      if (filing) { toast.error(filing); return; }
+      activate(side);
+      transfer(op, data.paths, dest, row ? row.name : where(l), null, filingNoun(from));
+      return;
+    }
     if (!l || !acceptsCopies(l)) { toast.error(l && netReadOnly(l) ? readOnly(l) : 'Open a disk or STASH: to drop files into it'); return; }
     if (!l.writable) { toast.error(readOnly(l)); return; }
-    const dest = dropFolder(l, e);
     if (data.paths.includes(dest)) return;                       // a folder dropped on itself
     if (data.from === side && dest === l.path) return;           // put back where it was picked up
-    const from = panes[data.from]?.listing;
     // A STASH: file that failed to arrive holds no bytes: said as Copy → says it, not as the op's "not found".
-    const failed = failedReason(from?.entries.filter((x) => data.paths.includes(x.path)) ?? []);
+    const failed = failedReason(pickedHere);
     if (failed) { toast.error(failed); return; }
-    const op = e.shiftKey ? 'move' : 'copy';
     if (op === 'move' && netBoardOf(l)) { toast.error(`${NET_MOVE_IN}.`); return; }   // C16
     if (op === 'move' && from && !from.writable) { toast.error(readOnly(from)); return; }
     activate(side);
     const label = where(l);
-    guarded([l.disk, op === 'move' ? from?.disk : null], () => transfer(op, data.paths, dest, label));
+    guarded([l.disk, op === 'move' ? from?.disk : null], () => transfer(op, data.paths, dest, label, l.disk?.diskId ?? null));
   }
 
   // ---- drawing ------------------------------------------------------------------------------------------------
 
-  const arrow = active === 'left';
   const dialogBusy = busy !== null;
   const dialogListing = dialog && 'side' in dialog ? panes[dialog.side].listing : null;
+  // The disk a dialog's operation changes, whose version its toast names.
+  const dialogTarget = dialogListing?.disk?.diskId ?? null;
   // What a delete names: the disk, STASH: (whose delete cannot be undone: ruling 8), or NET: (it cancels or clears, R4).
   const deleteWhere = deleteWhereOf(dialogListing);
-  const deletedFrom = (n: number) => (deleteWhere === 'NET:' ? `Cancelled or cleared ${items(n)} on ${placeOf(dialogListing)}.`
+  const deletedFrom = (n: number) => (deleteWhere === 'LIBRARY:' ? `Deleted ${n === 1 ? '1 collection' : `${n} collections`}.`
+    : deleteWhere === 'NET:' ? `Cancelled or cleared ${items(n)} on ${placeOf(dialogListing)}.`
     : `Deleted ${items(n)} from ${deleteWhere === 'STASH:' ? deleteWhere : placeName(deleteWhere)}.`);
+  // Makedir and Rename on LIBRARY: name collections (Files 2 §3.2, R3): the Library's rules, clashes among collections.
+  const naming = shelfOf(dialogListing) !== null;
+  const nameTaken = naming ? dialogListing!.entries.filter((e) => e.kind === 'collection').map((e) => e.name)
+    : dialogListing?.entries.map((e) => e.name) ?? [];
 
   function pane(side: Side) {
     const p = panes[side];
@@ -1274,8 +1399,6 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       </div>
     );
   }
-
-  const sep = <div aria-hidden className="my-1 h-px max-lg:hidden" style={{ background: 'var(--line)' }} />;
 
   return (
     <>
@@ -1312,59 +1435,58 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       </div>
       {/* Below lg nothing clips: a clip would cut off the strip's History over a short pane, and `hidden` would make
           this a scroll box the phone bar could not stick out of. The pane's top and the bar round their own corners.
-          From lg the manager fills the window under the header and the drop zone (about 420 px of them): at 1280 x 800
-          the whole button column is on screen without a page scroll, and 440 px keeps it (and the busy line) whole.
-          The column is 128 px: its widest label, Add to library, fits on one line at every width (Task 9). */}
-      <div className="grid rounded-[20px] lg:overflow-hidden max-lg:grid-cols-[minmax(0,1fr)] lg:h-[clamp(440px,calc(100dvh-420px),900px)] lg:grid-cols-[minmax(0,1fr)_128px_minmax(0,1fr)]"
+          From lg (Files 2 §2): the two panes, a 1 px line between them and nothing else, then the bank under both and
+          one status row. The manager fills the window under the header and the compact drop zones (about 260-300 px
+          of them): at 1280 x 800 the whole manager -- the bank's last row and the status row too -- is on screen as the
+          page opens, each pane about 385 px tall; from 1366 x 768 up likewise. 500 px is the floor: a pane inside a
+          disk (title bar, filter row, strip, foot: about 280 px) keeps room for a few rows, so on a shorter window the
+          page scrolls rather than squeezing them out. */}
+      <div className="grid rounded-[20px] lg:overflow-hidden max-lg:grid-cols-[minmax(0,1fr)] lg:h-[clamp(500px,calc(100dvh-300px),1000px)] lg:grid-rows-[minmax(0,1fr)_auto_auto]"
            style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
-        {pane('left')}
-        <div data-testid="files-actions" role="group" aria-label="File actions"
-             className="files-bar flex flex-wrap gap-1.5 border-t p-2 max-lg:order-last max-lg:rounded-b-[20px] lg:flex-col lg:gap-[7px] lg:border-x lg:border-t-0 lg:px-2 lg:py-4"
-             style={{ borderColor: 'var(--line)', background: 'var(--surface-2)' }}>
-          <ActionButton busy={busy !== null} id="copy" label={arrow ? 'Copy →' : '← Copy'} reason={reasons.copy} onClick={() => act('copy')}
-                        primary={picked.length > 0} />
-          <ActionButton busy={busy !== null} id="move" label={arrow ? 'Move →' : '← Move'} reason={reasons.move} onClick={() => act('move')} />
-          {sep}
-          <ActionButton busy={busy !== null} id="delete" label="Delete" reason={reasons.delete} onClick={() => act('delete')} />
-          <ActionButton busy={busy !== null} id="rename" label="Rename" reason={reasons.rename} onClick={() => act('rename')} />
-          <ActionButton busy={busy !== null} id="makedir" label="Makedir" reason={reasons.makedir} onClick={() => act('makedir')} />
-          <ActionButton busy={busy !== null} id="protect" label="Protect" reason={reasons.protect} onClick={() => act('protect')} />
-          <ActionButton busy={busy !== null} id="info" label="Info" reason={reasons.info} onClick={() => act('info')} />
-          {inStash && (
-            <ActionButton busy={busy !== null} id="addlib" label="Add to library" reason={reasons.addlib} onClick={() => act('addlib')} />
-          )}
-          {sep}
-          <ActionButton busy={busy !== null} id="download" label="Download" reason={reasons.download} onClick={() => act('download')} />
-          <ActionButton busy={busy !== null} id="swap" label="Swap ⇄" reason={null} onClick={swap} />
-          {/* The phone bar: one row of four, the rest under More. */}
-          <PhoneButton busy={busy !== null} id="copy" label="Copy to…" reason={reasons.copyTo} onClick={() => act('copyTo')}
-                       primary={picked.length > 0} />
-          <PhoneButton busy={busy !== null} id="move" label="Move to…" reason={reasons.moveTo} onClick={() => act('moveTo')} />
-          <PhoneButton busy={busy !== null} id="delete" label="Delete" reason={reasons.delete} onClick={() => act('delete')} />
-          <DropdownMenu>
-            <DropdownMenuTrigger data-testid="files-more" aria-haspopup="menu"
-                                 className="inline-flex min-h-11 min-w-0 flex-1 items-center justify-center rounded-[10px] border px-1.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-(--ring) lg:hidden"
-                                 style={{ borderColor: 'var(--line)', background: 'var(--surface)', color: 'var(--ink)' }}>
-              More ▾
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" align="end" data-testid="files-more-menu"
-                                 className="w-[min(240px,calc(100vw-32px))] rounded-2xl"
-                                 style={{ background: 'var(--surface)', color: 'var(--ink)', border: '1px solid var(--line)', boxShadow: 'var(--shadow-card)' }}>
-              {([['rename', 'Rename…'], ['makedir', 'Makedir…'], ['protect', 'Protect…'], ['info', 'Info'],
-                ...(inStash ? [['addlib', 'Add to library']] as const : []), ['download', 'Download']] as const).map(([id, label]) => (
-                // Not disabled: a tap on one that cannot act now says why.
-                <DropdownMenuItem key={id} data-testid={`files-more-${id}`} aria-disabled={reasons[id] !== null || undefined}
-                                  onClick={() => act(id)} className={cn(MENU_ITEM, 'h-11 sm:h-11 font-medium aria-disabled:opacity-50')}>
-                  {label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <p role="status" data-testid="files-busy" className="text-center text-[12px] max-lg:basis-full max-lg:empty:hidden lg:order-first" style={{ color: 'var(--muted)' }}>
-            {busy ?? ''}
-          </p>
+        <div className="grid min-h-0 max-lg:contents lg:grid-cols-[minmax(0,1fr)_1px_minmax(0,1fr)]">
+          {pane('left')}
+          <div aria-hidden data-testid="files-divider" className="max-lg:hidden" style={{ background: 'var(--line)' }} />
+          {pane('right')}
         </div>
-        {pane('right')}
+        <ButtonBank device={parsePath(src?.path ?? panes[active].path)?.device ?? null}
+                    reasons={bankReasons} busy={busy !== null} showInfo={!hideInfo} primaryCopy={picked.length > 0}
+                    onDevice={(d) => navigate(active, `${d}:`)} onCommand={bank} />
+        {/* Below lg the phone bar and the status row stick to the bottom together; from lg the wrapper is not a box
+            (contents), the bar is gone and the status row is the manager's last row, under the bank. */}
+        <div className="files-bar max-lg:rounded-b-[20px] lg:contents" style={{ background: 'var(--surface-2)' }}>
+          <div data-testid="files-actions" role="group" aria-label="File actions"
+               className="flex flex-wrap gap-1.5 border-t p-2 lg:hidden" style={{ borderColor: 'var(--line)' }}>
+            {/* The phone bar: one row of four, the rest under More. */}
+            <PhoneButton busy={busy !== null} id="copy" label="Copy to…" reason={reasons.copyTo} onClick={() => act('copyTo')}
+                         primary={picked.length > 0} />
+            <PhoneButton busy={busy !== null} id="move" label="Move to…" reason={reasons.moveTo} onClick={() => act('moveTo')} />
+            <PhoneButton busy={busy !== null} id="delete" label="Delete" reason={reasons.delete} onClick={() => act('delete')} />
+            <DropdownMenu>
+              <DropdownMenuTrigger data-testid="files-more" aria-haspopup="menu"
+                                   className="inline-flex min-h-11 min-w-0 flex-1 items-center justify-center rounded-[10px] border px-1.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-(--ring) lg:hidden"
+                                   style={{ borderColor: 'var(--line)', background: 'var(--surface)', color: 'var(--ink)' }}>
+                More ▾
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="top" align="end" data-testid="files-more-menu"
+                                   className="w-[min(240px,calc(100vw-32px))] rounded-2xl"
+                                   style={{ background: 'var(--surface)', color: 'var(--ink)', border: '1px solid var(--line)', boxShadow: 'var(--shadow-card)' }}>
+                {([['rename', 'Rename…'], ['makedir', 'Makedir…'], ['createadf', 'Create ADF…'], ['protect', 'Protect…'], ['info', 'Info'],
+                  ...(inStash ? [['addlib', 'Add to library']] as const : []), ['download', 'Download']] as const).map(([id, label]) => (
+                  // Not disabled: a tap on one that cannot act now says why.
+                  <DropdownMenuItem key={id} data-testid={`files-more-${id}`} aria-disabled={reasons[id] !== null || busy !== null || undefined}
+                                    aria-describedby={busy !== null ? 'files-busy' : undefined}
+                                    onClick={() => act(id)} className={cn(MENU_ITEM, 'h-11 sm:h-11 font-medium aria-disabled:opacity-50')}>
+                    {label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          {/* The one status row (§2.3): progress such as "Copying 3 of 12…". */}
+          <p role="status" id="files-busy" data-testid="files-busy"
+             className="px-3 py-0.5 text-[12px] max-lg:pb-2 max-lg:text-center max-lg:empty:hidden lg:min-h-[22px] lg:border-t"
+             style={{ borderColor: 'var(--line)', color: 'var(--muted)' }}>{busy ?? ''}</p>
+        </div>
       </div>
 
       {(dialog?.kind === 'clash' || dialog?.kind === 'stash-clash') && (
@@ -1376,20 +1498,36 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
                              onCancel={() => setDialog(null)}
                              onConfirm={() => void runFromDialog({ op: 'delete', sources: dialog.entries.map((e) => e.path) },
                                deleteWhere === 'NET:' ? `Cancelling or clearing ${items(dialog.entries.length)}…` : `Deleting ${items(dialog.entries.length)}…`,
-                               deletedFrom)} />
+                               deletedFrom, dialogTarget)} />
       )}
       {(dialog?.kind === 'makedir' || dialog?.kind === 'rename') && (
         <NameDialog mode={dialog.kind} initial={dialog.kind === 'rename' ? dialog.entry.name : ''}
-                    taken={dialogListing?.entries.map((e) => e.name) ?? []} busy={dialogBusy}
+                    rules={naming ? 'collection' : 'amiga'} taken={nameTaken} refused={dialog.refused ?? null} busy={dialogBusy}
                     onCancel={() => setDialog(null)}
-                    onSave={(name) => void (dialog.kind === 'rename'
-                      ? runFromDialog({ op: 'rename', source: dialog.entry.path, name }, 'Renaming…', () => `Renamed ${dialog.entry.name} to ${name}.`)
-                      : runFromDialog({ op: 'makedir', dest: dialogListing!.path, name }, 'Making the folder…', () => `Made the folder ${name}.`))} />
+                    onSave={(name) => {
+                      // A collection name the server finds taken (R3) is said under the field, which keeps the name.
+                      const inline = naming ? {
+                        code: 'name_exists' as const,
+                        refused: (words: string) => setDialog((cur) => (cur === dialog ? { ...dialog, refused: { name, words } } : cur)),
+                      } : undefined;
+                      void (dialog.kind === 'rename'
+                        ? runFromDialog({ op: 'rename', source: dialog.entry.path, name }, 'Renaming…', () => `Renamed ${dialog.entry.name} to ${name}.`, dialogTarget, inline)
+                        : runFromDialog({ op: 'makedir', dest: dialogListing!.path, name }, naming ? 'Making the collection…' : 'Making the folder…',
+                          () => (naming ? `Made the collection ${name}.` : `Made the folder ${name}.`), dialogTarget, inline));
+                    }} />
+      )}
+      {dialog?.kind === 'create' && (
+        // The subtitle names a STASH: folder by its path ("In STASH:/Disks"); elsewhere the place's own name ("In Demos").
+        <CreateAdfDialog where={panes[dialog.side].listing?.path.startsWith('STASH:') ? panes[dialog.side].listing!.path : placeOf(panes[dialog.side].listing)}
+                         busy={dialogBusy}
+                         taken={prefs.files.onClash === 'ask' && panes[dialog.side].listing?.path.startsWith('STASH:')
+                           ? panes[dialog.side].listing!.entries.map((e) => e.name) : null}
+                         onCancel={() => setDialog(null)} onCreate={(v) => { createOnce.current(() => createDisk(dialog.side, v)); }} />
       )}
       {dialog?.kind === 'protect' && (
         <ProtectDialog entries={dialog.entries} busy={dialogBusy} onCancel={() => setDialog(null)}
                        onSave={(protection) => void runFromDialog({ op: 'protect', sources: dialog.entries.map((e) => e.path), protection },
-                         'Setting protection…', (n) => `Protection set on ${items(n)}.`)} />
+                         'Setting protection…', (n) => `Protection set on ${items(n)}.`, dialogTarget)} />
       )}
       {dialog?.kind === 'info' && (
         // A queue row's Info only reads: its comment travels with the send and is not edited in NET:.
@@ -1397,11 +1535,12 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
                     onSaveComment={(comment) => {
                       const entry = dialog.entry;
                       guarded([dialogListing?.disk], () => void runFromDialog({ op: 'comment', source: entry.path, comment },
-                        'Saving the comment…', () => `Comment saved on ${entry.name}.`));
+                        'Saving the comment…', () => `Comment saved on ${entry.name}.`, dialogTarget));
                     }} />
       )}
       {dialog?.kind === 'pick' && (
         <CopyToPicker op={dialog.op} count={dialog.sources.length} start={dialog.start} busy={dialogBusy} list={fetchListing}
+                      filing={(l) => filingReason(dialog.op, src, picked, shelfOf(l))}
                       onCancel={() => setDialog(null)} onPick={(l) => placePicked(dialog, l)} />
       )}
       {dialog?.kind === 'identity' && dialog.disk.tosecName && (

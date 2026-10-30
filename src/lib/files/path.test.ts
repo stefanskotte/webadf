@@ -87,11 +87,15 @@ describe('filesHrefForDisk (Task 9; increment 2 R1)', () => {
     expect([q.get('left'), q.get('right'), q.get('active')]).toEqual(['STASH:', 'LIBRARY:/g1/d1', 'right']);
     expect(filesHrefForDisk('g1', 'd1', true)).toBe(`${href}#disk-history`);
   });
+  it('opens a filed title\'s disk inside its collection (Files 2 §3.1)', () => {
+    expect(filesHrefForDisk('g', 'd', false, 'c')).toBe(`/files?left=STASH:&right=${encodeURIComponent('LIBRARY:/c/g/d')}&active=right`);
+    expect(filesHrefForDisk('g', 'd', true, null)).toBe(`/files?left=STASH:&right=${encodeURIComponent('LIBRARY:/g/d')}&active=right#disk-history`);
+  });
 });
 
 describe('the panes\' devices (increment 2 R1, increment 3)', () => {
-  it('STASH:, NET: and LIBRARY:, STASH: on the left and LIBRARY: on the right by default', () => {
-    expect(PANE_DEVICES).toEqual(['STASH', 'NET', 'LIBRARY']);
+  it('STASH:, LIBRARY: and NET: (the device column\'s order, Files 2 R12), STASH: on the left and LIBRARY: on the right by default', () => {
+    expect(PANE_DEVICES).toEqual(['STASH', 'LIBRARY', 'NET']);
     expect([DEFAULT_LEFT, DEFAULT_RIGHT]).toEqual(['STASH:', 'LIBRARY:']);
   });
 });

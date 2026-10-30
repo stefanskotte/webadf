@@ -56,7 +56,7 @@ function diskName(d: GameDetailDisk): string {
   return d.tosecName ?? d.sourceFilename ?? `Disk ${d.diskNo}`;
 }
 
-export function DiskSetSection({ gameId, title, entries, from, view = null, fobDevices = [], send = null, sendPicker = null, kind = null, authored = false }: {
+export function DiskSetSection({ gameId, title, entries, from, view = null, fobDevices = [], send = null, sendPicker = null, kind = null, authored = false, filesCollectionId = null }: {
   gameId: string;
   /** The title's name, for the Add disks… heading and its "Moved to" toast. */
   title: string;
@@ -73,6 +73,8 @@ export function DiskSetSection({ gameId, title, entries, from, view = null, fobD
   /** The title's kind and authored flag, carried to each DiskRow for its icon colour. */
   kind?: string | null;
   authored?: boolean;
+  /** The title's first collection, carried to each DiskRow: Files… opens the disk inside it (Files 2 §3.1). */
+  filesCollectionId?: string | null;
 }) {
   const router = useRouter();
   const [reordering, setReordering] = useState(false);
@@ -223,7 +225,7 @@ export function DiskSetSection({ gameId, title, entries, from, view = null, fobD
           return (
             <DiskRow
               key={disk.id} disk={disk} gameId={gameId} from={from} view={view} fobDevices={fobDevices} send={send} choices={choices}
-              kind={kind} authored={authored}
+              kind={kind} authored={authored} filesCollectionId={filesCollectionId}
               helpNfc={i === 0}
               helpProtect={id === shown.find((sid) => byId.get(sid)!.disk.imageFormat !== 'hfe')}
               helpHfe={id === shown.find((sid) => byId.get(sid)!.disk.imageFormat === 'hfe')}

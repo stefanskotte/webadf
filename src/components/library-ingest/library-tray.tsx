@@ -16,7 +16,7 @@ const TONE = {
 
 /**
  * What this visit's drops did (Files increment 3, R9): fixed to the bottom of the Library's content column, newest
- * drop first -- each disk's name, its state (Hashing… / Uploading… / Added / Already in the library / Refused and
+ * drop first -- each disk's name, its state (Hashing… / Uploading… / Added / Refused and
  * why), Open title once it has one; the summary line, the set suggestion panel, and Close, which empties it (not while
  * anything is still running). Not stored: it is gone on the next visit, as the Upload card's rows were. Below `lg` it
  * sits above the bottom tab bar.

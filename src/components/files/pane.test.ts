@@ -71,6 +71,14 @@ describe('Pane (Files increment 1, Task 7)', () => {
     expect(html.indexOf('the-strip')).toBeLessThan(html.indexOf('pane-left-error'));
   });
 
+  it('a collection row is a folder with its title count in the Size cell, first at the root (Files 2 §3.1)', () => {
+    const l: Listing = { ...rootListing, entries: [...rootListing.entries, entry('Demos', 'collection', { path: 'LIBRARY:/c1', size: null, sizeText: '12 titles', protection: null, date: null })] };
+    const html = render({ listing: l });
+    expect(rows(html).map((t) => attr(t, 'data-name'))).toEqual(['Demos', 'SysInfo']);
+    expect(html).toContain('12 titles');
+    expect(attr(rows(html)[0], 'data-kind')).toBe('collection');
+    expect(subLine(l.entries[1])).toBe('12 titles');
+  });
   it('lists folders first, then files by the sort', () => {
     const r = rows(render());
     expect(r.map((t) => attr(t, 'data-name'))).toEqual(['Tools', 'Assign', 'List']);
@@ -130,10 +138,11 @@ describe('Pane (Files increment 1, Task 7)', () => {
     expect(tagOf(root, 'pane-left-crumb-1')).toBeUndefined();
   });
 
-  it('the STASH:, NET: and LIBRARY: device buttons, the one shown pressed (increment 2 R1, increment 3)', () => {
+  it('the STASH:, LIBRARY: and NET: device chips, the one shown pressed, below lg only (increment 2 R1, Files 2 R12)', () => {
     const html = render();
     const devs = [...html.matchAll(/data-testid="pane-left-dev-([^"]+)"/g)].map((m) => m[1]);
-    expect(devs).toEqual(['STASH', 'NET', 'LIBRARY']);
+    expect(devs).toEqual(['STASH', 'LIBRARY', 'NET']);
+    expect(tagOf(html, 'pane-left-dev-LIBRARY')).toMatch(/lg:hidden/);
     expect(attr(tagOf(html, 'pane-left-dev-LIBRARY')!, 'aria-pressed')).toBe('true');
     expect(attr(tagOf(html, 'pane-left-dev-STASH')!, 'aria-pressed')).toBe('false');
     const stash = render({ listing: stashListing });
@@ -275,6 +284,21 @@ describe('the filter and Show .info (increment 4)', () => {
     const withInfo = { ...diskListing, entries: [...diskListing.entries, entry('Assign.info', 'file'), entry('Zed.info', 'file')] };
     const h = render({ listing: withInfo, view: { filter: 'ass', hideInfo: true } });
     expect(h).toMatch(/1 of 5 shown · 1 \.info file hidden/);
+  });
+  it('the title bar: dark for the source, the soft tint for the destination, the ? in it (Files 2 §2.2, R11)', () => {
+    const src = tagOf(render({ active: true }), 'pane-left-title')!;
+    expect(attr(src, 'data-role')).toBe('source');
+    expect(src).toContain('background:var(--ink)');
+    const dst = tagOf(render({ active: false }), 'pane-left-title')!;
+    expect(attr(dst, 'data-role')).toBe('destination');
+    expect(dst).toContain('background:var(--viewing-bg)');
+    const html = render();
+    expect(html.indexOf('data-testid="pane-left-title"')).toBeLessThan(html.indexOf('data-testid="help-tip-files"'));
+    expect(html.indexOf('data-testid="help-tip-files"')).toBeLessThan(html.indexOf('data-testid="pane-left-filter"'));
+  });
+  it('the ? on the dark source bar uses the on-ink look; on the destination the usual one (Task 8 review)', () => {
+    expect(tagOf(render({ active: true }), 'help-tip-files')).toContain('hover:bg-(--on-ink-fill)');
+    expect(tagOf(render({ active: false }), 'help-tip-files')).toContain('hover:bg-(--ink)');
   });
   it('the ? names the device: stash-net in STASH:, files in a disk', () => {
     expect(render({ listing: stashListing, help: 'stash-net' })).toContain('data-testid="help-tip-stash-net"');

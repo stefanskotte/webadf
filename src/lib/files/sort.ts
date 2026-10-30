@@ -18,12 +18,20 @@ function byKey(a: FsEntry, b: FsEntry, key: FilesSortKey): number {
 /** An archive is a file here: it opens as a folder, but it sorts with the files (increment 2 ruling 7). */
 const isFolder = (e: FsEntry) => e.kind !== 'file' && e.kind !== 'archive';
 
-/** Folders (dir, title, disk) first whatever the key; ties break by name ascending. A new array. */
+/** Collections first (Files 2 §3.1), then the other folders (title, disk, dir, board), then files and archives. */
+const rank = (e: FsEntry) => (e.kind === 'collection' ? 0 : isFolder(e) ? 1 : 2);
+
+/**
+ * Folders first whatever the key; ties break by name ascending. A new array. The collections at LIBRARY:'s root come
+ * before everything, in the order the server gave them (the Library's collection order, ruling D10): the column sort
+ * never reorders them (the sort is stable), only what follows them.
+ */
 export function sortFsEntries(entries: FsEntry[], sort: FilesSort): FsEntry[] {
   const sign = sort.dir === 'asc' ? 1 : -1;
   return [...entries].sort((a, b) => {
-    const fa = isFolder(a), fb = isFolder(b);
-    if (fa !== fb) return fa ? -1 : 1;
+    const ra = rank(a), rb = rank(b);
+    if (ra !== rb) return ra - rb;
+    if (ra === 0) return 0;
     return sign * byKey(a, b, sort.key) || byName(a.name, b.name);
   });
 }

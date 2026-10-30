@@ -28,15 +28,19 @@ function paneParam(raw: string | string[] | undefined, fallback: string): string
 
 /**
  * The pane's first listing; null when the place is gone, with the words when it cannot be read: a disk image the
- * store did not give back, or an archive that does not open (Task 4).
+ * store did not give back (with the disk the refusal named, for its strip), or an archive that does not open (Task 4).
  */
-async function firstListing(ctx: { orgId: string; userId: string }, path: string): Promise<{ listing: Listing | null; error?: string }> {
+type First = { listing: Listing | null; error?: string; errorDisk?: string };
+async function firstListing(ctx: { orgId: string; userId: string }, path: string): Promise<First> {
   try {
     const p = parsePath(path)!;
     return { listing: await driverFor(p.device)!.list(ctx, p) };
   } catch (e) {
     if (e instanceof Refused && (e.refusal.code === 'blob_unavailable' || e.refusal.code === 'archive_unreadable')) {
-      return { listing: null, error: refusalWords(e.refusal.code) };
+      return {
+        listing: null, error: refusalWords(e.refusal.code),
+        errorDisk: e.refusal.code === 'blob_unavailable' ? e.refusal.detail : undefined,
+      };
     }
     throw e;
   }
@@ -64,10 +68,10 @@ export default async function FilesPage({ searchParams }: { searchParams: Promis
   // A pane at NET:/<board> names the board the Send zone starts on.
   const netBoard = [leftPath, rightPath].map((p) => parsePath(p)).find((p) => p?.device === 'NET' && p.segments.length >= 1)?.segments[0] ?? null;
   // The disk strip of each pane inside a disk (Task 9): one read per disk, even with both panes in it. A disk whose
-  // image cannot be read still gets one (stripDiskOf): the strip needs only the database, and its History mends it.
-  const pane = (path: string, r: { listing: Listing | null; error?: string }) =>
-    stripDiskOf({ path, listing: r.listing, error: r.error ?? null, gone: !r.listing && !r.error });
-  const diskIds = [...new Set([pane(leftPath, left), pane(rightPath, right)].filter((x): x is string => !!x))];
+  // image cannot be read still gets one (stripDiskOf, by the id its refusal named): the strip needs only the database,
+  // and its History mends it.
+  const pane = (r: First) => stripDiskOf({ listing: r.listing, errorDisk: r.errorDisk ?? null });
+  const diskIds = [...new Set([pane(left), pane(right)].filter((x): x is string => !!x))];
   const strips = (await Promise.all(diskIds.map((id) => diskStripData(orgId, id)))).filter((x): x is StripData => x !== null);
 
   return (
@@ -75,7 +79,8 @@ export default async function FilesPage({ searchParams }: { searchParams: Promis
       <PageHeader size="lg" eyebrow="Move files" title="Files" help="files" />
       <div className="px-4 pb-10 sm:px-7">
         <FilesManager
-          initial={{ left: left.listing, right: right.listing, leftPath, rightPath, active, leftError: left.error, rightError: right.error, strips }}
+          initial={{ left: left.listing, right: right.listing, leftPath, rightPath, active, leftError: left.error, rightError: right.error,
+            leftErrorDisk: left.errorDisk, rightErrorDisk: right.errorDisk, strips }}
           prefs={{ files: prefs.files, hideInfo: prefs.browse.hideInfo }}
           send={{ targets, initialBoard: netBoard, serverNow: now }}
         />

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  dropBlocked, fetchDownload, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems, TOO_BIG_WORDS, BUSY_DROP, DIALOG_DROP,
+  createClosesDialog, dropBlocked, navTargets, fetchDownload, oneAtATime, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems, TOO_BIG_WORDS, BUSY_DROP, DIALOG_DROP,
 } from './manager-rules';
 import type { OpItem } from './driver';
 import type { Listing } from './types';
@@ -10,15 +10,14 @@ const listing = (diskId: string | null): Listing => ({
   disk: diskId === null ? null : { diskId } as Listing['disk'],
 });
 
-describe('stripDiskOf (final review: an unreadable disk keeps its strip)', () => {
-  it('the listed disk, else the disk the path is in when its image could not be read', () => {
-    expect(stripDiskOf({ path: 'LIBRARY:/g/d', listing: listing('d'), error: null, gone: false })).toBe('d');
-    expect(stripDiskOf({ path: 'LIBRARY:/g/d/C', listing: null, error: 'The disk image could not be read.', gone: false })).toBe('d');
+describe('stripDiskOf (an unreadable disk keeps its strip; Files 2 R2: by id, not by path)', () => {
+  it('the listing\'s disk, else the id the refusal named', () => {
+    expect(stripDiskOf({ listing: listing('d'), errorDisk: null })).toBe('d');
+    expect(stripDiskOf({ listing: null, errorDisk: 'd4' })).toBe('d4');
   });
-  it('none above the disks, and none for a place that is gone', () => {
-    expect(stripDiskOf({ path: 'LIBRARY:/g', listing: listing(null), error: null, gone: false })).toBeNull();
-    expect(stripDiskOf({ path: 'LIBRARY:/g', listing: null, error: 'x', gone: false })).toBeNull();
-    expect(stripDiskOf({ path: 'LIBRARY:/g/d', listing: null, error: 'This place no longer exists.', gone: true })).toBeNull();
+  it('none above the disks, and none for a failure that named no disk', () => {
+    expect(stripDiskOf({ listing: listing(null), errorDisk: null })).toBeNull();
+    expect(stripDiskOf({ listing: null, errorDisk: null })).toBeNull();
   });
 });
 
@@ -108,4 +107,55 @@ describe('stashTitle (final review: a drop into STASH: never counts a skipped to
   it('added and skipped', () => expect(stashTitle(1, 2, 'STASH:', count)).toBe('Added 1 item to STASH:. Skipped 2 (already there).'));
   it('only skipped', () => expect(stashTitle(0, 1, 'STASH:', count)).toBe('Nothing was added. Skipped 1 (already there).'));
   it('nothing', () => expect(stashTitle(0, 0, 'STASH:', count)).toBe('Nothing was added.'));
+});
+
+describe('Create ADF…: the dialog closes only on a made disk (Task 7 review)', () => {
+  const ok: OpItem = { source: 'STASH:/Work.adf', ok: true };
+  it('closes when the item was made (or skipped by the clash setting)', () => {
+    expect(createClosesDialog({ kind: 'done', items: [ok] })).toBe(true);
+    expect(createClosesDialog({ kind: 'done', items: [{ ...ok, skipped: true }] })).toBe(true);
+  });
+  it('stays open, the name in its field, when the item is refused, the op refused or a clash came back', () => {
+    expect(createClosesDialog({ kind: 'done', items: [{ source: 'x', ok: false, refusal: { code: 'disk_full' } }] })).toBe(false);
+    expect(createClosesDialog({ kind: 'done', items: [] })).toBe(false);
+    expect(createClosesDialog({ kind: 'refused' })).toBe(false);
+    expect(createClosesDialog({ kind: 'clashes' })).toBe(false);
+  });
+});
+
+describe('oneAtATime (Enter and a click cannot submit twice)', () => {
+  it('runs one call at a time and refuses the rest until it settles', async () => {
+    let finish!: () => void;
+    let runs = 0;
+    const go = () => { runs++; return new Promise<void>((r) => { finish = r; }); };
+    const once = oneAtATime();
+    expect(once(go)).toBe(true);
+    expect(once(go)).toBe(false);
+    expect(runs).toBe(1);
+    finish();
+    await Promise.resolve(); await Promise.resolve();
+    expect(once(go)).toBe(true);
+    expect(runs).toBe(2);
+  });
+  it('lets go after a failed run too', async () => {
+    const once = oneAtATime();
+    expect(once(() => Promise.reject(new Error('x')))).toBe(true);
+    await Promise.resolve(); await Promise.resolve();
+    expect(once(() => Promise.resolve())).toBe(true);
+  });
+});
+
+describe('navTargets (Parent and Root; Task 8 review: from the path when an error left nothing listed)', () => {
+  const crumbs = (...paths: string[]) => paths.map((path) => ({ label: path, path }));
+  it('from the listing\'s crumbs', () => {
+    const l = { crumbs: crumbs('LIBRARY:', 'LIBRARY:/c', 'LIBRARY:/c/g') };
+    expect(navTargets(l, 'LIBRARY:/c/g')).toEqual({ parent: 'LIBRARY:/c', root: 'LIBRARY:' });
+    expect(navTargets({ crumbs: crumbs('STASH:') }, 'STASH:')).toEqual({ parent: null, root: null });
+  });
+  it('an errored pane (no listing) goes up from its path: Root works from a deep place', () => {
+    expect(navTargets(null, 'STASH:/a/b/c')).toEqual({ parent: 'STASH:/a/b', root: 'STASH:' });
+    expect(navTargets(null, 'LIBRARY:/g')).toEqual({ parent: 'LIBRARY:', root: 'LIBRARY:' });
+    expect(navTargets(null, 'NET:')).toEqual({ parent: null, root: null });
+    expect(navTargets(null, 'nonsense')).toEqual({ parent: null, root: null });
+  });
 });

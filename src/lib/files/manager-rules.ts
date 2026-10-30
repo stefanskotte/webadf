@@ -1,21 +1,19 @@
 // The Files manager's small decisions, out of the component so they can be tested (final review of increment 1).
 // CLIENT-SAFE: no database import.
 import { SIGNED_OUT_TEXT } from '@/lib/signed-out';
-import { parsePath } from './path';
 import { ZIP_MAX_BYTES, type ClashChoice } from './transfer';
 import type { Listing } from './types';
 import type { OpItem } from './driver';
+import { formatPath, parentOf, parsePath } from './path';
 
 /**
- * The disk whose strip a pane shows: the disk its listing is inside, else -- when the listing failed because the
- * image could not be read, not because the place is gone -- the disk its path names. The strip needs no image, and
- * its History and Restore are how such a disk is mended. Null above the disks.
+ * The disk whose strip a pane shows: the disk its listing is inside, else -- when the listing failed because the image
+ * could not be read -- the disk the refusal named (`errorDisk`, the blob_unavailable detail; Files 2 R2: never parsed
+ * from the path, which may run through a collection). The strip needs no image; its History and Restore are how such a
+ * disk is mended. Null above the disks.
  */
-export function stripDiskOf(p: { path: string; listing: Listing | null; error: string | null; gone: boolean }): string | null {
-  if (p.listing) return p.listing.disk?.diskId ?? null;
-  if (!p.error || p.gone) return null;
-  const at = parsePath(p.path);
-  return at && at.device === 'LIBRARY' ? at.segments[1] ?? null : null;
+export function stripDiskOf(p: { listing: Listing | null; errorDisk: string | null }): string | null {
+  return p.listing ? p.listing.disk?.diskId ?? null : p.errorDisk;
 }
 
 /** A drop while an operation runs is not taken; said, rather than lost without a word. */
@@ -99,4 +97,41 @@ export function stashTitle(added: number, skipped: number, dir: string, count: (
   const head = added > 0 ? `Added ${count(added)} to ${dir}` : 'Nothing was added.';
   if (!skipped) return head;
   return `${added > 0 ? `${head}.` : head} ${skippedWords(skipped)}`;
+}
+
+/**
+ * Create ADF…: whether the dialog closes. Only a made disk (or one the clash setting skipped) closes it; a refused item,
+ * a refused op or a clash keeps it open with the typed name, to be changed and tried again (Task 7 review).
+ */
+export function createClosesDialog(r: { kind: 'done'; items: OpItem[] } | { kind: 'refused' | 'clashes' }): boolean {
+  return r.kind === 'done' && r.items[0]?.ok === true;
+}
+
+/**
+ * A guard that runs one async call at a time: a call while one is in flight is refused (returns false), so Enter and a
+ * click in the same moment cannot submit twice -- before the busy state has re-rendered the button disabled.
+ */
+export function oneAtATime(): (go: () => Promise<unknown>) => boolean {
+  let running = false;
+  return (go) => {
+    if (running) return false;
+    running = true;
+    go().catch(() => {}).finally(() => { running = false; });
+    return true;
+  };
+}
+
+/**
+ * Where Parent and Root go from a pane (Files 2 §2.3), null at the top. From the listing's crumbs (their paths may run
+ * through a collection); a pane showing an error has no listing, so then from its path -- Root must still work from a
+ * deep place that is gone (Task 8 review).
+ */
+export function navTargets(listing: { crumbs: { path: string }[] } | null, path: string): { parent: string | null; root: string | null } {
+  if (listing) {
+    const c = listing.crumbs;
+    return c.length > 1 ? { parent: c[c.length - 2].path, root: c[0].path } : { parent: null, root: null };
+  }
+  const p = parsePath(path);
+  const up = p && parentOf(p);
+  return up ? { parent: formatPath(up), root: `${p.device}:` } : { parent: null, root: null };
 }

@@ -1,14 +1,7 @@
 import { z } from 'zod';
-import { createHash } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
-import { getDb } from '@/db';
-import { games, disks, blobs, entitlements } from '@/db/schema/catalog';
-import { collections, collectionGames } from '@/db/schema/collections';
 import { requireOrg } from '@/lib/session';
-import { diskStore } from '@/lib/storage';
-import { stableId } from '@/lib/ingest';
-import { formatVolume, MAX_VOLUME_NAME } from '@/lib/adffs/format';
-import { makeSortTitle } from '@/lib/tosec';
+import { MAX_VOLUME_NAME } from '@/lib/adffs/format';
+import { createBlankDisk } from '@/lib/blank-disk';
 
 export const maxDuration = 60;
 
@@ -24,18 +17,7 @@ const body = z.object({
 /** What a disk is called before anyone names it. */
 const DEFAULT_NAME = 'Empty';
 
-/**
- * Make a blank, formatted Amiga disk.
- *
- * The bytes are built HERE and stored directly (diskStore.put) rather than
- * through the presigned-upload path: that path exists so a browser's large
- * uploads never pass through a function, and these 880 KB (or 1.76 MB) are
- * already in this function's memory.
- *
- * THE DISK IS REAL THE MOMENT THIS RETURNS (operator's ruling, 2026-09-03):
- * blob, entitlement, game and disk rows all exist, and the name is edited
- * afterwards like any other. There is no draft state.
- */
+/** Make a blank, formatted Amiga disk (createBlankDisk: real the moment this returns). */
 export async function POST(request: Request) {
   const { orgId } = await requireOrg();
 
@@ -54,78 +36,8 @@ export async function POST(request: Request) {
   // DD by default: the drive and most software expect it, and HD needs
   // Kickstart 3.0+ and firmware 1.4.1+ to play at all.
   const density = parsed.data.density ?? 'dd';
-  const bytes = formatVolume({ filesystem, volumeName, density });
-  const sha256 = createHash('sha256').update(bytes).digest('hex');
 
-  // Content-addressed, so two blank disks made in the same millisecond with
-  // the same name ARE the same bytes and the same blob. Everything below is
-  // onConflictDoNothing for that reason, not merely for retries.
-  await diskStore.put(sha256, bytes);
-
-  const db = getDb();
-  await db.insert(blobs).values({
-    sha256, sizeBytes: bytes.length, storageKey: diskStore.storageKey(sha256),
-    // Hashes left null, exactly as an upload without client-side hashes: the
-    // sweeper computes them, finds no DAT entry -- a disk somebody made is in
-    // no preservation set -- and stamps match_state 'none'. That is the
-    // correct verdict, not a miss.
-  }).onConflictDoNothing();
-
-  await db.insert(entitlements).values({
-    orgId, sha256, sourceFilename: `${volumeName}.adf`,
-  }).onConflictDoNothing();
-
-  const sortTitle = makeSortTitle(volumeName);
-  // Deterministic and org-scoped, exactly like /api/ingest/complete: the
-  // dedupe lives on `blobs`, never on these per-tenant catalog rows.
-  const gameId = stableId('game', orgId, sortTitle, sha256);
-  const diskId = stableId('disk', gameId, sha256);
-
-  await db.insert(games).values({
-    id: gameId, orgId, title: volumeName, sortTitle,
-    // OUTSIDE MACHINE_SOURCES, and this is the whole authority rule doing its
-    // job. A disk somebody made will hash to something no DAT contains, so
-    // the sweeper stamps match_state 'none' -- correct, not a miss. Marking
-    // it 'human' additionally means applyMatch never retitles it and
-    // mergeDuplicates never absorbs it, and a merge DELETES the losing row.
-    metadataSource: 'human',
-    // Made here, not uploaded. Drives the card's inline rename and keeps this
-    // disk out of the TOSEC coverage rate, where it would otherwise read as a
-    // gap in the archive rather than as somebody's own disk.
-    authored: true,
-  }).onConflictDoNothing();
-
-  await db.insert(disks).values({
-    id: diskId, gameId, orgId, diskNo: 1, sha256,
-    tosecName: `${volumeName}.adf`, isBoot: true, sizeBytes: bytes.length,
-  }).onConflictDoNothing();
-
-  // "Created where you stand": if the library is filtered to a collection,
-  // the new disk joins it. Resolved against this org's own collections first
-  // -- collection_games has no org_id (D-4-5), so an unchecked id here would
-  // file a game into another tenant's collection.
-  let collectionId: string | null = null;
-  if (parsed.data.collectionId) {
-    const owned = await db.select({ id: collections.id }).from(collections)
-      .where(and(eq(collections.id, parsed.data.collectionId), eq(collections.orgId, orgId)))
-      .limit(1);
-    if (owned.length > 0) {
-      collectionId = owned[0].id;
-      // FIRST in the collection, where addGameToCollection appends. The two
-      // differ on purpose: dragging an existing title in is filing something
-      // you already know about, but a disk you just made has to be visible or
-      // you cannot name it -- and at the end of a long collection it is not.
-      // The library itself needs no such help: it already orders by
-      // createdAt desc (D9), so a new disk is first there for free.
-      const [{ minSort }] = await db
-        .select({ minSort: sql<number>`coalesce(min(${collectionGames.sortKey}), 0)::int` })
-        .from(collectionGames)
-        .where(eq(collectionGames.collectionId, collectionId));
-      await db.insert(collectionGames)
-        .values({ collectionId, gameId, sortKey: minSort - 1 })
-        .onConflictDoNothing();
-    }
-  }
-
-  return Response.json({ gameId, diskId, sha256, volumeName, filesystem, density, collectionId });
+  // An unknown or foreign collectionId (a stale ?collection=) is ignored, never refused: without mustFile, never null.
+  const made = (await createBlankDisk(orgId, { volumeName, filesystem, density, collectionId: parsed.data.collectionId ?? null }))!;
+  return Response.json({ gameId: made.gameId, diskId: made.diskId, sha256: made.sha256, volumeName, filesystem, density, collectionId: made.collectionId });
 }

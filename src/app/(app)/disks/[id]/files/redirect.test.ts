@@ -9,7 +9,8 @@ vi.mock('@/lib/session', () => ({ requireOrg: async () => ({ orgId: 'o1', userId
 const libraryDiskOf = vi.fn();
 vi.mock('@/lib/files/disk-strip-data', () => ({ libraryDiskOf }));
 // Past the redirect the page goes on to its own reads; the first of them stops the test there.
-vi.mock('@/lib/collections', () => ({ listCollections: async () => { throw new Error('PAST_THE_REDIRECT'); } }));
+const firstCollectionOf = vi.fn();
+vi.mock('@/lib/collections', () => ({ listCollections: async () => { throw new Error('PAST_THE_REDIRECT'); }, firstCollectionOf }));
 
 const { default: DiskFilesPage } = await import('./page');
 
@@ -19,13 +20,21 @@ function call(id: string, sp: Record<string, string>) {
 }
 
 describe('/disks/[id]/files redirects to Files (R3)', () => {
-  beforeEach(() => { redirect.mockClear(); notFound.mockClear(); libraryDiskOf.mockReset(); });
+  beforeEach(() => { redirect.mockClear(); notFound.mockClear(); libraryDiskOf.mockReset(); firstCollectionOf.mockReset(); firstCollectionOf.mockResolvedValue(null); });
 
   it('with no version: Files, STASH: on the left, the disk on the right, the right pane active', async () => {
     libraryDiskOf.mockResolvedValue({ gameId: 'g1', imageFormat: 'adf' });
     await expect(call('d1', {})).rejects.toThrow('NEXT_REDIRECT');
     expect(libraryDiskOf).toHaveBeenCalledWith('o1', 'd1');
     expect(redirect).toHaveBeenCalledWith(`/files?left=STASH:&right=${encodeURIComponent('LIBRARY:/g1/d1')}&active=right`);
+  });
+
+  it('a filed title\'s disk opens inside its first collection (Files 2 §3.1)', async () => {
+    libraryDiskOf.mockResolvedValue({ gameId: 'g1', imageFormat: 'adf' });
+    firstCollectionOf.mockResolvedValue('c1');
+    await expect(call('d1', {})).rejects.toThrow('NEXT_REDIRECT');
+    expect(firstCollectionOf).toHaveBeenCalledWith('o1', 'g1');
+    expect(redirect).toHaveBeenCalledWith(`/files?left=STASH:&right=${encodeURIComponent('LIBRARY:/c1/g1/d1')}&active=right`);
   });
 
   it('an unknown or foreign disk is a 404, as before', async () => {

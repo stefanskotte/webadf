@@ -29,6 +29,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { collectionDot } from '@/lib/library-look';
+import { COLLECTION_EXISTS } from '@/lib/files/shelf-rules';
 import { viewHref, isCurrentView, type LibraryView } from '@/lib/library-view';
 import {
   useCollectionsContext,
@@ -306,7 +307,7 @@ function CollectionRow({
       data-collection-id={collection.id}
       data-current={showCurrent}
       data-drop-target={isDropTarget ? 'true' : undefined}
-      className={`group flex shrink-0 items-center gap-1 md:h-[38px] md:rounded-[10px] md:pl-1 md:pr-1.5 max-md:h-11 max-md:rounded-full max-md:border ${active ? 'max-md:pr-0' : 'max-md:pr-3'} ${showCurrent ? CURRENT : `${CHIP} ${HOVER}`}`}
+      className={`group flex shrink-0 items-center gap-1 ${renaming ? 'md:min-h-[38px]' : 'md:h-[38px]'} md:rounded-[10px] md:pl-1 md:pr-1.5 max-md:h-11 max-md:rounded-full max-md:border ${active ? 'max-md:pr-0' : 'max-md:pr-3'} ${showCurrent ? CURRENT : `${CHIP} ${HOVER}`}`}
     >
       {/*
         `touchAction: 'none'` is load-bearing for the TouchSensor's press-and-hold: dnd-kit only calls preventDefault()
@@ -378,6 +379,8 @@ function CollectionRow({
 /**
  * Rename a collection: inline in its rail row from md, on a line under the chip row below md (C7 spec §4.2). One field
  * either way. Enter saves and Escape cancels (focus back on the ⋯); a blur saves and leaves focus where it went.
+ * A name another collection has, in any case (Files 2 R3): the field stays open with what was typed and says why under
+ * it; any other failure is a toast and ends the rename.
  */
 function RenameField({ collection, onEnd, inline = false }: {
   collection: CollectionSummary; onEnd: (refocus: boolean) => void; inline?: boolean;
@@ -385,7 +388,9 @@ function RenameField({ collection, onEnd, inline = false }: {
   const router = useRouter();
   const [name, setName] = useState(collection.name);
   const [busy, setBusy] = useState(false);
+  const [clash, setClash] = useState(false);
   const ended = useRef(false);
+  const clashed = useRef<string | null>(null);   // the text the server refused: a blur with it unchanged asks nothing
   const field = useRef<HTMLInputElement>(null);
   // Opened from the ⋯ menu, which hands focus back to its trigger as it closes: take it after that (two frames).
   useEffect(() => {
@@ -394,12 +399,14 @@ function RenameField({ collection, onEnd, inline = false }: {
     return () => { cancelAnimationFrame(outer); cancelAnimationFrame(inner); };
   }, []);
 
-  async function submit(refocus: boolean) {
+  async function submit(refocus: boolean, fromBlur = false) {
     if (ended.current) return;   // Enter then the unmount's blur: one request
-    ended.current = true;
     const trimmed = name.trim();
+    if (fromBlur && clashed.current === trimmed) return;   // after a clash only Enter or a changed name tries again
+    ended.current = true;
     if (!trimmed || trimmed === collection.name) { onEnd(refocus); return; }
     setBusy(true);
+    let keepOpen = false;
     try {
       let res: Response;
       try {
@@ -414,6 +421,13 @@ function RenameField({ collection, onEnd, inline = false }: {
       }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        if (res.status === 409 && body.error === 'name_exists') {
+          ended.current = false;   // still open: the next Enter or blur tries again
+          keepOpen = true;
+          clashed.current = trimmed;
+          setClash(true);
+          return;
+        }
         toast.error('Could not rename the collection', {
           description: typeof body.error === 'string' ? body.error : undefined,
         });
@@ -421,30 +435,42 @@ function RenameField({ collection, onEnd, inline = false }: {
       }
     } finally {
       setBusy(false);
-      onEnd(refocus);
-      router.refresh();
+      if (!keepOpen) {
+        onEnd(refocus);
+        router.refresh();
+      }
     }
   }
 
   return (
-    <input
-      ref={field}
-      autoFocus
-      aria-label="Collection name"
-      value={name}
-      readOnly={busy}
-      aria-disabled={busy || undefined}
-      onChange={(e) => setName(e.target.value)}
-      onBlur={() => void submit(false)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') { e.preventDefault(); void submit(true); }
-        if (e.key === 'Escape') { e.preventDefault(); ended.current = true; onEnd(true); }
-      }}
-      className={inline
-        ? 'h-8 min-w-0 flex-1 rounded-lg border px-2 text-[14px] aria-disabled:opacity-60'
-        : 'h-11 w-full rounded-[10px] border px-3 text-[14px] aria-disabled:opacity-60'}
-      style={{ borderColor: 'var(--line-strong)', background: 'var(--surface)', color: 'var(--ink)' }}
-    />
+    <div className={inline ? 'flex min-w-0 flex-1 flex-col gap-0.5 py-[3px]' : 'flex flex-col gap-1'}>
+      <input
+        ref={field}
+        autoFocus
+        aria-label="Collection name"
+        value={name}
+        readOnly={busy}
+        aria-disabled={busy || undefined}
+        aria-invalid={clash || undefined}
+        aria-describedby={clash ? `collection-rename-error-${collection.id}` : undefined}
+        onChange={(e) => { setName(e.target.value); setClash(false); }}
+        onBlur={() => void submit(false, true)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); void submit(true); }
+          if (e.key === 'Escape') { e.preventDefault(); ended.current = true; onEnd(true); }
+        }}
+        className={inline
+          ? 'h-8 w-full min-w-0 rounded-lg border px-2 text-[14px] aria-disabled:opacity-60'
+          : 'h-11 w-full rounded-[10px] border px-3 text-[14px] aria-disabled:opacity-60'}
+        style={{ borderColor: 'var(--line-strong)', background: 'var(--surface)', color: 'var(--ink)' }}
+      />
+      {clash && (
+        <p id={`collection-rename-error-${collection.id}`} role="alert" data-testid="collection-rename-error"
+           className="px-0.5 text-[12px] leading-[1.4]" style={{ color: 'var(--danger-fg)' }}>
+          {COLLECTION_EXISTS}.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -452,6 +478,8 @@ function CreateCollectionForm({ phone = false, onDone }: { phone?: boolean; onDo
   const router = useRouter();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  // A name another collection has, in any case (Files 2 R3): said under the field, which keeps what was typed.
+  const [clash, setClash] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -474,6 +502,7 @@ function CreateCollectionForm({ phone = false, onDone }: { phone?: boolean; onDo
       }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        if (res.status === 409 && body.error === 'name_exists') { setClash(true); return; }
         toast.error('Could not create the collection', {
           description: typeof body.error === 'string' ? body.error : undefined,
         });
@@ -492,28 +521,38 @@ function CreateCollectionForm({ phone = false, onDone }: { phone?: boolean; onDo
   return (
     <form id={phone ? 'collection-create-form' : undefined} onSubmit={onSubmit}
           onKeyDown={(e) => { if (phone && e.key === 'Escape') { e.preventDefault(); onDone?.(); } }}
-          className="flex items-center gap-1.5 px-1 py-1 max-md:px-0">
-      <input
-        data-testid="collection-create"
-        aria-label="New collection name"
-        value={name}
-        autoFocus={phone}
-        readOnly={busy}
-        aria-disabled={busy || undefined}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="New collection"
-        className={FIELD}
-        style={{ background: 'var(--surface)', border: '1px dashed var(--line-strong)', color: 'var(--ink)' }}
-      />
-      <button
-        type="submit"
-        aria-label="Add collection"
-        aria-disabled={busy || undefined}
-        className="grid h-9 w-9 shrink-0 place-items-center rounded-[9px] border aria-disabled:opacity-50 max-md:size-11"
-        style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}
-      >
-        <Plus size={16} aria-hidden />
-      </button>
+          className="flex flex-col gap-1 px-1 py-1 max-md:px-0">
+      <div className="flex items-center gap-1.5">
+        <input
+          data-testid="collection-create"
+          aria-label="New collection name"
+          value={name}
+          autoFocus={phone}
+          readOnly={busy}
+          aria-disabled={busy || undefined}
+          aria-invalid={clash || undefined}
+          aria-describedby={clash ? 'collection-create-error' : undefined}
+          onChange={(e) => { setName(e.target.value); setClash(false); }}
+          placeholder="New collection"
+          className={FIELD}
+          style={{ background: 'var(--surface)', border: '1px dashed var(--line-strong)', color: 'var(--ink)' }}
+        />
+        <button
+          type="submit"
+          aria-label="Add collection"
+          aria-disabled={busy || undefined}
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-[9px] border aria-disabled:opacity-50 max-md:size-11"
+          style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}
+        >
+          <Plus size={16} aria-hidden />
+        </button>
+      </div>
+      {clash && (
+        <p id="collection-create-error" role="alert" data-testid="collection-create-error"
+           className="px-0.5 text-[12px] leading-[1.4]" style={{ color: 'var(--danger-fg)' }}>
+          {COLLECTION_EXISTS}.
+        </p>
+      )}
     </form>
   );
 }

@@ -123,7 +123,7 @@ version in its History.*
 
 *The display editor: choose the panel, then which elements the OLED draws and where.*
 
-![The Library after adding eight disks: the Add disks button in the header, and the tray at the bottom listing each disk as Added or Already in the library](docs/screenshots/upload.png)
+![The Library after adding eight disks: the Add disks button in the header, and the tray at the bottom listing each disk it added](docs/screenshots/upload.png)
 
 *Adding disks: drop them anywhere on the Library page, or use Add disks (Browse files, Paste a URL). The tray says
 what each one did.*

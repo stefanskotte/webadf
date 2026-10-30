@@ -35,18 +35,20 @@ export function formatPath(p: FsPath): string {
   return p.segments.length ? `${p.device}:/${p.segments.join('/')}` : `${p.device}:`;
 }
 
-/** The devices a pane's buttons offer, in order (increment 2, R1; NET: since increment 3). */
-export const PANE_DEVICES: readonly Device[] = ['STASH', 'NET', 'LIBRARY'];
+/** The devices the panes show, in the device column's order (Files 2 R12): STASH:, LIBRARY:, NET:. */
+export const PANE_DEVICES: readonly Device[] = ['STASH', 'LIBRARY', 'NET'];
 /** Where the panes start when the URL names no place (increment 2, R1). */
 export const DEFAULT_LEFT = 'STASH:';
 export const DEFAULT_RIGHT = 'LIBRARY:';
 
 /**
  * Files with STASH: on the left and a library disk open on the right (increment 2, R1): what "Files…" and every link
- * to a disk's files opens. `#disk-history` (`history`) opens the disk strip's History over the pane.
+ * to a disk's files opens -- inside `collectionId` when the title is filed (Files 2 §3.1: its first collection), else
+ * at LIBRARY:/<title>/<disk>. `#disk-history` (`history`) opens the disk strip's History over the pane.
  */
-export function filesHrefForDisk(gameId: string, diskId: string, history = false): string {
-  return `/files?left=${DEFAULT_LEFT}&right=${encodeURIComponent(`LIBRARY:/${gameId}/${diskId}`)}&active=right${history ? '#disk-history' : ''}`;
+export function filesHrefForDisk(gameId: string, diskId: string, history = false, collectionId: string | null = null): string {
+  const right = collectionId ? `LIBRARY:/${collectionId}/${gameId}/${diskId}` : `LIBRARY:/${gameId}/${diskId}`;
+  return `/files?left=${DEFAULT_LEFT}&right=${encodeURIComponent(right)}&active=right${history ? '#disk-history' : ''}`;
 }
 
 /**

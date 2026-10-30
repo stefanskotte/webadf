@@ -3,6 +3,7 @@
 import { requireOrg } from '@/lib/session';
 import { parsePath, type FsPath } from '@/lib/files/path';
 import { BlobUnavailableError, zipLibraryPaths, ZIP_LIMITS } from '@/lib/files/library';
+import { placeInLibrary } from '@/lib/files/library-paths';
 import { driverFor } from '@/lib/files/drivers';
 import { refuse, Refused, type FsCtx, type IncomingItem } from '@/lib/files/driver';
 import { tallyIncoming, zipIncoming } from '@/lib/disk-zip';
@@ -82,12 +83,26 @@ function within(p: FsPath, outer: FsPath): boolean {
 }
 
 /**
+ * A LIBRARY: path without its collection prefix (Files 2 §3.1): LIBRARY:/<collection>/<title>/<disk>/… and
+ * LIBRARY:/<title>/<disk>/… name one entry, and the de-duplication below must see them as one. Anything that is not
+ * a place inside a disk (or is not found) is left as it came, for `collect` to answer.
+ */
+async function canonical(ctx: FsCtx, p: FsPath): Promise<FsPath> {
+  if (p.device !== 'LIBRARY') return p;
+  const at = await placeInLibrary(ctx, p.segments);
+  return at?.level === 'disk' ? { device: 'LIBRARY', segments: [at.gameId, at.diskId, ...at.names] } : p;
+}
+
+/**
  * A selection that reaches beyond LIBRARY: each path through its own driver's `collect`, in order, the caps counted as
  * each comes (a STASH: file by its row's size, before its blob is read), then the bytes the collect left in the store
- * read (up to 12 at a time), then one zip. An entry selected twice, or inside another selected folder, goes in once.
+ * read (up to 12 at a time), then one zip. An entry selected twice (in either form of its LIBRARY: path), or inside
+ * another selected folder, goes in once.
  */
-async function zipAcross(orgId: string, userId: string, paths: FsPath[], q: URLSearchParams): Promise<Response> {
+async function zipAcross(orgId: string, userId: string, given: FsPath[], q: URLSearchParams): Promise<Response> {
   const ctx: FsCtx = { orgId, userId };
+  // Each resolved through the database (a collection or a title?): a few at a time, as the blob reads below.
+  const paths = await mapLimit(given, 12, (p) => canonical(ctx, p));
   const picked = paths.filter((p, k) => !paths.some((o, j) => j !== k
     && (o.segments.length === p.segments.length ? j < k && within(p, o) : within(p, o))));
   const tops: { items: IncomingItem[] }[] = [];

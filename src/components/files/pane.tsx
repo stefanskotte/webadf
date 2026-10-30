@@ -13,6 +13,7 @@ import type { HelpTopicId } from '@/lib/help/topics';
 import { HelpTip } from '@/components/help/help-tip';
 import { Switch } from '@/components/ui/switch';
 import { acceptsCopies, addToLibraryReason, holdsFiles, netBoardOf } from '@/lib/files/pane-rules';
+import { shelfOf } from '@/lib/files/shelf-rules';
 
 /**
  * One side of the Files manager. Presentational: the manager (files-manager.tsx) owns fetching, sort and selection
@@ -40,7 +41,7 @@ export type PaneProps = {
   errorAction?: ReactNode;   // under the error, e.g. a way back to LIBRARY: when the place is gone
 };
 
-/** The device buttons (increment 2, R1): STASH:, NET: (increment 3) and LIBRARY:. */
+/** The device chips below lg (increment 2, R1; Files 2 §2.1): STASH:, LIBRARY:, NET:. */
 const DEVICES = PANE_DEVICES.map((d) => `${d}:`);
 
 /** Below lg only Name is a column: the size and date go on a second line under the name (no sideways scroll). */
@@ -58,6 +59,7 @@ export function paneSize(bytes: number): string {
 
 /** The type chip: the Browse glyph for files and folders; a title, a disk and a board are folders here. */
 function glyphOf(e: FsEntry): { label: string; bg: string; fg: string } {
+  if (e.kind === 'collection') return entryGlyph({ kind: 'dir', name: e.name });
   if (e.kind === 'title') return { label: 'TTL', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
   if (e.kind === 'disk') return { label: 'DSK', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
   // A board under NET: opens as its queue, so it is a folder here too (increment 3).
@@ -69,9 +71,9 @@ function glyphOf(e: FsEntry): { label: string; bg: string; fg: string } {
 /** A file, or an archive (a file that also opens as a folder): the rows that have a size. */
 const sized = (e: FsEntry) => (e.kind === 'file' || e.kind === 'archive') && e.size !== null;
 
-/** Below lg, the line under a row's name: what the Size and Date columns say at lg ("6 B · 2019-08-14"). */
+/** Below lg, the line under a row's name: what the Size and Date columns say at lg ("6 B · 2019-08-14", "12 titles"). */
 export function subLine(e: FsEntry): string {
-  return [sized(e) ? paneSize(e.size!) : null, e.date ? e.date.slice(0, 10) : null]
+  return [sized(e) ? paneSize(e.size!) : e.sizeText ?? null, e.date ? e.date.slice(0, 10) : null]
     .filter((x): x is string => x !== null).join(' · ');
 }
 
@@ -102,8 +104,10 @@ export function Pane({ filterRef, ...p }: PaneProps) {
   const foot = listing ? paneFoot({ base, shown: counts.shown, total: counts.total, infoHidden: counts.infoHidden, picked: picked.length, pickedSize: paneSize(pickedBytes) }) : '';
   const sideName = side === 'left' ? 'left' : 'right';
   const onlyInfo = view.hideInfo && !view.filter.trim() && counts.infoHidden > 0 && counts.shown === 0;
-  // Only rows that hold files drag (C2): titles and disks do not move, and nothing is copied out of NET:.
-  const drags = holdsFiles(listing);
+  // Rows that hold files drag (C2), and titles on LIBRARY: or in a collection, to be filed (Files 2 §3.2); disks and
+  // collections do not move, and nothing is copied out of NET:.
+  const shelf = shelfOf(listing) !== null;
+  const drags = holdsFiles(listing) || shelf;
   // A STASH: folder's disk images can each go into the library from their row (R8); not inside an archive.
   const addable = (e: FsEntry) => !!listing && !e.marks.includes('in the library') && addToLibraryReason(listing, [e]) === null;
   const rowAct = 'shrink-0 rounded-[4px] text-[11.5px] underline underline-offset-2 max-lg:min-h-11 max-lg:px-1 focus-visible:outline-2 focus-visible:outline-(--ring)';
@@ -115,48 +119,55 @@ export function Pane({ filterRef, ...p }: PaneProps) {
     <section data-testid={`pane-${side}`} data-active={p.active ? 'true' : 'false'}
              aria-label={side === 'left' ? 'Left pane' : 'Right pane'}
              onMouseDown={p.onActivate} onFocus={p.onActivate}
-             // Only a writable folder inside a disk or in STASH:, or a board's queue, takes a drop; anywhere else the
-             // browser shows no-drop.
-             onDragOver={(e) => { if (acceptsCopies(listing) && listing!.writable) e.preventDefault(); }}
+             // Only a writable folder inside a disk or in STASH:, a board's queue, or LIBRARY: and a collection (where
+             // titles and disk images are filed) take a drop; anywhere else the browser shows no-drop.
+             onDragOver={(e) => { if ((acceptsCopies(listing) && listing!.writable) || shelf) e.preventDefault(); }}
              onDrop={(e) => { e.preventDefault(); p.onDropRows(e); }}
              className="flex min-w-0 flex-col max-lg:rounded-t-[20px]" style={{ background: 'var(--surface)' }}>
-      <div className="border-b px-3.5 pt-3 pb-2.5 max-lg:rounded-t-[20px]"
-           style={{ borderColor: 'var(--line)', background: p.active ? 'var(--viewing-bg)' : undefined }}>
-        <div className="mb-2 flex items-center gap-1.5">
+      {/* The title bar (Files 2 §2.2): the path and the meta, dark on the source pane and the soft tint on the
+          destination -- the one sign of which way Copy and Move go. */}
+      <div data-testid={tid('title')} data-role={p.active ? 'source' : 'destination'}
+           className="flex min-w-0 items-center gap-1.5 px-3.5 py-2 max-lg:rounded-t-[20px]"
+           style={p.active ? { background: 'var(--ink)', color: 'var(--surface)' } : { background: 'var(--viewing-bg)', color: 'var(--ink)' }}>
+        <button type="button" aria-label="Up one level" title="Up one level" data-testid={tid('up')} disabled={!parent}
+                onClick={() => parent && p.onNavigate(parent.path)}
+                className="shrink-0 rounded-[6px] border px-1.5 font-mono text-[13px] max-lg:min-h-11 max-lg:min-w-11 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-(--ring)"
+                style={p.active ? { borderColor: 'var(--on-ink-fill)', color: 'var(--on-ink-2)' } : { borderColor: 'var(--line)', color: 'var(--muted)' }}>↑</button>
+        <nav aria-label="Path" className="flex min-w-0 flex-wrap items-center font-mono text-[13px]">
+          {crumbs.map((c, i) => (
+            <span key={c.path} className="flex items-center">
+              {i > 0 && !crumbs[i - 1].label.endsWith(':') && <span aria-hidden style={{ color: p.active ? 'var(--on-ink-muted)' : 'var(--muted-2)' }}>/</span>}
+              <button type="button" data-testid={tid(`crumb-${i}`)} onClick={() => p.onNavigate(c.path)}
+                      aria-current={i === crumbs.length - 1 ? 'location' : undefined}
+                      className="rounded-[4px] font-medium [overflow-wrap:anywhere] hover:underline max-lg:min-h-11 max-lg:px-1 focus-visible:outline-2 focus-visible:outline-(--ring)"
+                      style={{ color: p.active ? 'var(--surface)' : 'var(--ink)' }}>{c.label}</button>
+            </span>
+          ))}
+        </nav>
+        {listing && (
+          <span data-testid={tid('meta')} className="ml-auto shrink-0 pl-2 text-[12px]" style={{ color: p.active ? 'var(--on-ink-muted)' : 'var(--muted-2)' }}>
+            {metaOf(listing)}
+          </span>
+        )}
+        <HelpTip topic={p.help} onInk={p.active} className={listing ? '' : 'ml-auto'} />
+      </div>
+      {/* The tools row: the chips (below lg), the filter and Show .info, the read-only line. With no listing only the
+          chips are left, so from lg the row goes. */}
+      <div className={`border-b px-3.5 pt-2 pb-2.5 ${listing ? '' : 'lg:hidden'}`} style={{ borderColor: 'var(--line)' }}>
+        {/* Below lg the device column is these three chips at the top of the shown pane (§2.1); from lg the bank's
+            device column replaces them. */}
+        <div className="mb-2 flex items-center gap-1.5 lg:hidden">
           {DEVICES.map((d) => (
             <button key={d} type="button" aria-pressed={device === d} data-testid={tid(`dev-${d.slice(0, -1)}`)}
                     onClick={() => p.onNavigate(d)}
-                    className="rounded-[7px] px-2 py-1 font-mono text-[12px] max-lg:min-h-11 max-lg:px-3 focus-visible:outline-2 focus-visible:outline-(--ring)"
+                    className="rounded-[7px] px-2 py-1 font-mono text-[12px] max-lg:min-h-11 max-lg:px-3 focus-visible:outline-2 focus-visible:outline-(--ring) lg:hidden"
                     style={device === d ? { background: 'var(--ink)', color: 'var(--surface)' } : { background: 'var(--track)', color: 'var(--muted)' }}>
               {d}
             </button>
           ))}
-          <HelpTip topic={p.help} className="ml-auto" />
-        </div>
-        <div className="flex min-w-0 items-center gap-1.5">
-          <button type="button" aria-label="Up one level" title="Up one level" data-testid={tid('up')} disabled={!parent}
-                  onClick={() => parent && p.onNavigate(parent.path)}
-                  className="shrink-0 rounded-[6px] border px-1.5 font-mono text-[13px] max-lg:min-h-11 max-lg:min-w-11 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-(--ring)"
-                  style={{ borderColor: 'var(--line)', color: 'var(--muted)' }}>↑</button>
-          <nav aria-label="Path" className="flex min-w-0 flex-wrap items-center font-mono text-[13px]">
-            {crumbs.map((c, i) => (
-              <span key={c.path} className="flex items-center">
-                {i > 0 && !crumbs[i - 1].label.endsWith(':') && <span aria-hidden style={{ color: 'var(--muted-2)' }}>/</span>}
-                <button type="button" data-testid={tid(`crumb-${i}`)} onClick={() => p.onNavigate(c.path)}
-                        aria-current={i === crumbs.length - 1 ? 'location' : undefined}
-                        className="rounded-[4px] font-medium [overflow-wrap:anywhere] hover:underline max-lg:min-h-11 max-lg:px-1 focus-visible:outline-2 focus-visible:outline-(--ring)"
-                        style={{ color: 'var(--ink)' }}>{c.label}</button>
-              </span>
-            ))}
-          </nav>
-          {listing && (
-            <span data-testid={tid('meta')} className="ml-auto shrink-0 pl-2 text-[12px]" style={{ color: 'var(--muted-2)' }}>
-              {metaOf(listing)}
-            </span>
-          )}
         </div>
         {listing && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <input ref={filterRef} type="search" data-testid={tid('filter')} aria-label={`Filter the ${sideName} pane by name`}
                    placeholder="Filter names" value={view.filter} onChange={(e) => p.onFilter(e.target.value)}
                    onKeyDown={(e) => { if (e.key === 'Escape' && e.currentTarget.value !== '') { p.onFilter(''); e.preventDefault(); } }}
@@ -232,7 +243,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
                 return (
                   <tr key={e.path} data-testid="pane-row" data-name={e.name} data-kind={e.kind} aria-selected={sel}
                       data-cursor={p.active && selection.cursor === i ? 'true' : undefined}
-                      draggable={drags}
+                      draggable={drags && e.kind !== 'collection'}
                       onDragStart={(ev) => p.onDragStartRows(sel ? picked : [i], ev)}
                       onClick={(ev) => p.onRowClick(i, { shift: ev.shiftKey, toggle: ev.metaKey || ev.ctrlKey })}
                       onDoubleClick={() => p.onRowOpen(i, 'dblclick')}
@@ -286,7 +297,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
                       )}
                     </td>
                     <td className={`${cell} text-right font-mono text-[12px] max-lg:hidden`} style={{ ...cellStyle, color: 'var(--muted)' }}>
-                      {sized(e) ? paneSize(e.size!) : '—'}
+                      {sized(e) ? paneSize(e.size!) : e.sizeText ?? '—'}
                     </td>
                     <td className={`${cell} font-mono text-[11px] font-semibold max-lg:hidden`} style={cellStyle}>
                       {e.protection ? <span className="flex gap-0.5"><ProtectionCells protection={e.protection} /></span>

@@ -40,6 +40,7 @@ const { getDb, closeDb } = await import('@/db');
 const { migrate } = await import('drizzle-orm/node-postgres/migrator');
 const { createHash } = await import('node:crypto');
 const { games, disks, entitlements, blobs } = await import('@/db/schema/catalog');
+const { collections, collectionGames } = await import('@/db/schema/collections');
 const { organization } = await import('@/db/schema/auth');
 const { devices } = await import('@/db/schema/devices');
 const { eq } = await import('drizzle-orm');
@@ -117,6 +118,9 @@ beforeAll(async () => {
   const hv = readVolume(blankHd); if (!hv.ok) throw new Error('no volume');
   const hd = must(addFile(blankHd, hv.rootBlock, 'Big', big));   // an HD root is block 1760, not ROOT_BLOCK
   for (const n of [5, 6, 7, 8]) await seedDisk(`g${n}`, `Big ${n}`, `d${n}`, hd);
+  // SysInfo and Other are filed in a collection: their entries have a second path through it (Files 2 §3.1).
+  await getDb().insert(collections).values({ id: 'c1', orgId: 'o1', name: 'Demos', sortKey: 0 });
+  await getDb().insert(collectionGames).values([{ collectionId: 'c1', gameId: 'g1', sortKey: 0 }, { collectionId: 'c1', gameId: 'g2', sortKey: 1 }]);
   await stash('Notes.txt', new TextEncoder().encode('notes'));
   await stash('t.zip', new Uint8Array(readFileSync('src/lib/archive/fixtures/t.zip')));
   await stash('bad.lha', new TextEncoder().encode('not an lha at all'));
@@ -333,6 +337,14 @@ describe('/api/files', () => {
     // An entry selected twice, or inside a selected folder, is in the zip once.
     const once = await dlMany('STASH:/Mods', 'STASH:/mods/a.mod', 'STASH:/Notes.txt', 'STASH:/notes.txt');
     expect(Object.keys(unzipSync(new Uint8Array(await once.arrayBuffer()))).sort()).toEqual(['Mods/', 'Mods/a.mod', 'Notes.txt']);
+  });
+  it('a zip across devices holds an entry selected in both its forms, through a collection and not, once (Files 2 §3.1)', async () => {
+    const z = await dlMany('STASH:/Notes.txt', 'LIBRARY:/g1/d1/ReadMe', 'LIBRARY:/c1/g1/d1/ReadMe', 'LIBRARY:/c1/g2/d2/S', 'LIBRARY:/g2/d2/S/Startup');
+    expect(z.status).toBe(200);
+    expect(Object.keys(unzipSync(new Uint8Array(await z.arrayBuffer()))).sort()).toEqual(['Notes.txt', 'ReadMe', 'S/', 'S/Startup']);
+    // A path through a collection the title is not filed in is still not found.
+    await getDb().insert(collections).values({ id: 'c2', orgId: 'o1', name: 'Empty', sortKey: 1 });
+    expect((await dlMany('STASH:/Notes.txt', 'LIBRARY:/c2/g1/d1/ReadMe')).status).toBe(404);
   });
   it('a zip across devices reads its STASH: blobs side by side, not one after another (60 s functions)', async () => {
     const reads = inFlight('read');

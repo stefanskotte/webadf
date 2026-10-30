@@ -61,9 +61,9 @@ test('NET: in the panes: a board row with its key; Copy → queues, the pane fol
   ], '[data-testid="files-drop-stash"]');
   await expect(toast(page, 'Added 2 items to STASH:')).toBeVisible({ timeout: LIVE });
 
-  // The device buttons, NET: between STASH: and LIBRARY:; the board under NET: with its marks.
-  const devs = page.getByTestId('pane-right').locator('[data-testid^="pane-right-dev-"]');
-  await expect(devs).toHaveText(['STASH:', 'NET:', 'LIBRARY:']);
+  // The device column: STASH:, LIBRARY:, NET: (Files 2 R12); the board under NET: with its marks.
+  const devs = page.getByTestId('files-devices').locator('[data-testid^="files-dev-"]');
+  await expect(devs).toHaveText(['STASH:', 'LIBRARY:', 'NET:']);
   const board = rowAt(page, 'right', 'A500 bench');
   await expect(board).toHaveAttribute('data-kind', 'board');
   await expect(board).toContainText('BRD');

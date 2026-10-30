@@ -20,4 +20,14 @@ describe('HelpTip', () => {
     expect(html).not.toContain('<svg');
     expect(html).toContain('aria-label="About The board&#x27;s display"');
   });
+
+  it('on an ink bar it turns the on-ink fill with an outline when hovered or open, never ink on ink (Task 8 review)', () => {
+    const html = renderToStaticMarkup(createElement(HelpTip, { topic: 'files', onInk: true }));
+    expect(html).toContain('bg-(--track)');
+    expect(html).toContain('hover:bg-(--on-ink-fill)');
+    expect(html).toContain('data-[popup-open]:bg-(--on-ink-fill)');
+    expect(html).toContain('data-[popup-open]:ring-(--on-ink-muted)');
+    expect(html).not.toContain('hover:bg-(--ink)');
+    expect(html).not.toContain('data-[popup-open]:bg-(--ink)');
+  });
 });

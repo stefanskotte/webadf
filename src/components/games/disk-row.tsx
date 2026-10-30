@@ -18,10 +18,12 @@ import { DiskIcon } from '@/components/ui/disk-icon';
 import { titleDiskColor } from '@/lib/library-look';
 import { DiskSetMenu, LoneDiskMenu, type DiskSetControls } from './disk-set-menu';
 
-export function DiskRow({ disk, gameId, choices, from, view = null, fobDevices = [], send = null, setControls, loneGameId, helpProtect, helpNfc, helpHfe, kind = null, authored = false }: {
+export function DiskRow({ disk, gameId, choices, from, view = null, fobDevices = [], send = null, setControls, loneGameId, helpProtect, helpNfc, helpHfe, kind = null, authored = false, filesCollectionId = null }: {
   disk: GameDetailDisk;
-  /** The title this disk is in: Files… opens the disk at LIBRARY:/<title>/<disk>. */
+  /** The title this disk is in: Files… opens the disk at LIBRARY:/<title>/<disk> (or inside filesCollectionId). */
   gameId: string;
+  /** The title's first collection, or null: Files… opens the disk inside it (Files 2 §3.1, firstCollectionOf). */
+  filesCollectionId?: string | null;
   /** Per-device verdict for THIS disk -- see lib/mount-choice.ts. */
   choices: MountChoice[];
   /**
@@ -177,7 +179,7 @@ export function DiskRow({ disk, gameId, choices, from, view = null, fobDevices =
           <ExtractAction diskId={disk.id} gameId={gameId} extractable={disk.extractable === true} reason={disk.extractReason}
                          help={helpHfe === true} />
         ) : (
-          <Link href={filesHrefForDisk(gameId, disk.id)}
+          <Link href={filesHrefForDisk(gameId, disk.id, false, filesCollectionId)}
                 data-testid={`files-${disk.id}`} className={GHOST} style={GHOST_STYLE}>
             Files…
           </Link>

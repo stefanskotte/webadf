@@ -14,7 +14,8 @@ import { registerUploads } from '@/lib/ingest-complete';
 import { isLocal } from '@/lib/remote-hidden';
 
 export type AddToLibraryResult =
-  | { ok: true; diskId: string; gameId: string }
+  // existed: the library had this disk before this call (added from this file before, or the same bytes from elsewhere).
+  | { ok: true; diskId: string; gameId: string; existed?: true }
   | { ok: false; status: 404 | 422 | 502; error: 'not_found' | 'not_a_disk_image' | 'refused' | 'ingest_failed'; reason?: string };
 
 async function diskWhere(orgId: string, where: ReturnType<typeof eq>) {
@@ -32,7 +33,7 @@ export async function addUploadToLibrary(orgId: string, id: string): Promise<Add
   if (!row || !blob) return { ok: false, status: 404, error: 'not_found' };
   if (row.libraryDiskId) {
     const d = await diskWhere(orgId, eq(disks.id, row.libraryDiskId));
-    if (d) return { ok: true, diskId: d.id, gameId: d.gameId };
+    if (d) return { ok: true, diskId: d.id, gameId: d.gameId, existed: true };
   }
   if (!libraryEligible(row.path, row.sizeBytes)) return { ok: false, status: 422, error: 'not_a_disk_image' };
   let stored: Uint8Array;
@@ -45,6 +46,7 @@ export async function addUploadToLibrary(orgId: string, id: string): Promise<Add
   const img = prepared.images[0];
   // Verified, not trusted by its key: a presigned PUT never committed may have planted other bytes there (storeSendBytes).
   const sha256 = await storeSendBytes(img.bytes);
+  const before = await diskWhere(orgId, eq(disks.sha256, sha256));
   const res = await registerUploads(orgId, [{ sha256, sizeBytes: img.bytes.byteLength, filename: img.filename }]);
   if (res.status !== 200 && res.status !== 409) return { ok: false, status: 502, error: 'ingest_failed' };
   const out = (await res.json()) as { rejectedReasons?: Record<string, string> };
@@ -53,5 +55,5 @@ export async function addUploadToLibrary(orgId: string, id: string): Promise<Add
   const d = await diskWhere(orgId, eq(disks.sha256, sha256));
   if (!d) return { ok: false, status: 502, error: 'ingest_failed' };
   await setLibraryDisk(db, orgId, id, d.id);
-  return { ok: true, diskId: d.id, gameId: d.gameId };
+  return { ok: true, diskId: d.id, gameId: d.gameId, ...(before ? { existed: true as const } : {}) };
 }

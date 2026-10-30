@@ -43,4 +43,19 @@ describe('CopyToPicker (Files increment 1, Task 10)', () => {
     expect(hereLabel('copy', listing({}))).toBe('Copy here');
     expect(hereLabel('move', listing({}))).toBe('Move here');
   });
+
+  it('a filing picks a shelf by the manager\'s rule (Files 2)', () => {
+    const root = listing({ path: 'LIBRARY:', disk: null, writable: false, library: { level: 'root', collectionId: null } });
+    expect(pickReason('move', root, () => null)).toBeNull();
+    expect(pickReason('copy', root, () => 'It is in the library already')).toBe('It is in the library already');
+    expect(pickReason('copy', root, () => undefined)).toBe('Open a disk or STASH: to copy into it');
+    expect(pickReason('copy', root)).toBe('Open a disk or STASH: to copy into it');
+    expect(pickReason('copy', null, () => 'x')).toBeNull();
+  });
+
+  it('collections come first in the Library\'s order, then the rest by name (D10)', () => {
+    const c = (name: string) => ({ ...entry(name, 'collection'), path: `LIBRARY:/${name}` });
+    const l = listing({ path: 'LIBRARY:', disk: null, entries: [c('Zeta'), c('Alpha'), entry('Bravo', 'title'), entry('Able', 'title')] });
+    expect(placesIn(l).map((e) => e.name)).toEqual(['Zeta', 'Alpha', 'Able', 'Bravo']);
+  });
 });
