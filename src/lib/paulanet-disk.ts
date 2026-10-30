@@ -6,7 +6,7 @@
  * (tools/paulanet-driver/, plan 2026-10-18) and its PaulaNET Config is his, unmodified: both used by his permission
  * under his terms (third-party/paulanet/); they are not MIT.
  */
-export const PAULANET_DISK_SHA256 = 'efecdfb9782826337ec9f159d66df971c966994f30502dab3ffe69a60b115ee5';
+export const PAULANET_DISK_SHA256 = '05a898caa137cb2e24f1aa0f30784126a3e88276aaf80387af446d1e204bbb45';
 export const PAULANET_DISK_BYTES = 901_120;
 /**
  * The driver disk before Transfer 2.3 (2026-10-30: browsing the Amiga's volumes from the web app): Transfer 2.2.

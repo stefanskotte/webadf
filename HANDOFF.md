@@ -1591,10 +1591,11 @@ row and Queue alone.
     volume (the second Empty vanished from VOLS); the fixture formats them 3 s apart.
   - **Window screenshot:** the gui mode (3.2) with BROWSE shows the checkbox ticked, nothing overlapping, and the status
     line "Web: listed Work:Up" (tools/receive/uae/browse-demo.ts; scratchpad transfer-2.3-window.png).
-  - **Build pin:** tools/receive/dist/Transfer sha256 e66660020d868b4ede98d2f6aeefe82836a80a7576a6e69ddf515bca9396eec9
-    (46736 bytes); a second build is byte-identical (deterministic).
-  - **Driver disk:** efecdfb9782826337ec9f159d66df971c966994f30502dab3ffe69a60b115ee5 (901120 bytes); 9f58337d (Transfer 2.2)
-    is now PAULANET_DISK_PREVIOUS, 36bce70c (2.1) heads the older list. **Not yet in the disk store: the controller runs
+  - **Build pin (after the final-review fixes):** tools/receive/dist/Transfer sha256
+    c26266d4d8606cd9728c1aa775bc4854a9ad90194633207fab089438acf875b1 (47312 bytes); a second build is byte-identical
+    (deterministic). The Task 6 pin e6666002 was never published.
+  - **Driver disk:** 05a898caa137cb2e24f1aa0f30784126a3e88276aaf80387af446d1e204bbb45 (901120 bytes; the Task 6 disk
+    efecdfb9 was never published and is listed nowhere); 9f58337d (Transfer 2.2) is now PAULANET_DISK_PREVIOUS, 36bce70c (2.1) heads the older list. **Not yet in the disk store: the controller runs
     scripts/paulanet-disk-upload.ts before pushing master** (production serves the new digest as soon as it is live).
   - **Plan rulings:** T1 a changed switch (or a TRUST that changes the key) closes an idle connection so the board
     reconnects and hears READY 3 <b>; T2 names the web app would refuse are left out of VOLS/DIR and not counted; T3 DOS
@@ -1608,6 +1609,23 @@ row and Queue alone.
   - **Controller rulings from reviews:** (a) the net.c stale-hello close also waits for net.c's own send buffer
     (o_off == o_len) (Task 5 review); (b) a GET's file that fails after GOT adds a failed row in the window; (c)
     test_proto.c's junk-line test uses POST now (GET is a verb; a stray HTTP "GET /" gets one `ERR - bad` line).
+  - **Final whole-branch review fixes (2026-10-30):** (1) a date the server would refuse (days > 999999, mins or ticks
+    > 99999) goes out `0.0.0`, so one damaged date cannot fail a whole VOLS/DIR; (2) unticking stops work already
+    accepted: a waiting request is answered `ERR <rid> off`, and a GET's file acknowledged with GOT but not yet sent is
+    taken off the queue with `ERR <rid> off` (UP_FAILED "browsing is off") and never opened; (3) only mounted volumes:
+    DIR/GET paths must start with a volume name or device name (ASCII case folded) that VOLS would send, else
+    `ERR notfound` without touching the path -- keeps CON:, PIPE: and assigns (ENVARC:, SYS:, C:) out; a failed volume
+    list there is `ERR io`; (4) a request whose id cannot be read (a scanner's "GET / HTTP/1.0") gets `ERR - bad` but no
+    owner event; (5) the 32-volume list is one file-static array, not in each session (~7.5 KB saved per session); (6) a
+    GET says "copying <path>" (the file is only queued at GOT); (7) Close() in a_close_r and UnLock/FreeDosObject in
+    a_dir_close are quiet too (T8); (8) spec §3 gains the GOT/late-ERR contract, §7 two bench items; (9) README/ReadMe
+    say how a Shell user switches browsing off. FS-UAE browse on the re-pinned binary: 3.1 and 2.04 pass all nine plus
+    "BROWSE without SAVE stored nothing" (the mounted-volume check needed no harness change).
+  - **Input to the firmware 1.22 plan (spec §3 "After GOT"):** `GOT <rid> <tag>` ends a GET's answer, but Transfer may
+    later, whenever no other request is being answered, send `ERR <rid> io|toolarge|off <len>:<text>` for that GET (file
+    unreadable or grown past 4 MB at its turn, or browsing switched off). The board must route such a line by its rid
+    and post it as that request's piece (the server accepts it); the PUT carrying the GOT's tag may come later than
+    other lines.
   - **Observed in FS-UAE:** every volume in VOLS gets a device (Ram Disk RAM:, Workbench3.2 DF1:, Work DH0:); RAM Disk
     shows size 0; an empty drive is not listed.
   - **Next: firmware 1.22.0 (spec §3), then the A500 bench (§7).**
