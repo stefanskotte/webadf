@@ -220,7 +220,10 @@ static void req_done(rx_session *s, int cut) {
     emit_req(s, s->req_kind, s->req_id, s->req_path, s->req_count, cut, 0);
     req_end(s);
 }
+/* The server takes only ^\d{1,6}\.\d{1,5}\.\d{1,5}$: a damaged date goes out as 0.0.0, so one bad entry cannot fail a
+   whole VOLS or DIR answer (final review 1). */
 static void put_date(rx_session *s, unsigned long d, unsigned long m, unsigned long t) {
+    if (d > 999999UL || m > 99999UL || t > 99999UL) d = m = t = 0;
     put_dec(s, d); puts_(s, "."); put_dec(s, m); puts_(s, "."); put_dec(s, t);
 }
 const char *rx_err_code(long err, int want_dir) {
@@ -268,6 +271,36 @@ static void get_start(rx_session *s) {
     emit_req(s, RX_REQ_GET, s->req_id, s->req_path, 0, 0, 0);
     req_end(s);
 }
+/* The volume list: file-static, not in each session (final review 5; the Shell and the window each have a session).
+   One connection is answered at a time and its requests one at a time, so a DIR/GET check never runs while a VOLS
+   answer is walking this list. */
+static rx_vol g_vols[RX_VOLS_MAX];
+static int ascii_eq_n(const char *a, const char *b, unsigned n) {
+    unsigned i;
+    for (i = 0; i < n; i++) {
+        unsigned char x = (unsigned char)a[i], y = (unsigned char)b[i];
+        if (x >= 'a' && x <= 'z') x = (unsigned char)(x - 32);
+        if (y >= 'a' && y <= 'z') y = (unsigned char)(y - 32);
+        if (x != y) return 0;
+    }
+    return 1;
+}
+/* 1 if the part of path before its first ':' names a mounted volume VOLS would send, by its name or its device name
+   (ASCII case folded); 0 if not, -1 if the list cannot be read. Keeps CON:, PIPE: and assigns (ENVARC:, SYS:, C:)
+   out: a handler that is not a filesystem can open a window on the Amiga or block Transfer (spec V2; final review 3). */
+static int vol_known(rx_session *s, const char *path) {
+    unsigned n = (unsigned)(strchr(path, ':') - path); int k, i;
+    k = s->fs->vols(s->fs->ctx, g_vols, RX_VOLS_MAX);
+    if (k < 0) return -1;
+    for (i = 0; i < k; i++) {
+        const rx_vol *v = &g_vols[i];
+        size_t dn = strlen(v->device);
+        if (!rx_name_sendable(v->name) || !rx_device_sendable(v->device)) continue;   /* as VOLS (rulings T2, T11) */
+        if (strlen(v->name) == n && ascii_eq_n(v->name, path, n)) return 1;
+        if (dn == n + 1 && v->device[n] == ':' && ascii_eq_n(v->device, path, n)) return 1;
+    }
+    return 0;
+}
 static void cat(char *out, unsigned cap, const char *str) {
     size_t n = strlen(out);
     while (*str && n + 1 < cap) out[n++] = *str++;
@@ -282,14 +315,21 @@ void rx_req_words(const rx_event *e, char *out, unsigned cap) {
     else if (strlen(e->path) > 40) { memcpy(p, e->path, 37); strcpy(p + 37, "..."); }
     else strcpy(p, e->path);
     if (e->text) { cat(out, cap, get ? "could not copy " : "could not list "); cat(out, cap, p); cat(out, cap, ": "); cat(out, cap, e->text); }
-    else { cat(out, cap, get ? "copied " : "listed "); cat(out, cap, p); if (e->bytes) cat(out, cap, " (first 1000)"); }
+    else { cat(out, cap, get ? "copying " : "listed ");   /* GOT: the file is only queued */ cat(out, cap, p); if (e->bytes) cat(out, cap, " (first 1000)"); }
 }
 static void req_start(rx_session *s) {
     s->req_kind = s->wait_kind; strcpy(s->req_id, s->wait_id); strcpy(s->req_path, s->wait_path);
     s->wait_kind = RX_REQ_NONE;
     s->req_i = 0; s->req_count = 0; s->req_open = 0;
+    /* switched off (or no longer trusted) since it was accepted: the owner's word wins (final review 2) */
+    if (!rx_browse_on(s)) { req_fail_text(s, "off", "browsing is off in Transfer"); return; }
+    if (s->req_kind != RX_REQ_VOLS) {
+        int k = vol_known(s, s->req_path);
+        if (k < 0) { req_fail_text(s, "io", "cannot read the volume list"); return; }
+        if (!k) { req_fail(s, RX_DOS_NOT_FOUND, s->req_kind == RX_REQ_DIR); return; }
+    }
     if (s->req_kind == RX_REQ_VOLS) {
-        int k = s->fs->vols(s->fs->ctx, s->req_vols, RX_VOLS_MAX);
+        int k = s->fs->vols(s->fs->ctx, g_vols, RX_VOLS_MAX);
         if (k < 0) { req_fail_text(s, "io", "cannot read the volume list"); return; }
         s->req_nvols = k;
     }
@@ -307,7 +347,7 @@ static void req_pump(rx_session *s) {
     while (s->req_kind == RX_REQ_VOLS && RX_OUT_MAX - s->out_n >= RX_REQ_ROOM) {
         const rx_vol *v;
         if (s->req_i >= (unsigned)s->req_nvols) { req_done(s, 0); break; }
-        v = &s->req_vols[s->req_i++];
+        v = &g_vols[s->req_i++];
         if (!rx_name_sendable(v->name) || !rx_device_sendable(v->device)) continue;   /* plan rulings T2, T11 */
         puts_(s, "VOL "); puts_(s, s->req_id); puts_(s, " "); put_lenstr(s, v->name); puts_(s, " "); put_lenstr(s, v->device);
         puts_(s, " "); put_dec(s, v->size); puts_(s, " "); put_dec(s, v->free); puts_(s, " ");
@@ -347,7 +387,8 @@ static void refuse_req(rx_session *s, int kind, const char *id, const char *path
 static void on_request(rx_session *s, cur *c, int kind) {
     const char *t; unsigned n; char id[RX_ID_MAX + 1], path[RX_LOCAL_MAX + 1];
     id[0] = 0; path[0] = 0;
-    if (!tok(c, &t, &n) || !id_ok(t, n)) { refuse_req(s, kind, "", "", "bad", "bad request"); return; }
+    /* no readable id: junk such as a scanner's "GET / HTTP/1.0"; answered, but not the owner's news (final review 4) */
+    if (!tok(c, &t, &n) || !id_ok(t, n)) { req_err(s, "", "bad", "bad request"); return; }
     memcpy(id, t, n); id[n] = 0;
     if ((kind != RX_REQ_VOLS && (!lenstr(c, path, sizeof path, 0) || !local_path_ok(path))) || c->p < c->end) {
         refuse_req(s, kind, id, path, "bad", "bad request"); return;
@@ -461,6 +502,11 @@ static void up_put(rx_session *s) {
     while (put_due(s)) {
         rx_up_item it = s->upq->q[0];
         rx_upq_remove(s->upq, it.tag);
+        if (it.rid[0] && !rx_browse_on(s)) {   /* a GOT file, switched off before its turn: never opened (final review 2) */
+            req_err(s, it.rid, "off", "browsing is off in Transfer");
+            emit_up(s, RX_EV_UP_FAILED, &it, 0, 0, 0, "browsing is off", "local");
+            continue;
+        }
         memset(&s->up_info, 0, sizeof s->up_info);
         if (s->fs->open_r(s->fs->ctx, it.local, &s->up_info) != 0) {
             if (it.rid[0]) req_err(s, it.rid, "io", "cannot read the file");

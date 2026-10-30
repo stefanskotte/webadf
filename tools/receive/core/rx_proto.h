@@ -132,7 +132,7 @@ typedef struct rx_session { /* fields private to rx_proto.c except list/list_n *
     int req_kind, req_open, req_nvols; unsigned req_i, req_count;
     char req_id[RX_ID_MAX + 1], req_path[RX_LOCAL_MAX + 1];             /* the request being answered */
     int wait_kind; char wait_id[RX_ID_MAX + 1], wait_path[RX_LOCAL_MAX + 1];   /* the one request waiting */
-    rx_vol req_vols[RX_VOLS_MAX];
+    /* (the volume list a VOLS answer walks is file-static in rx_proto.c: one connection is answered at a time) */
 } rx_session;
 
 void rx_init(rx_session *s, const rx_fs *fs, rx_event_fn on_event, void *uctx);
@@ -173,7 +173,8 @@ int rx_browse_on(const rx_session *s);    /* 1: requests are answered (switch on
 int rx_hello_stale(const rx_session *s);
 /* The protocol code for an AmigaDOS error (plan ruling T3); want_dir: the request wanted a drawer (DIR), not a file. */
 const char *rx_err_code(long err, int want_dir);
-/* An RX_EV_REQ in the owner's words (spec §2.3): "listed volumes", "listed Work:Programs", "copied Work:a.lha",
+/* An RX_EV_REQ in the owner's words (spec §2.3): "listed volumes", "listed Work:Programs", "copying Work:a.lha" (GOT:
+   the file is only queued then),
    "could not list Work:x: <why>"; a path over 40 bytes ends "...". Cut to cap. */
 void rx_req_words(const rx_event *e, char *out, unsigned cap);
 

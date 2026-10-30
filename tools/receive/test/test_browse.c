@@ -136,7 +136,7 @@ static void a_changed_switch_makes_the_hello_stale_once_idle(void) {
     Q.browse = 1; CHECK(!rx_hello_stale(&S), "switched back");
     feed("VOLS v\n"); Q.browse = 0;
     CHECK(!rx_hello_stale(&S), "not while a request waits");
-    drain(); CHECK(strcmp(ob, "VOL v 4:Work 4:DH0: 1 1 1.2.3\nDONE v 1\n") == 0, "the accepted request is answered");
+    drain(); CHECK(strcmp(ob, "ERR v off 27:browsing is off in Transfer\n") == 0, "the accepted request is answered off");
     CHECK(rx_hello_stale(&S), "then stale");
     setup(1); feed("WEBADF 2 " KEY "\n"); drain(); Q.browse = 0; CHECK(!rx_hello_stale(&S), "never on protocol 2");
     setup(1); feed("WEBADF 3 " KEY2 "\n"); drain(); CHECK(!rx_hello_stale(&S), "another key: READY 3 0 was right");
@@ -152,7 +152,7 @@ static void a_lost_connection_forgets_the_request(void) {
 }
 
 static void a_drawer_lists_each_entry_then_done(void) {
-    setup(1); F.days = 10; F.mins = 20; F.ticks = 30;
+    setup(1); F.days = 10; F.mins = 20; F.ticks = 30; vol("Work", "DH0:", 1, 1, 1); 
     ff_add(&F, "Work:", 1); ff_add(&F, "Work:Programs", 1);
     ff_put(&F, "Work:Programs/a.txt", "hello", 5, 0x40, "note"); ff_add(&F, "Work:Programs/Sub", 1);
     hello3(); drain();
@@ -162,13 +162,13 @@ static void a_drawer_lists_each_entry_then_done(void) {
     { int i = last_req(); CHECK(i >= 0 && strcmp(ev_code[i], "dir") == 0 && strcmp(ev_path[i], "Work:Programs") == 0 && ev[i].size == 2 && !ev_has_text[i], "the owner sees it"); }
 }
 static void a_volume_root_lists(void) {
-    setup(1); ff_add(&F, "Work:", 1); ff_add(&F, "Work:Programs", 1); ff_put(&F, "Work:Programs/a.txt", "x", 1, 0, "");
+    setup(1); vol("Work", "DH0:", 1, 1, 1); ff_add(&F, "Work:", 1); ff_add(&F, "Work:Programs", 1); ff_put(&F, "Work:Programs/a.txt", "x", 1, 0, "");
     hello3(); drain(); feed("DIR d2 5:Work:\n"); drain();
     CHECK(strcmp(ob, "ENT d2 d 0 0 0.0.0 8:Programs 0:\nDONE d2 1\n") == 0, ob);
 }
 static void a_long_drawer_is_paced_and_nothing_is_lost(void) {
     static char b[RX_UP_BLOCK + 1]; int k, n = 0, pass = 0;
-    setup(1); strcpy(F.synth, "Work:Big"); F.synth_n = 600;
+    setup(1); vol("Work", "DH0:", 1, 1, 1); strcpy(F.synth, "Work:Big"); F.synth_n = 600;
     hello3(); drain();
     feed("DIR d3 8:Work:Big\n");
     ob_n = 0; ob[0] = 0; max_take = 0;
@@ -190,34 +190,34 @@ static void a_long_drawer_is_paced_and_nothing_is_lost(void) {
     CHECK(!F.dir_open, "let go at the end");
 }
 static void the_listing_stops_at_1000_with_cut(void) {
-    setup(1); strcpy(F.synth, "Work:Big"); F.synth_n = 1005;
+    setup(1); vol("Work", "DH0:", 1, 1, 1); strcpy(F.synth, "Work:Big"); F.synth_n = 1005;
     hello3(); drain(); feed("DIR d4 8:Work:Big\n"); drain();
     CHECK_EQ_INT(lines_starting("ENT d4 "), 1000);
     CHECK(ob_n > 17 && strcmp(ob + ob_n - 17, "DONE d4 1000 cut\n") == 0, "DONE 1000 cut, last");
     CHECK_EQ_INT(F.dir_closes, 1);
     { int i = last_req(); CHECK(i >= 0 && ev[i].bytes == 1 && ev[i].size == 1000, "cut, for the owner"); }
-    setup(1); strcpy(F.synth, "Work:Big"); F.synth_n = 1000;
+    setup(1); vol("Work", "DH0:", 1, 1, 1); strcpy(F.synth, "Work:Big"); F.synth_n = 1000;
     hello3(); drain(); feed("DIR d5 8:Work:Big\n"); drain();
     CHECK(ob_n > 13 && strcmp(ob + ob_n - 13, "DONE d5 1000\n") == 0, "exactly 1000: not cut");
 }
 static void names_the_web_app_cannot_take_are_left_out_of_a_drawer(void) {
-    setup(1); ff_add(&F, "Work:D", 1); ff_put(&F, "Work:D/ok", "x", 1, 0, "");
+    setup(1); vol("Work", "DH0:", 1, 1, 1); ff_add(&F, "Work:D", 1); ff_put(&F, "Work:D/ok", "x", 1, 0, "");
     ff_put(&F, "Work:D/bad\x01name", "x", 1, 0, ""); ff_put(&F, "Work:D/1234567890123456789012345678901", "x", 1, 0, "");
     hello3(); drain(); feed("DIR d6 6:Work:D\n"); drain();
     CHECK(strcmp(ob, "ENT d6 f 1 0 0.0.0 2:ok 0:\nDONE d6 1\n") == 0, ob);
 }
 static void latin1_names_go_out_byte_for_byte(void) {
-    setup(1); ff_add(&F, "Gr\xfc\xdf" "e:", 1); ff_put(&F, "Gr\xfc\xdf" "e:Caf\xe9", "x", 1, 0, "\xe9t\xe9");
+    setup(1); vol("Gr\xfc\xdf" "e", "DH1:", 1, 1, 1); ff_add(&F, "Gr\xfc\xdf" "e:", 1); ff_put(&F, "Gr\xfc\xdf" "e:Caf\xe9", "x", 1, 0, "\xe9t\xe9");
     hello3(); drain(); feed("DIR d7 6:Gr\xfc\xdf" "e:\n"); drain();
     CHECK(strcmp(ob, "ENT d7 f 1 0 0.0.0 4:Caf\xe9 3:\xe9t\xe9\nDONE d7 1\n") == 0, ob);
 }
 static void comments_lose_control_bytes(void) {
-    setup(1); ff_add(&F, "Work:", 1); ff_put(&F, "Work:a", "x", 1, 0, "a\nb");
+    setup(1); vol("Work", "DH0:", 1, 1, 1); ff_add(&F, "Work:", 1); ff_put(&F, "Work:a", "x", 1, 0, "a\nb");
     hello3(); drain(); feed("DIR d8 5:Work:\n"); drain();
     CHECK(strcmp(ob, "ENT d8 f 1 0 0.0.0 1:a 3:a b\nDONE d8 1\n") == 0, ob);
 }
 static void drawer_errors_carry_amigados_words(void) {
-    setup(1); ff_put(&F, "Work:a.txt", "x", 1, 0, ""); hello3(); drain();
+    setup(1); vol("Work", "DH0:", 1, 1, 1); ff_put(&F, "Work:a.txt", "x", 1, 0, ""); hello3(); drain();
     feed("DIR e1 9:Work:Nope\n"); drain(); CHECK(strcmp(ob, "ERR e1 notfound 13:dos error 205\n") == 0, ob);
     feed("DIR e2 10:Work:a.txt\n"); drain(); CHECK(strcmp(ob, "ERR e2 notdir 13:dos error 212\n") == 0, ob);
     { int i = last_req(); CHECK(i >= 0 && strcmp(ev_text[i], "dos error 212") == 0, "the owner sees AmigaDOS's words"); }
@@ -228,7 +228,7 @@ static void drawer_errors_carry_amigados_words(void) {
     CHECK(strcmp(rx_err_code(103, 1), "io") == 0, "103");
 }
 static void a_drawer_that_fails_mid_listing_ends_with_err_and_lets_go(void) {
-    setup(1); strcpy(F.synth, "DF0:"); F.synth_n = 50; F.dir_fail_after = 2;
+    setup(1); vol("Empty", "DF0:", 1, 1, 1); strcpy(F.synth, "DF0:"); F.synth_n = 50; F.dir_fail_after = 2;
     hello3(); drain(); feed("DIR e3 4:DF0:\n"); drain();
     CHECK(strcmp(ob, "ENT e3 f 0 0 0.0.0 5:f0000 0:\nENT e3 f 1 0 0.0.0 5:f0001 0:\nERR e3 io 13:dos error 226\n") == 0, ob);
     CHECK(!F.dir_open && F.dir_closes == 1, "let go");
@@ -246,7 +246,7 @@ static void malformed_and_off_dir_requests(void) {
 }
 static void a_lost_connection_mid_listing_releases_the_drawer(void) {
     static char b[RX_UP_BLOCK + 1];
-    setup(1); strcpy(F.synth, "Work:Big"); F.synth_n = 600;
+    setup(1); vol("Work", "DH0:", 1, 1, 1); strcpy(F.synth, "Work:Big"); F.synth_n = 600;
     hello3(); drain(); feed("DIR d9 8:Work:Big\n");
     CHECK(rx_take_output(&S, b, sizeof b) > 0, "a first part");
     CHECK(F.dir_open, "open mid-listing");
@@ -255,7 +255,7 @@ static void a_lost_connection_mid_listing_releases_the_drawer(void) {
     { int i = last_req(); CHECK(i >= 0 && strcmp(ev_text[i], "connection lost") == 0, "the owner sees why"); }
 }
 static void requests_go_before_queued_files(void) {
-    setup(1); strcpy(F.synth, "Work:Big"); F.synth_n = 300; ff_put(&F, "DH0:Mine", "m", 1, 0, "");
+    setup(1); vol("Work", "DH0:", 1, 1, 1); strcpy(F.synth, "Work:Big"); F.synth_n = 300; ff_put(&F, "DH0:Mine", "m", 1, 0, "");
     hello3(); drain();
     feed("DIR d10 8:Work:Big\n");
     CHECK_EQ_INT(rx_up_add(&Q, "DH0:Mine", "Mine"), 1);
@@ -269,7 +269,7 @@ static void file_line(char *dst, const char *id, const char *data, unsigned long
     sprintf(dst, "FILE %s %lu %lx 0 %u:%s 0:\n", id, len, crc, (unsigned)strlen(path), path);
 }
 static void a_file_is_got_then_goes_up_at_the_front(void) {
-    setup(1); F.days = 1; F.mins = 2; F.ticks = 3;
+    setup(1); F.days = 1; F.mins = 2; F.ticks = 3; vol("Work", "DH0:", 1, 1, 1); 
     ff_put(&F, "Work:a.txt", "hello", 5, 0x40, "note");
     ff_put(&F, "DH0:One", "1", 1, 0, ""); ff_put(&F, "DH0:Two", "2", 1, 0, "");
     CHECK_EQ_INT(rx_up_add(&Q, "DH0:One", "One"), 1); CHECK_EQ_INT(rx_up_add(&Q, "DH0:Two", "Two"), 2);
@@ -283,7 +283,7 @@ static void a_file_is_got_then_goes_up_at_the_front(void) {
 }
 static void get_refusals(void) {
     static char b[RX_UP_BLOCK + 1];
-    setup(1); ff_add(&F, "Work:D", 1); ff_put(&F, "Work:locked", "x", 1, 0x08, ""); ff_put(&F, "Work:big", "x", 1, 0, "");
+    setup(1); vol("Work", "DH0:", 1, 1, 1); ff_add(&F, "Work:D", 1); ff_put(&F, "Work:locked", "x", 1, 0x08, ""); ff_put(&F, "Work:big", "x", 1, 0, "");
     hello3(); drain();
     feed("GET g2 9:Work:Nope\n"); drain(); CHECK(strcmp(ob, "ERR g2 notfound 13:dos error 205\n") == 0, ob);
     feed("GET g3 6:Work:D\n"); drain(); CHECK(strcmp(ob, "ERR g3 isdir 13:dos error 212\n") == 0, ob);
@@ -294,12 +294,12 @@ static void get_refusals(void) {
     feed("GET g6 4:Work\n"); drain(); CHECK(strcmp(ob, "ERR g6 bad 11:bad request\n") == 0, "no volume");
     CHECK_EQ_INT(Q.n, 0);
     /* a full queue: the GET is answered busy before any of the 64 starts */
-    setup(1); ff_put(&F, "Work:a", "x", 1, 0, ""); ff_put(&F, "DH0:f", "x", 1, 0, ""); hello3(); drain();
+    setup(1); vol("Work", "DH0:", 1, 1, 1); ff_put(&F, "Work:a", "x", 1, 0, ""); ff_put(&F, "DH0:f", "x", 1, 0, ""); hello3(); drain();
     feed("GET g7 6:Work:a\n");
     { int i; for (i = 0; i < RX_UP_MAX; i++) rx_up_add(&Q, "DH0:f", "f"); }
     drain(); CHECK(strncmp(ob, "ERR g7 busy 22:too many files waiting\nPUT ", 42) == 0, ob);
     /* the file went before its turn came: ERR io after the GOT */
-    setup(1); ff_put(&F, "Work:gone.txt", "x", 1, 0, ""); hello3(); drain();
+    setup(1); vol("Work", "DH0:", 1, 1, 1); ff_put(&F, "Work:gone.txt", "x", 1, 0, ""); hello3(); drain();
     feed("GET g8 13:Work:gone.txt\n");
     { int k = rx_take_output(&S, b, sizeof b - 1); b[k > 0 ? k : 0] = 0; CHECK(strcmp(b, "GOT g8 1\n") == 0, b); }
     ff_remove(&F, "Work:gone.txt");
@@ -316,7 +316,7 @@ static void a_request_right_after_a_files_last_byte(void) {
 }
 static void a_dropped_connection_forgets_get_files_not_yet_gone_up(void) {
     static char b[RX_UP_BLOCK + 1];
-    setup(1); ff_put(&F, "Work:a.txt", "hello", 5, 0, "");
+    setup(1); vol("Work", "DH0:", 1, 1, 1); ff_put(&F, "Work:a.txt", "hello", 5, 0, "");
     ff_put(&F, "DH0:One", "1", 1, 0, ""); ff_put(&F, "DH0:Two", "2", 1, 0, "");
     rx_up_add(&Q, "DH0:One", "One"); rx_up_add(&Q, "DH0:Two", "Two");
     hello3(); drain();
@@ -335,7 +335,7 @@ static void the_owners_words(void) {
     e.code = "vols"; e.path = ""; rx_req_words(&e, w, sizeof w); CHECK(strcmp(w, "listed volumes") == 0, w);
     e.code = "dir"; e.path = "Work:Programs"; rx_req_words(&e, w, sizeof w); CHECK(strcmp(w, "listed Work:Programs") == 0, w);
     e.bytes = 1; e.path = "Work:Big"; rx_req_words(&e, w, sizeof w); CHECK(strcmp(w, "listed Work:Big (first 1000)") == 0, w);
-    e.bytes = 0; e.code = "get"; e.path = "Work:a.lha"; rx_req_words(&e, w, sizeof w); CHECK(strcmp(w, "copied Work:a.lha") == 0, w);
+    e.bytes = 0; e.code = "get"; e.path = "Work:a.lha"; rx_req_words(&e, w, sizeof w); CHECK(strcmp(w, "copying Work:a.lha") == 0, w);
     e.code = "dir"; e.path = "Work:x"; e.text = "dos error 205"; rx_req_words(&e, w, sizeof w);
     CHECK(strcmp(w, "could not list Work:x: dos error 205") == 0, w);
     e.code = "vols"; e.path = ""; e.text = "cannot read the volume list"; rx_req_words(&e, w, sizeof w);
@@ -345,6 +345,71 @@ static void the_owners_words(void) {
     e.path = "Work:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     rx_req_words(&e, w, sizeof w); CHECK(strlen(w) == 7 + 40 && strcmp(w + strlen(w) - 3, "...") == 0, w);
     rx_req_words(&e, w, 10); CHECK_EQ_INT(strlen(w), 9);
+}
+
+/* Final review: the fixes the whole-branch review asked for. */
+static void dates_the_server_would_refuse_go_out_as_zero(void) {
+    setup(1); vol("Work", "DH0:", 1, 1, 1); F.vols[0].days = 0xFFFFFFFFUL; hello3(); drain();
+    feed("VOLS v\n"); drain(); CHECK(strcmp(ob, "VOL v 4:Work 4:DH0: 1 1 0.0.0\nDONE v 1\n") == 0, ob);
+    setup(1); vol("Work", "DH0:", 1, 1, 1); ff_add(&F, "Work:", 1); ff_put(&F, "Work:a", "x", 1, 0, "");
+    F.days = 0xFFFFFFFFUL; F.mins = 1; F.ticks = 2; hello3(); drain();
+    feed("DIR d 5:Work:\n"); drain(); CHECK(strcmp(ob, "ENT d f 1 0 0.0.0 1:a 0:\nDONE d 1\n") == 0, ob);
+    F.days = 999999; F.mins = 99999; F.ticks = 99999;
+    feed("DIR d 5:Work:\n"); drain(); CHECK(strcmp(ob, "ENT d f 1 0 999999.99999.99999 1:a 0:\nDONE d 1\n") == 0, "the largest the server takes");
+    F.days = 1; F.mins = 100000; F.ticks = 2;
+    feed("DIR d 5:Work:\n"); drain(); CHECK(strcmp(ob, "ENT d f 1 0 0.0.0 1:a 0:\nDONE d 1\n") == 0, "minutes");
+    F.days = 1; F.mins = 2; F.ticks = 100000;
+    feed("DIR d 5:Work:\n"); drain(); CHECK(strcmp(ob, "ENT d f 1 0 0.0.0 1:a 0:\nDONE d 1\n") == 0, "ticks");
+}
+static void switching_off_stops_a_request_already_accepted(void) {
+    int i;
+    setup(1); vol("Work", "DH0:", 1, 1, 1);
+    ff_put(&F, "DH0:One", "1", 1, 0, ""); CHECK_EQ_INT(rx_up_add(&Q, "DH0:One", "One"), 1);
+    hello3(); drain(); CHECK(strncmp(ob, "READY 3 1\nPUT 1 1 ", 18) == 0, ob);
+    feed("VOLS a\n"); feed("TAKE 1 0 1\n"); drain();
+    Q.browse = 0;
+    feed("DONE 1 3:One\n"); drain();
+    CHECK(strcmp(ob, "ERR a off 27:browsing is off in Transfer\n") == 0, ob);
+    i = last_req(); CHECK(i >= 0 && strcmp(ev_id[i], "a") == 0 && strcmp(ev_text[i], "browsing is off in Transfer") == 0, "the owner sees it");
+}
+static void switching_off_stops_a_got_file_before_it_opens(void) {
+    static char b[RX_UP_BLOCK + 1]; int i, seen = 0, opens;
+    setup(1); vol("Work", "DH0:", 1, 1, 1); ff_put(&F, "Work:a.txt", "x", 1, 0, ""); hello3(); drain();
+    feed("GET g 10:Work:a.txt\n");
+    { int k = rx_take_output(&S, b, sizeof b - 1); b[k > 0 ? k : 0] = 0; CHECK(strcmp(b, "GOT g 1\n") == 0, b); }
+    opens = F.opens_r; Q.browse = 0;
+    drain();
+    CHECK(strcmp(ob, "ERR g off 27:browsing is off in Transfer\n") == 0, ob);
+    CHECK_EQ_INT(F.opens_r, opens); CHECK_EQ_INT(Q.n, 0);
+    for (i = 0; i < n_ev; i++) if (ev[i].kind == RX_EV_UP_FAILED && ev[i].tag == 1 && strcmp(ev_text[i], "browsing is off") == 0) seen = 1;
+    CHECK(seen, "the owner is told");
+}
+static void only_mounted_volumes_are_browsed(void) {
+    setup(1); vol("Work", "DH0:", 1, 1, 1); vol("Empty", "DF2:", 1, 1, 1); vol("Spaced", "D H1:", 1, 1, 1);
+    ff_add(&F, "work:", 1); ff_put(&F, "work:a", "x", 1, 0, ""); ff_add(&F, "DF2:", 1); ff_put(&F, "DF2:b", "x", 1, 0, "");
+    ff_add(&F, "CON:", 1); ff_put(&F, "ENVARC:webadf", "x", 1, 0, ""); ff_add(&F, "Spaced:", 1); ff_add(&F, "dh0:", 1);
+    hello3(); drain();
+    feed("DIR r 4:CON:\n"); drain(); CHECK(strcmp(ob, "ERR r notfound 13:dos error 205\n") == 0, ob);
+    feed("GET r 13:ENVARC:webadf\n"); drain(); CHECK(strcmp(ob, "ERR r notfound 13:dos error 205\n") == 0, ob);
+    feed("DIR r 7:Spaced:\n"); drain(); CHECK(strcmp(ob, "ERR r notfound 13:dos error 205\n") == 0, "a volume VOLS leaves out");
+    feed("DIR r 6:Work2:\n"); drain(); CHECK(strcmp(ob, "ERR r notfound 13:dos error 205\n") == 0, "a longer name");
+    feed("DIR r 4:DH0x\n"); drain(); CHECK(strcmp(ob, "ERR r bad 11:bad request\n") == 0, "no colon");
+    CHECK_EQ_INT(F.dir_opens, 0); CHECK_EQ_INT(F.stat_calls, 0);
+    { int i = last_req(); CHECK(i >= 0 && strcmp(ev_code[i], "get") != 0, "refusals reach the owner"); }
+    feed("DIR r 5:work:\n"); drain(); CHECK(strcmp(ob, "ENT r f 1 0 0.0.0 1:a 0:\nDONE r 1\n") == 0, ob);
+    feed("DIR r 4:DF2:\n"); drain(); CHECK(strcmp(ob, "ENT r f 1 0 0.0.0 1:b 0:\nDONE r 1\n") == 0, ob);
+    feed("DIR r 4:dh0:\n"); drain(); CHECK(F.dir_opens == 3, "a device name in any case");
+}
+static void unreadable_junk_tells_the_owner_nothing(void) {
+    int before;
+    setup(1); hello3(); drain(); before = n_ev;
+    feed("VOLS\n"); drain(); CHECK(strcmp(ob, "ERR - bad 11:bad request\n") == 0, ob);
+    feed("GET / HTTP/1.0\n"); drain(); CHECK(strcmp(ob, "ERR - bad 11:bad request\n") == 0, ob);
+    CHECK_EQ_INT(n_ev, before);
+}
+static void the_session_is_small(void) {
+    /* the volume list (32 rx_vol) is file-static, not in each session: the Shell and the window each have one */
+    CHECK(sizeof(rx_session) < 2 * sizeof(rx_vol) * RX_VOLS_MAX, "no volume list in each session");
 }
 
 int main(void) {
@@ -361,5 +426,8 @@ int main(void) {
     RUN(a_lost_connection_mid_listing_releases_the_drawer); RUN(requests_go_before_queued_files);
     RUN(a_file_is_got_then_goes_up_at_the_front); RUN(get_refusals); RUN(a_request_right_after_a_files_last_byte);
     RUN(a_dropped_connection_forgets_get_files_not_yet_gone_up); RUN(the_owners_words);
+    RUN(dates_the_server_would_refuse_go_out_as_zero); RUN(switching_off_stops_a_request_already_accepted);
+    RUN(switching_off_stops_a_got_file_before_it_opens); RUN(only_mounted_volumes_are_browsed);
+    RUN(unreadable_junk_tells_the_owner_nothing); RUN(the_session_is_small);
     return REPORT();
 }
