@@ -42,14 +42,18 @@ async function remembered(deviceId: string, segs: string[], now: Date): Promise<
   return ((s.row.answer ?? { entries: [] }) as { entries: EntryInfo[] }).entries;
 }
 
-/** One source walked: a file, or every file under a drawer (an empty drawer brings nothing), rel[0] its own name. */
-async function expand(deviceId: string, source: string, segs: string[], now: Date): Promise<Top> {
+/**
+ * One source walked: a file, or every file under a drawer (an empty drawer brings nothing), rel[0] its own name. With
+ * `walkDrawers` false a drawer is not walked (onto LIBRARY:, where it is refused whole): it brings nothing.
+ */
+async function expand(deviceId: string, source: string, segs: string[], now: Date, walkDrawers = true): Promise<Top> {
   const name = segs[segs.length - 1];
   const e = (await remembered(deviceId, segs.slice(0, -1), now)).find((x) => x.name.toLowerCase() === name.toLowerCase());
   if (!e) refuse('conflict', 409, RELIST);
   const pathOf = (s: string[]) => amigaPathOf(s)!.amigaPath;
   if (!e.dir) return { source, dir: false, files: [{ amigaPath: pathOf(segs), rel: [e.name], size: e.size }] };
   const files: File[] = [];
+  if (!walkDrawers) return { source, dir: true, files };
   const walk = async (at: string[], rel: string[]) => {
     for (const c of await remembered(deviceId, at, now)) {
       if (c.dir) await walk([...at, c.name], [...rel, c.name]);
@@ -87,8 +91,9 @@ export async function startFetch(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
   const results = new Map<string, OpItem>();
   const tops: Top[] = [];
   for (const [i, p] of (srcs as FsPath[]).entries()) {
-    const top = await expand(t.id, req.sources[i], p.segments.slice(1), now);
-    // Onto LIBRARY: only a disk image goes (the existing Add to library reason for anything else).
+    const top = await expand(t.id, req.sources[i], p.segments.slice(1), now, !library);
+    // Onto LIBRARY: only a disk image goes (the existing Add to library reason for anything else; a drawer, unwalked,
+    // as a folder -- the words the pane refuses it with before asking, shelf-rules NOT_A_FOLDER).
     if (library && (top.dir || !libraryEligible(top.files[0].rel[0], top.files[0].size))) {
       results.set(top.source, { source: top.source, ok: false, refusal: { code: 'not_a_disk_image', ...(top.dir ? { detail: 'a folder' } : {}) } });
     } else tops.push(top);

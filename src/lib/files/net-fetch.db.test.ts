@@ -163,6 +163,15 @@ describe('startFetch: one get per file', () => {
     const rows = await gets();
     expect(rows.map((g) => g.target)).toEqual([{ dest: 'STASH:', rel: ['Games.adf'], replace: false, library: { collectionId: null } }]);
   });
+
+  // Final review: a drawer onto LIBRARY: is refused as a folder without being walked -- even one whose listing is not
+  // remembered (no "List the drawer again" for a drawer the library would refuse anyway).
+  it('onto LIBRARY: a drawer is refused as a folder, unwalked', async () => {
+    await getDb().delete(remoteRequests).where(eq(remoteRequests.amigaPath, 'Work:Sub'));
+    const r = await copy([W('Games.adf'), W('Sub')], 'LIBRARY:');
+    expect(r).toMatchObject({ kind: 'done', items: [{ source: W('Games.adf'), ok: true },
+      { source: W('Sub'), ok: false, refusal: { code: 'not_a_disk_image', detail: 'a folder' } }], fetching: { files: 1 } });
+  });
 });
 
 describe('startFetch: clashes, decided at the start (P4)', () => {
