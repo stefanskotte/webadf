@@ -300,6 +300,53 @@ describe('fetchProgress', () => {
       .toMatchObject({ total: 1, done: 0, waiting: 0, failed: [{ name: 'a.lha', reason: 'A500 stopped answering' }] });
   });
 
+  it('a fetching get with a chunk stored 30 s ago is not expired, though sent over 10 minutes ago', async () => {
+    const r = await copy([W('a.lha')], 'STASH:/In');
+    if (r.kind !== 'done') throw new Error('refused');
+    const now = new Date();
+    const back = (s: number) => new Date(now.getTime() - s * 1000);
+    const [g] = await gets();
+    await takeWaiting(getDb(), 'b1', back(631));
+    await answerPiece(getDb(), 'b1', g.id, { piece: 0, lines: [`GOT ${g.id} 7`], last: true }, back(631));
+    const o = await openUpload(getDb(), dev, { size: 16385, date: '1.2.3', protection: 0, path: 'Work:a.lha', comment: '', request: g.id }, back(630));
+    if (!o.ok) throw new Error(o.code);
+    expect((await storeChunk(getDb(), 'b1', o.id, 0, new Uint8Array(16384), back(30))).ok).toBe(true);
+    expect(await fetchProgress(getDb(), 'o1', r.fetching!.id, now)).toMatchObject({ waiting: 1, failed: [] });
+    expect(await fetchProgress(getDb(), 'o1', r.fetching!.id, new Date(now.getTime() + 571_000))).toMatchObject({ waiting: 0, failed: [{ name: 'a.lha' }] });
+  });
+
+  it('a get failed timeout whose file then arrives ends done and placed: STASH:', async () => {
+    const r = await copy([W('a.lha')], 'STASH:/In');
+    if (r.kind !== 'done') throw new Error('refused');
+    const [g] = await gets();
+    await takeWaiting(getDb(), 'b1', new Date(Date.now() - 700_000));
+    expect(await fetchProgress(getDb(), 'o1', r.fetching!.id, new Date())).toMatchObject({ failed: [{ name: 'a.lha', reason: 'A500 stopped answering' }] });
+    await arrive(g.id, 'Work:a.lha', new TextEncoder().encode('lha!lha'));
+    expect(await getRow(g.id)).toMatchObject({ status: 'done', errorCode: null });
+    expect(await fetchProgress(getDb(), 'o1', r.fetching!.id, new Date()))
+      .toMatchObject({ done: 1, failed: [], waiting: 0, arrived: ['STASH:/In/a.lha'] });
+  });
+
+  it('a get failed timeout mid-upload whose upload then closes ends done and placed: LIBRARY:', async () => {
+    const adf = formatVolume({ filesystem: 'OFS', volumeName: 'Late' });
+    const r = await copy([W('Games.adf')], 'LIBRARY:');
+    if (r.kind !== 'done') throw new Error('refused');
+    const [g] = await gets();
+    const old = new Date(Date.now() - 700_000);
+    await takeWaiting(getDb(), 'b1', old);
+    await answerPiece(getDb(), 'b1', g.id, { piece: 0, lines: [`GOT ${g.id} 7`], last: true }, old);
+    const o = await openUpload(getDb(), dev, { size: adf.length, date: '1.2.3', protection: 0, path: 'Work:Games.adf', comment: '', request: g.id }, old);
+    if (!o.ok) throw new Error(o.code);
+    expect((await fetchProgress(getDb(), 'o1', r.fetching!.id, new Date()))!.failed).toHaveLength(1);
+    for (let at = 0; at < adf.length; at += 16384) {
+      expect((await storeChunk(getDb(), 'b1', o.id, at, adf.subarray(at, Math.min(at + 16384, adf.length)))).ok).toBe(true);
+    }
+    expect((await closeUpload(getDb(), 'b1', o.id, crc32(adf) >>> 0)).ok).toBe(true);
+    await placeFetched(getDb(), o.id);
+    expect((await getRow(g.id)).status).toBe('done');
+    expect((await uploadRow(o.id)).libraryDiskId).toBeTruthy();
+  });
+
   it('a get the board has not fetched yet (offline) is waiting, however old', async () => {
     const r = await copy([W('a.lha')], 'STASH:/In');
     if (r.kind !== 'done') throw new Error('refused');

@@ -9,7 +9,7 @@ import { cleanAmigaPath } from '@/lib/transfers';
 import { listStash, lockOrg, touchStashDirs } from '@/lib/stash';
 import { uniqueStashPath } from '@/lib/files/stash-paths';
 import { parsePath } from '@/lib/files/path';
-import { getForUpload, settleGet, type GetTarget } from '@/lib/remote-requests';
+import { getForUpload, liveGet, settleGet, touchGet, type GetTarget } from '@/lib/remote-requests';
 import { storeSendBytes } from '@/lib/send-http';
 import { firmwareAtLeast } from '@/lib/firmware-version';
 import {
@@ -53,7 +53,7 @@ async function openRow(db: Db, dev: { deviceId: string; orgId: string }, a: Open
         eq(amigaUploads.sizeBytes, a.size), eq(amigaUploads.amigaDate, a.date), gt(amigaUploads.expiresAt, now)))
       .orderBy(desc(amigaUploads.createdAt)).limit(1);
     if (same) {
-      if (rid) await tx.update(remoteRequests).set({ uploadId: same.id }).where(eq(remoteRequests.id, rid));
+      if (rid) await touchGet(tx, { id: rid }, now, same.id);
       return { ok: true as const, id: same.id, offset: same.received };
     }
     // Only rows that still count (3bv I1): receiving within its 24 h, stored within its 30 days.
@@ -69,7 +69,7 @@ async function openRow(db: Db, dev: { deviceId: string; orgId: string }, a: Open
     await tx.insert(amigaUploads).values({ id, orgId: dev.orgId, deviceId: dev.deviceId, deviceName: rid ? null : d?.name ?? 'Board',
       path, sizeBytes: a.size, protection: a.protection >>> 0, comment, amigaDate: a.date,
       expiresAt: new Date(now.getTime() + UPLOAD_RESUME_MS), ...(rid ? { source: 'copy' } : {}) });
-    if (rid) await tx.update(remoteRequests).set({ uploadId: id }).where(eq(remoteRequests.id, rid));
+    if (rid) await touchGet(tx, { id: rid }, now, id);
     return { ok: true as const, id, offset: 0 };
   });
 }
@@ -77,7 +77,7 @@ async function openRow(db: Db, dev: { deviceId: string; orgId: string }, a: Open
 export type ChunkResult = { ok: true; received: number } | { ok: false; status: 400 | 404 | 409; received?: number };
 
 /** One chunk at `offset`: stored when it is the next one; a retry of a stored one changes nothing; a gap is 409. */
-export async function storeChunk(db: Db, deviceId: string, id: string, offset: number, data: Uint8Array): Promise<ChunkResult> {
+export async function storeChunk(db: Db, deviceId: string, id: string, offset: number, data: Uint8Array, now = new Date()): Promise<ChunkResult> {
   if (data.byteLength < 1 || data.byteLength > UPLOAD_CHUNK) return { ok: false, status: 400 };
   return db.transaction(async (tx) => {
     const [r] = await tx.select({ size: amigaUploads.sizeBytes, received: amigaUploads.receivedBytes, status: amigaUploads.status })
@@ -90,6 +90,8 @@ export async function storeChunk(db: Db, deviceId: string, id: string, offset: n
     if (end > r.size || (data.byteLength !== UPLOAD_CHUNK && end !== r.size)) return { ok: false as const, status: 400 as const };
     await tx.insert(amigaUploadChunks).values({ uploadId: id, offset, data });
     await tx.update(amigaUploads).set({ receivedBytes: end }).where(eq(amigaUploads.id, id));
+    // A fetched file's chunk is its get's sign of life: the 10-minute timeout restarts (fix round 1 ruling).
+    await touchGet(tx, { uploadId: id }, now);
     return { ok: true as const, received: end };
   });
 }
@@ -177,7 +179,7 @@ export async function closeUpload(db: Db, deviceId: string, id: string, crc: num
 /** The get (if any) whose file upload `id` is, settled. */
 async function settleGetOf(db: Db, id: string, outcome: Parameters<typeof settleGet>[2], now: Date): Promise<void> {
   const [g] = await db.select({ id: remoteRequests.id }).from(remoteRequests)
-    .where(and(eq(remoteRequests.uploadId, id), eq(remoteRequests.kind, 'get'), inArray(remoteRequests.status, ['sent', 'fetching'])));
+    .where(and(eq(remoteRequests.uploadId, id), eq(remoteRequests.kind, 'get'), liveGet()));
   if (g) await settleGet(db, g.id, outcome, now);
 }
 

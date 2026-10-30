@@ -26,9 +26,32 @@ export async function expireStale(db: Db, now = new Date()): Promise<void> {
     and(list, eq(remoteRequests.status, 'sent'), lt(remoteRequests.sentAt, cutList)),
     and(list, eq(remoteRequests.status, 'waiting'), lt(remoteRequests.createdAt, cutList)),
   ));
+  // A get times out after 10 minutes with no get activity (fix round 1 ruling): its own once fetching; while only sent,
+  // the board's -- Transfer works through the batch one file at a time, so one queued behind busy siblings is not lost.
+  const cutGet = ms(now, GET_TIMEOUT_MS);
+  const own = sql`coalesce(${remoteRequests.activeAt}, ${remoteRequests.sentAt})`;
   await db.update(remoteRequests).set({ status: 'failed', errorCode: 'timeout', errorText: 'stopped answering', answeredAt: now }).where(and(
-    eq(remoteRequests.kind, 'get'), inArray(remoteRequests.status, ['sent', 'fetching']), lt(remoteRequests.sentAt, ms(now, GET_TIMEOUT_MS)),
+    eq(remoteRequests.kind, 'get'),
+    or(
+      and(eq(remoteRequests.status, 'fetching'), lt(own, cutGet)),
+      and(eq(remoteRequests.status, 'sent'), lt(own, cutGet), sql`not exists (select 1 from remote_requests b
+        where b.device_id = remote_requests.device_id and b.kind = 'get' and coalesce(b.active_at, b.sent_at) >= ${cutGet})`),
+    ),
   ));
+}
+
+/** A get its file can still arrive for: sent or fetching, or failed only by the timeout (a late arrival revives it). */
+export const liveGet = () => or(inArray(remoteRequests.status, ['sent', 'fetching']),
+  and(eq(remoteRequests.status, 'failed'), eq(remoteRequests.errorCode, 'timeout')));
+
+/**
+ * A sign of life from a get's file (its upload opened, a chunk stored): the get is fetching again from `now`, a
+ * timed-out one revived. `uploadId`, at the open, ties the upload to the get.
+ */
+export async function touchGet(db: Pick<Db, 'update'>, by: { id: string } | { uploadId: string }, now: Date, uploadId?: string): Promise<void> {
+  await db.update(remoteRequests).set({ status: 'fetching', activeAt: now, errorCode: null, errorText: null, answeredAt: null,
+    ...(uploadId ? { uploadId } : {}) })
+    .where(and('id' in by ? eq(remoteRequests.id, by.id) : eq(remoteRequests.uploadId, by.uploadId), eq(remoteRequests.kind, 'get'), liveGet()));
 }
 
 export async function latestFor(db: Db, deviceId: string, kind: 'vols' | 'dir', amigaPath: string, now = new Date()): Promise<ListingState> {
@@ -85,7 +108,7 @@ export async function takeWaiting(db: Db, deviceId: string, now = new Date()): P
       .where(and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.status, 'waiting')))
       .orderBy(asc(remoteRequests.createdAt)).limit(REQ_FETCH_MAX).for('update', { skipLocked: true });
     if (picked.length === 0) return [];
-    const rows = await tx.update(remoteRequests).set({ status: 'sent', sentAt: now })
+    const rows = await tx.update(remoteRequests).set({ status: 'sent', sentAt: now, activeAt: now })
       .where(inArray(remoteRequests.id, picked.map((p) => p.id))).returning();
     return rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   });
@@ -102,7 +125,7 @@ export async function answerPiece(
     if (r.status === 'done' || r.status === 'failed' || p.piece < r.pieces) return { ok: true as const };
     if (p.piece > r.pieces || (r.status !== 'sent' && r.status !== 'fetching')) return { ok: false as const, status: 409 as const };
     const prev = (r.answer ?? { volumes: [], entries: [] }) as { volumes: VolumeInfo[]; entries: EntryInfo[] };
-    const set: Partial<RemoteRow> = { pieces: r.pieces + 1 };
+    const set: Partial<RemoteRow> = { pieces: r.pieces + 1, ...(r.kind === 'get' ? { activeAt: now } : {}) };
     let end: 'done' | 'failed' | null = null;
     for (const line of p.lines) {
       const a = parseAnswerLine(rid, line);
@@ -125,8 +148,7 @@ export async function answerPiece(
 
 export async function getForUpload(db: Db, deviceId: string, rid: string): Promise<RemoteRow | null> {
   const [r] = await db.select().from(remoteRequests).where(and(
-    eq(remoteRequests.id, rid), eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.kind, 'get'),
-    inArray(remoteRequests.status, ['fetching', 'sent']),
+    eq(remoteRequests.id, rid), eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.kind, 'get'), liveGet(),
   ));
   return r ?? null;
 }

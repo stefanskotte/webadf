@@ -177,6 +177,28 @@ describe('the request store', () => {
     expect(r.status).toBe('failed'); expect(r.errorCode).toBe('timeout'); expect(r.errorText).toBe('stopped answering');
   });
 
+  // Fix round 1 ruling: a get times out after 10 minutes with no get activity -- its own once fetching, the board's
+  // (any of its gets) while it is still only sent, queued behind siblings Transfer works through one at a time.
+  it('a sent get whose sibling showed life recently does not time out; the board silent for 10 minutes does', async () => {
+    const t = { dest: 'STASH:', rel: ['a'], replace: false, library: null };
+    const [g1, g2] = await addGets(getDb(), { orgId, deviceId, fetchId: 'fa', files: [{ amigaPath: 'Work:a', target: t }, { amigaPath: 'Work:b', target: t }] }, t0);
+    await takeWaiting(getDb(), deviceId, t0);
+    await answerPiece(getDb(), deviceId, g1, { piece: 0, lines: [`GOT ${g1} 1`], last: true }, at(590));
+    await expireStale(getDb(), at(601));
+    expect((await rowOf(g1)).status).toBe('fetching');
+    expect((await rowOf(g2)).status).toBe('sent');
+    await expireStale(getDb(), at(1191));
+    expect((await rowOf(g1))).toMatchObject({ status: 'failed', errorCode: 'timeout' });
+    expect((await rowOf(g2))).toMatchObject({ status: 'failed', errorCode: 'timeout' });
+  });
+
+  it('a get that failed timeout is still found for its late upload', async () => {
+    const [g] = await addGets(getDb(), { orgId, deviceId, fetchId: 'fb', files: [{ amigaPath: 'Work:a', target: { dest: 'STASH:', rel: ['a'], replace: false, library: null } }] }, t0);
+    await takeWaiting(getDb(), deviceId, t0);
+    await expireStale(getDb(), at(601));
+    expect((await getForUpload(getDb(), deviceId, g))?.id).toBe(g);
+  });
+
   it('a waiting request nobody fetched also times out', async () => {
     const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:w', fresh: false }, t0);
     await expireStale(getDb(), at(61));

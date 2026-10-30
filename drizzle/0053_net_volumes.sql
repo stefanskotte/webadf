@@ -15,6 +15,7 @@ CREATE TABLE "remote_requests" (
 	"upload_id" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"sent_at" timestamp with time zone,
+	"active_at" timestamp with time zone,
 	"answered_at" timestamp with time zone
 );
 --> statement-breakpoint

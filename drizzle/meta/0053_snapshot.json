@@ -1,5 +1,5 @@
 {
-  "id": "db53c215-7f44-4705-9908-1c3543235414",
+  "id": "4b985501-261f-4471-b631-398048cf16f1",
   "prevId": "a1e5768c-f358-4e8c-b2b8-55d5ee9cfc6b",
   "version": "7",
   "dialect": "postgresql",
@@ -3891,6 +3891,12 @@
         },
         "sent_at": {
           "name": "sent_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "active_at": {
+          "name": "active_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

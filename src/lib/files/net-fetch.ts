@@ -10,7 +10,7 @@ import { devices } from '@/db/schema/devices';
 import { amigaUploads } from '@/db/schema/amiga-uploads';
 import { remoteRequests } from '@/db/schema/remote-requests';
 import { findSendTarget } from '@/lib/send-targets';
-import { addGets, expireStale, latestFor, settleGet, type GetTarget, type RemoteRow } from '@/lib/remote-requests';
+import { addGets, expireStale, latestFor, liveGet, settleGet, type GetTarget, type RemoteRow } from '@/lib/remote-requests';
 import { amigaPathOf, newRequestId, type EntryInfo } from '@/lib/remote-wire';
 import { errorWords } from '@/lib/remote-browse';
 import { FETCH_MAX_BYTES, FETCH_MAX_FILES } from '@/lib/remote-limits';
@@ -135,8 +135,8 @@ const LIBRARY_WORDS: Record<string, string> = {
  * Never throws: the file is stored whatever happens here, so the board hears ok and the get alone fails (`io`).
  */
 export async function placeFetched(db: Db, uploadId: string, now = new Date()): Promise<void> {
-  const [g] = await db.select().from(remoteRequests).where(and(eq(remoteRequests.uploadId, uploadId), eq(remoteRequests.kind, 'get'),
-    inArray(remoteRequests.status, ['sent', 'fetching'])));
+  // A get that timed out while its file was on the way is placed all the same (fix round 1 ruling): the file is here.
+  const [g] = await db.select().from(remoteRequests).where(and(eq(remoteRequests.uploadId, uploadId), eq(remoteRequests.kind, 'get'), liveGet()));
   if (!g) return;
   try { await place(db, g, uploadId, now); } catch {
     await settleGet(db, g.id, { ok: false, code: 'io', text: 'it could not be placed' }, now).catch(() => {});
