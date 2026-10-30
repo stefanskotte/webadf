@@ -77,6 +77,14 @@ describe('the request store', () => {
     expect(await reqVersionOf(deviceId)).toBe(1);
   });
 
+  it('requests made at the same moment share one row', async () => {
+    const asks = await Promise.all(Array.from({ length: 6 }, () =>
+      requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:Race', fresh: false }, t0)));
+    expect(new Set(asks.map((x) => ridOf(x as { state: string; row?: { id: string } }))).size).toBe(1);
+    expect(asks.every((x) => x.state === 'pending')).toBe(true);
+    expect(await reqVersionOf(deviceId)).toBe(1);
+  });
+
   it('the board takes waiting requests as sent, at most 8', async () => {
     for (let i = 0; i < 9; i++) await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: `Work:d${i}`, fresh: false }, at(i));
     const first = await takeWaiting(getDb(), deviceId, at(20));

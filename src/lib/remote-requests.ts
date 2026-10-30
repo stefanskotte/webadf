@@ -52,6 +52,10 @@ export async function requestListing(
   // Two panes on one drawer share one request; a visit within the memory reuses the answer, a Refresh does not.
   if (cur.state === 'pending' || (cur.state !== 'none' && !a.fresh)) return cur;
   return db.transaction(async (tx) => {
+    // Serialise on the board (the row bumped below), then look again: a concurrent ask may have inserted meanwhile.
+    await tx.select({ id: devices.id }).from(devices).where(eq(devices.id, a.deviceId)).for('update');
+    const again = await latestFor(tx as unknown as Db, a.deviceId, a.kind, a.amigaPath, now);
+    if (again.state === 'pending' || (again.state !== 'none' && !a.fresh)) return again;
     await tx.delete(remoteRequests).where(lt(remoteRequests.createdAt, ms(now, REQUEST_KEEP_MS)));
     const [row] = await tx.insert(remoteRequests).values({
       id: newRequestId(), orgId: a.orgId, deviceId: a.deviceId, kind: a.kind, amigaPath: a.amigaPath, createdAt: now,
