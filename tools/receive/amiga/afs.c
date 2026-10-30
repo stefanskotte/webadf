@@ -6,6 +6,17 @@
 #include <proto/dos.h>
 #include "afs.h"
 
+/* Plan ruling T8: while Transfer reads for the web app, a drive whose disk went never opens "Please insert volume" on
+   the Amiga's screen -- it would stop Transfer, and the board, until someone clicks. The call fails instead. */
+static APTR quiet_on(void) {
+    struct Process *p = (struct Process *)FindTask(NULL);
+    APTR w = p->pr_WindowPtr;
+    p->pr_WindowPtr = (APTR)-1;
+    return w;
+}
+static void quiet_off(APTR w) { ((struct Process *)FindTask(NULL))->pr_WindowPtr = w; }
+static unsigned long mul_cap(unsigned long a, unsigned long b) { return (b && a > 0xFFFFFFFFUL / b) ? 0xFFFFFFFFUL : a * b; }
+
 static void join(afs_ctx *c, const char *rel, char *out) {
     size_t n;
     strcpy(out, c->root);
@@ -114,12 +125,14 @@ static int a_list(void *x, const char *local, rx_list_fn each, void *u) {
 }
 static int a_open_r(void *x, const char *local, rx_finfo *info) {
     afs_ctx *c = x; struct FileInfoBlock *fib;
+    APTR w = quiet_on();
     c->rh = Open((STRPTR)local, MODE_OLDFILE);   /* MODE_OLDFILE takes a shared lock */
-    if (!c->rh) return -1;
+    if (!c->rh) { quiet_off(w); return -1; }
     fib = AllocDosObject(DOS_FIB, NULL);
     if (!fib || !ExamineFH(c->rh, fib) || fib->fib_DirEntryType > 0) {
         if (fib) FreeDosObject(DOS_FIB, fib);
         Close(c->rh); c->rh = 0;
+        quiet_off(w);
         return -1;
     }
     info->size = (unsigned long)fib->fib_Size; info->prot = (unsigned long)fib->fib_Protection;
@@ -127,10 +140,138 @@ static int a_open_r(void *x, const char *local, rx_finfo *info) {
     info->ticks = (unsigned long)fib->fib_Date.ds_Tick;
     strncpy(info->comment, (const char *)fib->fib_Comment, RX_COMMENT_MAX); info->comment[RX_COMMENT_MAX] = 0;
     FreeDosObject(DOS_FIB, fib);
+    quiet_off(w);
     return 0;
 }
-static long a_read(void *x, unsigned char *b, unsigned long n) { LONG got = Read(((afs_ctx *)x)->rh, b, (LONG)n); return got < 0 ? -1 : (long)got; }
+static long a_read(void *x, unsigned char *b, unsigned long n) {
+    APTR w = quiet_on();
+    LONG got = Read(((afs_ctx *)x)->rh, b, (LONG)n);
+    quiet_off(w);
+    return got < 0 ? -1 : (long)got;
+}
 static void a_close_r(void *x) { afs_ctx *c = x; if (c->rh) { Close(c->rh); c->rh = 0; } }
+/* --- Protocol 3 (spec 2026-10-30 §2.2): browsing, read-only, shared locks only --- */
+static void bstr(BSTR b, char *out, unsigned cap) {
+    const UBYTE *p = (const UBYTE *)BADDR(b);
+    unsigned n = p ? p[0] : 0;
+    if (n > cap - 1) n = cap - 1;
+    if (n) memcpy(out, p + 1, n);
+    out[n] = 0;
+}
+/* The size and free bytes of the volume in dev ("DH0:"), as a_free counts them; RAM: is free memory (ruling T11). */
+static void vol_sizes(const char *dev, unsigned long *size, unsigned long *fr) {
+    BPTR l = Lock((STRPTR)dev, SHARED_LOCK);
+    struct InfoData *id;
+    *size = 0; *fr = 0;
+    if (!l) return;
+    if (((struct FileLock *)BADDR(l))->fl_Task == DeviceProc((STRPTR)"RAM:")) {
+        ULONG mem = AvailMem(MEMF_ANY);
+        *fr = mem > 65536UL ? mem - 65536UL : 0;
+        UnLock(l);
+        return;
+    }
+    id = AllocVec(sizeof *id, MEMF_PUBLIC | MEMF_CLEAR);
+    if (id && Info(l, id)) {
+        unsigned long bpb = (unsigned long)id->id_BytesPerBlock;
+        *size = mul_cap((unsigned long)id->id_NumBlocks, bpb);
+        *fr = mul_cap((unsigned long)(id->id_NumBlocks - id->id_NumBlocksUsed), bpb);
+    }
+    if (id) FreeVec(id);
+    UnLock(l);
+}
+/* Mounted volumes (a handler task: a disk is in), each with the device whose handler it shares ("DF1:"). Names are
+   copied under the DOS list lock; Lock and Info run after it is let go. */
+static int a_vols(void *x, rx_vol *out, int max) {
+    static struct MsgPort *task[RX_VOLS_MAX];
+    struct DosList *head, *dl;
+    int n = 0, i;
+    APTR w;
+    (void)x;
+    if (max > RX_VOLS_MAX) max = RX_VOLS_MAX;
+    head = LockDosList(LDF_VOLUMES | LDF_DEVICES | LDF_READ);
+    for (dl = head; n < max && (dl = NextDosEntry(dl, LDF_VOLUMES)) != NULL; ) {
+        if (!dl->dol_Task) continue;   /* its disk was taken out */
+        memset(&out[n], 0, sizeof out[n]);
+        bstr(dl->dol_Name, out[n].name, sizeof out[n].name);
+        out[n].days = (unsigned long)dl->dol_misc.dol_volume.dol_VolumeDate.ds_Days;
+        out[n].mins = (unsigned long)dl->dol_misc.dol_volume.dol_VolumeDate.ds_Minute;
+        out[n].ticks = (unsigned long)dl->dol_misc.dol_volume.dol_VolumeDate.ds_Tick;
+        task[n++] = dl->dol_Task;
+    }
+    for (dl = head; (dl = NextDosEntry(dl, LDF_DEVICES)) != NULL; )
+        for (i = 0; i < n; i++)
+            if (!out[i].device[0] && dl->dol_Task == task[i]) {
+                bstr(dl->dol_Name, out[i].device, sizeof out[i].device - 1);
+                strcat(out[i].device, ":");
+            }
+    UnLockDosList(LDF_VOLUMES | LDF_DEVICES | LDF_READ);
+    w = quiet_on();
+    for (i = 0; i < n; i++) if (out[i].device[0]) vol_sizes(out[i].device, &out[i].size, &out[i].free);
+    quiet_off(w);
+    return n;
+}
+static void fill_dent(const struct FileInfoBlock *f, rx_dent *e) {
+    e->is_dir = f->fib_DirEntryType > 0;
+    e->size = e->is_dir ? 0 : (unsigned long)f->fib_Size;
+    e->prot = (unsigned long)f->fib_Protection;
+    e->days = (unsigned long)f->fib_Date.ds_Days; e->mins = (unsigned long)f->fib_Date.ds_Minute;
+    e->ticks = (unsigned long)f->fib_Date.ds_Tick;
+    strncpy(e->name, (const char *)f->fib_FileName, sizeof e->name - 1); e->name[sizeof e->name - 1] = 0;
+    strncpy(e->comment, (const char *)f->fib_Comment, RX_COMMENT_MAX); e->comment[RX_COMMENT_MAX] = 0;
+}
+static void a_dir_close(void *x) {
+    afs_ctx *c = x;
+    if (c->dfib) { FreeDosObject(DOS_FIB, c->dfib); c->dfib = NULL; }
+    if (c->dl) { UnLock(c->dl); c->dl = 0; }
+}
+static long a_dir_open(void *x, const char *path) {
+    afs_ctx *c = x;
+    APTR w = quiet_on();
+    long e = 0;
+    c->dl = Lock((STRPTR)path, SHARED_LOCK);
+    if (!c->dl) e = IoErr();
+    else if ((c->dfib = AllocDosObject(DOS_FIB, NULL)) == NULL) e = ERROR_NO_FREE_STORE;
+    else if (!Examine(c->dl, c->dfib)) e = IoErr();
+    else if (c->dfib->fib_DirEntryType <= 0) e = ERROR_OBJECT_WRONG_TYPE;
+    quiet_off(w);
+    if (e == 0 && c->dl) return 0;
+    a_dir_close(c);
+    return e ? e : ERROR_OBJECT_NOT_FOUND;
+}
+static long a_dir_next(void *x, rx_dent *e) {
+    afs_ctx *c = x;
+    APTR w = quiet_on();
+    long r = 1;
+    if (ExNext(c->dl, c->dfib)) fill_dent(c->dfib, e);
+    else { LONG err = IoErr(); r = err == ERROR_NO_MORE_ENTRIES ? 0 : -(err ? err : ERROR_OBJECT_NOT_FOUND); }
+    quiet_off(w);
+    return r;
+}
+static long a_stat(void *x, const char *path, rx_finfo *info, int *is_dir) {
+    APTR w = quiet_on();
+    BPTR l = Lock((STRPTR)path, SHARED_LOCK);
+    struct FileInfoBlock *f = NULL;
+    long e = 0;
+    (void)x;
+    if (!l) e = IoErr();
+    else if ((f = AllocDosObject(DOS_FIB, NULL)) == NULL) e = ERROR_NO_FREE_STORE;
+    else if (!Examine(l, f)) e = IoErr();
+    else {
+        *is_dir = f->fib_DirEntryType > 0;
+        info->size = (unsigned long)f->fib_Size; info->prot = (unsigned long)f->fib_Protection;
+        info->days = (unsigned long)f->fib_Date.ds_Days; info->mins = (unsigned long)f->fib_Date.ds_Minute;
+        info->ticks = (unsigned long)f->fib_Date.ds_Tick;
+        strncpy(info->comment, (const char *)f->fib_Comment, RX_COMMENT_MAX); info->comment[RX_COMMENT_MAX] = 0;
+    }
+    if (f) FreeDosObject(DOS_FIB, f);
+    if (l) UnLock(l);
+    quiet_off(w);
+    return (!l && !e) ? ERROR_OBJECT_NOT_FOUND : e;
+}
+static void a_fault(void *x, long err, char *text, unsigned cap) {
+    (void)x;
+    if (Fault(err, NULL, (STRPTR)text, (LONG)cap) <= 0) text[0] = 0;
+}
 void afs_base_name(const char *path, char *out) { rx_base_name(path, out); }   /* the rule is the core's, host-tested */
 void afs_set_root(afs_ctx *c, const char *root) { strncpy(c->root, root, sizeof c->root - 1); c->root[sizeof c->root - 1] = 0; }
 void afs_init(afs_ctx *c, rx_fs *fs, const char *root) {
@@ -140,4 +281,6 @@ void afs_init(afs_ctx *c, rx_fs *fs, const char *root) {
     fs->open_w = a_open_w; fs->write = a_write; fs->close_w = a_close_w; fs->rename = a_rename; fs->remove = a_remove;
     fs->set_meta = a_set_meta;
     fs->is_dir = a_is_dir; fs->list = a_list; fs->open_r = a_open_r; fs->read = a_read; fs->close_r = a_close_r;
+    fs->vols = a_vols; fs->dir_open = a_dir_open; fs->dir_next = a_dir_next; fs->dir_close = a_dir_close;
+    fs->stat = a_stat; fs->fault = a_fault;
 }

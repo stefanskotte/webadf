@@ -1,6 +1,7 @@
 /* Transfer in a Shell (spec 2026-10-16 §5, 2026-10-18 §2): one line per file; Ctrl-C stops. With SEND the files go to
    the web app: handed to a Transfer already running (port webadf.Transfer), or sent by this run, which listens on 6800
-   itself, waits up to 60 s for the board, and returns 0 (all sent), 5 (some) or 10 (none). */
+   itself, waits up to 60 s for the board, and returns 0 (all sent), 5 (some) or 10 (none).
+   With browsing on (BROWSE), one line per web request: "Web: listed Work:Programs". */
 #include <string.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
@@ -49,6 +50,11 @@ static void sh_event(void *u, const rx_event *e, rx_session *s) {
         a[0] = (LONG)e->path; a[1] = (LONG)e->text; VPrintf((STRPTR)"%s  ERR %s\n", a);
         sh.done++; ipc_done(e->tag, 0, 0, e->text);
         break;
+    case RX_EV_REQ: {
+        char w[80];
+        rx_req_words(e, w, sizeof w); a[0] = (LONG)w; VPrintf((STRPTR)"Web: %s\n", a);
+        break;
+    }
     default: break;
     }
     Flush(Output());
@@ -64,7 +70,7 @@ static int sh_pass(void *u, rx_session *s, int connected) {
 }
 static int send_rc(void) { return sh.ok == sh.asked ? RETURN_OK : sh.ok ? RETURN_WARN : RETURN_ERROR; }
 
-int shell_main(const char *dir, STRPTR *send, int trust) {
+int shell_main(const char *dir, STRPTR *send, int trust, int browse) {
     static afs_ctx ctx; static rx_fs fs;
     net_ui ui = { NULL, sh_event, sh_status, 0, sh_signal, sh_pass, NULL };
     char key[RX_KEY_HEX + 8];
@@ -73,6 +79,7 @@ int shell_main(const char *dir, STRPTR *send, int trust) {
     afs_init(&ctx, &fs, dir);
     cfg_key_load(key, sizeof key);
     rx_upq_init(&q, key);
+    q.browse = browse;
     if (trust) q.trust_next = 1;
     if (send && send[0]) {
         sh.send_mode = 1;
@@ -102,6 +109,7 @@ int shell_main(const char *dir, STRPTR *send, int trust) {
     if (ipc_open() == 0) ui.extra_sigs = ipc_sigmask();
     args[0] = (LONG)dir;
     VPrintf((STRPTR)"Transfer: saving into %s. Ctrl-C to stop.\n", args);
+    if (browse) PutStr((STRPTR)"Browsing on: the web app can read your disks (read-only)\n");
     rc = net_run(&ui, &ctx, &fs, &sess, &q);
     ipc_close();
     if (rc != 0) { PutStr((STRPTR)"Could not listen on port 6800\n"); net_close(); return RETURN_FAIL; }
