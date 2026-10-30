@@ -84,9 +84,10 @@ type DeviceKey = keyof UserPrefs['files']['sort'];
 /** `filter`: the pane's name filter (R6). It belongs to the place: kept on a fresh listing of the same place and on
  *  Swap (it travels with its pane), cleared when the pane lists another place. */
 /** `errorDisk`: the disk a failed listing's refusal named (blob_unavailable), whose strip still shows (stripDiskOf). */
+/** `pending`: the label of a NET: listing the Amiga has not answered yet (NET: volumes, spec 2026-10-30 §4.4), else null. */
 type PaneState = {
   path: string; listing: Listing | null; loading: boolean; error: string | null; gone: boolean; errorDisk: string | null;
-  selection: Selection; filter: string;
+  pending: string | null; selection: Selection; filter: string;
 };
 
 export type FilesManagerProps = {
@@ -96,6 +97,8 @@ export type FilesManagerProps = {
     leftError?: string; rightError?: string;
     /** The disk an unreadable image's refusal named, for its strip (Files 2 R2: never read from the path). */
     leftErrorDisk?: string; rightErrorDisk?: string;
+    /** A pane whose first listing is a NET: listing the Amiga has not answered yet: its label ("Reading … from A500…"). */
+    leftPending?: string; rightPending?: string;
     /** The disk strip of each pane that starts inside a disk (disk-strip-data.ts). */
     strips?: StripData[];
   };
@@ -223,10 +226,12 @@ async function fetchListing(path: string): Promise<{ listing: Listing } | { gone
   }
 }
 
-function firstState(path: string, listing: Listing | null, error: string | undefined, errorDisk?: string): PaneState {
+function firstState(path: string, listing: Listing | null, error: string | undefined, errorDisk?: string, pending?: string): PaneState {
+  // A pending place is neither gone nor failed: the pane says the label until it is answered (Task 7 asks again).
+  const waits = !listing && !error && pending !== undefined;
   return {
-    path, listing, loading: false, error: listing ? null : error ?? GONE, gone: !listing && !error,
-    errorDisk: listing ? null : errorDisk ?? null, selection: EMPTY_SELECTION, filter: '',
+    path, listing, loading: false, error: listing || waits ? null : error ?? GONE, gone: !listing && !error && !waits,
+    errorDisk: listing ? null : errorDisk ?? null, pending: waits ? pending : null, selection: EMPTY_SELECTION, filter: '',
   };
 }
 
@@ -285,8 +290,8 @@ function PhoneButton({ id, label, reason, busy, onClick, primary = false }: {
 export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const router = useRouter();
   const [panes, setPanes] = useState<Record<Side, PaneState>>(() => ({
-    left: firstState(initial.leftPath, initial.left, initial.leftError, initial.leftErrorDisk),
-    right: firstState(initial.rightPath, initial.right, initial.rightError, initial.rightErrorDisk),
+    left: firstState(initial.leftPath, initial.left, initial.leftError, initial.leftErrorDisk, initial.leftPending),
+    right: firstState(initial.rightPath, initial.right, initial.rightError, initial.rightErrorDisk, initial.rightPending),
   }));
   const [active, setActive] = useState<Side>(initial.active);
   const [sorts, setSorts] = useState(prefs.files.sort);
@@ -380,10 +385,10 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     setPanes((ps) => ({
       ...ps,
       [side]: 'listing' in r
-        ? { path, listing: r.listing, loading: false, error: null, gone: false, errorDisk: null, selection,
+        ? { path, listing: r.listing, loading: false, error: null, gone: false, errorDisk: null, pending: null, selection,
             filter: !opts.select && ps[side].listing?.path === r.listing.path ? ps[side].filter : '' }
         : { path, listing: null, loading: false, error: 'gone' in r ? GONE : r.error, gone: 'gone' in r,
-            errorDisk: 'gone' in r ? null : errorDiskOf(r), selection: EMPTY_SELECTION, filter: '' },
+            errorDisk: 'gone' in r ? null : errorDiskOf(r), pending: null, selection: EMPTY_SELECTION, filter: '' },
     }));
     return 'listing' in r;
   }
@@ -1377,7 +1382,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     return (
       // Below lg only the active side is drawn, as tall as its rows: the page scrolls, not a box inside it.
       <div className={`grid min-h-0 min-w-0 lg:grid-rows-[minmax(0,1fr)] ${active === side ? '' : 'max-lg:hidden'}`}>
-        <Pane side={side} active={active === side} listing={side === 'left' ? shownLeft : shownRight} loading={p.loading} error={p.error}
+        <Pane side={side} active={active === side} listing={side === 'left' ? shownLeft : shownRight} loading={p.loading} error={p.error ?? p.pending}
               // The Comment column: STASH: only by default (ruling 9), or always, or never (R3).
               sort={sortOf(p.listing, p.path)} selection={p.selection} showComment={showsComment(prefs.files.comments, p.listing?.path ?? p.path)}
               view={viewOf(p)} onFilter={(text) => setFilter(side, text)} onShowInfo={showInfo} filterRef={filterRefs[side]}
