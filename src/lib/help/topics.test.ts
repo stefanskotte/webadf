@@ -378,8 +378,8 @@ describe('Files help (increment 4)', () => {
       'Copy files it in both', 'Makedir on LIBRARY: makes a collection', 'Create ADF…', 'STASH: join the library']) expect(b).toContain(w);
     expect(b).not.toMatch(/→|←|middle column/);
   });
-  it('library says a disk the library already had reads Added', () => {
-    expect(bodyText('library').replace(/\s+/g, ' ')).toContain('one it already had reads Added too');
+  it('library never says a disk was already in the library (a disk it had reads Added like any other, spec §5)', () => {
+    expect(bodyText('library').replace(/\s+/g, ' ')).not.toMatch(/already in the library/i);
   });
   it('stash-net names the limits, archives, Add to library, the marks, sending by copy and the key digits', () => {
     const b = HELP_TOPICS['stash-net'].short + bodyText('stash-net').replace(/\s+/g, ' ');
