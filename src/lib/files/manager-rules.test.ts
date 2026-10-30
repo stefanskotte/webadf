@@ -180,11 +180,11 @@ describe('fetchStatus (NET: volumes §4.5: the status row of a copy out of a vol
 
 describe('asksBeforeCopy and pickGone (Task 8 fix round 1: the source drawer is asked before every copy out of a volume)', () => {
   const from = 'NET:/b1/Work/Games';
-  it('asks the source drawer from memory first, then the picked drawers fresh -- from memory on a resend', () => {
+  it('asks the picked drawers fresh (from memory on a resend), then the source drawer from memory LAST (fix round 2)', () => {
     expect(asksBeforeCopy(from, [], false)).toEqual([{ path: from, fresh: false }]);
     expect(asksBeforeCopy(from, [`${from}/A`, `${from}/B`], false))
-      .toEqual([{ path: from, fresh: false }, { path: `${from}/A`, fresh: true }, { path: `${from}/B`, fresh: true }]);
-    expect(asksBeforeCopy(from, [`${from}/A`], true)).toEqual([{ path: from, fresh: false }, { path: `${from}/A`, fresh: false }]);
+      .toEqual([{ path: `${from}/A`, fresh: true }, { path: `${from}/B`, fresh: true }, { path: from, fresh: false }]);
+    expect(asksBeforeCopy(from, [`${from}/A`], true)).toEqual([{ path: `${from}/A`, fresh: false }, { path: from, fresh: false }]);
   });
 
   it('a pick no longer in the re-listed source is "Object not found", named', () => {

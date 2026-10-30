@@ -899,15 +899,15 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   }
 
   /**
-   * Before a copy out of a volume is posted (plan P3; Task 8 fix round 1): the server expands each source from the
-   * listing of its drawer remembered within 2 minutes, so the source drawer is asked (from memory while it holds), then
-   * every picked drawer and the drawers in it (asksBeforeCopy), the pending label in the status row; nothing is
+   * Before a copy out of a volume is posted (plan P3; Task 8 fix rounds 1-2): the server expands each source from the
+   * listing of its drawer remembered within 2 minutes, so every picked drawer and the drawers in it are asked, then the
+   * source drawer last (from memory while it holds; asksBeforeCopy), the pending label in the status row; nothing is
    * collected here. A pick the source no longer holds, or an ask that fails, stops it: its words stay in the status row.
    * True to go on; true at once for any other copy.
    */
   async function readyToCopy(vol: VolumeCopy | undefined, sources: string[], resend: boolean): Promise<boolean> {
     if (!vol) return true;
-    setBusy(`Reading ${baseName(vol.from)}…`);
+    setBusy(`Reading ${baseName(vol.drawers[0] ?? vol.from)}…`);
     const failed = await askBeforeCopy(vol, sources, resend);
     setBusy(null);
     if (failed) showFetchLine(`walk-${Date.now()}`, failed, true);
@@ -921,12 +921,13 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       const at = a.path;
       const r = await askUntilAnswered<Exclude<Fetched, { pending: string }>>(at, {
         ask: fetchListing, fresh: a.fresh, wanted: () => alive.current, onPending: (label) => setBusy(label),
-        giveUp: () => ({ error: noAnswer(at, latest.current.panes[active].listing) }),
+        giveUp: () => { const { panes: cur, active: side } = latest.current; return { error: noAnswer(at, cur[side].listing) }; },
       });
       if (r === null) return '';
       if (!('listing' in r)) return 'gone' in r ? GONE : r.error;
       if (at === vol.from) { const gone = pickGone(r.listing.entries, sources); if (gone) return gone; continue; }
-      todo.push(...r.listing.entries.filter((e) => e.kind === 'dir').map((e) => ({ path: e.path, fresh: a.fresh })));
+      // A drawer's drawers go before the source drawer's ask, which stays last (asksBeforeCopy).
+      todo.splice(todo.length - 1, 0, ...r.listing.entries.filter((e) => e.kind === 'dir').map((e) => ({ path: e.path, fresh: a.fresh })));
     }
     return null;
   }
@@ -1029,7 +1030,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       [...d.done, ...skippedItems(d.sources, choices)], [...d.versions]);
     // Out of a volume the answer may come after the 2-minute memory ran out: asked again first (Task 8 fix round 1).
     if (!d.volume) { go(); return; }
-    void readyToCopy(d.volume, d.sources, true).then((ok) => { if (ok) go(); else if (d.done.length) finishRun(d, d.done, d.versions); });
+    // Only the sources that will be sent must still be there: one answered Skip is not asked about.
+    void readyToCopy(d.volume, d.sources.filter((x) => choices[x] !== 'skip'), true).then((ok) => { if (ok) go(); else if (d.done.length) finishRun(d, d.done, d.versions); });
   }
 
   /** Cancel stops the run here; anything an earlier request already did is still reported. */

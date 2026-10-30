@@ -148,13 +148,14 @@ export function fetchStatus(p: { total: number; done: number; failed: { name: st
 }
 
 /**
- * What a copy out of a volume asks before it is posted (Task 8 fix round 1): the server expands each source from the
- * listing of its drawer remembered within 2 minutes (plan P3), so the source drawer `from` is asked first -- from memory
- * while it holds, from the Amiga once it has run out -- then each picked drawer (and, as they are read, its drawers)
- * fresh. A resend after the Clash dialog asks them all from memory: they were just read, unless the answer was slow.
+ * What a copy out of a volume asks before it is posted (Task 8 fix rounds 1-2): the server expands each source from the
+ * listing of its drawer remembered within 2 minutes (plan P3). Each picked drawer (and, as they are read, its drawers --
+ * the caller puts them before the last ask) fresh; a resend after the Clash dialog asks them from memory, as they were
+ * just read unless the answer was slow. The source drawer `from` LAST, from memory while it holds, from the Amiga once
+ * it has run out: the server checks it first, so it must not run out during the walk (each drawer up to 20 s).
  */
 export function asksBeforeCopy(from: string, drawers: string[], resend: boolean): { path: string; fresh: boolean }[] {
-  return [{ path: from, fresh: false }, ...drawers.map((path) => ({ path, fresh: !resend }))];
+  return [...drawers.map((path) => ({ path, fresh: !resend })), { path: from, fresh: false }];
 }
 
 /** The first picked source the re-listed source drawer no longer holds, as the Amiga says it; null when all are there. */
