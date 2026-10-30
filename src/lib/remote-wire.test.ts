@@ -62,3 +62,29 @@ describe('newRequestId', () => {
     expect(a).not.toBe(b);
   });
 });
+
+// Fix round 1: the spec's name rules are binding (amigaNameProblem), not the brief's looser checks.
+describe('fix round 1: name rules', () => {
+  it('amigaPathOf refuses a suffixed volume whose base is not a name', () => {
+    expect(amigaPathOf(['Work:Secret (DF0:)', 'c'])).toBeNull();
+    expect(amigaPathOf(['Bad\u0001 (DF0:)'])).toBeNull();
+    expect(amigaPathOf(['.. (DF0:)'])).toBeNull();
+    expect(amigaPathOf(['Empty (DF1:)'])).toEqual({ volume: 'Empty (DF1:)', amigaPath: 'Empty (DF1:):' });
+  });
+  it('refuses "." and ".." as ENT or VOL names', () => {
+    expect(parseAnswerLine('r1', 'ENT r1 f 1 0 1.1.1 2:.. 0:')).toBeNull();
+    expect(parseAnswerLine('r1', 'ENT r1 d 0 0 1.1.1 1:. 0:')).toBeNull();
+    expect(parseAnswerLine('r1', 'VOL r1 2:.. 4:DH1: 1 1 1.1.1')).toBeNull();
+    expect(parseAnswerLine('r1', 'VOL r1 1:. 4:DH1: 1 1 1.1.1')).toBeNull();
+  });
+  it('caps a VOL name at 30 characters, as an ENT name', () => {
+    expect(parseAnswerLine('r1', `VOL r1 31:${'x'.repeat(31)} 4:DH1: 1 1 1.1.1`)).toBeNull();
+    expect(parseAnswerLine('r1', `VOL r1 30:${'x'.repeat(30)} 4:DH1: 1 1 1.1.1`)).not.toBeNull();
+  });
+  it('accepts device names with _, . and -', () => {
+    expect(parseAnswerLine('r1', 'VOL r1 4:Work 5:DH_1: 1 1 1.1.1')).toMatchObject({ t: 'vol', v: { device: 'DH_1:' } });
+  });
+  it('reads protection bits in either case', () => {
+    expect(parseAnswerLine('r1', 'ENT r1 f 1 0F 1.1.1 1:a 0:')).toMatchObject({ t: 'ent', e: { protection: 15 } });
+  });
+});

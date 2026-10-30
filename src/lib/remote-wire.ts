@@ -50,7 +50,9 @@ function date(w: string | null): string | null {
   const m = w ? /^(\d{1,6})\.(\d{1,5})\.(\d{1,5})$/.exec(w) : null;
   return m ? amigaDateIso(Number(m[1]), Number(m[2]), Number(m[3])) : null;
 }
-const NAME_OK = (n: string) => n.length > 0 && !n.includes('/') && !n.includes(':') && !/[\u0000-\u001f\u007f\u0080-\u009f]/.test(n) && !/[^\u0000-ÿ]/.test(n);
+// A board-sent name is held to the same rules as a name typed in the web app (amigaNameProblem: 30 characters, Latin-1, no ':' or '/', not '.' or '..').
+const NAME_OK = (n: string) => amigaNameProblem(n) === null;
+const DEVICE = /^[A-Za-z0-9_.-]{1,30}:$/;
 const CODES = new Set(['off', 'notfound', 'notdir', 'isdir', 'busy', 'toolarge', 'denied', 'bad', 'io', 'norx', 'old', 'timeout']);
 
 export function parseAnswerLine(rid: string, line: string): AnswerLine | null {
@@ -61,14 +63,14 @@ export function parseAnswerLine(rid: string, line: string): AnswerLine | null {
     case 'VOL': {
       const name = c.lenStr(); const device = c.lenStr();
       const size = num(c.word()); const free = num(c.word()); const d = date(c.word());
-      if (name === null || !NAME_OK(name) || device === null || !/^[A-Za-z0-9]{1,30}:$/.test(device) || size === null || free === null || d === null || !c.atEnd()) return null;
+      if (name === null || !NAME_OK(name) || device === null || !DEVICE.test(device) || size === null || free === null || d === null || !c.atEnd()) return null;
       return { t: 'vol', v: { name, device, size, free, date: d } };
     }
     case 'ENT': {
       const kind = c.word(); const size = num(c.word()); const prot = c.word(); const d = date(c.word());
       const name = c.lenStr(); const comment = c.lenStr();
-      if ((kind !== 'd' && kind !== 'f') || size === null || !prot || !/^[0-9a-f]{1,8}$/.test(prot) || d === null
-        || name === null || !NAME_OK(name) || name.length > 30 || comment === null || comment.length > 79 || !c.atEnd()) return null;
+      if ((kind !== 'd' && kind !== 'f') || size === null || !prot || !/^[0-9a-fA-F]{1,8}$/.test(prot) || d === null
+        || name === null || !NAME_OK(name) || comment === null || comment.length > 79 || !c.atEnd()) return null;
       return { t: 'ent', e: { name, dir: kind === 'd', size, protection: parseInt(prot, 16), date: d, comment } };
     }
     case 'DONE': {
@@ -90,12 +92,15 @@ export function parseAnswerLine(rid: string, line: string): AnswerLine | null {
   return null;
 }
 
-const SUFFIXED = /^.+ \([A-Za-z0-9]{1,30}:\)$/;
+// A duplicate volume is labelled "Name (DEVn:)" (volumeLabel). Transfer resolves that form (spec §2.2), so the
+// device suffix is exempt from the ':' rule, but the name before it must still be a name.
+const SUFFIXED = /^(.+) \(([A-Za-z0-9_.-]{1,30}:)\)$/;
 
 export function amigaPathOf(segments: string[]): { volume: string; amigaPath: string } | null {
   if (segments.length === 0) return null;
   const [volume, ...rest] = segments;
-  if (!(SUFFIXED.test(volume) || amigaNameProblem(volume) === null)) return null;
+  const m = SUFFIXED.exec(volume);
+  if (!(m ? amigaNameProblem(m[1]) === null : amigaNameProblem(volume) === null)) return null;
   for (const s of rest) if (amigaNameProblem(s) !== null) return null;
   return { volume, amigaPath: `${volume}:${rest.join('/')}` };
 }
