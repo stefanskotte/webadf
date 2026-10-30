@@ -242,6 +242,12 @@ export const devices = pgTable('devices', {
   // --- PaulaNET Phase 4 (spec 2026-10-16 §3): files sent to the Amiga ---
   /** Cursor, bumped on every change of this board's send queue; the poll's `xfer.v`, echoed as ?xferAck=. */
   sendVersion: integer('send_version').notNull().default(0),
+  /** NET: volumes (spec 2026-10-30): cursor bumped on every new remote request; the poll's `req.v`, echoed as ?reqAck=. */
+  reqVersion: integer('req_version').notNull().default(0),
+  /** Transfer's protocol on the board's connection (?rxv=): 2 or 3; null before a 1.22 board reports. */
+  rxProto: integer('rx_proto'),
+  /** Transfer's browsing switch from READY 3 (?browse=1). */
+  browseOn: boolean('browse_on').notNull().default(false),
   /** The receiver state the board last reported (?rx=): c connected, r refused, u unreachable, - unknown/off. */
   sendRx: text('send_rx'),
   sendRxAt: timestamp('send_rx_at', { withTimezone: true }),
