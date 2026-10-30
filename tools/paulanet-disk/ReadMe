@@ -67,7 +67,10 @@ Browsing (board firmware 1.22 or newer): tick Let the web app
 browse my disks in the window, or use BROWSE, and the web app's
 Files can show your disks under NET: and copy files from them.
 Transfer only reads; nothing on the Amiga changes. BROWSE SAVE
-keeps it on; untick the box to switch it off.
+keeps it on. To switch it off, untick the box in the window, or
+from a Shell type
+  Delete ENVARC:webadf/Browse ENV:webadf/Browse
+and start Transfer again without BROWSE.
 
 Nothing is overwritten: a second Foo.lha arrives as Foo_2.lha,
 and nothing is written outside the folder. While Transfer runs,

@@ -35,6 +35,9 @@ It needs Kickstart 2.04 or newer, any 68000 or later, and a running TCP/IP stack
   requester. The status line (or one Shell line per request) shows what the web app read: "Web: listed Work:Programs".
   The switch is the file `ENVARC:webadf/Browse` (`1`/`0`, copied to `ENV:`): the checkbox stores it at once;
   `BROWSE` switches it on for one run, `BROWSE SAVE` stores it too, and the window switches it off. Off is the default.
+  A Shell user switches it off by unticking the box in the window, or with `Delete ENVARC:webadf/Browse
+  ENV:webadf/Browse` and starting Transfer again without `BROWSE`. Unticking also stops a request already accepted and
+  a GET's file not yet sent: the board hears `ERR <rid> off`.
   Changing it closes the board's connection when idle, so the board reconnects and learns it. Needs board firmware
   1.22 or newer.
 - **The folder setting** is the file `ENVARC:webadf/ReceiveDir`, copied to `ENV:webadf/ReceiveDir`. The default is

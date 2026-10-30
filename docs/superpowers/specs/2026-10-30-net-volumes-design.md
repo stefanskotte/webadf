@@ -96,6 +96,11 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
   `{piece, lines, last}` when the answer ends (`DONE`/`ERR`) or the buffer fills (a big drawer arrives in pieces).
 - **GET:** `GOT <rid> <tag>` ties the request to the upload that follows; that upload's open body gains
   `"request":"<rid>"`. Nothing else in protocol 2 changes.
+- **After GOT (final review, 2026-10-30):** `GOT <rid> <tag>` ends a GET's answer. Afterwards, at any time no other
+  request is being answered, Transfer may still send `ERR <rid> io|toolarge|off <len>:<text>` for that already-GOT GET:
+  when the file cannot be read or has grown past 4 MB when its turn comes, or when browsing was switched off meanwhile.
+  The board routes such a line by its rid and posts it as that request's piece; the server already accepts it. The PUT
+  carrying the GOT's tag may come later than other lines.
 - **The board answers itself, at once:** `ERR <rid> norx` (Transfer not connected), `ERR <rid> old` (Transfer answered
   `READY 2`), `ERR <rid> timeout` (Transfer silent 30 s in the middle of an answer).
 - **Status:** `/api/device/status` gains Transfer's protocol (`2`/`3`) and the browse flag from `READY 3`.
@@ -212,6 +217,8 @@ Each step merges on its own.
 4. A drawer of over 1000 entries: the cut row shows.
 5. Browsing off: the reason row; Queue still sends a file.
 6. Quit Transfer during a listing: the pane says why within 30 s.
+7. Take a floppy out mid-listing and mid-copy: no requester on the Amiga, an ERR in the pane.
+8. One run with only 512 KB of memory.
 
 ## 8. Out of scope (phase 2 and later)
 
