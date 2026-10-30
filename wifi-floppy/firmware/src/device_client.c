@@ -40,6 +40,9 @@
 // (/api/device/image/net/<64 hex>) is 355, the firmware fetch (a 64-char version) 354, the display fetch 288.
 // &xferAck=4294967295&rx=u (fw 1.14.0, PaulaNET Phase 4) adds 25: 415, so 448.
 #define DC_REQ_BUF_BYTES  448
+// The poll's own request buffer (fw 1.22.0): &reqAck=4294967295&rxv=3&browse=1 adds 33 to the worst poll request
+// (435 with &boot=ffffffff&ota=1), 468, so 480. Only the poll carries it: the other DC_REQ_BUF_BYTES users keep 448.
+#define DC_POLL_REQ_BYTES 480
 // DC_POLL_BODY_BYTES moved to device_client.h so a test can name it -- see
 // the note there. A budget a test cannot name is a budget checked by hand.
 // 512 was never under load before the image fetch: every other response on
@@ -1205,6 +1208,17 @@ static void dc_take_xfer(device_client_t *c, char *json) {
     if (json_str(obj, "ip", ip, sizeof ip) && dc_parse_ipv4(ip, &hint)) c->send_ip_hint = hint;
 }
 
+// NET: volumes (fw 1.22.0): lifts `req` ({"v":N}) out of a 200 poll body and BLANKS it before any flat lookup, as
+// dc_take_xfer does. The server sends it on every body to a board that sends reqAck.
+static void dc_take_req(device_client_t *c, char *json) {
+    static char obj[24];   // {"v":4294967295} is 16; static: see the STACK note
+    if (!json_object(json, "req", obj, sizeof obj, true)) return;
+    uint32_t v;
+    if (!json_u32_strict(obj, "v", &v)) return;
+    c->req_version = v;
+    c->req_seen = true;
+}
+
 bool dc_parse_ipv4(const char *s, uint32_t *out) {
     uint32_t v = 0;
     for (int part = 0; part < 4; part++) {
@@ -1229,6 +1243,13 @@ void dc_set_send(device_client_t *c, uint32_t acked_version, char rx) {
     c->_send_on = true;
     c->_send_ack = acked_version;
     c->_send_rx = (rx == 'c' || rx == 'r' || rx == 'u') ? rx : '-';
+}
+
+void dc_set_req(device_client_t *c, uint32_t acked_version, int proto, bool browse) {
+    c->_req_on = true;
+    c->_req_ack = acked_version;
+    c->_req_proto = (proto == 2 || proto == 3) ? (uint8_t)proto : 0;
+    c->_req_browse = browse;
 }
 
 bool dc_drive_take(device_client_t *c, uint32_t *seq, df1_mode_t *mode) {
@@ -1978,18 +1999,27 @@ int dc_fetch_display(device_client_t *c, uint8_t *buf, int cap) {
 
 // --- PaulaNET Phase 4: files sent to the Amiga ---------------------------------------------------------------------
 
-int dc_fetch_send_queue(device_client_t *c, char *buf, int cap) {
+// One GET whose body is text, into buf (cap bytes). Body length, or -1. retryable=false for a request the server acts
+// on (GET /api/device/req marks its lines sent): a lost answer is not asked again over a fresh socket.
+static int dc_get_text(device_client_t *c, const char *path, char *buf, int cap, bool retryable) {
     if (!buf || cap <= 0) return -1;
     static char req[DC_REQ_BUF_BYTES];   // static: see the STACK note above
-    int req_len = http_build_request(req, sizeof req, "GET", "/api/device/send/queue", c->host_header, c->token, NULL);
+    int req_len = http_build_request(req, sizeof req, "GET", path, c->host_header, c->token, NULL);
     if (req_len < 0) return -1;
     dc_bytes_sink_t s = { (uint8_t *)buf, cap, 0 };
     static http_resp_t r;
-    bool ok = dc_exchange(c, req, req_len, dc_bytes_sink, &s, &r, /*retryable=*/true);
+    bool ok = dc_exchange(c, req, req_len, dc_bytes_sink, &s, &r, retryable);
     if (!ok || !r.body_complete) return -1;
     if (r.status == 401) { c->state = DC_HALTED; return -1; }   // 401 anywhere halts
     if (r.status != 200 || (r.content_length >= 0 && r.content_length > cap)) return -1;
     return s.len;
+}
+
+int dc_fetch_send_queue(device_client_t *c, char *buf, int cap) {
+    return dc_get_text(c, "/api/device/send/queue", buf, cap, /*retryable=*/true);
+}
+int dc_fetch_req(device_client_t *c, char *buf, int cap) {
+    return dc_get_text(c, "/api/device/req", buf, cap, /*retryable=*/false);
 }
 
 int dc_fetch_send_chunk(device_client_t *c, const char *id, uint32_t off, uint32_t len, uint8_t *buf) {
@@ -2042,6 +2072,11 @@ int dc_upload_close(device_client_t *c, const char *id, const char *json, char *
     int pn = snprintf(s_up_path, sizeof s_up_path, "/api/device/upload/%s/close", id);
     if (pn < 0 || pn >= (int)sizeof s_up_path) return -1;
     return dc_post(c, s_up_path, "application/json", (const uint8_t *)json, (int)strlen(json), resp, resp_cap);
+}
+int dc_post_req(device_client_t *c, const char *rid, const char *json, int n) {
+    int pn = snprintf(s_up_path, sizeof s_up_path, "/api/device/req/%s", rid);
+    if (pn < 0 || pn >= (int)sizeof s_up_path || n <= 0) return -1;
+    return dc_post(c, s_up_path, "application/json", (const uint8_t *)json, n, NULL, 0);
 }
 
 bool dc_display_owed(const device_client_t *c) {
@@ -2138,8 +2173,9 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     // DF1's pick, `next` stays DF0's next disk) 121.
     // &xferAck=4294967295&rx=u (fw 1.14.0, files sent to the Amiga) makes it 146, and &boot=ffffffff&ota=1 (Disk at
     // startup) 166.
+    // &reqAck=4294967295&rxv=3&browse=1 (fw 1.22.0, the web app's requests to Transfer) adds 33 to the worst: 199.
     // test_poll_url_carries_display_ack / _drive_ack / poll_url_carries_df1_ack / send_poll_params_only_once_set send them.
-    static char path[176];
+    static char path[208];
     int plen = snprintf(path, sizeof path, "/api/device/poll?since=%lu&nfcAck=%lu&displayAck=%lu",
              (unsigned long)c->since, (unsigned long)c->nfc_ack, (unsigned long)c->display_ack);
     if (c->_df1_capable && plen > 0 && plen < (int)sizeof path)
@@ -2149,6 +2185,15 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     if (c->_send_on && plen > 0 && plen < (int)sizeof path)
         snprintf(path + plen, sizeof path - (size_t)plen, "&xferAck=%lu&rx=%c",
                  (unsigned long)c->_send_ack, c->_send_rx);
+    // NET: volumes (fw 1.22.0): reqAck after rx; rxv and browse only while Transfer is connected at protocol 2 or 3.
+    plen = (int)strnlen(path, sizeof path);
+    if (c->_req_on && plen > 0 && plen < (int)sizeof path) {
+        snprintf(path + plen, sizeof path - (size_t)plen, "&reqAck=%lu", (unsigned long)c->_req_ack);
+        plen = (int)strnlen(path, sizeof path);
+        if (c->_req_proto && plen < (int)sizeof path)
+            snprintf(path + plen, sizeof path - (size_t)plen, "&rxv=%u&browse=%u",
+                     (unsigned)c->_req_proto, c->_req_browse ? 1u : 0u);
+    }
     // Disk at startup (dc_set_boot): last, so every older parameter keeps its place.
     static char bootp[24];   // static: see the STACK note above
     dc_boot_params(c, bootp);
@@ -2156,7 +2201,7 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     if (bootp[0] && plen > 0 && plen < (int)sizeof path)
         snprintf(path + plen, sizeof path - (size_t)plen, "&%s", bootp);
 
-    static char req[DC_REQ_BUF_BYTES];
+    static char req[DC_POLL_REQ_BYTES];
     int req_len = http_build_request(req, sizeof req, "GET", path, c->host_header, c->token, NULL);
     if (req_len < 0) return dc_enter_backoff(c); // unexpected: since is bounded, host is fixed
 
@@ -2267,6 +2312,7 @@ static dc_state_t dc_step_inner(device_client_t *c) {
             return dc_enter_backoff(c);
         }
         dc_take_xfer(c, body.buf);           // PaulaNET Phase 4: lifted and blanked first, like the objects below
+        dc_take_req(c, body.buf);            // NET: volumes: lifted and blanked first, like xfer
         dc_take_second_drive(c, body.buf);   // lifted and BLANKED first: its keys must never shadow ours
         dc_take_df1(c, body.buf);            // lifted and BLANKED too: its sha256 must never be read as desired's
         dc_take_fw_fields(c, body.buf);

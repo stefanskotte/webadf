@@ -537,6 +537,17 @@ typedef struct {
     uint32_t _send_ack;
     char     _send_rx;
 
+    // --- NET: volumes (spec 2026-10-30 section 3, fw 1.22.0): the web app's requests to Transfer ---
+    // The poll's req.v (the server's request cursor), 0 until a body carries it; req_seen once one has.
+    uint32_t req_version;
+    bool     req_seen;
+    // What the next poll reports (dc_set_req): &reqAck=, and &rxv=&browse= while Transfer is connected at protocol 2
+    // or 3 (plan ruling F1). Absent until dc_set_req is first called, so a board that cannot browse polls as 1.21.
+    bool     _req_on;
+    uint32_t _req_ack;
+    uint8_t  _req_proto;
+    bool     _req_browse;
+
     // How the most recent exchange (any request) ended -- see dc_xfer_t.
     dc_xfer_t last_xfer;
 } device_client_t;
@@ -688,7 +699,9 @@ void dc_adopt_image(device_client_t *c, const char *sha256);
 // an HD track's sector data (11,264, HD writes spec §4.4). Only the head is built into a static buffer
 // (DC_POST_HEAD_BYTES); the body goes out from the caller's memory -- a PSRAM ring, a track in PSRAM -- so the size
 // costs no SRAM (plan 2026-10-19 ruling P3; until 1.19.0 the static was head + 11,264).
-#define DC_POST_BODY_MAX 16384
+// NET: volumes (fw 1.22.0, plan ruling F2): an answer piece is a 32 KB JSON body, so 32768. Content-Length stays five
+// digits, so DC_POST_HEAD_BYTES is unchanged; the body is the caller's (PSRAM), so this costs no SRAM.
+#define DC_POST_BODY_MAX 32768
 
 // Sends one POST with a binary body (`body`/`body_len`, up to
 // DC_POST_BODY_MAX -- NUL bytes and all, unlike http_build_request's
@@ -943,6 +956,15 @@ int dc_fetch_send_chunk(device_client_t *c, const char *id, uint32_t off, uint32
 int dc_post_send_done(device_client_t *c, const char *id, const char *json);
 // What the next poll reports: &xferAck=<acked>&rx=<rx>.
 void dc_set_send(device_client_t *c, uint32_t acked_version, char rx);
+
+// --- NET: volumes (fw 1.22.0; amiga_send.c drives these) ---
+// GET /api/device/req: up to 8 request lines (Latin-1). Body length, or -1. Never retried over a stale connection:
+// the server marks what it returns as sent (plan ruling F9).
+int dc_fetch_req(device_client_t *c, char *buf, int cap);
+// POST /api/device/req/<rid> with one answer piece's JSON (n bytes, 1..DC_POST_BODY_MAX). HTTP status, or -1.
+int dc_post_req(device_client_t *c, const char *rid, const char *json, int n);
+// What the next poll reports: &reqAck=<acked>, plus &rxv=<proto>&browse=<0|1> when proto is 2 or 3.
+void dc_set_req(device_client_t *c, uint32_t acked_version, int proto, bool browse);
 
 // --- Uploads from the Amiga (spec 2026-10-18 §4; amiga_send.c drives these). HTTP status, or -1. resp gets the body.
 // POST /api/device/upload with {size, date, protection, path, comment}: 200 {id, offset}, or 4xx {code}.
