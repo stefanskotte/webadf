@@ -22,7 +22,7 @@ import {
   offersUndo, placeOf,
 } from '@/lib/files/pane-rules';
 import { askUntilAnswered } from '@/lib/files/ask-listing';
-import { boardNameFor, isNetVolume, netBoardRoot, netPollMs, NET_MOVE_IN, NET_OPEN_VOLUME, NET_PICK_BOARD, NET_READ_ONLY } from '@/lib/files/net-rules';
+import { boardNameFor, isNetVolume, listingRefusal, netBoardRoot, netPollMs, NET_MOVE_IN, NET_OPEN_VOLUME, NET_PICK_BOARD, NET_READ_ONLY } from '@/lib/files/net-rules';
 import { errorWords } from '@/lib/remote-browse';
 import { COLLECTIONS_STAY, createAdfReason, filingNoun, filingReason, shelfOf, shelfOfRow, shelfReasons } from '@/lib/files/shelf-rules';
 import { stashPollMs, trackArriving, withStalls, type ArrivingSeen } from '@/lib/files/arriving';
@@ -234,12 +234,12 @@ async function fetchListing(path: string, fresh = false): Promise<Fetched> {
       readAt.set(listing, Date.now());
       return { listing };
     }
-    if (res.status === 404 || res.status === 400) return { gone: true };
     const body = (await res.json().catch(() => null)) as { error?: unknown; detail?: unknown } | null;
-    // A NET: refusal's detail is the pane's whole sentence ("Object not found", "Switch on browsing in Transfer on
-    // A500"), as the page's first listing says it (first-listing.ts): never read through a disk's words.
-    const netWords = parsePath(path)?.device === 'NET' && typeof body?.detail === 'string' ? body.detail : null;
-    return { error: netWords ?? wordsFor(body?.error, body?.detail), code: body?.error, detail: body?.detail };
+    // A NET: refusal's detail is the pane's whole sentence, as the page's first listing says it (first-listing.ts):
+    // never read through a disk's words, and a drawer the Amiga refused (404) is not a place gone.
+    const r = listingRefusal(path, res.status, body?.detail);
+    if ('gone' in r) return { gone: true };
+    return { error: r.words ?? wordsFor(body?.error, body?.detail), code: body?.error, detail: body?.detail };
   } catch {
     return { error: refusalWords('failed') };
   }

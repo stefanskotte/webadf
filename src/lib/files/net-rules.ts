@@ -58,6 +58,18 @@ export function readAgo(readAt: number | null, now: number): string | null {
   return s < 60 ? `read ${s} s ago` : `read ${Math.floor(s / 60)} min ago`;
 }
 
+/**
+ * A refused listing (`/api/files/list`'s status and detail) in the pane: gone (404, 400: "This place no longer
+ * exists."), or its words -- a NET: refusal's detail is the pane's whole sentence ("Object not found", "Switch on
+ * browsing in Transfer on A500"), a 404 with one included (a drawer the Amiga refused, final review); `words` null
+ * elsewhere, where the refusal's code decides.
+ */
+export function listingRefusal(path: string, status: number, detail: unknown): { gone: true } | { words: string | null } {
+  const net = parsePath(path)?.device === 'NET' && typeof detail === 'string' ? detail : null;
+  if (status === 400 || (status === 404 && net === null)) return { gone: true };
+  return { words: net };
+}
+
 /** A pane asking for a pending listing (§4.4): ask again, or give up once PANE_GIVE_UP_MS have passed since it began. */
 export function nextAsk(startedAt: number, now: number): 'ask' | 'give-up' {
   return now - startedAt >= PANE_GIVE_UP_MS ? 'give-up' : 'ask';

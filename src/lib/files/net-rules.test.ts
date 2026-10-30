@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { netPollMs, planNetSend, NET_REFRESH_ACTIVE_MS, NET_REFRESH_IDLE_MS, readAgo, nextAsk, netTitle, isNetVolume, netBoardRoot, boardNameFor, NET_READ_ONLY } from './net-rules';
+import { netPollMs, planNetSend, NET_REFRESH_ACTIVE_MS, NET_REFRESH_IDLE_MS, readAgo, nextAsk, netTitle, isNetVolume, netBoardRoot, boardNameFor, NET_READ_ONLY, listingRefusal } from './net-rules';
 import type { Listing } from './types';
 
 const L = (path: string, marks: string[][] = []): Listing => ({ path, crumbs: [], writable: true, readOnlyReason: null, disk: null, meta: '',
@@ -88,5 +88,24 @@ describe('NET: volumes in the pane (spec 2026-10-30 §5)', () => {
     // Opened straight at a volume, nothing on screen names the board: the page's boards do (Task 9 e2e).
     expect(boardNameFor('NET:/d/Work', null, [{ id: 'e', name: 'A1200' }, { id: 'd', name: 'A500' }])).toBe('A500');
     expect(boardNameFor('NET:/d/Work', { ...L('NET:/d'), net: net({ volume: null, amigaPath: null }) }, [{ id: 'd', name: 'Old' }])).toBe('A500');
+  });
+});
+
+// Final review: in-app navigation to a NET: drawer the Amiga refused (notfound/notdir, 404 with its words) shows the
+// words, not "This place no longer exists."; every other 404 or 400 is still a place gone.
+describe('listingRefusal', () => {
+  it('a NET: 404 with words is a refusal in those words', () => {
+    expect(listingRefusal('NET:/b1/Work/Gone', 404, 'Object not found')).toEqual({ words: 'Object not found' });
+  });
+  it('a 404 or 400 without words, or on another device, is gone', () => {
+    expect(listingRefusal('NET:/b1', 404, undefined)).toEqual({ gone: true });
+    expect(listingRefusal('NET:/b1/Work', 400, 'bad')).toEqual({ gone: true });
+    expect(listingRefusal('STASH:/Gone', 404, 'Object not found')).toEqual({ gone: true });
+    expect(listingRefusal('LIBRARY:/g1', 404, undefined)).toEqual({ gone: true });
+  });
+  it('other refusals: a NET: detail is the whole sentence; elsewhere the code\'s words decide (null)', () => {
+    expect(listingRefusal('NET:/b1/Work', 409, 'Switch on browsing in Transfer on A500')).toEqual({ words: 'Switch on browsing in Transfer on A500' });
+    expect(listingRefusal('STASH:/x', 409, 'whatever')).toEqual({ words: null });
+    expect(listingRefusal('NET:/b1/Work', 504, undefined)).toEqual({ words: null });
   });
 });
