@@ -231,10 +231,10 @@ describe('Pane (Files increment 1, Task 7)', () => {
     expect(html).not.toContain('Drop files');
 
     const queue: Listing = {
-      path: 'NET:/b1', crumbs: [{ label: 'NET:', path: 'NET:' }, { label: 'A500 bench', path: 'NET:/b1' }], writable: true, readOnlyReason: null, disk: null,
+      path: 'NET:/b1/Queue', crumbs: [{ label: 'NET:', path: 'NET:' }, { label: 'A500 bench', path: 'NET:/b1' }, { label: 'Queue', path: 'NET:/b1/Queue' }], writable: true, readOnlyReason: null, disk: null,
       meta: '1 waiting · 0.0 of 16 MB', queue: { deviceId: 'b1', files: 1, bytes: 5 },
       // C17: two rows may share a name, and a name may hold a /.
-      entries: [entry('Mods/a.mod', 'file', { path: 'NET:/b1/t1', marks: ['Waiting'] }), entry('Mods/a.mod', 'file', { path: 'NET:/b1/t2', marks: ['Delivered · saved as a_2.mod'] })],
+      entries: [entry('Mods/a.mod', 'file', { path: 'NET:/b1/Queue/t1', marks: ['Waiting'] }), entry('Mods/a.mod', 'file', { path: 'NET:/b1/Queue/t2', marks: ['Delivered · saved as a_2.mod'] })],
     };
     const q = render({ listing: queue });
     expect(rows(q)).toHaveLength(2);
@@ -303,5 +303,49 @@ describe('the filter and Show .info (increment 4)', () => {
   it('the ? names the device: stash-net in STASH:, files in a disk', () => {
     expect(render({ listing: stashListing, help: 'stash-net' })).toContain('data-testid="help-tip-stash-net"');
     expect(render({ help: 'files' })).toContain('data-testid="help-tip-files"');
+  });
+});
+
+describe('NET: volumes in the pane (spec 2026-10-30 §5)', () => {
+  const net = { board: 'b', boardName: 'A500', volume: 'Work', amigaPath: 'Work:Programs', readAt: 1, cut: false, browse: null };
+  const volume: Listing = {
+    path: 'NET:/b/Work/Programs', crumbs: [{ label: 'NET:', path: 'NET:' }, { label: 'A500', path: 'NET:/b' }, { label: 'Work:', path: 'NET:/b/Work' },
+      { label: 'Programs', path: 'NET:/b/Work/Programs' }],
+    entries: [entry('a.lha', 'file', { path: 'NET:/b/Work/Programs/a.lha' })], writable: false, readOnlyReason: 'Read-only for now', disk: null,
+    meta: '41.0 MB free', net,
+  };
+  const boardRoot: Listing = {
+    path: 'NET:/b', crumbs: [{ label: 'NET:', path: 'NET:' }, { label: 'A500', path: 'NET:/b' }],
+    entries: [entry('Queue', 'dir', { path: 'NET:/b/Queue' })], writable: false, readOnlyReason: 'Open a volume or Queue', disk: null,
+    meta: 'Switch on browsing in Transfer on A500', net: { ...net, volume: null, amigaPath: null, readAt: null, browse: 'Switch on browsing in Transfer on A500' },
+  };
+  it('a volume\'s title bar names the board and the Amiga path; its rows drag; its read-only line says so', () => {
+    const html = render({ listing: volume });
+    expect(html).toContain('data-testid="pane-left-net-title"');
+    expect(html).toContain('A500 · Work:Programs');
+    expect(html).not.toContain('data-testid="pane-left-crumb-0"');
+    expect(html).toMatch(/data-testid="pane-row"[^>]*draggable="true"/);
+    expect(html).toContain('Read-only for now.');
+    // The server's HTML says no age: the clock starts once mounted.
+    expect(html).not.toContain('pane-left-read-ago');
+  });
+  it('a pending listing is a quiet status line over the old rows, dimmed; never an alert', () => {
+    const html = render({ listing: volume, loading: true, pending: 'Reading Work:Programs from A500…' });
+    expect(html).toMatch(/<p role="status" data-testid="pane-pending"[^>]*>Reading Work:Programs from A500…<\/p>/);
+    expect(html).not.toContain('role="alert"');
+    expect(html).toContain('opacity-50');
+    expect(html).toContain('data-name="a.lha"');
+    // With nothing to show yet, the label stands in for "Loading…".
+    const first = render({ listing: null, loading: true, pending: 'Reading volumes from A500…' });
+    expect(first).toContain('Reading volumes from A500…');
+    expect(first).not.toContain('Loading…');
+  });
+  it('a board whose volumes cannot be read says why in one row above Queue', () => {
+    const html = render({ listing: boardRoot });
+    expect(html).toMatch(/data-testid="net-browse-reason".*Switch on browsing in Transfer on A500[^]*data-name="Queue"/);
+  });
+  it('a cut listing ends with a row saying so', () => {
+    expect(render({ listing: { ...volume, net: { ...net, cut: true } } })).toMatch(/data-name="a.lha"[^]*data-testid="net-cut"[^]*Only the first 1000 entries are shown/);
+    expect(render({ listing: volume })).not.toContain('net-cut');
   });
 });

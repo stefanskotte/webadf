@@ -15,6 +15,11 @@ const listing = (o: Partial<Listing>): Listing => ({
 });
 
 describe('CopyToPicker (Files increment 1, Task 10)', () => {
+  it('a volume of a board\'s Amiga takes nothing: read-only for now (NET: volumes, spec 2026-10-30 §5)', () => {
+    const net = { board: 'b', boardName: 'A500', volume: 'Work', amigaPath: 'Work:', readAt: null, cut: false, browse: null };
+    expect(pickReason('copy', listing({ path: 'NET:/b/Work', disk: null, writable: false, readOnlyReason: 'Read-only for now', net }))).toBe('Read-only for now');
+    expect(placesIn(listing({ entries: [entry('Work', 'volume'), entry('Queue', 'dir')] })).map((e) => e.name)).toEqual(['Queue', 'Work']);
+  });
   it('only a writable folder inside a disk or in STASH: takes the copy', () => {
     expect(pickReason('copy', listing({}))).toBeNull();
     expect(pickReason('copy', listing({ disk: null }))).toBe('Open a disk or STASH: to copy into it');
@@ -32,7 +37,7 @@ describe('CopyToPicker (Files increment 1, Task 10)', () => {
   });
 
   it('NET: boards are places; inside one, Copy sends and Move is refused (increment 3, Task 2)', () => {
-    const board = listing({ path: 'NET:/b1', disk: null, queue: { deviceId: 'b1', files: 0, bytes: 0 } });
+    const board = listing({ path: 'NET:/b1/Queue', disk: null, queue: { deviceId: 'b1', files: 0, bytes: 0 } });
     expect(pickReason('copy', board)).toBeNull();
     expect(pickReason('move', board)).toBe('Files sent to the Amiga stay where they are — use Copy');
     expect(pickReason('copy', listing({ path: 'NET:', disk: null, writable: false, readOnlyReason: 'Open a board to send files to it' })))

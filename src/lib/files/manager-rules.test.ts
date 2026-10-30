@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  createClosesDialog, dropBlocked, navTargets, fetchDownload, oneAtATime, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems, TOO_BIG_WORDS, BUSY_DROP, DIALOG_DROP,
+  asksBeforeCopy, createClosesDialog, dropBlocked, fetchStatus, navTargets, pickGone, fetchDownload, oneAtATime, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems, TOO_BIG_WORDS, BUSY_DROP, DIALOG_DROP,
 } from './manager-rules';
 import type { OpItem } from './driver';
 import type { Listing } from './types';
@@ -157,5 +157,40 @@ describe('navTargets (Parent and Root; Task 8 review: from the path when an erro
     expect(navTargets(null, 'LIBRARY:/g')).toEqual({ parent: 'LIBRARY:', root: 'LIBRARY:' });
     expect(navTargets(null, 'NET:')).toEqual({ parent: null, root: null });
     expect(navTargets(null, 'nonsense')).toEqual({ parent: null, root: null });
+  });
+});
+
+describe('fetchStatus (NET: volumes §4.5: the status row of a copy out of a volume)', () => {
+  it('fetchStatus counts up and ends with a summary', () => {
+    expect(fetchStatus({ total: 12, done: 2, failed: [], waiting: 10 }, 'A500')).toEqual({ line: 'Copying 3 of 12 from A500…', finished: false });
+    expect(fetchStatus({ total: 12, done: 11, failed: [{ name: 'x.lha', reason: 'Object not found' }], waiting: 0 }, 'A500'))
+      .toEqual({ line: 'Copied 11, 1 failed: x.lha: Object not found', finished: true });
+    expect(fetchStatus({ total: 2, done: 2, failed: [], waiting: 0 }, 'A500')).toEqual({ line: 'Copied 2', finished: true });
+  });
+
+  it('the count never passes the total; more than one failure names the first', () => {
+    expect(fetchStatus({ total: 3, done: 2, failed: [{ name: 'a', reason: 'r' }], waiting: 0 }, 'A500').finished).toBe(true);
+    expect(fetchStatus({ total: 3, done: 1, failed: [{ name: 'a', reason: 'r' }], waiting: 1 }, 'A500').line).toBe('Copying 3 of 3 from A500…');
+    expect(fetchStatus({ total: 3, done: 1, failed: [{ name: 'a', reason: 'r' }, { name: 'b', reason: 's' }], waiting: 1 }, 'A500').line)
+      .toBe('Copying 3 of 3 from A500…');
+    expect(fetchStatus({ total: 3, done: 1, failed: [{ name: 'a', reason: 'r' }, { name: 'b', reason: 's' }], waiting: 0 }, 'A500'))
+      .toEqual({ line: 'Copied 1, 2 failed: a: r; …', finished: true });
+  });
+});
+
+describe('asksBeforeCopy and pickGone (Task 8 fix round 1: the source drawer is asked before every copy out of a volume)', () => {
+  const from = 'NET:/b1/Work/Games';
+  it('asks the picked drawers fresh (from memory on a resend), then the source drawer from memory LAST (fix round 2)', () => {
+    expect(asksBeforeCopy(from, [], false)).toEqual([{ path: from, fresh: false }]);
+    expect(asksBeforeCopy(from, [`${from}/A`, `${from}/B`], false))
+      .toEqual([{ path: `${from}/A`, fresh: true }, { path: `${from}/B`, fresh: true }, { path: from, fresh: false }]);
+    expect(asksBeforeCopy(from, [`${from}/A`], true)).toEqual([{ path: `${from}/A`, fresh: false }, { path: from, fresh: false }]);
+  });
+
+  it('a pick no longer in the re-listed source is "Object not found", named', () => {
+    const entries = [{ path: `${from}/x.lha` }, { path: `${from}/A` }];
+    expect(pickGone(entries, [`${from}/x.lha`, `${from}/A`])).toBeNull();
+    expect(pickGone(entries, [`${from}/X.LHA`])).toBeNull();   // AmigaDOS names ignore case
+    expect(pickGone(entries, [`${from}/x.lha`, `${from}/gone.txt`])).toBe('gone.txt: Object not found');
   });
 });

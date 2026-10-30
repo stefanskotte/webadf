@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import type { FsEntry, Listing } from '@/lib/files/types';
 import { refusalWords } from '@/lib/files/words';
 import { acceptsCopies, netBoardOf } from '@/lib/files/pane-rules';
-import { NET_MOVE_IN, NET_PICK_BOARD } from '@/lib/files/net-rules';
+import { isNetVolume, NET_MOVE_IN, NET_PICK_BOARD, NET_READ_ONLY } from '@/lib/files/net-rules';
 import { PANE_DEVICES } from '@/lib/files/path';
 import { managerReturnsFocus } from './dialogs';
 
@@ -40,6 +40,8 @@ export function pickReason(op: 'copy' | 'move', l: Listing | null, filing?: (l: 
   const f = filing?.(l);
   if (f !== undefined) return f;
   if (l.path === 'NET:') return NET_PICK_BOARD;
+  // A volume of a board's Amiga takes nothing in phase 1 (NET: volumes, spec 2026-10-30 §5).
+  if (isNetVolume(l)) return NET_READ_ONLY;
   if (!acceptsCopies(l)) return `Open a disk or STASH: to ${op} into it`;
   if (!l.writable) return refusalWords('read_only', l.readOnlyReason ?? undefined);
   if (op === 'move' && netBoardOf(l)) return NET_MOVE_IN;
@@ -62,7 +64,7 @@ export function placesIn(l: Listing): FsEntry[] {
   return [...places.filter((e) => e.kind === 'collection'), ...rest];
 }
 
-const PLACE_GLYPH: Record<string, string> = { title: 'TTL', disk: 'DSK', dir: 'DIR', board: 'BRD', collection: 'DIR' };
+const PLACE_GLYPH: Record<string, string> = { title: 'TTL', disk: 'DSK', dir: 'DIR', board: 'BRD', collection: 'DIR', volume: 'DIR' };
 
 export function CopyToPicker({ op, count, start, busy, list, onPick, onCancel, filing }: CopyToPickerProps) {
   const [path, setPath] = useState(start);

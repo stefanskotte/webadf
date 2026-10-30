@@ -13,6 +13,8 @@ vi.mock('@/lib/amiga-uploads', () => ({
   openUpload: (...a: unknown[]) => openUpload(...a), storeChunk: (...a: unknown[]) => storeChunk(...a),
   closeUpload: (...a: unknown[]) => closeUpload(...a),
 }));
+const placeFetched = vi.fn(async (...args: unknown[]) => { void args; });
+vi.mock('@/lib/files/net-fetch', () => ({ placeFetched: (...a: unknown[]) => placeFetched(...a) }));
 const recordSendRx = vi.fn(async (...args: unknown[]) => { void args; });
 vi.mock('@/lib/transfers', () => ({ recordSendRx: (...a: unknown[]) => recordSendRx(...a) }));
 
@@ -44,6 +46,12 @@ describe('POST /api/device/upload', () => {
     expect(a.path).toBe('Caf\u00e9.txt');
     expect(a.path).toBe('Café.txt');
     expect(a.comment).toBe('na\u00efve \\u00e9');                  // an escaped backslash stays literal text
+  });
+  it('passes a fetched file\'s request (NET: volumes §4.5) on, and refuses a malformed one', async () => {
+    openUpload.mockResolvedValue({ ok: true, id: 'u1', offset: 0 });
+    expect((await openPOST(json('/api/device/upload', { ...OPEN, request: 'Ab_9-x' }))).status).toBe(200);
+    expect(openUpload.mock.calls[0][2]).toMatchObject({ request: 'Ab_9-x' });
+    expect((await openPOST(json('/api/device/upload', { ...OPEN, request: 'a b' }))).status).toBe(400);
   });
   it('maps refusals to their codes and statuses', async () => {
     for (const [code, status] of [['size', 413], ['full', 409], ['name', 400]] as const) {
@@ -99,9 +107,13 @@ describe('POST /api/device/upload/<id>/close', () => {
     let r = await closePOST(json('/api/device/upload/u1/close', { crc32: 907060870 }), params('u1'));
     expect(r.status).toBe(200); expect(await r.json()).toEqual({ name: 'Café.txt' });
     expect(closeUpload).toHaveBeenCalledWith(expect.anything(), 'd1', 'u1', 907060870);
+    // A stored close places the file a Files copy fetched (a no-op for a Transfer send); a refused one does not.
+    expect(placeFetched).toHaveBeenCalledTimes(1);
+    expect(placeFetched).toHaveBeenCalledWith(expect.anything(), 'u1');
     closeUpload.mockResolvedValueOnce({ ok: false, status: 409, code: 'crc' });
     r = await closePOST(json('/api/device/upload/u1/close', { crc32: 1 }), params('u1'));
     expect(r.status).toBe(409); expect(await r.json()).toEqual({ code: 'crc' });
+    expect(placeFetched).toHaveBeenCalledTimes(1);
     r = await closePOST(json('/api/device/upload/u1/close', { crc32: -1 }), params('u1'));
     expect(r.status).toBe(400);
   });

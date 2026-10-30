@@ -35,4 +35,18 @@ describe('commandFor', () => {
     expect(commandFor({ ...base, key: '/', target: { tagName: 'INPUT' } })).toBeNull();
     expect(commandFor({ ...base, key: '/', dialogOpen: true })).toBeNull();
   });
+  // NET: volumes (spec 2026-10-30 §5): Ctrl-R (Cmd-R on a Mac) reads the source pane again, never the browser's reload.
+  it('Ctrl-R and Cmd-R refresh', () => {
+    expect(commandFor(ev('r', { ctrlKey: true }))).toBe('refresh');
+    expect(commandFor(ev('r', { metaKey: true }))).toBe('refresh');
+    expect(commandFor(ev('R', { ctrlKey: true }))).toBe('refresh');
+    // A filter box has no use for Ctrl-R either: it still refreshes the pane.
+    expect(commandFor(ev('r', { ctrlKey: true, target: { tagName: 'INPUT' } }))).toBe('refresh');
+  });
+  it('R alone, with Alt, with Shift (a hard reload) or under a dialog is no refresh', () => {
+    expect(commandFor(ev('r'))).toBeNull();
+    expect(commandFor(ev('r', { ctrlKey: true, altKey: true }))).toBeNull();
+    expect(commandFor(ev('R', { ctrlKey: true, shiftKey: true }))).toBeNull();
+    expect(commandFor(ev('r', { metaKey: true, dialogOpen: true }))).toBeNull();
+  });
 });

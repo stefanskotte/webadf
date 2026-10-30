@@ -44,9 +44,12 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
 
 - **Volumes:** from the DOS list (`LockDosList(LDF_VOLUMES|LDF_READ)`), only volumes with a mounted handler task; the
   device is the handler's device name (`DF0:`, `DH1:`); size and free come from `Info()`, in bytes (0 when unknown).
-  A second volume with the same name (case-insensitive, intl-aware) is sent as `Name (DF1:)`; Transfer resolves that
-  form back when it appears in a path.
-- **Paths:** `<Volume>:<drawer>/<file>` as AmigaDOS takes them; empty after the colon = the volume's root.
+  Every volume is sent by its plain name, duplicates included (final review ruling, 2026-10-30): the server labels a
+  second volume with the same name (case-insensitive), and a volume named `Queue`, as `Name (DF1:)`; Transfer never
+  sends nor needs to resolve that form.
+- **Paths:** `<Volume>:<drawer>/<file>` as AmigaDOS takes them; empty after the colon = the volume's root. A path
+  through a volume the server labelled arrives as the device's path (`DF1:c`, not `Empty (DF1:):c`), which AmigaDOS
+  resolves to the volume in that drive.
 - **Codes:** `off` (browsing switched off), `notfound`, `notdir`, `isdir` (GET of a drawer), `busy` (object in use),
   `toolarge` (over 4 MB), `denied` (read-protected), `bad` (malformed command), `io` (any other DOS error). The text is
   AmigaDOS's own message (`Fault()`), or a short English one for `off`/`bad`/`toolarge`.
@@ -72,7 +75,7 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
 ### 2.4 Testing
 
 - Host tests of the core (`pnpm receive:test`): parsing each command, each refusal code, the drain-paced drawer
-  listing (a full buffer pauses and resumes without loss), the 1000 cut, the duplicate-name form both ways, off/on.
+  listing (a full buffer pauses and resumes without loss), the 1000 cut, two volumes with one name (both sent plain), off/on.
 - Fake-board scenarios (`scenarios.ts`) for VOLS, DIR, GET, and a request waiting behind a file.
 - FS-UAE runs on 2.04, 3.1 and 3.2: a drawer of over 1000 entries, two floppies with the same name, browsing off.
 - The build pin (`receive.sha256`) is renewed; the driver disk carries Transfer 2.3.
@@ -82,8 +85,11 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
 - **Wake:** the poll query gains `reqAck=<n>` (the request cursor last fetched). When the server's `reqVersion`
   differs, the poll answers `req:{v}` (same inequality rule as `xfer`). Firmware without `reqAck` is never sent
   requests.
-- **Fetch:** `GET /api/device/req` returns up to 8 waiting requests as protocol lines (`VOLS`, `DIR`, `GET`). One HTTPS
-  request per `as_step()` still holds.
+- **Fetch:** `GET /api/device/req` returns up to 8 waiting requests as protocol lines (`VOLS`, `DIR`, `GET`), listings
+  (`VOLS`/`DIR`) before files (`GET`), each oldest first. When requests still wait after a fetch, the server bumps
+  `req_version` again in the same transaction, so the board is woken for the rest: the board must ack (`reqAck`) the `v`
+  it saw in the poll BEFORE its fetch, never a later one (final review, 2026-10-30). One HTTPS request per `as_step()`
+  still holds.
 - **Relay:** one request at a time to Transfer, only on a protocol 3 connection. A file moving either way finishes
   first; then requests go before queued downloads (someone is waiting in a browser).
 - **Answers:** reply lines are gathered in a 32 KB PSRAM buffer and posted to `POST /api/device/req/<rid>` as
@@ -105,7 +111,8 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
   (`waiting`|`sent`|`done`|`failed`), error_code, error_text, answer (jsonb: volumes or entries), pieces received,
   cut (bool), copy target (jsonb, GET only: destination path and clash rule), upload_id (GET), created_at, sent_at,
   answered_at.
-- `devices.req_version` (integer, default 0), bumped in the same transaction as a new request.
+- `devices.req_version` (integer, default 0), bumped in the same transaction as a new request, and again by a board's
+  fetch that leaves requests waiting (§3 Fetch).
 - Rows older than 24 h are deleted when a new request is added (no new cron; self-host identical).
 
 ### 4.2 Board routes (device auth as today; a board sees only its own requests)
@@ -121,16 +128,20 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
 - `NET:/<deviceId>/Queue/<transferId>`: the send queue. Old `NET:/<deviceId>/<transferId>` paths and
   `filesHrefForBoard` links go there.
 - `NET:/<deviceId>/<Volume>/<drawer>/…`: a volume. The driver turns it into `Volume:drawer/…`; each segment must pass
-  `amigaNameProblem` (the volume segment may carry the ` (DF1:)` suffix).
+  `amigaNameProblem` (the volume segment may carry the ` (DF1:)` suffix: the name before it must pass, the device must
+  match `[A-Za-z0-9_.-]{1,30}:`). Through a suffixed volume the path sent to Transfer, and the one requests are stored
+  and remembered under, is the device's (`DF1:drawer/…`); the pane still shows the label.
 - A volume really named `Queue` is shown as `Queue (DH2:)` (its device).
 
 ### 4.4 Listing
 
 1. The NET: driver looks for a `done` answer for the same board, kind and path (case-insensitive) younger than 2 minutes;
    if found it lists it, with its age.
-2. Otherwise it reuses a `waiting`/`sent` request for that path, or adds one, and answers `pending <rid>`.
-3. The pane asks `GET /api/files/net/request/<rid>` every 500 ms; after 20 s it stops with "A500 didn't answer".
-4. Refresh (`fresh`) skips step 1.
+2. Otherwise it reuses a `waiting`/`sent` request for that path, or adds one, and answers 202 `pending` (plan ruling P1:
+   the list route itself, no request id).
+3. The pane asks the same list URL every 500 ms; after 20 s it stops with "A500 didn't answer".
+4. Refresh (`fresh`) skips step 1, and replaces a pending request older than 20 s (failed `timeout`) instead of sharing
+   it.
 - The board must be online, on firmware 1.22+ and reported protocol 3 with browsing on; otherwise the driver answers
   the reason at once without adding a request.
 

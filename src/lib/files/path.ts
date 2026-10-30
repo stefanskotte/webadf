@@ -1,7 +1,7 @@
 // Files (spec 2026-10-29 §3.1): every place a pane can point at. CLIENT-SAFE: no imports.
 // LIBRARY:/<gameId>/<diskId>/<dir>/<file>: titles and disks by id, so two titles with one name never collide; inside a
-// disk, AmigaDOS names. STASH:/<folder>/<file>: by name (increment 2). NET:/<deviceId>/<transferId>: boards and their
-// queue rows by id (increment 3, R1).
+// disk, AmigaDOS names. STASH:/<folder>/<file>: by name (increment 2). NET:/<deviceId>/Queue/<transferId>: boards and
+// their queue rows by id (increment 3, R1); NET:/<deviceId>/<Volume>/<drawer>/…: the Amiga's volumes (spec 2026-10-30).
 
 export type Device = 'STASH' | 'NET' | 'LIBRARY';
 export type FsPath = { device: Device; segments: string[] };
@@ -57,7 +57,8 @@ export function filesHrefForDisk(gameId: string, diskId: string, history = false
  * for files from the Amiga.
  */
 export function filesHrefForBoard(deviceId: string, active: 'left' | 'right'): string {
-  return `/files?left=${DEFAULT_LEFT}&right=${encodeURIComponent(`NET:/${deviceId}`)}&active=${active}`;
+  // The queue is the board's Queue folder since NET: volumes (spec 2026-10-30 §4.3; QUEUE_FOLDER, kept literal: no imports).
+  return `/files?left=${DEFAULT_LEFT}&right=${encodeURIComponent(`NET:/${deviceId}/Queue`)}&active=${active}`;
 }
 
 export function parentOf(p: FsPath): FsPath | null {

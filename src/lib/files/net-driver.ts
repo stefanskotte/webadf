@@ -3,7 +3,10 @@
 // (firmware XFER_FW or newer), NET:/<deviceId> that board's Send-to-Amiga queue, each row addressed by its transfer id
 // and named by its Amiga path (R1). A copy into NET:/<board> queues every file it brings, all or nothing (R3), keeping
 // path, protection and comment (R2: Receive has no date). Delete cancels a waiting row and clears a finished one (R4).
-// Nothing is copied or moved out of NET: (R5). A board that is not this org's, or cannot receive, is not found. SERVER ONLY.
+// Nothing is copied or moved out of NET: (R5). A board that is not this org's, or cannot receive, is not found.
+// NET: volumes (spec 2026-10-30 §4.3-4.6): NET:/<board> lists the Amiga's volumes then the Queue folder, the queue now
+// being NET:/<board>/Queue; NET:/<board>/<Volume>/<drawer>/… is read, read-only, through a remote request the board
+// answers (remote-requests.ts), remembered 2 minutes. SERVER ONLY.
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { transfers } from '@/db/schema/transfers';
@@ -15,9 +18,13 @@ import { SEND_FILE_MAX, SEND_QUEUE_MAX_BYTES, SEND_QUEUE_MAX_FILES } from '@/lib
 import { uploadBoards } from '@/lib/amiga-uploads';
 import { mapLimit } from '@/lib/pool';
 import { protectionString } from '@/lib/adffs/dir';
+import { latestFor, requestListing, type RemoteRow } from '@/lib/remote-requests';
+import { browseBlock, errorWords } from '@/lib/remote-browse';
+import { amigaPathOf, volumeLabel, type EntryInfo, type VolumeInfo } from '@/lib/remote-wire';
+import { QUEUE_FOLDER } from '@/lib/remote-limits';
 import { formatPath, parsePath, type FsPath } from './path';
-import { refuse, type FsCtx, type IncomingTop, type OpCtx, type OpItem, type Outcome, type VolumeDriver } from './driver';
-import { NET_COPY_OUT, NET_PICK_BOARD, netEmpty } from './net-rules';
+import { Pending, refuse, type FsCtx, type IncomingTop, type OpCtx, type OpItem, type Outcome, type VolumeDriver } from './driver';
+import { NET_COPY_OUT, NET_OPEN_VOLUME, NET_PICK_BOARD, NET_READ_ONLY, netEmpty } from './net-rules';
 import type { Crumb, FsEntry, Listing } from './types';
 
 const ROOT: Crumb = { label: 'NET:', path: 'NET:' };
@@ -25,7 +32,19 @@ const netPath = (...segs: string[]) => formatPath({ device: 'NET', segments: seg
 const MB = 1024 * 1024;
 const iso = (ms: number) => new Date(ms).toISOString();
 
+/** NET:/<board>/<Volume>/<entry>…: a file or drawer on a volume (not the volume itself, nor Queue): what a copy fetches (§4.5). */
+export function isNetVolumePath(p: FsPath): boolean {
+  return p.device === 'NET' && p.segments.length >= 3 && p.segments[1] !== QUEUE_FOLDER;
+}
+
 // ---- list -----------------------------------------------------------------------------------------------------
+
+/** Whether `id` is a transfer of this org on this board: an old NET:/<board>/<transferId> path (§4.3). */
+async function queueRowOf(ctx: FsCtx, board: string, id: string): Promise<boolean> {
+  const [row] = await getDb().select({ id: transfers.id }).from(transfers)
+    .where(and(eq(transfers.id, id), eq(transfers.orgId, ctx.orgId), eq(transfers.deviceId, board)));
+  return !!row;
+}
 
 /** R6: online / offline 3 h, Transfer running, what waits, and the key Transfer shows (fw 1.19.0+). */
 function boardMarks(t: SendTarget, waiting: number, sending: boolean, key: string | null, now: number): string[] {
@@ -56,20 +75,99 @@ async function listQueue(ctx: FsCtx, t: SendTarget, now: number): Promise<Listin
   const [rows, load] = await Promise.all([listTransfers(db, ctx.orgId, t.id), queueLoad(db, t.id, new Date(now))]);
   const entries = rows.map((row): FsEntry => {
     const view = toView(row, now);
-    return { name: view.path, kind: 'file', path: netPath(t.id, row.id), size: view.sizeBytes, date: iso(view.createdAt),
+    return { name: view.path, kind: 'file', path: netPath(t.id, QUEUE_FOLDER, row.id), size: view.sizeBytes, date: iso(view.createdAt),
       protection: protectionString(row.protection), comment: row.comment || null, marks: [transferState(view).text] };
   });
-  return { path: netPath(t.id), crumbs: [ROOT, { label: t.name, path: netPath(t.id) }], entries, writable: true, readOnlyReason: null,
-    disk: null, queue: { deviceId: t.id, ...load },
+  return { path: netPath(t.id, QUEUE_FOLDER), crumbs: [...boardCrumbs(t), { label: QUEUE_FOLDER, path: netPath(t.id, QUEUE_FOLDER) }],
+    entries, writable: true, readOnlyReason: null, disk: null, queue: { deviceId: t.id, ...load },
     meta: `${load.files} waiting · ${(load.bytes / MB).toFixed(1)} of ${SEND_QUEUE_MAX_BYTES / MB} MB` };
 }
 
-async function list(ctx: FsCtx, p: FsPath): Promise<Listing | null> {
+const boardCrumbs = (t: SendTarget): Crumb[] => [ROOT, { label: t.name, path: netPath(t.id) }];
+const freeText = (v: VolumeInfo) => `${(v.free / MB).toFixed(1)} MB free`;
+type Answer = { volumes: VolumeInfo[]; entries: EntryInfo[] };
+const answerOf = (row: RemoteRow) => (row.answer ?? { volumes: [], entries: [] }) as Answer;
+
+/** §4.4: null when the board can be browsed now, else the first missing thing in the pane's words. */
+export const browseOf = (t: SendTarget, now: number) => browseBlock({ online: t.online, firmware: t.firmwareVersion, rx: t.rx,
+  rxProto: t.rxProto, browseOn: t.browseOn, name: t.name, offlineWords: targetState(t, now) });
+
+/**
+ * NET:/<board> (§5): the Amiga's volumes, in Transfer's order, then Queue. When they cannot be read (the board cannot be
+ * browsed, or the volumes request failed) `net.browse` says why and Queue is listed alone: the queue works regardless.
+ */
+async function listBoardRoot(ctx: FsCtx, t: SendTarget, now: number, opts: { fresh?: boolean }): Promise<Listing> {
+  const db = getDb();
+  let block = browseOf(t, now);
+  let volumes: VolumeInfo[] = [];
+  let readAt: number | null = null;
+  if (block === null) {
+    const s = await requestListing(db, { orgId: ctx.orgId, deviceId: t.id, kind: 'vols', amigaPath: '', fresh: !!opts.fresh }, new Date(now));
+    if (s.state === 'ready') { volumes = answerOf(s.row).volumes; readAt = now - s.ageMs; }
+    else if (s.state === 'failed') block = errorWords(s.row.errorCode ?? '', s.row.errorText ?? '', t.name);
+    else throw new Pending(`Reading volumes from ${t.name}…`);
+  }
+  const load = await queueLoad(db, t.id, new Date(now));
+  const entries: FsEntry[] = volumes.map((v) => {
+    const label = volumeLabel(v, volumes);
+    return { name: label, kind: 'volume', path: netPath(t.id, label), size: null, sizeText: `${v.device} · ${freeText(v)}`,
+      date: v.date, protection: null, comment: null, marks: [] };
+  });
+  entries.push({ name: QUEUE_FOLDER, kind: 'dir', path: netPath(t.id, QUEUE_FOLDER), size: null, date: null, protection: null,
+    comment: null, marks: [`${load.files} waiting`] });
+  return { path: netPath(t.id), crumbs: boardCrumbs(t), entries, writable: false, readOnlyReason: NET_OPEN_VOLUME, disk: null,
+    net: { board: t.id, boardName: t.name, volume: null, amigaPath: null, readAt, cut: false, browse: block },
+    meta: block ?? `${volumes.length} ${volumes.length === 1 ? 'volume' : 'volumes'}` };
+}
+
+/** The free space of the volume a pane is in, from a remembered volumes answer (never asked for on its own). */
+async function volumeFree(t: SendTarget, volume: string, now: number): Promise<string> {
+  const s = await latestFor(getDb(), t.id, 'vols', '', new Date(now));
+  if (s.state !== 'ready') return '';
+  const { volumes } = answerOf(s.row);
+  const v = volumes.find((x) => volumeLabel(x, volumes) === volume);
+  return v ? freeText(v) : '';
+}
+
+/**
+ * NET:/<board>/<Volume>/<drawer>/… (§4.4, §4.6): a drawer as Transfer listed it; refused with the pane's words. Asked
+ * and remembered by the path Transfer is sent (a labelled volume's device path); shown by the volume's label.
+ */
+async function listVolume(ctx: FsCtx, t: SendTarget, segs: string[], now: number, opts: { fresh?: boolean }): Promise<Listing | null> {
+  const at = amigaPathOf(segs);
+  if (!at) return null;
+  const block = browseOf(t, now);
+  if (block !== null) refuse('read_only', 409, block);
+  const s = await requestListing(getDb(), { orgId: ctx.orgId, deviceId: t.id, kind: 'dir', amigaPath: at.amigaPath, fresh: !!opts.fresh }, new Date(now));
+  if (s.state === 'failed') {
+    const code = s.row.errorCode ?? '';
+    const words = errorWords(code, s.row.errorText ?? '', t.name);
+    if (code === 'notfound' || code === 'notdir') refuse('not_found', 404, words);
+    if (code === 'timeout') refuse('failed', 504, words);
+    refuse('read_only', 409, words);
+  }
+  if (s.state !== 'ready') throw new Pending(`Reading ${at.shown} from ${t.name}…`);
+  const entries = answerOf(s.row).entries.map((e): FsEntry => ({ name: e.name, kind: e.dir ? 'dir' : 'file',
+    path: netPath(t.id, ...segs, e.name), size: e.dir ? null : e.size, date: e.date, protection: protectionString(e.protection),
+    comment: e.comment || null, marks: [] }));
+  const crumbs: Crumb[] = [...boardCrumbs(t), { label: `${at.volume}:`, path: netPath(t.id, at.volume) },
+    ...segs.slice(1).map((name, i) => ({ label: name, path: netPath(t.id, ...segs.slice(0, i + 2)) }))];
+  return { path: netPath(t.id, ...segs), crumbs, entries, writable: false, readOnlyReason: NET_READ_ONLY, disk: null,
+    net: { board: t.id, boardName: t.name, volume: at.volume, amigaPath: at.shown, readAt: now - s.ageMs, cut: !!s.row.cut, browse: null },
+    meta: await volumeFree(t, at.volume, now) };
+}
+
+async function list(ctx: FsCtx, p: FsPath, opts: { fresh?: boolean } = {}): Promise<Listing | null> {
   const now = Date.now();
   if (p.segments.length === 0) return listBoards(ctx, now);
-  if (p.segments.length !== 1) return null;
   const t = await findSendTarget(getDb(), ctx.orgId, p.segments[0], now);
-  return t ? listQueue(ctx, t, now) : null;
+  if (!t) return null;
+  const [, second, ...rest] = p.segments;
+  if (second === undefined) return listBoardRoot(ctx, t, now, opts);
+  // Queue/<transferId> is a row, not a folder; so is an old NET:/<board>/<transferId> an open tab may hold (§4.3).
+  if (second === QUEUE_FOLDER) return rest.length === 0 ? listQueue(ctx, t, now) : null;
+  if (rest.length === 0 && await queueRowOf(ctx, t.id, second)) return null;
+  return listVolume(ctx, t, p.segments.slice(1), now, opts);
 }
 
 // ---- write ----------------------------------------------------------------------------------------------------
@@ -82,15 +180,19 @@ async function boardOf(ctx: FsCtx, id: string): Promise<SendTarget> {
 }
 
 /**
- * A copy into NET:/<board>: every file of every top, by its path relative to the folder copied (NET: has no folders,
+ * A copy into NET:/<board>/Queue (or the old NET:/<board>): every file of every top, by its path relative to the folder copied (NET: has no folders,
  * so an empty folder brings nothing). Refused whole before any byte is stored when a file is empty or over 4 MB, or
  * the copy does not fit beside what the board already holds; queueTransfers then holds the board's limits in one
  * transaction. NET: never clashes: Transfer saves Foo_2 rather than
  * overwrite, so `onClash` does not apply.
  */
 async function write(ctx: OpCtx, dir: FsPath, tops: IncomingTop[]): Promise<Outcome> {
-  if (dir.segments.length !== 1) refuse('unsupported', 400, 'send to a board, not into a folder');
+  if (dir.segments.length === 0) refuse('unsupported', 400, 'send to a board, not into a folder');
   const t = await boardOf(ctx, dir.segments[0]);
+  const [, second, ...rest] = dir.segments;
+  // A volume takes nothing in phase 1 (spec 2026-10-30 §5); a folder inside the queue is no place.
+  if (second !== undefined && second !== QUEUE_FOLDER) refuse('read_only', 409, NET_READ_ONLY);
+  if (rest.length) refuse('unsupported', 400, 'send to a board, not into a folder');
   if (!ctx.userId) refuse('unsupported', 400, 'signed-in person required');
   const files = tops.flatMap((top) => top.items.filter((i) => i.kind === 'file').map((i) => ({ i, path: i.rel.join('/') })));
   for (const { i, path } of files) {
@@ -126,8 +228,9 @@ async function write(ctx: OpCtx, dir: FsPath, tops: IncomingTop[]): Promise<Outc
 // ---- remove ---------------------------------------------------------------------------------------------------
 
 /**
- * Delete (R4), per row: a waiting or sending one is cancelled, a finished (or lapsed) one cleared; a row that finished
- * between the listing and the click is cleared too. A board this org cannot send to refuses the whole op (C5); a row
+ * Delete (R4), per row (NET:/<board>/Queue/<id>, or the old NET:/<board>/<id> an open tab may hold): a waiting or
+ * sending one is cancelled, a finished (or lapsed) one cleared; a row that finished between the listing and the click
+ * is cleared too. A board this org cannot send to refuses the whole op (C5); a row
  * that is not on the board the path names is not found, that item only.
  */
 async function remove(ctx: OpCtx, sources: string[]): Promise<Outcome> {
@@ -140,8 +243,11 @@ async function remove(ctx: OpCtx, sources: string[]): Promise<Outcome> {
   }
   const items: OpItem[] = [];
   for (const { raw, p } of parsed) {
-    const ok = p?.device === 'NET' && p.segments.length === 2 && await (async () => {
-      const [board, id] = p.segments;
+    const named = p?.device !== 'NET' ? null
+      : p.segments.length === 3 && p.segments[1] === QUEUE_FOLDER ? [p.segments[0], p.segments[2]]
+        : p.segments.length === 2 && p.segments[1] !== QUEUE_FOLDER ? p.segments : null;
+    const ok = named !== null && await (async () => {
+      const [board, id] = named;
       const [row] = await db.select({ id: transfers.id }).from(transfers)
         .where(and(eq(transfers.id, id), eq(transfers.orgId, ctx.orgId), eq(transfers.deviceId, board)));
       if (!row) return false;

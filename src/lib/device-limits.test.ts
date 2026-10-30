@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { DC_TITLE_MAX, DC_LABEL_MAX } from './device-limits';
 import { FIRMWARE_VERSION_MAX } from './firmware-version';
-import { buildXfer } from './xfer-wire';
+import { buildXfer, buildReq } from './xfer-wire';
 
 const header = readFileSync('wifi-floppy/firmware/src/device_client.h', 'utf8');
 const define = (name: string): number => {
@@ -96,14 +96,16 @@ describe('the firmware bounds the server respects', () => {
     // PaulaNET Phase 4 (fw 1.14.0): `xfer` rides every body to a board that sends xferAck -- the queue itself travels
     // in its own response (GET /api/device/send/queue), so the poll carries only the cursor.
     const xfer = `,"xfer":${JSON.stringify(buildXfer(4294967295, '255.255.255.255'))}`;
-    const worst = Buffer.byteLength(disk + next + display + drive + df1 + xfer + update + nfcWrite + nfcKind, 'utf8');
+    // NET: volumes: `req` rides every body to a board that sends reqAck (the requests themselves travel in GET /api/device/req).
+    const req = `,"req":${JSON.stringify(buildReq(4294967295))}`;
+    const worst = Buffer.byteLength(disk + next + display + drive + df1 + xfer + req + update + nfcWrite + nfcKind, 'utf8');
     const budget = define('DC_POLL_BODY_BYTES');
     // Reported rather than just asserted, so a future reader sees the margin
     // instead of rediscovering it.
     expect(worst, `worst-case body ${worst} bytes against a ${budget}-byte buffer`)
       .toBeLessThan(budget);
     // A board before 1.12.0 sends no df1Ack and is never sent `df1`: its worst case must still fit ITS buffer.
-    expect(worst - Buffer.byteLength(df1 + xfer, 'utf8'), 'a 1.11 board keeps its 1,536-byte buffer').toBeLessThan(1536);
+    expect(worst - Buffer.byteLength(df1 + xfer + req, 'utf8'), 'a 1.11 board keeps its 1,536-byte buffer').toBeLessThan(1536);
   });
 
   // Review Focus 4: 1.14.0 and 1.15.0 copy `xfer` into a 48-byte buffer (dc_take_xfer's `static char obj[48]`), and

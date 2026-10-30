@@ -40,7 +40,8 @@ describe('help topics', () => {
       const text = bodyText(id);
       const words = text.split(/\s+/).filter(Boolean).length;
       expect(words).toBeGreaterThanOrEqual(60);
-      expect(words).toBeLessThanOrEqual(280);
+      // files covers two panes, the bank, filing and (NET: volumes) browsing the Amiga: it alone may run longer.
+      expect(words).toBeLessThanOrEqual(id === 'files' ? 360 : 280);
       expect(text).not.toMatch(BANNED);
     });
   }
@@ -385,7 +386,7 @@ describe('Files help (increment 4)', () => {
     const b = HELP_TOPICS['stash-net'].short + bodyText('stash-net').replace(/\s+/g, ' ');
     for (const w of ['30 days', '500 files', '256 MB', '20 MB', '4 MB', '32 files', '16 MB', 'read-only', 'Add to library',
       'dropped', 'marked with the board', '1.15.0', 'Delete cancels', 'key AB12', 'cannot be undone', 'paste a URL',
-      'Nothing is copied out of NET:', 'On firmware 1.19.0 or newer a board s row shows four digits of its key'])
+      'Nothing is copied out of a board’s Queue', 'On firmware 1.19.0 or newer a board s row shows four digits of its key'])
       expect(b).toContain(w);
   });
   it('library says Add disks takes a URL', () => {
@@ -393,6 +394,20 @@ describe('Files help (increment 4)', () => {
   });
   it('the new topics never say drive in their title or short (the help filter test pins drive to four topics)', () => {
     for (const id of ['files', 'stash-net'] as const) expect(HELP_TOPICS[id].title + HELP_TOPICS[id].short).not.toMatch(/drive/i);
+  });
+
+  it('files says how to browse the Amiga: its needs, Refresh, the Queue folder, and read-only for now (NET: volumes)', () => {
+    const b = bodyText('files').replace(/\s+/g, ' ');
+    for (const w of ['Browsing the Amiga', 'firmware 1.22', 'Transfer 2.3', 'browsing switched on', 'a few seconds',
+      '2 minutes', 'says when it was read', 'Refresh', 'Ctrl-R', 'Queue folder',
+      'Read-only for now: copy files to STASH:, or disk images to LIBRARY:']) expect(b).toContain(w);
+    // Phase 1 is read-only: nothing may say the Amiga's disks take files.
+    expect(b).not.toMatch(/(copy|move|write|save)[^.]*(to|onto|into) (the Amiga's|its Amiga's) (disks?|volumes?)|can be written/i);
+  });
+
+  it("stash-net points to Files for a board's volumes, and sends go into its Queue (NET: volumes)", () => {
+    const b = bodyText('stash-net').replace(/\s+/g, ' ');
+    for (const w of ['Queue', 'Browsing the Amiga under Files']) expect(b).toContain(w);
   });
 
   it('files says a title already in the target collection is skipped and stays put', () => {

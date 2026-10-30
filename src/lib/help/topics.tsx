@@ -103,6 +103,13 @@ export const HELP_TOPICS = {
           <em>Protect</em> sets bits; <em>Info</em> shows details. Type in a filter box; <em>Show .info</em> hides or shows icon files.
         </p>
         <p>
+          <strong>Browsing the Amiga.</strong> Inside a board, NET: lists its Amiga&apos;s volumes, then its{' '}
+          <em>Queue</em> folder, where the files you send wait. Browsing needs firmware 1.22 and Transfer 2.3, with browsing
+          switched on in Transfer. Each drawer takes a few seconds to read; a drawer read in the last 2 minutes opens at once
+          and says when it was read. <em>Refresh</em> (Ctrl-R) reads it again. Read-only for now: copy files to STASH:, or
+          disk images to LIBRARY:.
+        </p>
+        <p>
           <strong>Keys.</strong> ↑ and ↓ move, Space picks, Enter opens, Backspace goes up, Tab switches pane, / filters,
           F5 copies, F6 moves, F7 makes a folder, F2 renames, Delete deletes.
         </p>
@@ -555,15 +562,16 @@ export const HELP_TOPICS = {
           <strong>Disk images.</strong> <em>Add to library</em> makes an ADF, DSK, ADZ, DMS, DMZ or HFE file a library disk.
         </p>
         <p>
-          <strong>NET:</strong> lists your boards on firmware 1.15.0 or newer. Copy files or folders into a board to send
-          them to its Amiga: each waits there until Transfer takes it, marked waiting, sending, delivered or failed.
-          Delete cancels a file still waiting or sending, or clears a finished one. On firmware 1.19.0 or newer a board&apos;s row shows
+          <strong>NET:</strong> lists your boards on firmware 1.15.0 or newer. Copy files or folders into a board&apos;s{' '}
+          <em>Queue</em> to send them to its Amiga: each waits there until Transfer takes it, marked waiting, sending, delivered or failed.
+          Delete cancels a file still waiting or sending, or clears a finished one. Its Amiga&apos;s volumes are listed beside
+          Queue: see <em>Browsing the Amiga</em> under Files. On firmware 1.19.0 or newer a board&apos;s row shows
           four digits of its key (<em>key AB12</em>), the digits Transfer shows.
         </p>
         <GoodToKnow items={[
           'STASH: holds up to 500 files or 256 MB for your organization, and keeps each file 30 days. A file can be 20 MB from your computer, 4 MB from the Amiga.',
           'Up to 4 MB a file, and 32 files or 16 MB waiting for one board.',
-          'Nothing is copied out of NET:, and a copy into it leaves the original where it was.',
+          'Nothing is copied out of a board’s Queue, and a copy into it leaves the original where it was.',
           'STASH: keeps no versions: a delete there cannot be undone.',
         ]} />
       </>

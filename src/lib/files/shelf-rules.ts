@@ -2,7 +2,9 @@
 // LIBRARY: above the disks (Files 2 §3.2): the words a refusal carries and the pure rules the server and the manager
 // share. CLIENT-SAFE: types and pure functions only.
 import { parsePath } from './path';
-import { addToLibraryReason } from './pane-rules';
+import { addToLibraryReason, SELECT_IMAGES } from './pane-rules';
+import { isNetVolume, NET_READ_ONLY } from './net-rules';
+import { libraryEligible } from '@/lib/from-amiga-ui';
 import type { FsEntry, Listing } from './types';
 
 export const TITLES_ON_LIBRARY_PAGE = 'Rename or delete titles on the Library page';
@@ -18,6 +20,9 @@ export const COLLECTIONS_STAY = 'Collections stay in LIBRARY:';
 export const COLLECTION_EXISTS = 'A collection with that name already exists';
 /** A disk image added to the library while its target collection was deleted: in the library, filed nowhere. */
 export const ADDED_UNFILED = 'The collection is gone; the disk was added to the library, in no collection';
+/** A NET: drawer onto a shelf: refusalWords('not_a_disk_image', 'a folder'), the server's per-item words, written out
+ *  (words.ts imports this module). Said before the copy walks the drawer (final review). */
+export const NOT_A_FOLDER = 'Not a disk image the library takes — a folder.';
 /** Create ADF in NET: (Files 2 §4): a blank disk is made in STASH: or LIBRARY:, never sent. */
 export const NOT_ON_NET = 'Disks are made in STASH: or LIBRARY:';
 /** Create ADF in a title's disk list or on a disk (§4): a new title is made on a shelf. */
@@ -74,6 +79,13 @@ export function filingReason(op: 'copy' | 'move', src: Listing | null, picked: F
   }
   if (!to) return undefined;
   if (inStash(src)) return addToLibraryReason(src, picked, { filing: true });
+  // Out of a NET: volume (spec 2026-10-30 §4.5, §5): disk images are copied in through the board; a drawer is refused
+  // here as the server refuses it (not_a_disk_image, a folder), before anything is walked; a volume is never moved from.
+  if (isNetVolume(src)) {
+    if (op === 'move') return NET_READ_ONLY;
+    if (picked.some((e) => e.kind === 'dir')) return NOT_A_FOLDER;
+    return picked.every((e) => e.kind === 'file' && libraryEligible(e.name, e.size ?? 0)) ? null : SELECT_IMAGES;
+  }
   return ONLY_TITLES_FILED;
 }
 
@@ -99,7 +111,7 @@ export function filingNoun(src: Listing | null): (n: number) => string {
 export function createAdfReason(l: Listing | null): string | null {
   if (!l) return 'Open STASH: or LIBRARY: first';
   const device = parsePath(l.path)?.device;
-  if (device === 'NET') return NOT_ON_NET;
+  if (device === 'NET') return isNetVolume(l) ? NET_READ_ONLY : NOT_ON_NET;
   if (device === 'STASH') return l.readOnlyReason === 'archive' ? 'Archives are read-only — copy files out of them.' : null;
   return l.library?.level === 'root' || l.library?.level === 'collection' ? null : GO_UP;
 }

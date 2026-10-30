@@ -159,7 +159,7 @@ test('the button bank holds the actions in the spec\'s grid order; Rename focuse
   await paneRow(page, 'NOTES.TXT').click();
   await expect(rename).not.toHaveAttribute('aria-disabled');
   await expect(page.getByTestId('files-grid').locator('button'))
-    .toHaveText(['All', 'Copy', 'Makedir', 'Create ADF…', 'Info', 'Download', 'None', 'Move', 'Rename', 'Add to library', 'Protect', 'Filter…', 'Parent', 'Root', 'Swap', 'Show .info', 'Delete']);
+    .toHaveText(['All', 'Copy', 'Makedir', 'Create ADF…', 'Info', 'Download', 'None', 'Move', 'Rename', 'Add to library', 'Protect', 'Filter…', 'Parent', 'Root', 'Swap', 'Show .info', 'Refresh', 'Delete']);
   // One file downloads by its path (R4).
   const [dl, res] = await Promise.all([page.waitForEvent('download'),
     page.waitForResponse((r) => r.url().includes('/api/files/download?')), page.getByTestId('files-download').click()]);

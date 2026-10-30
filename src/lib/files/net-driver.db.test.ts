@@ -1,5 +1,5 @@
 // src/lib/files/net-driver.db.test.ts
-// NET: (increment 3, Task 1): boards and their queues; a copy into NET:/<board> sends, all or nothing; Delete cancels a
+// NET: (increment 3, Task 1): boards and their queues (since NET: volumes, spec 2026-10-30, under NET:/<board>/Queue); a copy into NET:/<board> sends, all or nothing; Delete cancels a
 // waiting row and clears a finished one; nothing is copied or moved out of NET:, and nothing is moved into it.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Client } from 'pg';
@@ -30,6 +30,9 @@ const { parsePath } = await import('./path');
 const { insertStash, listStash } = await import('@/lib/stash');
 const { runOp } = await import('./ops');
 const { netDriver } = await import('./net-driver');
+const { Pending, Refused } = await import('./driver');
+const { remoteRequests } = await import('@/db/schema/remote-requests');
+const { takeWaiting, answerPiece } = await import('@/lib/remote-requests');
 
 const ctx = { orgId: 'o1', userId: 'u1' };
 const P = (s: string) => parsePath(s)!;
@@ -57,7 +60,9 @@ beforeAll(async () => {
   await db.insert(organization).values([{ id: 'o1', name: 'o1', slug: 'o1', createdAt: new Date() }, { id: 'o2', name: 'o2', slug: 'o2', createdAt: new Date() }]);
   const now = new Date();
   await db.insert(devices).values([
-    { id: 'b1', orgId: 'o1', name: 'A500 bench', tokenHash: 'h1', firmwareVersion: '1.15.0+gabc', lastSeenAt: now, upKey: 'ab12' },
+    // b1 can be browsed (spec 2026-10-30 §4.4): firmware 1.22, Transfer running on protocol 3 with browsing on.
+    { id: 'b1', orgId: 'o1', name: 'A500 bench', tokenHash: 'h1', firmwareVersion: '1.22.0+gabc', lastSeenAt: now, upKey: 'ab12',
+      sendRx: 'c', sendRxAt: now, rxProto: 3, browseOn: true },
     { id: 'b2', orgId: 'o1', name: 'Zed', tokenHash: 'h2', firmwareVersion: '1.16.0+gdef', lastSeenAt: new Date(now.getTime() - 3 * 3600_000) },
     { id: 'b0', orgId: 'o1', name: 'Old', tokenHash: 'h0', firmwareVersion: '1.14.0+g000', lastSeenAt: now },
     { id: 'bx', orgId: 'o2', name: 'Theirs', tokenHash: 'hx', firmwareVersion: '1.15.0+g111', lastSeenAt: now },
@@ -100,18 +105,20 @@ describe('NET: listing', () => {
   it('lists the boards that can receive, online first, with their marks; it takes no copies itself', async () => {
     const l = (await netDriver.list(ctx, P('NET:')))!;
     expect(l.entries.map((e) => [e.kind, e.name, e.path])).toEqual([['board', 'A500 bench', 'NET:/b1'], ['board', 'Zed', 'NET:/b2']]);
-    expect(l.entries[0].marks).toEqual(['online', 'key AB12']);
+    expect(l.entries[0].marks).toEqual(['online', 'Transfer running', 'key AB12']);
     expect(l.entries[1].marks).toEqual(['offline 3 h']);
     expect(l.writable).toBe(false);
     expect(l.readOnlyReason).toBe('Open a board to send files to it');
     expect(l.meta).toBe('2 boards');
     expect(l.crumbs).toEqual([{ label: 'NET:', path: 'NET:' }]);
   });
-  it('a board below 1.15.0 is not listed and not found; another org\'s board is not found; nor is a path below a row', async () => {
+  it('a board below 1.15.0 is not listed and not found; another org\'s board is not found; nor is a path below a queue row', async () => {
     expect(await netDriver.list(ctx, P('NET:/b0'))).toBeNull();
     expect(await netDriver.list(ctx, P('NET:/bx'))).toBeNull();
     expect(await netDriver.list(ctx, P('NET:/nope'))).toBeNull();
-    expect(await netDriver.list(ctx, P('NET:/b1/x/y'))).toBeNull();
+    expect(await netDriver.list(ctx, P('NET:/b1/Queue/x'))).toBeNull();
+    expect(await netDriver.list(ctx, P('NET:/bx/Queue'))).toBeNull();
+    expect(await netDriver.list(ctx, P('NET:/bx/Work'))).toBeNull();
     expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/C'], dest: 'NET:/b0', onClash: 'ask' }))
       .toMatchObject({ kind: 'refused', status: 404, refusal: { code: 'not_found' } });
     expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/C'], dest: 'NET:/bx', onClash: 'ask' }))
@@ -120,28 +127,28 @@ describe('NET: listing', () => {
     expect(await queued('bx')).toEqual([]);
   });
   it('an empty board queue says so', async () => {
-    const l = (await netDriver.list(ctx, P('NET:/b2')))!;
-    expect(l).toMatchObject({ path: 'NET:/b2', entries: [], writable: true, readOnlyReason: null, disk: null,
+    const l = (await netDriver.list(ctx, P('NET:/b2/Queue')))!;
+    expect(l).toMatchObject({ path: 'NET:/b2/Queue', entries: [], writable: true, readOnlyReason: null, disk: null,
       queue: { deviceId: 'b2', files: 0, bytes: 0 }, meta: '0 waiting · 0.0 of 16 MB' });
-    expect(l.crumbs).toEqual([{ label: 'NET:', path: 'NET:' }, { label: 'Zed', path: 'NET:/b2' }]);
+    expect(l.crumbs).toEqual([{ label: 'NET:', path: 'NET:' }, { label: 'Zed', path: 'NET:/b2' }, { label: 'Queue', path: 'NET:/b2/Queue' }]);
   });
 });
 
 describe('copy into NET:', () => {
   it('queues a disk folder with paths, protection and comment, says how many it queued, and lists it with its state', async () => {
     const v = await version('b1');
-    const r = await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/C'], dest: 'NET:/b1', onClash: 'ask' });
+    const r = await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/C'], dest: 'NET:/b1/Queue', onClash: 'ask' });
     expect(r).toMatchObject({ kind: 'done', items: [{ source: 'LIBRARY:/g1/d1/C', ok: true }], queued: 1 });
     const rows = await queued();
     expect(rows.map((x) => [x.path, x.protection, x.comment, x.status, x.sizeBytes, x.createdByUserId])).toEqual([['C/Assign', 5, 'cmd', 'queued', 7, 'u1']]);
     expect(rows[0].crc32).toBe(crc32(enc('assign!')) >>> 0);
     expect(await version('b1')).toBe(v + 1);
-    const l = (await netDriver.list(ctx, P('NET:/b1')))!;
-    expect(l.entries[0]).toMatchObject({ name: 'C/Assign', kind: 'file', path: `NET:/b1/${rows[0].id}`, size: 7, comment: 'cmd',
+    const l = (await netDriver.list(ctx, P('NET:/b1/Queue')))!;
+    expect(l.entries[0]).toMatchObject({ name: 'C/Assign', kind: 'file', path: `NET:/b1/Queue/${rows[0].id}`, size: 7, comment: 'cmd',
       protection: protectionString(5), date: rows[0].createdAt.toISOString(), marks: ['Waiting'] });
     expect(l.queue).toEqual({ deviceId: 'b1', files: 1, bytes: 7 });
     expect(l.meta).toBe('1 waiting · 0.0 of 16 MB');
-    expect((await netDriver.list(ctx, P('NET:')))!.entries[0].marks).toEqual(['online', '1 waiting', 'key AB12']);
+    expect((await netDriver.list(ctx, P('NET:')))!.entries[0].marks).toEqual(['online', 'Transfer running', '1 waiting', 'key AB12']);
   });
   it('queues STASH: folders as relative paths, every file of every source in one go, and bumps the cursor once', async () => {
     await emptyQueue();
@@ -151,7 +158,8 @@ describe('copy into NET:', () => {
     expect((await queued()).map((x) => x.path).sort()).toEqual(['S/Startup-Sequence', 'Two/Sub/b.txt', 'Two/a.txt']);
     expect(await version('b1')).toBe(v + 1);
     // The board takes them in the order the copy named them (oldest first): listTransfers shows that newest first.
-    expect((await netDriver.list(ctx, P('NET:/b1')))!.entries.map((e) => e.name)).toEqual(['S/Startup-Sequence', 'Two/Sub/b.txt', 'Two/a.txt']);
+    // (The copy above went to the old NET:/<board> form, which still queues.)
+    expect((await netDriver.list(ctx, P('NET:/b1/Queue')))!.entries.map((e) => e.name)).toEqual(['S/Startup-Sequence', 'Two/Sub/b.txt', 'Two/a.txt']);
   });
   it('a folder over the queue limit queues nothing', async () => {
     const before = (await queued()).length;
@@ -200,9 +208,11 @@ describe('copy into NET:', () => {
       .toMatchObject({ kind: 'done', queued: 1 });
     expect((await queued('b2')).map((x) => x.path)).toEqual(['Assign']);
   });
-  it('refuses a folder inside a board, a signed-out copy, and copying or moving out of NET:', async () => {
-    expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/C'], dest: 'NET:/b1/x', onClash: 'ask' }))
+  it('refuses a folder inside the queue, a volume, a signed-out copy, and copying or moving out of NET:', async () => {
+    expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/C'], dest: 'NET:/b1/Queue/x', onClash: 'ask' }))
       .toMatchObject({ kind: 'refused', status: 400, refusal: { code: 'unsupported' } });
+    expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/C'], dest: 'NET:/b1/Work', onClash: 'ask' }))
+      .toMatchObject({ kind: 'refused', status: 409, refusal: { code: 'read_only', detail: 'Read-only for now' } });
     expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/C'], dest: 'NET:', onClash: 'ask' }))
       .toMatchObject({ kind: 'refused', status: 400, refusal: { code: 'unsupported' } });
     expect(await runOp({ orgId: 'o1', userId: null }, { op: 'copy', sources: ['LIBRARY:/g1/d1/C'], dest: 'NET:/b1', onClash: 'ask' }))
@@ -231,11 +241,11 @@ describe('delete in NET:', () => {
   it('cancels a waiting row', async () => {
     const [row] = await waiting();
     const v = await version('b1');
-    expect(await runOp(ctx, { op: 'delete', sources: [`NET:/b1/${row.id}`] })).toMatchObject({ kind: 'done', items: [{ ok: true }] });
+    expect(await runOp(ctx, { op: 'delete', sources: [`NET:/b1/Queue/${row.id}`] })).toMatchObject({ kind: 'done', items: [{ ok: true }] });
     expect((await queued()).find((x) => x.id === row.id)!.status).toBe('cancelled');
     expect(await version('b1')).toBe(v + 1);
   });
-  it('clears a finished row', async () => {
+  it('clears a finished row, by the old NET:/<board>/<id> path an open tab may still hold', async () => {
     const [row] = (await queued()).filter((x) => x.status === 'cancelled');
     expect(await runOp(ctx, { op: 'delete', sources: [`NET:/b1/${row.id}`] })).toMatchObject({ kind: 'done', items: [{ ok: true }] });
     expect((await queued()).find((x) => x.id === row.id)).toBeUndefined();
@@ -250,7 +260,7 @@ describe('delete in NET:', () => {
   it('a waiting row past its expiry reads expired and is cleared, not cancelled (R4)', async () => {
     const [row] = await waiting();
     await getDb().update(transfers).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(transfers.id, row.id));
-    const l = (await netDriver.list(ctx, P('NET:/b1')))!;
+    const l = (await netDriver.list(ctx, P('NET:/b1/Queue')))!;
     expect(l.entries.find((e) => e.path.endsWith(row.id))!.marks).toEqual(['Expired · the Amiga did not take it within 24 h']);
     expect(await runOp(ctx, { op: 'delete', sources: [`NET:/b1/${row.id}`] })).toMatchObject({ kind: 'done', items: [{ ok: true }] });
     expect((await queued()).find((x) => x.id === row.id)).toBeUndefined();
@@ -258,23 +268,140 @@ describe('delete in NET:', () => {
   it('a row that is not there, or is another board\'s, is not found per item (C5)', async () => {
     const [mine] = await waiting();
     const [b2row] = await queued('b2');
-    const r = await runOp(ctx, { op: 'delete', sources: [`NET:/b1/${mine.id}`, 'NET:/b1/no-such-row', `NET:/b1/${b2row.id}`] });
+    const r = await runOp(ctx, { op: 'delete', sources: [`NET:/b1/Queue/${mine.id}`, 'NET:/b1/Queue/no-such-row', `NET:/b1/Queue/${b2row.id}`] });
     expect(r).toMatchObject({ kind: 'done', items: [
-      { source: `NET:/b1/${mine.id}`, ok: true },
-      { source: 'NET:/b1/no-such-row', ok: false, refusal: { code: 'not_found' } },
-      { source: `NET:/b1/${b2row.id}`, ok: false, refusal: { code: 'not_found' } },
+      { source: `NET:/b1/Queue/${mine.id}`, ok: true },
+      { source: 'NET:/b1/Queue/no-such-row', ok: false, refusal: { code: 'not_found' } },
+      { source: `NET:/b1/Queue/${b2row.id}`, ok: false, refusal: { code: 'not_found' } },
     ] });
     expect((await queued('b2')).find((x) => x.id === b2row.id)!.status).toBe('queued');
   });
-  it('a board itself is not deleted', async () => {
-    expect(await runOp(ctx, { op: 'delete', sources: ['NET:/b1'] }))
-      .toMatchObject({ kind: 'done', items: [{ source: 'NET:/b1', ok: false, refusal: { code: 'not_found' } }] });
+  it('a board itself, its Queue folder and a volume are not deleted', async () => {
+    expect(await runOp(ctx, { op: 'delete', sources: ['NET:/b1', 'NET:/b1/Queue', 'NET:/b1/Work/x'] }))
+      .toMatchObject({ kind: 'done', items: [
+        { source: 'NET:/b1', ok: false, refusal: { code: 'not_found' } },
+        { source: 'NET:/b1/Queue', ok: false, refusal: { code: 'not_found' } },
+        { source: 'NET:/b1/Work/x', ok: false, refusal: { code: 'not_found' } },
+      ] });
   });
   it("another org's row is not found", async () => {
     await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/C/Assign'], dest: 'NET:/b1', onClash: 'ask' });
     const [row] = await waiting();
-    expect(await runOp({ orgId: 'o2', userId: 'u2' }, { op: 'delete', sources: [`NET:/b1/${row.id}`] })).toMatchObject({ kind: 'refused', status: 404 });
+    expect(await runOp({ orgId: 'o2', userId: 'u2' }, { op: 'delete', sources: [`NET:/b1/Queue/${row.id}`] })).toMatchObject({ kind: 'refused', status: 404 });
     const [still] = await getDb().select().from(transfers).where(and(eq(transfers.id, row.id), eq(transfers.status, 'queued')));
     expect(still).toBeDefined();
+  });
+});
+
+// NET: volumes (spec 2026-10-30 §4.3-4.6, §5): NET:/<board> lists the Amiga's volumes then Queue; a volume or drawer is
+// read through a remote request the board answers (simulated here with takeWaiting + answerPiece).
+describe('NET: volumes', () => {
+  const NAME = 'A500 bench';
+  const FREE = 40 * MB;
+  /** The label of the Pending a listing throws, or null when it lists. */
+  async function pendingOf(p: string, opts?: { fresh?: boolean }): Promise<string | null> {
+    try { await netDriver.list(ctx, P(p), opts); } catch (e) { if (e instanceof Pending) return e.label; throw e; }
+    return null;
+  }
+  /** The board takes what waits and answers the one request with `lines` (the rid filled in). */
+  async function answer(lines: (rid: string) => string[]) {
+    const [row] = await takeWaiting(getDb(), 'b1');
+    expect(await answerPiece(getDb(), 'b1', row.id, { piece: 0, lines: lines(row.id), last: true })).toEqual({ ok: true });
+    return row;
+  }
+  const rows = async (kind: string, amigaPath: string) => getDb().select().from(remoteRequests)
+    .where(and(eq(remoteRequests.deviceId, 'b1'), eq(remoteRequests.kind, kind), eq(remoteRequests.amigaPath, amigaPath)));
+  const refusalOf = async (p: string) => {
+    try { await netDriver.list(ctx, P(p)); } catch (e) { if (e instanceof Refused) return { ...e.refusal, status: e.status }; throw e; }
+    return null;
+  };
+
+  it('a board lists its volumes, in Transfer\'s order, then Queue; a volume named Queue carries its device', async () => {
+    expect(await pendingOf('NET:/b1')).toBe(`Reading volumes from ${NAME}…`);
+    expect((await rows('vols', '')).map((r) => r.status)).toEqual(['waiting']);
+    await answer((rid) => [`VOL ${rid} 4:Work 4:DH1: ${200 * MB} ${FREE} 9000.0.0`, `VOL ${rid} 5:Queue 4:DH2: ${100 * MB} ${MB} 9001.0.0`, `DONE ${rid} 2`]);
+    const l = (await netDriver.list(ctx, P('NET:/b1')))!;
+    expect(l.entries.map((e) => [e.name, e.kind, e.path])).toEqual([
+      ['Work', 'volume', 'NET:/b1/Work'], ['Queue (DH2:)', 'volume', 'NET:/b1/Queue (DH2:)'], ['Queue', 'dir', 'NET:/b1/Queue']]);
+    expect(l.entries[0]).toMatchObject({ sizeText: 'DH1: · 40.0 MB free', size: null, date: new Date(Date.UTC(1978, 0, 1) + 9000 * 86_400_000).toISOString() });
+    expect(l.entries[2].marks[0]).toMatch(/^\d+ waiting$/);
+    expect(l).toMatchObject({ path: 'NET:/b1', writable: false, readOnlyReason: 'Open a volume or Queue', meta: '2 volumes',
+      net: { board: 'b1', boardName: NAME, volume: null, amigaPath: null, cut: false, browse: null } });
+    expect(typeof l.net!.readAt).toBe('number');
+    expect(l.crumbs).toEqual([{ label: 'NET:', path: 'NET:' }, { label: NAME, path: 'NET:/b1' }]);
+  });
+
+  it('browsing off: no request, only Queue, and the words why', async () => {
+    await getDb().update(devices).set({ browseOn: false }).where(eq(devices.id, 'b1'));
+    try {
+      const before = (await getDb().select().from(remoteRequests)).length;
+      const l = (await netDriver.list(ctx, P('NET:/b1')))!;
+      expect(l.entries.map((e) => e.name)).toEqual(['Queue']);
+      expect(l.net!.browse).toBe(`Switch on browsing in Transfer on ${NAME}`);
+      expect(l.meta).toBe(`Switch on browsing in Transfer on ${NAME}`);
+      expect((await getDb().select().from(remoteRequests)).length).toBe(before);
+      expect(await refusalOf('NET:/b1/Work')).toEqual({ code: 'read_only', detail: `Switch on browsing in Transfer on ${NAME}`, status: 409 });
+    } finally { await getDb().update(devices).set({ browseOn: true }).where(eq(devices.id, 'b1')); }
+  });
+
+  it('a drawer lists through a request: drawers and files, read-only, crumbs, the volume\'s free space', async () => {
+    expect(await pendingOf('NET:/b1/Work/Programs')).toBe(`Reading Work:Programs from ${NAME}…`);
+    await answer((rid) => [`ENT ${rid} f 1234 5 9100.60.0 6:ReadMe 5:hello`, `ENT ${rid} d 0 0 9100.0.0 3:Sub 0:`, `DONE ${rid} 2`]);
+    const l = (await netDriver.list(ctx, P('NET:/b1/Work/Programs')))!;
+    expect(l.entries.find((e) => e.name === 'Sub')).toMatchObject({ kind: 'dir', path: 'NET:/b1/Work/Programs/Sub', size: null, comment: null });
+    expect(l.entries.find((e) => e.name === 'ReadMe')).toMatchObject({ kind: 'file', path: 'NET:/b1/Work/Programs/ReadMe', size: 1234,
+      protection: protectionString(5), comment: 'hello', date: new Date(Date.UTC(1978, 0, 1) + 9100 * 86_400_000 + 3_600_000).toISOString() });
+    expect(l).toMatchObject({ path: 'NET:/b1/Work/Programs', writable: false, readOnlyReason: 'Read-only for now', disk: null, meta: '40.0 MB free',
+      net: { board: 'b1', boardName: NAME, volume: 'Work', amigaPath: 'Work:Programs', cut: false, browse: null } });
+    expect(typeof l.net!.readAt).toBe('number');
+    expect(l.crumbs).toEqual([{ label: 'NET:', path: 'NET:' }, { label: NAME, path: 'NET:/b1' }, { label: 'Work:', path: 'NET:/b1/Work' },
+      { label: 'Programs', path: 'NET:/b1/Work/Programs' }]);
+    // The volumes answer no longer remembered: no free space to show.
+    await getDb().update(remoteRequests).set({ answeredAt: new Date(Date.now() - 180_000) })
+      .where(and(eq(remoteRequests.deviceId, 'b1'), eq(remoteRequests.kind, 'vols')));
+    expect((await netDriver.list(ctx, P('NET:/b1/Work/Programs')))!.meta).toBe('');
+  });
+
+  it('a cut answer says so', async () => {
+    expect(await pendingOf('NET:/b1/Work/Big')).not.toBeNull();
+    await answer((rid) => [`ENT ${rid} f 1 0 9100.0.0 1:a 0:`, `DONE ${rid} 1000 cut`]);
+    expect((await netDriver.list(ctx, P('NET:/b1/Work/Big')))!.net!.cut).toBe(true);
+  });
+
+  it('an error answer refuses with the pane\'s words', async () => {
+    await pendingOf('NET:/b1/Work/Gone');
+    await answer((rid) => [`ERR ${rid} notfound 0:`]);
+    expect(await refusalOf('NET:/b1/Work/Gone')).toEqual({ code: 'not_found', detail: 'Object not found', status: 404 });
+    await pendingOf('NET:/b1/Work/Off');
+    await answer((rid) => [`ERR ${rid} off 0:`]);
+    expect(await refusalOf('NET:/b1/Work/Off')).toEqual({ code: 'read_only', detail: `Switch on browsing in Transfer on ${NAME}`, status: 409 });
+  });
+
+  it('Refresh (fresh) asks again though the listing is remembered', async () => {
+    expect(await pendingOf('NET:/b1/Work/Programs')).toBeNull();
+    expect(await pendingOf('NET:/b1/Work/Programs', { fresh: true })).toBe(`Reading Work:Programs from ${NAME}…`);
+    expect((await rows('dir', 'Work:Programs')).length).toBe(2);
+  });
+
+  // Final review ruling: Transfer sends plain names; the server labels duplicates, and a path through a label goes to
+  // Transfer as the device's path. The pane still shows the label.
+  it('two volumes with one name: labelled by device, and a drawer on one is asked for by its device path', async () => {
+    await takeWaiting(getDb(), 'b1');   // what earlier cases left asked, so the answer below is the volumes'
+    await pendingOf('NET:/b1', { fresh: true });
+    await answer((rid) => [`VOL ${rid} 5:Empty 4:DF0: ${MB} ${MB} 9000.0.0`, `VOL ${rid} 5:Empty 4:DF1: ${MB} ${2 * MB} 9000.0.0`, `DONE ${rid} 2`]);
+    expect((await netDriver.list(ctx, P('NET:/b1')))!.entries.map((e) => e.name)).toEqual(['Empty (DF0:)', 'Empty (DF1:)', 'Queue']);
+    expect(await pendingOf('NET:/b1/Empty (DF1:)/c')).toBe(`Reading Empty (DF1:):c from ${NAME}…`);
+    expect((await rows('dir', 'DF1:c')).map((r) => r.status)).toEqual(['waiting']);
+    await answer((rid) => [`ENT ${rid} f 10 0 9100.0.0 3:Dir 0:`, `DONE ${rid} 1`]);
+    const l = (await netDriver.list(ctx, P('NET:/b1/Empty (DF1:)/c')))!;
+    expect(l.entries.map((e) => e.path)).toEqual(['NET:/b1/Empty (DF1:)/c/Dir']);
+    expect(l).toMatchObject({ meta: '2.0 MB free', net: { volume: 'Empty (DF1:)', amigaPath: 'Empty (DF1:):c' } });
+    expect(l.crumbs.slice(2)).toEqual([{ label: 'Empty (DF1:):', path: 'NET:/b1/Empty (DF1:)' }, { label: 'c', path: 'NET:/b1/Empty (DF1:)/c' }]);
+  });
+
+  it('a name the Amiga cannot hold is not found; another org\'s board is not found', async () => {
+    expect(await netDriver.list(ctx, { device: 'NET', segments: ['b1', 'Work', 'a:b'] })).toBeNull();
+    expect(await netDriver.list({ orgId: 'o2', userId: 'u2' }, P('NET:/b1'))).toBeNull();
+    expect(await netDriver.list({ orgId: 'o2', userId: 'u2' }, P('NET:/b1/Work/Programs'))).toBeNull();
   });
 });

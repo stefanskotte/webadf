@@ -6,11 +6,10 @@ import { getUserPrefs } from '@/lib/user-prefs';
 import { formatPath, PANE_DEVICES, parsePath } from '@/lib/files/path';
 import { paneDefaults } from '@/lib/files/view';
 import { driverFor } from '@/lib/files/drivers';
-import { Refused } from '@/lib/files/driver';
-import { refusalWords } from '@/lib/files/words';
+import { firstFromThrown, type First } from '@/lib/files/first-listing';
 import { diskStripData } from '@/lib/files/disk-strip-data';
 import { stripDiskOf } from '@/lib/files/manager-rules';
-import type { Listing, StripData } from '@/lib/files/types';
+import type { StripData } from '@/lib/files/types';
 import { PageHeader } from '@/components/shell/page-header';
 import { FilesManager } from '@/components/files/files-manager';
 
@@ -28,20 +27,16 @@ function paneParam(raw: string | string[] | undefined, fallback: string): string
 
 /**
  * The pane's first listing; null when the place is gone, with the words when it cannot be read: a disk image the
- * store did not give back (with the disk the refusal named, for its strip), or an archive that does not open (Task 4).
+ * store did not give back (with the disk the refusal named, for its strip), an archive that does not open (Task 4), a
+ * NET: refusal; or pending, a NET: listing the Amiga has not answered yet (firstFromThrown).
  */
-type First = { listing: Listing | null; error?: string; errorDisk?: string };
 async function firstListing(ctx: { orgId: string; userId: string }, path: string): Promise<First> {
+  const p = parsePath(path)!;
   try {
-    const p = parsePath(path)!;
     return { listing: await driverFor(p.device)!.list(ctx, p) };
   } catch (e) {
-    if (e instanceof Refused && (e.refusal.code === 'blob_unavailable' || e.refusal.code === 'archive_unreadable')) {
-      return {
-        listing: null, error: refusalWords(e.refusal.code),
-        errorDisk: e.refusal.code === 'blob_unavailable' ? e.refusal.detail : undefined,
-      };
-    }
+    const first = firstFromThrown(e, p.device);
+    if (first) return first;
     throw e;
   }
 }
@@ -80,7 +75,7 @@ export default async function FilesPage({ searchParams }: { searchParams: Promis
       <div className="px-4 pb-10 sm:px-7">
         <FilesManager
           initial={{ left: left.listing, right: right.listing, leftPath, rightPath, active, leftError: left.error, rightError: right.error,
-            leftErrorDisk: left.errorDisk, rightErrorDisk: right.errorDisk, strips }}
+            leftErrorDisk: left.errorDisk, rightErrorDisk: right.errorDisk, leftPending: left.pending, rightPending: right.pending, strips }}
           prefs={{ files: prefs.files, hideInfo: prefs.browse.hideInfo }}
           send={{ targets, initialBoard: netBoard, serverNow: now }}
         />

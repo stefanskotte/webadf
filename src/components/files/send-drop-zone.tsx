@@ -13,6 +13,7 @@ import { netDropRefusal, sendToBoard, type NetSendResult } from '@/lib/files/net
 import { SIGNED_OUT_TEXT } from '@/lib/signed-out';
 import { NET_REFRESH_ACTIVE_MS, NET_REFRESH_IDLE_MS } from '@/lib/files/net-rules';
 import type { Listing } from '@/lib/files/types';
+import { QUEUE_FOLDER } from '@/lib/remote-limits';
 
 /** Below sm the "?" sits in the tile's top-right corner: a sibling of the label, so a tap on it does not open the chooser. */
 const SEND_HELP = 'max-sm:z-20 max-sm:col-start-2 max-sm:row-start-1 max-sm:m-1.5 max-sm:self-start max-sm:justify-self-end';
@@ -60,7 +61,7 @@ export function SendDropZone({ targets, initialBoard, serverNow, paneQueues = []
   useEffect(() => {
     if (!board || fromPane) return;
     let live = true;
-    const readQueue = () => fetch(`/api/files/list?path=${encodeURIComponent(`NET:/${board}`)}`, { cache: 'no-store' })
+    const readQueue = () => fetch(`/api/files/list?path=${encodeURIComponent(`NET:/${board}/${QUEUE_FOLDER}`)}`, { cache: 'no-store' })
       .then((r) => (r.ok ? (r.json() as Promise<Listing>) : null))
       .then((l) => { if (live && l?.queue) setRead({ board, files: l.queue.files }); })
       .catch(() => {});
@@ -103,7 +104,7 @@ export function SendDropZone({ targets, initialBoard, serverNow, paneQueues = []
       try { files = await reading; } catch { toast.error('The dropped files could not be read.'); return; }
       let queue = { files: 0, bytes: 0 };
       try {
-        const res = await fetch(`/api/files/list?path=${encodeURIComponent(`NET:/${to.id}`)}`, { cache: 'no-store' });
+        const res = await fetch(`/api/files/list?path=${encodeURIComponent(`NET:/${to.id}/${QUEUE_FOLDER}`)}`, { cache: 'no-store' });
         if (res.redirected) { toast.error(SIGNED_OUT_TEXT); return; }
         const l = res.ok ? ((await res.json()) as Listing) : null;
         if (!l?.queue) { toast.error(`${to.name} cannot take files now. Check Devices.`); return; }

@@ -620,7 +620,7 @@ test('Files at 390px stacks its two drop tiles, and a 200-byte saved path in NET
   await request.post('/api/device/status', { headers: authHeader(token),
     data: { mountedSha256: null, firmwareVersion: '1.15.0+gabc1234', secondDrive: 'net', driveVersion: 0 } });
   await request.get('/api/device/poll?since=999999&xferAck=0&rx=c', { headers: authHeader(token) });
-  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: `NET:/${deviceId}`, active: 'right' })}`);
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: `NET:/${deviceId}/Queue`, active: 'right' })}`);
   await hydrated(page, 'files-send-input', 'onChange');
   await page.getByTestId('files-send-input').setInputFiles({ name: 'p.txt', mimeType: 'text/plain', buffer: Buffer.from('x') });
   const row = page.getByTestId('pane-right').locator('[data-testid="pane-row"][data-name="p.txt"]');

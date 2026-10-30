@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { collectionNameProblem, SHELF_WORDS, MAKEDIR_IN_DISK, filingReason, shelfOf, shelfOfRow, shelfReasons, COLLECTIONS_STAY, filingNoun, createAdfReason } from './shelf-rules';
+import { refusalWords } from './words';
 import type { FsEntry, Listing } from './types';
 
 describe('collection names (Files 2 R3: the Library\'s 1-80 characters, trimmed)', () => {
@@ -96,6 +97,28 @@ describe('fix round 1', () => {
     expect(filingNoun(root)(2)).toBe('2 titles');
     expect(filingNoun(stash)(1)).toBe('1 disk');
     expect(filingNoun(stash)(3)).toBe('3 disks');
+  });
+});
+
+describe('NET: volumes (spec 2026-10-30 §5: Add to library = Copy to LIBRARY:)', () => {
+  const net = { board: 'b1', boardName: 'A500', volume: 'Work', amigaPath: 'Work:', readAt: null, cut: false, browse: null };
+  const volume: Listing = { ...L('NET:/b1/Work', undefined, { writable: false, readOnlyReason: 'Read-only for now' }), net };
+  const f = (name: string, kind: FsEntry['kind'] = 'file'): FsEntry => ({ ...E(name, kind, `NET:/b1/Work/${name}`), size: 901120 });
+  it('disk images are copied onto a shelf; nothing is moved; other files are refused', () => {
+    expect(filingReason('copy', volume, [f('Game.adf'), f('Other.adf')], { collectionId: null })).toBeNull();
+    expect(filingReason('copy', volume, [f('Game.adf')], { collectionId: 'c1' })).toBeNull();
+    expect(filingReason('move', volume, [f('Game.adf')], { collectionId: null })).toBe('Read-only for now');
+    expect(filingReason('copy', volume, [f('ReadMe')], { collectionId: null })).toMatch(/Select disk images/);
+    expect(filingReason('copy', volume, [f('Game.adf')], null)).toBeUndefined();
+  });
+  // Final review: a drawer is refused before the walk, in the words the server refuses it with per item.
+  it('a drawer is refused onto a shelf as a folder, in the server\'s words', () => {
+    const words = filingReason('copy', volume, [f('Game.adf'), f('Games', 'dir')], { collectionId: null });
+    expect(words).toBe(refusalWords('not_a_disk_image', 'a folder'));
+    expect(filingReason('copy', volume, [f('Games', 'dir')], { collectionId: 'c1' })).toBe(words);
+  });
+  it('Create ADF… on a volume is read-only for now', () => {
+    expect(createAdfReason(volume)).toBe('Read-only for now');
   });
 });
 

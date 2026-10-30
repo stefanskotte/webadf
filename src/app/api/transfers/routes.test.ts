@@ -27,7 +27,8 @@ vi.mock('@/lib/transfers', () => ({
 }));
 const { cleanAmigaPath: realCleanAmigaPath } = await vi.importActual<typeof import('@/lib/transfers')>('@/lib/transfers');
 
-const TARGET = { id: 'dev-1', name: 'Bench', macAddress: null, defaultName: false, online: true, lastSeenAt: 1, network: true, rx: 'c', rxAt: 1 };
+const TARGET = { id: 'dev-1', name: 'Bench', macAddress: null, defaultName: false, online: true, lastSeenAt: 1, network: true, rx: 'c', rxAt: 1,
+  firmwareVersion: '1.21.1+gabc', rxProto: null, browseOn: false };
 let n = 0;
 beforeEach(() => {
   vi.clearAllMocks(); store.clear(); n = 0;

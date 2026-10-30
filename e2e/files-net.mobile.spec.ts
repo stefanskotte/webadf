@@ -33,6 +33,8 @@ test('at 390: Copy to… walks into a board under NET: and sends; Move to… the
   let picker = page.getByTestId('files-copy-to');
   await picker.getByTestId('files-copy-to-dev-NET').tap();
   await picker.locator('[data-testid="files-copy-to-folder"][data-name="A500 bench"]').tap();
+  // The board holds its volumes and Queue (NET: volumes, spec 2026-10-30 §4.3): the send queue is Queue.
+  await picker.locator('[data-testid="files-copy-to-folder"][data-name="Queue"]').tap();
   await expect(picker.getByTestId('files-copy-to-reason')).toHaveText('Files sent to the Amiga stay where they are — use Copy');
   await expect(picker.getByTestId('files-copy-to-here')).toBeDisabled();
   await picker.getByTestId('files-copy-to-close').tap();
@@ -44,6 +46,7 @@ test('at 390: Copy to… walks into a board under NET: and sends; Move to… the
   await picker.getByTestId('files-copy-to-dev-NET').tap();
   await expect(picker.getByTestId('files-copy-to-reason')).toHaveText('Open a board to send files to it');
   await picker.locator('[data-testid="files-copy-to-folder"][data-name="A500 bench"]').tap();
+  await picker.locator('[data-testid="files-copy-to-folder"][data-name="Queue"]').tap();
   await expect(picker.getByTestId('files-copy-to-here')).toHaveText('Send here');
   await picker.getByTestId('files-copy-to-here').tap();
   await expect(picker).toBeHidden({ timeout: 15_000 });
@@ -53,6 +56,7 @@ test('at 390: Copy to… walks into a board under NET: and sends; Move to… the
   await page.getByTestId('files-side-right').tap();
   await expect(row(page, 'right', 'a.txt')).toContainText('Waiting', { timeout: 15_000 });
   await expect(page.getByTestId('pane-right-crumb-1')).toHaveText('A500 bench');
+  await expect(page.getByTestId('pane-right-crumb-2')).toHaveText('Queue');
   const box = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(box).toBeLessThanOrEqual(390);
 });

@@ -16,12 +16,13 @@ export async function listSendTargets(db: Db, orgId: string, now = Date.now()): 
   const rows = await db.select({
     id: devices.id, name: devices.name, macAddress: devices.macAddress, firmwareVersion: devices.firmwareVersion,
     lastSeenAt: devices.lastSeenAt, secondDriveReported: devices.secondDriveReported,
-    sendRx: devices.sendRx, sendRxAt: devices.sendRxAt,
+    sendRx: devices.sendRx, sendRxAt: devices.sendRxAt, rxProto: devices.rxProto, browseOn: devices.browseOn,
   }).from(devices).where(eq(devices.orgId, orgId)).orderBy(asc(devices.name), asc(devices.id));
   return orderTargets(rows.filter((r) => firmwareAtLeast(r.firmwareVersion, XFER_FW)).map((r) => ({
     id: r.id, name: r.name, macAddress: r.macAddress, defaultName: isDefaultDeviceName(r.name, r.macAddress),
     online: isOnline(r.lastSeenAt, now), lastSeenAt: r.lastSeenAt?.getTime() ?? null,
     network: r.secondDriveReported === 'net', rx: asRx(r.sendRx), rxAt: r.sendRxAt?.getTime() ?? null,
+    firmwareVersion: r.firmwareVersion, rxProto: r.rxProto, browseOn: r.browseOn,
   })));
 }
 

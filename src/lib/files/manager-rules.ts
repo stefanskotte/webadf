@@ -135,3 +135,32 @@ export function navTargets(listing: { crumbs: { path: string }[] } | null, path:
   const up = p && parentOf(p);
   return up ? { parent: formatPath(up), root: `${p.device}:` } : { parent: null, root: null };
 }
+
+/**
+ * The status row of a copy out of a NET: volume (spec 2026-10-30 §4.5), from GET /api/files/net/fetch/<id>: the file
+ * now on its way while any wait, then the summary, naming the first failure ("; …" when there are more).
+ */
+export function fetchStatus(p: { total: number; done: number; failed: { name: string; reason: string }[]; waiting: number }, board: string): { line: string; finished: boolean } {
+  if (p.waiting > 0) return { line: `Copying ${Math.min(p.done + p.failed.length + 1, p.total)} of ${p.total} from ${board}…`, finished: false };
+  const [first, ...more] = p.failed;
+  const failed = first ? `, ${p.failed.length} failed: ${first.name}: ${first.reason}${more.length ? '; …' : ''}` : '';
+  return { line: `Copied ${p.done}${failed}`, finished: true };
+}
+
+/**
+ * What a copy out of a volume asks before it is posted (Task 8 fix rounds 1-2): the server expands each source from the
+ * listing of its drawer remembered within 2 minutes (plan P3). Each picked drawer (and, as they are read, its drawers --
+ * the caller puts them before the last ask) fresh; a resend after the Clash dialog asks them from memory, as they were
+ * just read unless the answer was slow. The source drawer `from` LAST, from memory while it holds, from the Amiga once
+ * it has run out: the server checks it first, so it must not run out during the walk (each drawer up to 20 s).
+ */
+export function asksBeforeCopy(from: string, drawers: string[], resend: boolean): { path: string; fresh: boolean }[] {
+  return [...drawers.map((path) => ({ path, fresh: !resend })), { path: from, fresh: false }];
+}
+
+/** The first picked source the re-listed source drawer no longer holds, as the Amiga says it; null when all are there. */
+export function pickGone(entries: { path: string }[], sources: string[]): string | null {
+  const there = new Set(entries.map((e) => e.path.toLowerCase()));
+  const gone = sources.find((s) => !there.has(s.toLowerCase()));
+  return gone === undefined ? null : `${gone.slice(gone.lastIndexOf('/') + 1)}: Object not found`;
+}

@@ -70,6 +70,22 @@ export async function seedDevices(
 }
 
 /**
+ * NET: volumes (spec 2026-10-30 §4.4): what the board reports about browsing, set straight in the row as seedDevices
+ * does -- seen now, Transfer's state `rx` seen now, its protocol and its browsing switch. `firmware` is the board's real
+ * form, `<semver>+g<sha>` (firmwareAtLeast refuses a bare version). Call again in a long test: online is 60 s.
+ */
+export async function setBrowse(deviceId: string, o: { firmware?: string; rx?: 'c' | 'u'; rxProto?: 2 | 3; browseOn?: boolean } = {}) {
+  const now = new Date();
+  await getDb().update(devices).set({
+    lastSeenAt: now, sendRxAt: now,
+    ...(o.firmware !== undefined ? { firmwareVersion: o.firmware } : {}),
+    ...(o.rx !== undefined ? { sendRx: o.rx } : {}),
+    ...(o.rxProto !== undefined ? { rxProto: o.rxProto } : {}),
+    ...(o.browseOn !== undefined ? { browseOn: o.browseOn } : {}),
+  }).where(eq(devices.id, deviceId));
+}
+
+/**
  * Insert one game + disk + blob + entitlement directly. Faster than the real
  * ingest flow and enough for protocol tests, which are not about ingest.
  */

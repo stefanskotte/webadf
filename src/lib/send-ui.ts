@@ -11,9 +11,11 @@ export const RX_FRESH_MS = 75_000;
 export const LONG_OFFLINE_MS = 24 * 3600_000;
 export const SEND_BOARD_KEY = 'webadf:send-board';
 
+/** `firmwareVersion`, `rxProto`, `browseOn`: whether NET: may browse the board's Amiga (spec 2026-10-30, browseBlock). */
 export type SendTarget = {
   id: string; name: string; macAddress: string | null; defaultName: boolean;
   online: boolean; lastSeenAt: number | null; network: boolean; rx: Rx | null; rxAt: number | null;
+  firmwareVersion: string | null; rxProto: number | null; browseOn: boolean;
 };
 export type SendContext = { targets: SendTarget[]; now: number };
 export type TransferView = {

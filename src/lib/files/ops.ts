@@ -11,6 +11,8 @@ import {
   type Added, type CopyMove, type FsCtx, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome, type VolumeDriver,
 } from './driver';
 import { NET_MOVE_IN } from './net-rules';
+import { isNetVolumePath } from './net-driver';
+import { startFetch } from './net-fetch';
 import { addDiskImages } from './add-to-library';
 import { createAdf, type CreateAdfRequest } from './create-adf';
 import { deleteOnShelf, fileOnShelf, makeCollection, renameOnShelf, shelfDest, shelfItem } from './shelf';
@@ -31,7 +33,7 @@ export type OpRequest =
   | ({ op: 'create-adf' } & CreateAdfRequest);                    // a blank disk into STASH: or LIBRARY: (Files 2 §4)
 export type OpResult =
   /** `versions`: each history version the op saved, in the order it saved them (Undo needs exactly one, Task 9b). */
-  | ({ kind: 'done'; items: OpItem[]; added?: Added[]; queued?: number } & { versions: OpVersion[] })
+  | ({ kind: 'done'; items: OpItem[]; added?: Added[]; queued?: number; fetching?: { id: string; files: number } } & { versions: OpVersion[] })
   | Extract<Outcome, { kind: 'clashes' }>
   | { kind: 'refused'; refusal: Refusal; status: number };
 
@@ -42,7 +44,7 @@ export async function runOp(ctx: FsCtx, req: OpRequest): Promise<OpResult> {
     // `written` is the engine's own business (crossDevice); the caller hears items, what was added, and the versions.
     if (r.kind !== 'done') return r;
     return { kind: 'done', items: r.items, ...(r.added ? { added: r.added } : {}), ...(r.queued !== undefined ? { queued: r.queued } : {}),
-      versions: run.versions };
+      ...(r.fetching ? { fetching: r.fetching } : {}), versions: run.versions };
   } catch (e) {
     if (e instanceof Refused) return { kind: 'refused', refusal: e.refusal, status: e.status };
     throw e;
@@ -69,6 +71,9 @@ function need<K extends keyof VolumeDriver>(d: VolumeDriver, k: K): NonNullable<
 async function dispatch(ctx: OpCtx, req: OpRequest): Promise<Outcome> {
   switch (req.op) {
     case 'copy': case 'move': {
+      // Out of a NET: volume (spec 2026-10-30 §4.5): a fetch from the Amiga, decided before the shelf -- a disk image
+      // copied onto LIBRARY: from a volume is fetched first, then added (P5), not filed.
+      if (req.sources.some((s) => { const p = parsePath(s); return !!p && isNetVolumePath(p); })) return startFetch(ctx, req as CopyMove);
       const dest = pathOf(req.dest);
       // LIBRARY: above the disks (the root, a collection, a title's disk list): filing, not a write (Files 2 §3.2).
       const shelf = await shelfDest(ctx, dest);

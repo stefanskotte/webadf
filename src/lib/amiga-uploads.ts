@@ -4,9 +4,12 @@ import type { Db } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { transfers } from '@/db/schema/transfers';
 import { amigaUploads, amigaUploadChunks } from '@/db/schema/amiga-uploads';
+import { remoteRequests } from '@/db/schema/remote-requests';
 import { cleanAmigaPath } from '@/lib/transfers';
 import { listStash, lockOrg, touchStashDirs } from '@/lib/stash';
 import { uniqueStashPath } from '@/lib/files/stash-paths';
+import { parsePath } from '@/lib/files/path';
+import { getForUpload, liveGet, settleGet, touchGet, type GetTarget } from '@/lib/remote-requests';
 import { storeSendBytes } from '@/lib/send-http';
 import { firmwareAtLeast } from '@/lib/firmware-version';
 import {
@@ -20,15 +23,35 @@ const LIVE = ['receiving', 'stored'];
 /** What a board sent (R5), as the board card's count sees it: STASH: rows from the browser, copies and folders are not its. */
 const FROM_AMIGA = [eq(amigaUploads.source, 'amiga'), eq(amigaUploads.kind, 'file')];
 
-export type OpenInput = { size: number; date: string; protection: number; path: string; comment: string };
-export type OpenResult = { ok: true; id: string; offset: number } | { ok: false; code: 'size' | 'full' | 'name' };
+/** `request`: the get this upload answers (NET: volumes, spec 2026-10-30 §4.5): the file is stored at the copy's target. */
+export type OpenInput = { size: number; date: string; protection: number; path: string; comment: string; request?: string };
+type OpenFail = 'size' | 'full' | 'name';
+export type OpenResult = { ok: true; id: string; offset: number } | { ok: false; code: OpenFail };
 
 /** Resumes the same file from the same board (path, size, date) within 24 h, or opens a new one within the org's limits. */
 export async function openUpload(db: Db, dev: { deviceId: string; orgId: string }, a: OpenInput, now = new Date()): Promise<OpenResult> {
-  if (!Number.isSafeInteger(a.size) || a.size < 0 || a.size > UPLOAD_FILE_MAX) return { ok: false, code: 'size' };
-  const path = cleanAmigaPath(a.path);
-  if (!path) return { ok: false, code: 'name' };
+  // A fetched file (§4.5) goes where the copy said: the STASH: folder's segments, then its path below the copied entry.
+  const get = a.request === undefined ? null : await getForUpload(db, dev.deviceId, a.request);
+  if (a.request !== undefined && !get) return { ok: false, code: 'name' };
+  // Any refusal fails the get with why: this file fails, the copy's other files go on (each is its own get), and the
+  // copy never waits out the 10 minutes to say "stopped answering" (final review).
+  const refused = async (code: OpenFail, why: { code: string; text: string }): Promise<OpenResult> => {
+    if (get) await settleGet(db, get.id, { ok: false, ...why }, now);
+    return { ok: false, code };
+  };
+  if (!Number.isSafeInteger(a.size) || a.size < 0) return refused('size', { code: 'bad', text: 'the board sent a size webadf could not read' });
+  if (a.size > UPLOAD_FILE_MAX) return refused('size', { code: 'toolarge', text: 'over 4 MB' });
+  const target = get?.target as GetTarget | undefined;
+  const path = cleanAmigaPath(target ? [...(parsePath(target.dest)?.segments ?? []), ...target.rel].join('/') : a.path);
+  if (!path) return refused('name', { code: 'bad', text: 'the name could not be used' });
   const comment = a.comment.replace(/[^\x20-\x7e\xa0-\xff]/g, '').slice(0, 79);
+  const r = await openRow(db, dev, a, path, comment, get?.id ?? null, now);
+  if (!r.ok) return refused(r.code, r.code === 'full' ? { code: 'full', text: 'STASH: is full' } : { code: 'bad', text: 'it could not be stored' });
+  return r;
+}
+
+async function openRow(db: Db, dev: { deviceId: string; orgId: string }, a: OpenInput, path: string, comment: string, rid: string | null,
+  now: Date): Promise<OpenResult> {
   return db.transaction(async (tx) => {
     // The count and the insert under one lock per org: READ COMMITTED alone lets two opens count the same rows (ruling P8).
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`amiga_uploads:${dev.orgId}`}))`);
@@ -36,7 +59,10 @@ export async function openUpload(db: Db, dev: { deviceId: string; orgId: string 
       .where(and(eq(amigaUploads.orgId, dev.orgId), eq(amigaUploads.deviceId, dev.deviceId), eq(amigaUploads.status, 'receiving'), eq(amigaUploads.path, path),
         eq(amigaUploads.sizeBytes, a.size), eq(amigaUploads.amigaDate, a.date), gt(amigaUploads.expiresAt, now)))
       .orderBy(desc(amigaUploads.createdAt)).limit(1);
-    if (same) return { ok: true as const, id: same.id, offset: same.received };
+    if (same) {
+      if (rid) await touchGet(tx, { id: rid }, now, same.id);
+      return { ok: true as const, id: same.id, offset: same.received };
+    }
     // Only rows that still count (3bv I1): receiving within its 24 h, stored within its 30 days.
     const [load] = await tx.select({ n: sql<number>`count(*)::int`, b: sql<string>`coalesce(sum(${amigaUploads.sizeBytes}),0)::bigint` })
       .from(amigaUploads)
@@ -46,9 +72,11 @@ export async function openUpload(db: Db, dev: { deviceId: string; orgId: string 
     }
     const [d] = await tx.select({ name: devices.name }).from(devices).where(eq(devices.id, dev.deviceId));
     const id = crypto.randomUUID();
-    await tx.insert(amigaUploads).values({ id, orgId: dev.orgId, deviceId: dev.deviceId, deviceName: d?.name ?? 'Board',
+    // A fetched file is a Files copy (P6): source copy, no board name, as every copy row.
+    await tx.insert(amigaUploads).values({ id, orgId: dev.orgId, deviceId: dev.deviceId, deviceName: rid ? null : d?.name ?? 'Board',
       path, sizeBytes: a.size, protection: a.protection >>> 0, comment, amigaDate: a.date,
-      expiresAt: new Date(now.getTime() + UPLOAD_RESUME_MS) });
+      expiresAt: new Date(now.getTime() + UPLOAD_RESUME_MS), ...(rid ? { source: 'copy' } : {}) });
+    if (rid) await touchGet(tx, { id: rid }, now, id);
     return { ok: true as const, id, offset: 0 };
   });
 }
@@ -56,7 +84,7 @@ export async function openUpload(db: Db, dev: { deviceId: string; orgId: string 
 export type ChunkResult = { ok: true; received: number } | { ok: false; status: 400 | 404 | 409; received?: number };
 
 /** One chunk at `offset`: stored when it is the next one; a retry of a stored one changes nothing; a gap is 409. */
-export async function storeChunk(db: Db, deviceId: string, id: string, offset: number, data: Uint8Array): Promise<ChunkResult> {
+export async function storeChunk(db: Db, deviceId: string, id: string, offset: number, data: Uint8Array, now = new Date()): Promise<ChunkResult> {
   if (data.byteLength < 1 || data.byteLength > UPLOAD_CHUNK) return { ok: false, status: 400 };
   return db.transaction(async (tx) => {
     const [r] = await tx.select({ size: amigaUploads.sizeBytes, received: amigaUploads.receivedBytes, status: amigaUploads.status })
@@ -69,6 +97,8 @@ export async function storeChunk(db: Db, deviceId: string, id: string, offset: n
     if (end > r.size || (data.byteLength !== UPLOAD_CHUNK && end !== r.size)) return { ok: false as const, status: 400 as const };
     await tx.insert(amigaUploadChunks).values({ uploadId: id, offset, data });
     await tx.update(amigaUploads).set({ receivedBytes: end }).where(eq(amigaUploads.id, id));
+    // A fetched file's chunk is its get's sign of life: the 10-minute timeout restarts (fix round 1 ruling).
+    await touchGet(tx, { uploadId: id }, now);
     return { ok: true as const, received: end };
   });
 }
@@ -123,6 +153,7 @@ export async function closeUpload(db: Db, deviceId: string, id: string, crc: num
       if (hit.length) await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
       return hit.length > 0;
     });
+    if (failed) await settleGetOf(db, id, { ok: false, code: 'crc', text: 'the copy arrived damaged' }, now);
     // Deleted or expired meanwhile: it stays so, and the board hears gone.
     return failed ? { ok: false, status: 409, code: 'crc' } : lost({ ok: false, status: 404, code: 'gone' });
   }
@@ -130,6 +161,13 @@ export async function closeUpload(db: Db, deviceId: string, id: string, crc: num
   const done = await db.transaction(async (tx) => {
     // One name, one entry (R4): under the org lock, a path STASH: already holds is stored as its keep-both name.
     await lockOrg(tx, r.orgId);
+    // A fetch answered Replace (P4): the FILE at exactly this path goes, so the arriving one takes its name.
+    const [get] = await tx.select({ target: remoteRequests.target }).from(remoteRequests)
+      .where(and(eq(remoteRequests.uploadId, id), eq(remoteRequests.kind, 'get')));
+    if ((get?.target as GetTarget | undefined)?.replace) {
+      await tx.update(amigaUploads).set({ status: 'deleted' }).where(and(eq(amigaUploads.orgId, r.orgId), ne(amigaUploads.id, id),
+        eq(amigaUploads.kind, 'file'), eq(amigaUploads.status, 'stored'), sql`lower(${amigaUploads.path}) = lower(${r.path})`));
+    }
     const others = (await listStash(tx, r.orgId, now)).filter((x) => x.id !== id && x.status !== 'failed');   // a failed stub holds no name: a retry of its path is stored as that path
     const path = uniqueStashPath(others, r.path);
     const hit = await tx.update(amigaUploads).set({ status: 'stored', crc32: crc >>> 0, blobSha256: sha, storedAt: sql`now()`, receivedBytes: r.sizeBytes,
@@ -143,6 +181,13 @@ export async function closeUpload(db: Db, deviceId: string, id: string, crc: num
   });
   // Lost the update: another close stored it (ok, the same name) -- or a delete took it (gone, not ok).
   return done ? { ok: true, name: r.path } : lost({ ok: false, status: 404, code: 'gone' });
+}
+
+/** The get (if any) whose file upload `id` is, settled. */
+async function settleGetOf(db: Db, id: string, outcome: Parameters<typeof settleGet>[2], now: Date): Promise<void> {
+  const [g] = await db.select({ id: remoteRequests.id }).from(remoteRequests)
+    .where(and(eq(remoteRequests.uploadId, id), eq(remoteRequests.kind, 'get'), liveGet()));
+  if (g) await settleGet(db, g.id, outcome, now);
 }
 
 export async function getUpload(db: Db, orgId: string, id: string): Promise<UploadRow | null> {

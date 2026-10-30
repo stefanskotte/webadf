@@ -5,7 +5,8 @@ import type { SendTarget } from '@/lib/send-ui';
 import { SendDropZone, sentReport } from './send-drop-zone';
 
 const target = (id: string, name: string, o: Partial<SendTarget> = {}): SendTarget => ({
-  id, name, macAddress: null, defaultName: false, online: true, lastSeenAt: 1000, network: true, rx: 'c', rxAt: 1000, ...o,
+  id, name, macAddress: null, defaultName: false, online: true, lastSeenAt: 1000, network: true, rx: 'c', rxAt: 1000,
+  firmwareVersion: '1.21.1+gabc', rxProto: null, browseOn: false, ...o,
 });
 const render = (targets: SendTarget[]) =>
   renderToStaticMarkup(createElement(SendDropZone, { targets, initialBoard: null, serverNow: 1000, onSent: () => {} }));

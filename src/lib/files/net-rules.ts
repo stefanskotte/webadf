@@ -5,6 +5,7 @@ import { parsePath } from './path';
 import type { Listing } from './types';
 import { isActiveTransferText } from '@/lib/send-ui';
 import { SEND_FILE_MAX, SEND_QUEUE_MAX_BYTES, SEND_QUEUE_MAX_FILES } from '@/lib/send-limits';
+import { PANE_GIVE_UP_MS, QUEUE_FOLDER } from '@/lib/remote-limits';
 
 export const NET_REFRESH_ACTIVE_MS = 3_000;
 export const NET_REFRESH_IDLE_MS = 10_000;
@@ -17,11 +18,70 @@ export const NET_MOVE_IN = 'Files sent to the Amiga stay where they are — use 
 export const netEmpty = (path: string) => `${path} is empty`;
 /** NET: itself lists boards and takes nothing: its `readOnlyReason`. */
 export const NET_PICK_BOARD = 'Open a board to send files to it';
+/** A volume of a board's Amiga takes nothing in phase 1 (NET: volumes, spec 2026-10-30 §5): its `readOnlyReason`. */
+export const NET_READ_ONLY = 'Read-only for now';
+/** NET:/<board> lists places (its volumes and Queue), not files: its `readOnlyReason`, and what a copy out of it says. */
+export const NET_OPEN_VOLUME = 'Open a volume or Queue';
 
-/** How often a pane showing `l` re-reads it: NET:/<board> only; faster while anything waits or sends. */
+/** A listing of a volume, or a drawer in one (`net.volume` set): read, read-only, through the board (spec 2026-10-30). */
+export function isNetVolume(l: Listing | null): boolean {
+  return !!l?.net?.volume;
+}
+
+/** The board NET:/<board> is the root of (its volumes and Queue); null for any other path. */
+export function netBoardRoot(path: string): string | null {
+  const p = parsePath(path);
+  return p?.device === 'NET' && p.segments.length === 1 ? p.segments[0] : null;
+}
+
+/**
+ * The board's name for a NET: path, from a listing on screen that knows it (a listing of that board, or NET: with the
+ * board's row), else `boards`, else the board's id: the "didn't answer" words name it before anything of it was read.
+ */
+export function boardNameFor(path: string, l: Listing | null, boards: readonly { id: string; name: string }[] = []): string {
+  const id = parsePath(path)?.segments[0] ?? path;
+  if (l?.net?.board === id) return l.net.boardName;
+  // `boards`: the page's boards (its Send targets), for a pane opened straight at a volume nothing on screen names.
+  return l?.entries.find((e) => e.kind === 'board' && e.path === `NET:/${id}`)?.name ?? boards.find((b) => b.id === id)?.name ?? id;
+}
+
+/** The title bar of a volume pane (§5): "A500 · Work:Programs"; null at the board and anywhere else. */
+export function netTitle(l: Listing): string | null {
+  return l.net?.amigaPath ? `${l.net.boardName} · ${l.net.amigaPath}` : null;
+}
+
+/** "read 40 s ago" for a remembered listing (§5, V3); null when nothing was read or it is under 5 s old. */
+export function readAgo(readAt: number | null, now: number): string | null {
+  if (readAt === null) return null;
+  const s = Math.floor((now - readAt) / 1000);
+  if (s < 5) return null;
+  return s < 60 ? `read ${s} s ago` : `read ${Math.floor(s / 60)} min ago`;
+}
+
+/**
+ * A refused listing (`/api/files/list`'s status and detail) in the pane: gone (404, 400: "This place no longer
+ * exists."), or its words -- a NET: refusal's detail is the pane's whole sentence ("Object not found", "Switch on
+ * browsing in Transfer on A500"), a 404 with one included (a drawer the Amiga refused, final review); `words` null
+ * elsewhere, where the refusal's code decides.
+ */
+export function listingRefusal(path: string, status: number, detail: unknown): { gone: true } | { words: string | null } {
+  const net = parsePath(path)?.device === 'NET' && typeof detail === 'string' ? detail : null;
+  if (status === 400 || (status === 404 && net === null)) return { gone: true };
+  return { words: net };
+}
+
+/** A pane asking for a pending listing (§4.4): ask again, or give up once PANE_GIVE_UP_MS have passed since it began. */
+export function nextAsk(startedAt: number, now: number): 'ask' | 'give-up' {
+  return now - startedAt >= PANE_GIVE_UP_MS ? 'give-up' : 'ask';
+}
+
+/**
+ * How often a pane showing `l` re-reads it: a board's queue (NET:/<board>/Queue) only; faster while anything waits or
+ * sends. A board's volumes are read on request (spec 2026-10-30), never polled.
+ */
 export function netPollMs(l: Listing | null): number | null {
   const p = l && parsePath(l.path);
-  if (!p || p.device !== 'NET' || p.segments.length !== 1) return null;
+  if (!p || p.device !== 'NET' || p.segments.length !== 2 || p.segments[1] !== QUEUE_FOLDER) return null;
   return l.entries.some((e) => e.marks[0] !== undefined && isActiveTransferText(e.marks[0])) ? NET_REFRESH_ACTIVE_MS : NET_REFRESH_IDLE_MS;
 }
 

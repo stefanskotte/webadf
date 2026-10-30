@@ -18,9 +18,12 @@ export type Added = { source: string; gameId: string; diskId: string };
 /**
  * `written`: the sources a write actually placed (not skipped, not refused). A move between devices removes only these
  * (ruling 1); runOp does not pass it on. `queued`: how many files a copy into NET:/<board> queued (increment 3, C3), a
- * folder being several, so the pane can say "Queued 3 files".
+ * folder being several, so the pane can say "Queued 3 files". `fetching`: a copy out of a NET: volume (spec 2026-10-30
+ * §4.5): the fetch id its progress is read by, and how many files it asked the Amiga for.
  */
-export type Outcome = { kind: 'done'; items: OpItem[]; added?: Added[]; written?: string[]; queued?: number } | { kind: 'clashes'; clashes: Clash[] };
+export type Outcome =
+  | { kind: 'done'; items: OpItem[]; added?: Added[]; written?: string[]; queued?: number; fetching?: { id: string; files: number } }
+  | { kind: 'clashes'; clashes: Clash[] };
 export type FileBytes = { name: string; bytes: Uint8Array; date: Date | null; protection: string; comment: string | null };
 /**
  * One entry of a copy, a folder before what it holds; rel[0] is the copied entry's own name. `sha256` when the bytes are
@@ -38,6 +41,13 @@ export type CopyMove = { op: 'copy' | 'move'; sources: string[]; dest: string; o
 /** A refusal thrown from anywhere below runOp; runOp (or a per-item catch) turns it into a result. */
 export class Refused extends Error {
   constructor(readonly refusal: Refusal, readonly status: number) { super(refusal.code); }
+}
+/**
+ * NET: volumes (spec 2026-10-30 §4.4): a listing the board's Amiga has been asked for and not answered yet. The list
+ * route answers it 202 with the label ("Reading Work:Programs from A500…"); the pane asks again.
+ */
+export class Pending extends Error {
+  constructor(readonly label: string) { super('pending'); }
 }
 export function refuse(code: RefusalCode, status: number, detail?: string): never {
   throw new Refused(detail ? { code, detail } : { code }, status);
@@ -76,7 +86,8 @@ export function itemResult(source: string, fn: () => void): OpItem {
 
 export interface VolumeDriver {
   readonly device: Device;
-  list(ctx: FsCtx, p: FsPath): Promise<Listing | null>;                // null = not found (404)
+  /** null = not found (404). `fresh`: NET: volumes ask the Amiga again rather than reuse a remembered answer (Refresh). */
+  list(ctx: FsCtx, p: FsPath, opts?: { fresh?: boolean }): Promise<Listing | null>;
   read(ctx: FsCtx, p: FsPath): Promise<FileBytes | null>;              // a file's bytes + meta; null for a folder or not found
   collect(ctx: FsCtx, p: FsPath): Promise<IncomingItem[] | null>;      // one entry walked, for a copy to another device
   within?(ctx: OpCtx, req: CopyMove): Promise<Outcome>;                // copy/move with every source and the dest on this device

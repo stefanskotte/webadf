@@ -169,6 +169,8 @@ export interface PollTick {
   df1Version: number;
   /** The send queue's cursor (PaulaNET Phase 4): compared against the board's ?xferAck=. */
   sendVersion: number;
+  /** The NET: volumes request queue's cursor: compared against the board's ?reqAck=. */
+  reqVersion: number;
   /** The Amiga's last address (R17): sent as xfer.ip. */
   netAmigaIpLast: string | null;
   /** What DF1 holds and when the Amiga's driver last read: driverDiskFor's inputs (plan 2026-10-17 R16). */
@@ -199,6 +201,7 @@ export async function readPollTick(deviceId: string): Promise<PollTick | null> {
       netNextSentVersion: devices.netNextSentVersion,
       df1Version: devices.df1Version,
       sendVersion: devices.sendVersion,
+      reqVersion: devices.reqVersion,
       netAmigaIpLast: devices.netAmigaIpLast,
       df1Sha256: devices.df1Sha256,
       netDriverSeenAt: devices.netDriverSeenAt,

@@ -3,7 +3,8 @@
 import { libraryEligible } from '@/lib/from-amiga-ui';
 import { isActiveTransferText } from '@/lib/send-ui';
 import { parsePath } from './path';
-import { NET_COPY_OUT } from './net-rules';
+import { isNetVolume, netBoardRoot, NET_COPY_OUT, NET_OPEN_VOLUME, NET_READ_ONLY } from './net-rules';
+import { QUEUE_FOLDER } from '@/lib/remote-limits';
 import type { FsEntry, Listing } from './types';
 
 const inStash = (path: string) => parsePath(path)?.device === 'STASH';
@@ -17,10 +18,13 @@ export function holdsFiles(l: Listing | null): boolean {
   return !!l && (l.disk !== null || inStash(l.path));
 }
 
-/** The board a NET:/<board> listing is the queue of; null for NET: itself and anywhere else. */
+/**
+ * The board a NET:/<board>/Queue listing is the queue of (NET: volumes, spec 2026-10-30 §4.3); null for NET: itself, a
+ * board's root, its volumes and anywhere else.
+ */
 export function netBoardOf(l: Listing | null): string | null {
   const p = l ? parsePath(l.path) : null;
-  return p?.device === 'NET' && p.segments.length === 1 ? p.segments[0] : null;
+  return p?.device === 'NET' && p.segments.length === 2 && p.segments[1] === QUEUE_FOLDER ? p.segments[0] : null;
 }
 
 /**
@@ -32,9 +36,18 @@ export function acceptsCopies(l: Listing | null): boolean {
   return holdsFiles(l) || netBoardOf(l) !== null;
 }
 
-/** R5: nothing is copied, moved or downloaded out of NET:. */
+/**
+ * R5: nothing is copied, moved or downloaded out of a board's queue or NET: itself. A volume's files are (NET: volumes,
+ * spec 2026-10-30 §4.5); a board's root lists places, so it asks for one.
+ */
 export function copyOutReason(l: Listing | null): string | null {
-  return l && inNet(l.path) ? NET_COPY_OUT : null;
+  if (!l || !inNet(l.path) || isNetVolume(l)) return null;
+  return netBoardRoot(l.path) !== null ? NET_OPEN_VOLUME : NET_COPY_OUT;
+}
+
+/** What every command that would write to a volume says (§5: Move, Delete, Rename, Makedir, Protect, …); else null. */
+export function netVolumeReason(l: Listing | null): string | null {
+  return isNetVolume(l) ? NET_READ_ONLY : null;
 }
 
 /** NET: rows are queue rows: nothing renames them, makes folders, sets protection or edits a comment there. */
@@ -53,6 +66,9 @@ export function failedReason(picked: FsEntry[]): string | null {
   return picked.some((e) => e.marks.some((m) => m.startsWith('failed'))) ? FAILED_ROW : null;
 }
 
+/** What Add to library (and filing onto a shelf) says when something picked is no disk image. */
+export const SELECT_IMAGES = 'Select disk images (ADF, ADZ, DMS, DMZ, HFE) to add them';
+
 /** Add to library takes stored disk images in STASH: itself (R8), never members of an archive. */
 /** `filing`: Copy or Move onto LIBRARY: (Files 2 R4), which also files a disk image the library already has. */
 export function addToLibraryReason(l: Listing | null, picked: FsEntry[], opts: { filing?: boolean } = {}): string | null {
@@ -61,7 +77,7 @@ export function addToLibraryReason(l: Listing | null, picked: FsEntry[], opts: {
   if (l.readOnlyReason === 'archive') return 'Copy it out of the archive first';
   if (!opts.filing && picked.some((e) => e.marks.includes('in the library'))) return 'Already in the library';
   const image = (e: FsEntry) => (e.kind === 'file' || e.kind === 'archive') && !unfinished(e) && libraryEligible(e.name, e.size ?? 0);
-  return picked.every(image) ? null : 'Select disk images (ADF, ADZ, DMS, DMZ, HFE) to add them';
+  return picked.every(image) ? null : SELECT_IMAGES;
 }
 
 /**
@@ -82,7 +98,8 @@ export function offersUndo(op: 'copy' | 'move', sources: readonly string[], dest
 export function placeOf(l: Listing | null): string {
   if (l?.disk) return l.disk.label;
   if (l?.library) return l.crumbs.at(-1)?.label ?? 'LIBRARY:';
-  if (netBoardOf(l)) return l!.crumbs.at(-1)?.label ?? 'the board';
+  // The board's crumb, before its Queue crumb (NET: volumes, spec 2026-10-30 §4.3).
+  if (netBoardOf(l)) return l!.crumbs.at(-2)?.label ?? 'the board';
   return l && inStash(l.path) ? 'STASH:' : 'the other side';
 }
 
