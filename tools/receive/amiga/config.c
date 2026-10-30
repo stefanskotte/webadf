@@ -46,3 +46,14 @@ int cfg_key_save(const char *key) {
     write_one("ENV:", "BoardKey", key);
     return write_one("ENVARC:", "BoardKey", key);
 }
+/* The browsing switch (spec 2026-10-30 §2.3): webadf/Browse holds "1" or "0"; anything else, or no file, is off. */
+int cfg_browse_load(void) {
+    char b[8];
+    if (read_file("ENV:webadf/Browse", b, sizeof b)) return b[0] == '1';
+    if (read_file("ENVARC:webadf/Browse", b, sizeof b)) return b[0] == '1';
+    return 0;
+}
+int cfg_browse_save(int on) {
+    write_one("ENV:", "Browse", on ? "1" : "0");
+    return write_one("ENVARC:", "Browse", on ? "1" : "0");
+}

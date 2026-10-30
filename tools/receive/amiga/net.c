@@ -95,6 +95,9 @@ int net_run(net_ui *ui, afs_ctx *ctx, rx_fs *fs, rx_session *s, rx_upq *q) {
                 else { if (sent < 0 && Errno() != EWOULDBLOCK) bad = 1; break; }
             }
         }
+        /* The switch (or the trust) changed since READY 3: close once idle and everything sent (net.c's own
+           buffer too, or the last chunk is lost), so the board reconnects and hears it (plan ruling T1). */
+        if (cl >= 0 && !bad && o_off == o_len && rx_hello_stale(s)) bad = 1;
         if (cl >= 0 && bad) drop(ui, s, &cl);
         if (n > 0 && FD_ISSET(ls, &r)) {
             LONG ns = accept(ls, NULL, NULL);

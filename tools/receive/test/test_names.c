@@ -1,3 +1,4 @@
+#include <string.h>
 #include "harness.h"
 #include "rx_names.h"
 
@@ -61,4 +62,36 @@ static void base_names(void) {
     rx_base_name("RAM:/", out); CHECK(strcmp(out, "RAM") == 0, "volume, then a slash");
     rx_base_name("DH0:123456789012345678901234567890XYZ", out); CHECK_EQ_INT(strlen(out), RX_PART_MAX);
 }
-int main(void) { RUN(ok_paths); RUN(bad_paths); RUN(candidates); RUN(utoa); RUN(base_names); return REPORT(); }
+static void sendable_names(void) {
+    char n31[32];
+    CHECK(rx_name_sendable("Work"), "plain");
+    CHECK(rx_name_sendable("RAM Disk"), "a space inside");
+    CHECK(rx_name_sendable("Caf\xe9"), "latin-1");
+    CHECK(rx_name_sendable(".info"), "a leading dot");
+    CHECK(rx_name_sendable("123456789012345678901234567890"), "30 bytes");
+    memset(n31, 'a', 31); n31[31] = 0;
+    CHECK(!rx_name_sendable(n31), "31 bytes");
+    CHECK(!rx_name_sendable(""), "empty");
+    CHECK(!rx_name_sendable("   "), "only spaces");
+    CHECK(!rx_name_sendable("\xa0\xa0"), "only no-break spaces (JavaScript's trim takes them too)");
+    CHECK(!rx_name_sendable("."), "dot");
+    CHECK(!rx_name_sendable(".."), "dot dot");
+    CHECK(!rx_name_sendable("a:b"), "colon");
+    CHECK(!rx_name_sendable("a/b"), "slash");
+    CHECK(!rx_name_sendable("a\x01"), "control byte");
+    CHECK(!rx_name_sendable("a\x7f"), "DEL");
+    CHECK(!rx_name_sendable("a\x85"), "C1 byte");
+}
+static void sendable_devices(void) {
+    CHECK(rx_device_sendable("DF0:"), "DF0:");
+    CHECK(rx_device_sendable("RAM:"), "RAM:");
+    CHECK(rx_device_sendable("my.dev-1_:"), "dots, dashes, underscores");
+    CHECK(rx_device_sendable("123456789012345678901234567890:"), "30 and a colon");
+    CHECK(!rx_device_sendable("1234567890123456789012345678901:"), "31 and a colon");
+    CHECK(!rx_device_sendable("DF0"), "no colon");
+    CHECK(!rx_device_sendable(":"), "only a colon");
+    CHECK(!rx_device_sendable("D F0:"), "a space");
+    CHECK(!rx_device_sendable("DF0:x"), "after the colon");
+}
+
+int main(void) { RUN(ok_paths); RUN(bad_paths); RUN(candidates); RUN(utoa); RUN(base_names); RUN(sendable_names); RUN(sendable_devices); return REPORT(); }

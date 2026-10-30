@@ -67,7 +67,7 @@ const logs: [string, RegExp[]][] = [
   ['s09', [/cannot receive files \(update to 1\.19\.0\)/, /rc=10/]], ['s10', [/Another board or computer connected -- not sending/, /rc=10/]],
   ['s11', [/Trusted board FEDC/, /rc=0/]], ['s12', [/Hello\.txt {2}21 bytes {2}OK/, /rc=0/]],
   // The direction is RECEIVE or SEND (2.1): both is refused before anything starts; and the version names the program.
-  ['s13', [/^Transfer: RECEIVE or SEND, not both$/m, /rc=10/]], ['ver', [/Transfer 2\.2/]],
+  ['s13', [/^Transfer: RECEIVE or SEND, not both$/m, /rc=10/]], ['ver', [/Transfer 2\.3/]],
 ];
 
 let fail = 0;

@@ -3,7 +3,7 @@ import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { runScenarios, runUploadScenarios } from './scenarios';
+import { runScenarios, runUploadScenarios, runBrowseScenarios, makeBrowseFixture } from './scenarios';
 import { connect, rawConnect } from './fake-board';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
@@ -60,6 +60,25 @@ describe('Receive (POSIX build) against the fake board', () => {
       expect(res).toHaveLength(10);
       expect(fs.readFileSync(keyFile, 'utf8').trim()).toBe('fedcba9876543210fedcba9876543210');   // TRUST saved the second key
       expect(lines).toContain('TRUST new 0123');                                                    // first contact
+    } finally { proc.kill(); }
+  }, 300000);
+
+  it('answers VOLS, DIR and GET with browsing on; a request waits behind a file; switching off reconnects', async () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'br-'));
+    const src = fs.mkdtempSync(path.join(tmp, 'brsrc-'));
+    const vols = makeBrowseFixture(fs.mkdtempSync(path.join(tmp, 'vols-')));
+    const { proc, port, lines } = await start(dir, { RX_VOLS: vols, RX_BROWSE: '1' }, path.join(tmp, 'BrowseKey'));
+    const ctl = {
+      dir: src,
+      send: (p: string) => proc.stdin!.write(`SEND ${p}\n`),
+      browse: (on: boolean) => proc.stdin!.write(`BROWSE ${on ? 1 : 0}\n`),
+    };
+    try {
+      const res = await runBrowseScenarios(port, ctl);
+      expect(res.filter((r) => !r.ok)).toEqual([]);
+      expect(res).toHaveLength(11);
+      expect(lines).toContain('REQ dir Work:Big 1000 cut ok');
+      expect(lines).toContain('REQ get Work:Programs/a.txt 0 ok');
     } finally { proc.kill(); }
   }, 300000);
 

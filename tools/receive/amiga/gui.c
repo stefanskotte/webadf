@@ -1,6 +1,7 @@
 /* Transfer's window (spec 2026-10-16 §5, 2026-10-18 §2): the folder, the board, and both directions in one list. It is
    an AppWindow: icons dropped on it go to the web app (a drawer walked, 64 files at most); Send... opens an asl
-   requester (several files on V38+, one on V37). gadtools, asl and workbench only (V37). */
+   requester (several files on V38+, one on V37). A checkbox lets the web app browse the Amiga's disks (read-only); the
+   status line shows its last request. gadtools, asl and workbench only (V37). */
 #include <stdio.h>
 #include <string.h>
 #include <exec/memory.h>
@@ -27,7 +28,7 @@ struct Library *GadToolsBase, *AslBase, *WorkbenchBase;
 struct IntuitionBase *IntuitionBase;
 struct GfxBase *GfxBase;
 
-enum { G_DIR, G_CHOOSE, G_SEND, G_RETRY, G_TRUST, G_SAVE, G_STATUS, G_LIST, G_N };
+enum { G_DIR, G_CHOOSE, G_SEND, G_RETRY, G_TRUST, G_SAVE, G_BROWSE, G_STATUS, G_LIST, G_N };
 #define ROWS_MAX 96
 enum { ST_WAITING, ST_RECEIVING, ST_DONE, ST_FAILED, ST_UP_WAITING, ST_UP_MOVING, ST_UP_DONE, ST_UP_FAILED };
 typedef struct { struct Node node; char id[RX_ID_MAX + 1]; unsigned tag; char name[RX_PATH_MAX + 1];
@@ -167,7 +168,7 @@ static int gui_trust(void *u) { gui *G = u; if (rx_trust_now(G->s) != 0) G->q->t
 
 static void on_event(void *u, const rx_event *e, rx_session *s) {
     gui *G = u; row *r; unsigned i; int k;
-    char k4[5], t[80];
+    char k4[5], t[80], w[80];
     switch (e->kind) {
     case RX_EV_LIST:
         for (k = G->n - 1; k >= 0; k--) {
@@ -217,9 +218,16 @@ static void on_event(void *u, const rx_event *e, rx_session *s) {
         ipc_done(e->tag, 1, e->size, "");
         break;
     case RX_EV_UP_FAILED:
-        if ((r = find_tag(G, e->tag)) != NULL) { r->state = ST_UP_FAILED; strncpy(r->why, e->text ? e->text : "", sizeof r->why - 1); }
+        /* A GET's file that fails after GOT has no row yet (nothing began): add it, as UP_BEGIN does. */
+        if (!(r = find_tag(G, e->tag)) && (r = add(G, "")) != NULL) { r->tag = e->tag; strcpy(r->name, e->path); }
+        if (r) { r->state = ST_UP_FAILED; strncpy(r->why, e->text ? e->text : "", sizeof r->why - 1); }
         ipc_done(e->tag, 0, 0, e->text);
         break;
+    case RX_EV_REQ:
+        rx_req_words(e, w, sizeof w);
+        sprintf(t, "Web: %.70s", w);
+        set_status(G, t);
+        return;
     default: return;
     }
     relist(G);
@@ -265,6 +273,13 @@ static void save(gui *G) {
     else if (!G->fs->folder_ok(G->ctx)) set_status(G, "Folder not found");
     else set_status(G, saved ? "Saved. Listening on port 6800" : "Not saved (ENVARC:). Listening on port 6800");
 }
+/* The switch (spec 2026-10-30 §2.3; plan ruling T9): stored at once, in ENV: and ENVARC:. A connected board reconnects
+   to hear it (rx_hello_stale, net.c). */
+static void set_browse(gui *G, int on) {
+    G->q->browse = on;
+    if (cfg_browse_save(on) != 0) set_status(G, on ? "Browsing on (not saved: ENVARC:)" : "Browsing off (not saved: ENVARC:)");
+    else set_status(G, on ? "Browsing on: the web app can read your disks" : "Browsing off");
+}
 static int on_signal(void *u, ULONG sigs) {
     gui *G = u; struct IntuiMessage *m; struct AppMessage *am; LONG i;
     (void)sigs;
@@ -275,6 +290,7 @@ static int on_signal(void *u, ULONG sigs) {
         else if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(G->win); GT_EndRefresh(G->win, TRUE); }
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_CHOOSE) choose(G);
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_SAVE) save(G);
+        else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_BROWSE) set_browse(G, (gad->Flags & GFLG_SELECTED) != 0);
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_SEND) send_files(G);
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_RETRY) retry_failed(G);
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_TRUST && rx_trust_now(G->s) != 0) set_status(G, "No board to trust yet");
@@ -330,6 +346,13 @@ static int build(gui *G, const char *dir) {
     ng.ng_LeftEdge = (WORD)(x0 + iw - w - 6); ng.ng_Width = (WORD)w; ng.ng_GadgetText = (UBYTE *)"Save"; ng.ng_GadgetID = G_SAVE;
     G->g[G_SAVE] = g = CreateGadget(BUTTON_KIND, g, &ng, TAG_END);
     y = (UWORD)(y + gh + 4);
+    /* The browsing switch (spec 2026-10-30 §2.3), on its own row. */
+    ng.ng_LeftEdge = (WORD)x0; ng.ng_TopEdge = (WORD)y; ng.ng_Width = 26; ng.ng_Height = (WORD)gh;
+    ng.ng_GadgetText = (UBYTE *)"Let the web app browse my disks (read-only)"; ng.ng_GadgetID = G_BROWSE;
+    ng.ng_Flags = PLACETEXT_RIGHT;
+    G->g[G_BROWSE] = g = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, (ULONG)(G->q->browse ? TRUE : FALSE), TAG_END);
+    ng.ng_Flags = PLACETEXT_IN;
+    y = (UWORD)(y + gh + 4);
     ng.ng_LeftEdge = (WORD)x0; ng.ng_TopEdge = (WORD)y; ng.ng_Width = (WORD)(iw - 12); ng.ng_GadgetText = NULL; ng.ng_GadgetID = G_STATUS;
     G->g[G_STATUS] = g = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)G->status, GTTX_Border, TRUE, TAG_END);
     y = (UWORD)(y + gh + 4);
@@ -357,7 +380,7 @@ static void wait_window(gui *G) {
     }
 }
 
-int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int trust) {
+int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int trust, int browse) {
     static gui G; static afs_ctx ctx; static rx_fs fs; static rx_session s; static rx_upq q;
     char key[RX_KEY_HEX + 8];
     long i;
@@ -373,6 +396,7 @@ int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int 
     afs_init(&ctx, &fs, dir);
     cfg_key_load(key, sizeof key);
     rx_upq_init(&q, key);
+    q.browse = browse;
     if (trust) gui_trust(&G);   /* Transfer GUI TRUST (ruling PF18): as the Shell form, the next board's key is trusted */
     strcpy(G.status, "Starting...");
     strcpy(G.okstatus, "Listening on port 6800");

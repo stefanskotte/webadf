@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Boots FS-UAE with Transfer and runs the shared scenarios against it through bsdsocket emulation (the Amiga's
-# listen on 6800 is the Mac's port 6800). Usage: uae-test.sh 204|31|32 [shell|gui|space|ram|send]
+# listen on 6800 is the Mac's port 6800). Usage: uae-test.sh 204|31|32 [shell|gui|space|ram|send|browse]
 # Never pattern-kills: stops only the FS-UAE PID it started.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"; repo="$(cd "$here/../../.." && pwd)"
@@ -17,7 +17,7 @@ case "$ks" in
        # its Modules disk (copied into Work:Libs below), and a 3.1 Workbench has none.
        wb="${WEBADF_WB32:-$HOME/Downloads/workbench-3.2-adf/Workbench3.2.adf}"
        modules="${WEBADF_MOD32:-$HOME/Downloads/workbench-3.2-adf/ModulesA500_3.2.adf}";;
-  *) echo "usage: uae-test.sh 204|31|32 [shell|gui|space|ram|send]"; exit 2;;
+  *) echo "usage: uae-test.sh 204|31|32 [shell|gui|space|ram|send|browse]"; exit 2;;
 esac
 [ -f "$rom" ] || { echo "FAIL: no Kickstart ROM at $rom"; exit 1; }
 [ -f "$wb" ] || { echo "FAIL: no Workbench disk at $wb"; exit 1; }
@@ -41,6 +41,7 @@ cleanup() { [ -n "$pid" ] && kill "$pid" 2>/dev/null || true; }
 trap cleanup EXIT
 tools_out="$work/hd/Transfer"; "$repo/tools/receive/build.sh" "$tools_out" >/dev/null
 target='Work:Out'; df0=''
+df2=''; fdc=2
 if [ "$mode" = ram ]; then target='RAM:'; fi
 if [ "$mode" = space ]; then
   xdftool "$work/small.adf" create + format Small ofs >/dev/null; df0="$work/small.adf"; target='DF0:'
@@ -59,11 +60,25 @@ fi
 if [ "$mode" = gui ]; then
   mkdir -p "$work/hd/Up"; head -c 901120 /dev/zero > "$work/hd/Up/Lemmings.adf"; printf 'notes\n' > "$work/hd/Up/Notes.txt"
 fi
+if [ "$mode" = browse ]; then
+  # NET: volumes (spec 2026-10-30 §2.4), the fixture scenarios.ts's makeBrowseFixture describes:
+  # - Work:Programs/a.txt, and Work:Big with 1005 empty files;
+  # - two floppies both named Empty (DF0:, DF2:), each with a Which.txt naming its drive.
+  mkdir -p "$work/hd/Programs" "$work/hd/Big"
+  printf 'hello from the Amiga\n' > "$work/hd/Programs/a.txt"
+  for i in $(seq -w 0 1004); do : > "$work/hd/Big/f$i"; done
+  printf 'df0\n' > "$work/which0"; printf 'df2\n' > "$work/which2"
+  xdftool "$work/empty0.adf" create + format Empty ofs + write "$work/which0" Which.txt >/dev/null
+  sleep 3   # AmigaDOS takes two disks with one name AND one volume date for the same volume: format them apart
+  xdftool "$work/empty2.adf" create + format Empty ofs + write "$work/which2" Which.txt >/dev/null
+  df0="$work/empty0.adf"; df2="$work/empty2.adf"; fdc=3
+fi
 case "$mode" in
   shell|space|ram) run_line="Work:Transfer RECEIVE TO $target SAVE >Work:receive.log";;
   gui) run_line="DF1:C/Assign >NIL: SYS: DF1:
 DF1:C/LoadWB
-Run >NIL: Work:Transfer TO $target GUI SEND Work:Up/Lemmings.adf Work:Up/Notes.txt";;
+Run >NIL: Work:Transfer TO $target GUI BROWSE SEND Work:Up/Lemmings.adf Work:Up/Notes.txt";;
+  browse) run_line="Work:Transfer BROWSE TO Work:Out >Work:receive.log";;
   send) e9=$(printf '\351')   # é in Latin-1: the Amiga reads the script byte by byte
         run_line=""
         # <log>:<file>; s03b is the drawer again with the slash Shell TAB completion adds.
@@ -103,10 +118,11 @@ cat > "$work/receive.fs-uae" <<EOF
 amiga_model = $model
 kickstart_file = $rom
 chip_memory = 1024
-floppy_drive_count = 2
+floppy_drive_count = $fdc
 floppy_drive_0 = $df0
 floppy_drive_1 = $wb
 floppy_drive_1_write_protected = 1
+floppy_drive_2 = $df2
 hard_drive_0 = $work/hd
 hard_drive_0_label = Work
 bsdsocket_library = 1
@@ -132,6 +148,10 @@ case "$mode" in
   gui) echo "GUI is up; touch $work/stop to end (10 minutes at most)"
        for _ in $(seq 1 600); do [ -e "$work/stop" ] && break; sleep 1; done
        echo "--- ENVARC: $(cat "$work/hd/EnvArc/webadf/ReceiveDir" 2>/dev/null)";;
+  browse) pnpm exec tsx "$repo/tools/receive/run-scenarios.ts" --port 6800 --browse --uae || rc=1
+          [ -e "$work/hd/EnvArc/webadf/Browse" ] && { echo "FAIL BROWSE without SAVE stored the switch"; rc=1; } \
+            || echo "PASS BROWSE without SAVE stored nothing"
+          sleep 2; echo "--- receive.log"; cat "$work/hd/receive.log" 2>/dev/null || true;;
   send) pnpm exec tsx "$repo/tools/receive/uae/send-scenarios.ts" --hd "$work/hd" || rc=1;;
 esac
 exit $rc

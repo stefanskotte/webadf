@@ -135,7 +135,7 @@ static void disconnect_mid_file(void) {
 }
 static void garbage_ignored_overflow_closes(void) {
     setup();
-    CHECK_EQ_INT(feed("GET / HTTP/1.0\r\n\r\n"), 0); CHECK(strcmp(out(), "") == 0, "no reply to junk");
+    CHECK_EQ_INT(feed("POST / HTTP/1.0\r\n\r\n"), 0); CHECK(strcmp(out(), "") == 0, "no reply to junk");
     feed("WEBADF 1\n"); CHECK(strcmp(out(), "READY 1\n") == 0, "still works");
     char big[700]; memset(big, 'x', 699); big[699] = 0;
     CHECK_EQ_INT(feed(big), -1);
