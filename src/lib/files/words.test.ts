@@ -26,6 +26,9 @@ describe('refusalWords', () => {
     expect(refusalWords('not_a_disk_image')).toBe('Only disk images (ADF, ADZ, DMS, DMZ, HFE) go into the library.');
     expect(refusalWords('not_a_disk_image', 'notes.txt')).toBe('Not a disk image the library takes — notes.txt.');
     expect(refusalWords('read_only', 'archive')).toBe('Archives are read-only — copy files out of them.');
+    // NET: volumes (spec 2026-10-30 §5): a volume, and a board's root, say their own words, never "This disk".
+    expect(refusalWords('read_only', 'Read-only for now')).toBe('Read-only for now.');
+    expect(refusalWords('read_only', 'Open a volume or Queue')).toBe('Open a volume or Queue.');
     expect(refusalWords('unsupported', 'still arriving from the Amiga')).toBe('That is still arriving from the Amiga.');
     expect(refusalWords('unsupported', netEmpty('mods/a.txt'))).toBe('mods/a.txt is empty — nothing was sent.');
   });

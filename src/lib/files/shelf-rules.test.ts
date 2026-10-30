@@ -99,6 +99,22 @@ describe('fix round 1', () => {
   });
 });
 
+describe('NET: volumes (spec 2026-10-30 §5: Add to library = Copy to LIBRARY:)', () => {
+  const net = { board: 'b1', boardName: 'A500', volume: 'Work', amigaPath: 'Work:', readAt: null, cut: false, browse: null };
+  const volume: Listing = { ...L('NET:/b1/Work', undefined, { writable: false, readOnlyReason: 'Read-only for now' }), net };
+  const f = (name: string, kind: FsEntry['kind'] = 'file'): FsEntry => ({ ...E(name, kind, `NET:/b1/Work/${name}`), size: 901120 });
+  it('disk images and drawers are copied onto a shelf; nothing is moved; other files are refused', () => {
+    expect(filingReason('copy', volume, [f('Game.adf'), f('Games', 'dir')], { collectionId: null })).toBeNull();
+    expect(filingReason('copy', volume, [f('Game.adf')], { collectionId: 'c1' })).toBeNull();
+    expect(filingReason('move', volume, [f('Game.adf')], { collectionId: null })).toBe('Read-only for now');
+    expect(filingReason('copy', volume, [f('ReadMe')], { collectionId: null })).toMatch(/Select disk images/);
+    expect(filingReason('copy', volume, [f('Game.adf')], null)).toBeUndefined();
+  });
+  it('Create ADF… on a volume is read-only for now', () => {
+    expect(createAdfReason(volume)).toBe('Read-only for now');
+  });
+});
+
 describe('Create ADF… (§4)', () => {
   it('in STASH: and on LIBRARY: or a collection; never NET:, a title, a disk or an archive', () => {
     expect(createAdfReason(L('STASH:/Disks', undefined, { writable: true }))).toBeNull();

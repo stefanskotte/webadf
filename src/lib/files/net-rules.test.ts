@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { netPollMs, planNetSend, NET_REFRESH_ACTIVE_MS, NET_REFRESH_IDLE_MS } from './net-rules';
+import { netPollMs, planNetSend, NET_REFRESH_ACTIVE_MS, NET_REFRESH_IDLE_MS, readAgo, nextAsk, netTitle, isNetVolume, netBoardRoot, boardNameFor, NET_READ_ONLY } from './net-rules';
 import type { Listing } from './types';
 
 const L = (path: string, marks: string[][] = []): Listing => ({ path, crumbs: [], writable: true, readOnlyReason: null, disk: null, meta: '',
@@ -38,5 +38,52 @@ describe('planNetSend', () => {
     expect(planNetSend([4 * MB], { files: 0, bytes: 12 * MB })).toEqual({ ok: true });
     expect(planNetSend([4 * MB + 1], { files: 0, bytes: 0 })).toEqual({ ok: false, why: 'too_large', index: 0 });
     expect(planNetSend([1, 1], { files: 30, bytes: 0 })).toEqual({ ok: true });
+  });
+});
+
+describe('NET: volumes in the pane (spec 2026-10-30 §5)', () => {
+  const net = (o: Partial<NonNullable<Listing['net']>> = {}) => ({ board: 'd', boardName: 'A500', volume: 'Work', amigaPath: 'Work:Programs', readAt: null, cut: false, browse: null, ...o });
+  it('readAgo', () => {
+    expect(readAgo(null, 1000)).toBeNull();
+    expect(readAgo(1000, 3000)).toBeNull();
+    expect(readAgo(0, 4_999)).toBeNull();
+    expect(readAgo(0, 5_000)).toBe('read 5 s ago');
+    expect(readAgo(0, 40_000)).toBe('read 40 s ago');
+    expect(readAgo(0, 59_999)).toBe('read 59 s ago');
+    expect(readAgo(0, 60_000)).toBe('read 1 min ago');
+    expect(readAgo(0, 125_000)).toBe('read 2 min ago');
+  });
+  it('nextAsk gives up after 20 s', () => {
+    expect(nextAsk(0, 0)).toBe('ask');
+    expect(nextAsk(0, 19_999)).toBe('ask');
+    expect(nextAsk(0, 20_000)).toBe('give-up');
+  });
+  it('netTitle', () => {
+    expect(netTitle({ net: net() } as never)).toBe('A500 · Work:Programs');
+    expect(netTitle({ net: net({ volume: null, amigaPath: null }) } as never)).toBeNull();
+    expect(netTitle(L('STASH:'))).toBeNull();
+  });
+  it('isNetVolume: a volume or a drawer in one, never the board, its Queue or NET:', () => {
+    expect(NET_READ_ONLY).toBe('Read-only for now');
+    expect(isNetVolume({ ...L('NET:/d/Work/Programs'), net: net() })).toBe(true);
+    expect(isNetVolume({ ...L('NET:/d/Work'), net: net({ amigaPath: 'Work:' }) })).toBe(true);
+    expect(isNetVolume({ ...L('NET:/d'), net: net({ volume: null, amigaPath: null }) })).toBe(false);
+    expect(isNetVolume(L('NET:/d/Queue'))).toBe(false);
+    expect(isNetVolume(L('NET:'))).toBe(false);
+    expect(isNetVolume(null)).toBe(false);
+  });
+  it('netBoardRoot: the board of NET:/<board> only', () => {
+    expect(netBoardRoot('NET:/d')).toBe('d');
+    expect(netBoardRoot('NET:/d/Queue')).toBeNull();
+    expect(netBoardRoot('NET:/d/Work')).toBeNull();
+    expect(netBoardRoot('NET:')).toBeNull();
+    expect(netBoardRoot('STASH:/d')).toBeNull();
+  });
+  it('boardNameFor: the name a listing on screen gives the board, else its id', () => {
+    expect(boardNameFor('NET:/d/Work', { ...L('NET:/d'), net: net({ volume: null, amigaPath: null }) })).toBe('A500');
+    const boards = { ...L('NET:'), entries: [{ name: 'A1200', kind: 'board' as const, path: 'NET:/d', size: null, date: null, protection: null, comment: null, marks: [] }] };
+    expect(boardNameFor('NET:/d', boards)).toBe('A1200');
+    expect(boardNameFor('NET:/d/Work', { ...L('NET:/e'), net: net({ board: 'e' }) })).toBe('d');
+    expect(boardNameFor('NET:/d', null)).toBe('d');
   });
 });

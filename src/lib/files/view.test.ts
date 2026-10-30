@@ -79,6 +79,11 @@ describe('showsComment', () => {
     expect(showsComment('auto', 'STASH:/Mods')).toBe(true);
     expect(showsComment('auto', 'LIBRARY:/g/d')).toBe(false);
     expect(showsComment('always', 'NET:/b')).toBe(true);
+    // A volume of a board's Amiga shows the usual columns, its comments too (NET: volumes, spec 2026-10-30 §5).
+    expect(showsComment('auto', 'NET:/b/Work/Programs')).toBe(true);
+    expect(showsComment('auto', 'NET:/b/Work')).toBe(true);
+    expect(showsComment('auto', 'NET:/b/Queue')).toBe(false);
+    expect(showsComment('auto', 'NET:/b')).toBe(false);
     expect(showsComment('never', 'STASH:')).toBe(false);
   });
 });

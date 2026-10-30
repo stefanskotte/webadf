@@ -1,6 +1,6 @@
 // Keyboard commands for the Files panes. Client-safe: no DOM types needed.
 export type FilesCommand =
-  | 'up' | 'down' | 'pick' | 'open' | 'parent' | 'switch' | 'copy' | 'move' | 'makedir' | 'rename' | 'delete' | 'find';
+  | 'up' | 'down' | 'pick' | 'open' | 'parent' | 'switch' | 'copy' | 'move' | 'makedir' | 'rename' | 'delete' | 'find' | 'refresh';
 
 const KEYS: Record<string, FilesCommand> = {
   ArrowUp: 'up', ArrowDown: 'down', ' ': 'pick', Enter: 'open', Backspace: 'parent', Tab: 'switch',
@@ -12,9 +12,12 @@ const TYPING = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
 /** The command a key press means, or null when the key belongs to something else (a field, a dialog, a shortcut). */
 export function commandFor(e: {
   key: string; target: { tagName?: string; isContentEditable?: boolean } | null;
-  dialogOpen: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean;
+  dialogOpen: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey?: boolean;
 }): FilesCommand | null {
-  if (e.dialogOpen || e.altKey || e.ctrlKey || e.metaKey) return null;
+  if (e.dialogOpen || e.altKey) return null;
+  // Ctrl-R / Cmd-R reads the source pane again (NET: volumes, spec 2026-10-30 §5), in a field too: it edits no text.
+  // With Shift it stays the browser's hard reload.
+  if (e.ctrlKey || e.metaKey) return e.key.toLowerCase() === 'r' && !e.shiftKey ? 'refresh' : null;
   if (e.target && (e.target.isContentEditable || TYPING.has((e.target.tagName ?? '').toUpperCase()))) return null;
   return Object.hasOwn(KEYS, e.key) ? KEYS[e.key] : null;
 }

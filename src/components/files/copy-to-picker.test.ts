@@ -15,6 +15,11 @@ const listing = (o: Partial<Listing>): Listing => ({
 });
 
 describe('CopyToPicker (Files increment 1, Task 10)', () => {
+  it('a volume of a board\'s Amiga takes nothing: read-only for now (NET: volumes, spec 2026-10-30 §5)', () => {
+    const net = { board: 'b', boardName: 'A500', volume: 'Work', amigaPath: 'Work:', readAt: null, cut: false, browse: null };
+    expect(pickReason('copy', listing({ path: 'NET:/b/Work', disk: null, writable: false, readOnlyReason: 'Read-only for now', net }))).toBe('Read-only for now');
+    expect(placesIn(listing({ entries: [entry('Work', 'volume'), entry('Queue', 'dir')] })).map((e) => e.name)).toEqual(['Queue', 'Work']);
+  });
   it('only a writable folder inside a disk or in STASH: takes the copy', () => {
     expect(pickReason('copy', listing({}))).toBeNull();
     expect(pickReason('copy', listing({ disk: null }))).toBe('Open a disk or STASH: to copy into it');

@@ -2,7 +2,9 @@
 // LIBRARY: above the disks (Files 2 §3.2): the words a refusal carries and the pure rules the server and the manager
 // share. CLIENT-SAFE: types and pure functions only.
 import { parsePath } from './path';
-import { addToLibraryReason } from './pane-rules';
+import { addToLibraryReason, SELECT_IMAGES } from './pane-rules';
+import { isNetVolume, NET_READ_ONLY } from './net-rules';
+import { libraryEligible } from '@/lib/from-amiga-ui';
 import type { FsEntry, Listing } from './types';
 
 export const TITLES_ON_LIBRARY_PAGE = 'Rename or delete titles on the Library page';
@@ -74,6 +76,12 @@ export function filingReason(op: 'copy' | 'move', src: Listing | null, picked: F
   }
   if (!to) return undefined;
   if (inStash(src)) return addToLibraryReason(src, picked, { filing: true });
+  // Out of a NET: volume (spec 2026-10-30 §4.5, §5): disk images are copied in through the board, a drawer's images
+  // too (the server refuses anything else in it, file by file); a volume is never moved from.
+  if (isNetVolume(src)) {
+    if (op === 'move') return NET_READ_ONLY;
+    return picked.every((e) => e.kind === 'dir' || (e.kind === 'file' && libraryEligible(e.name, e.size ?? 0))) ? null : SELECT_IMAGES;
+  }
   return ONLY_TITLES_FILED;
 }
 
@@ -99,7 +107,7 @@ export function filingNoun(src: Listing | null): (n: number) => string {
 export function createAdfReason(l: Listing | null): string | null {
   if (!l) return 'Open STASH: or LIBRARY: first';
   const device = parsePath(l.path)?.device;
-  if (device === 'NET') return NOT_ON_NET;
+  if (device === 'NET') return isNetVolume(l) ? NET_READ_ONLY : NOT_ON_NET;
   if (device === 'STASH') return l.readOnlyReason === 'archive' ? 'Archives are read-only — copy files out of them.' : null;
   return l.library?.level === 'root' || l.library?.level === 'collection' ? null : GO_UP;
 }

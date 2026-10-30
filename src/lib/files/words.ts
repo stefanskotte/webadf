@@ -1,7 +1,7 @@
 // The words for a refused Files operation. Client-safe: types only.
 import { isMountedReason } from '../mount-wording';
 import type { RefusalCode } from './types';
-import { NET_COPY_OUT, NET_MOVE_IN, NET_PICK_BOARD } from './net-rules';
+import { NET_COPY_OUT, NET_MOVE_IN, NET_OPEN_VOLUME, NET_PICK_BOARD, NET_READ_ONLY } from './net-rules';
 import { ADDED_UNFILED, COLLECTION_EXISTS, SHELF_WORDS } from './shelf-rules';
 
 const REMOVE_FAILED = 'copied, but the original could not be removed';
@@ -17,7 +17,7 @@ export function refusalWords(code: RefusalCode, detail?: string): string {
     case 'read_only':
       if (detail === 'hfe_read_only' || detail === 'no_filesystem') return refusalWords(detail);
       if (detail === 'archive') return 'Archives are read-only — copy files out of them.';
-      if (detail === NET_PICK_BOARD) return `${NET_PICK_BOARD}.`;
+      if (detail === NET_PICK_BOARD || detail === NET_READ_ONLY || detail === NET_OPEN_VOLUME) return `${detail}.`;
       if (detail && !isMountedReason(detail)) return 'This disk is read-only.';
       return refusalWords('mounted', detail);
     case 'mounted': return detail

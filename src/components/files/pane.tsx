@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode, Ref } from 'react';
+import { useEffect, useState, type ReactNode, type Ref } from 'react';
 import type { FsEntry, Listing } from '@/lib/files/types';
 import { phoneSortAfter, type FilesSort, type FilesSortKey } from '@/lib/files/sort';
 import type { Selection } from '@/lib/files/selection';
@@ -14,6 +14,8 @@ import { HelpTip } from '@/components/help/help-tip';
 import { Switch } from '@/components/ui/switch';
 import { acceptsCopies, addToLibraryReason, holdsFiles, netBoardOf } from '@/lib/files/pane-rules';
 import { shelfOf } from '@/lib/files/shelf-rules';
+import { isNetVolume, netTitle, readAgo } from '@/lib/files/net-rules';
+import { DIR_CUT } from '@/lib/remote-limits';
 
 /**
  * One side of the Files manager. Presentational: the manager (files-manager.tsx) owns fetching, sort and selection
@@ -23,6 +25,8 @@ import { shelfOf } from '@/lib/files/shelf-rules';
  */
 export type PaneProps = {
   side: 'left' | 'right'; active: boolean; listing: Listing | null; loading: boolean; error: string | null;
+  /** The label of a NET: listing the Amiga is being asked for ("Reading Work:Programs from A500…"), else null. */
+  pending?: string | null;
   sort: FilesSort; selection: Selection; showComment: boolean;
   /** This pane's filter and the shared Show .info (R6, R7). */
   view: PaneView;
@@ -38,7 +42,7 @@ export type PaneProps = {
   /** A disk image's own Add to library on its STASH: row (R8): that one row, whatever is picked. */
   onAddToLibrary(index: number): void;
   strip?: ReactNode;   // the disk strip of the disk the pane is in (also one whose image could not be read)
-  errorAction?: ReactNode;   // under the error, e.g. a way back to LIBRARY: when the place is gone
+  errorAction?: ReactNode;   // under the error (or the pending line), e.g. a way back to LIBRARY: when the place is gone
 };
 
 /** The device chips below lg (increment 2, R1; Files 2 §2.1): STASH:, LIBRARY:, NET:. */
@@ -86,8 +90,29 @@ function metaOf(l: Listing): string {
   return d.freeBytes === null ? fmt : `${paneSize(d.freeBytes)} free · ${fmt}`;
 }
 
+/**
+ * The clock "read 40 s ago" counts on (NET: volumes, spec 2026-10-30 §5): null until mounted, so the server's HTML and
+ * the first client render agree, then ticking every 5 s while `on`.
+ */
+function useNow(on: boolean): number | null {
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    if (!on) return;
+    const tick = () => setNow(Date.now());
+    const first = setTimeout(tick, 0);
+    const every = setInterval(tick, 5_000);
+    return () => { clearTimeout(first); clearInterval(every); };
+  }, [on]);
+  return now;
+}
+
 export function Pane({ filterRef, ...p }: PaneProps) {
   const { side, listing, sort, selection, view } = p;
+  const pending = p.pending ?? null;
+  // A volume's title bar names the board and the Amiga path, and how old a remembered listing is (§5).
+  const title = listing ? netTitle(listing) : null;
+  const now = useNow(listing?.net?.readAt != null);
+  const ago = listing?.net && now !== null ? readAgo(listing.net.readAt, now) : null;
   const rows = listing ? paneRows(listing.entries, sort, view) : [];
   const counts = listing ? viewCounts(listing.entries, view) : { total: 0, shown: 0, infoHidden: 0 };
   const tid = (s: string) => `pane-${side}-${s}`;
@@ -108,12 +133,15 @@ export function Pane({ filterRef, ...p }: PaneProps) {
   // Rows that hold files drag (C2), and titles on LIBRARY: or in a collection, to be filed (Files 2 §3.2); disks and
   // collections do not move, and nothing is copied out of NET:.
   const shelf = shelfOf(listing) !== null;
-  const drags = holdsFiles(listing) || shelf;
+  // A volume's rows drag out as copies (NET: volumes, spec 2026-10-30 §5).
+  const drags = holdsFiles(listing) || shelf || isNetVolume(listing);
   // A STASH: folder's disk images can each go into the library from their row (R8); not inside an archive.
   const addable = (e: FsEntry) => !!listing && !e.marks.includes('in the library') && addToLibraryReason(listing, [e]) === null;
   const rowAct = 'shrink-0 rounded-[4px] text-[11.5px] underline underline-offset-2 max-lg:min-h-11 max-lg:px-1 focus-visible:outline-2 focus-visible:outline-(--ring)';
 
   const cell = 'border-b px-2.5 py-[7px] whitespace-nowrap';
+  // A whole-width row: the checkbox, the four columns and the Comment column when shown.
+  const span = 5 + (p.showComment ? 1 : 0);
   const cellStyle = { borderColor: 'var(--hairline)' } as const;
 
   return (
@@ -134,6 +162,13 @@ export function Pane({ filterRef, ...p }: PaneProps) {
                 onClick={() => parent && p.onNavigate(parent.path)}
                 className="shrink-0 rounded-[6px] border px-1.5 font-mono text-[13px] max-lg:min-h-11 max-lg:min-w-11 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-(--ring)"
                 style={p.active ? { borderColor: 'var(--on-ink-fill)', color: 'var(--on-ink-2)' } : { borderColor: 'var(--line)', color: 'var(--muted)' }}>↑</button>
+        {title ? (
+          // A volume (§5): "A500 · Work:Programs" in place of the crumbs; ↑, Parent and Root still walk up.
+          <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 font-mono text-[13px]">
+            <span data-testid={tid('net-title')} aria-current="location" className="font-medium [overflow-wrap:anywhere]">{title}</span>
+            {ago && <span data-testid={tid('read-ago')} className="text-[12px]" style={{ color: p.active ? 'var(--on-ink-muted)' : 'var(--muted-2)' }}>{ago}</span>}
+          </span>
+        ) : (
         <nav aria-label="Path" className="flex min-w-0 flex-wrap items-center font-mono text-[13px]">
           {crumbs.map((c, i) => (
             <span key={c.path} className="flex items-center">
@@ -145,6 +180,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
             </span>
           ))}
         </nav>
+        )}
         {listing && (
           <span data-testid={tid('meta')} className="ml-auto shrink-0 pl-2 text-[12px]" style={{ color: p.active ? 'var(--on-ink-muted)' : 'var(--muted-2)' }}>
             {metaOf(listing)}
@@ -174,7 +210,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
                    onKeyDown={(e) => { if (e.key === 'Escape' && e.currentTarget.value !== '') { p.onFilter(''); e.preventDefault(); } }}
                    className="min-w-0 flex-1 rounded-[7px] border bg-transparent px-2 py-1 text-[13px] max-lg:min-h-11 placeholder:text-(--muted-2) focus-visible:outline-2 focus-visible:outline-(--ring)"
                    style={{ borderColor: 'var(--line)', color: 'var(--ink)' }} />
-            {holdsFiles(listing) && (
+            {(holdsFiles(listing) || isNetVolume(listing)) && (
               <span className="flex shrink-0 items-center gap-1 text-[12px]" style={{ color: 'var(--muted)' }}>
                 <span id={tid('show-info-label')}>Show .info</span>
                 <Switch testId={tid('show-info')} checked={!view.hideInfo} onChange={(on) => p.onShowInfo(on)}
@@ -196,12 +232,17 @@ export function Pane({ filterRef, ...p }: PaneProps) {
       {p.error && (
         <p role="alert" data-testid={tid('error')} className="px-3.5 py-3 text-[13px]" style={{ color: 'var(--danger-fg)' }}>{p.error}</p>
       )}
-      {p.error && p.errorAction && <div className="px-3.5 pb-3">{p.errorAction}</div>}
-      {p.loading && !listing && (
+      {/* A NET: listing on its way from the Amiga (spec 2026-10-30 §5): a quiet line, never an alert; the old rows stay
+          under it, dimmed, and the other pane and navigation stay usable. */}
+      {pending && !p.error && (
+        <p role="status" data-testid="pane-pending" className="px-3.5 py-2 text-[13px]" style={{ color: 'var(--muted)' }}>{pending}</p>
+      )}
+      {(p.error || pending) && p.errorAction && <div className="px-3.5 pb-3">{p.errorAction}</div>}
+      {p.loading && !listing && !pending && (
         <p data-testid={tid('loading')} className="px-3.5 py-3 text-[13px]" style={{ color: 'var(--muted)' }}>Loading…</p>
       )}
       {listing && (
-        <div className="min-h-0 flex-1 lg:overflow-auto" aria-busy={p.loading || undefined}>
+        <div className={`min-h-0 flex-1 lg:overflow-auto ${pending ? 'opacity-50' : ''}`} aria-busy={p.loading || undefined}>
           <table role="grid" aria-multiselectable="true" aria-label={`${side === 'left' ? 'Left' : 'Right'} pane files`}
                  className="w-full border-collapse text-[13px] max-lg:table-fixed">
             <thead>
@@ -238,6 +279,14 @@ export function Pane({ filterRef, ...p }: PaneProps) {
               </tr>
             </thead>
             <tbody>
+              {/* A board whose volumes cannot be read (§5): one row saying why, above Queue, which still works. */}
+              {listing.net?.browse && (
+                <tr data-testid="net-browse-reason">
+                  <td colSpan={span} className={`${cell} text-[13px] whitespace-normal`} style={{ ...cellStyle, color: 'var(--warning-fg)' }}>
+                    {listing.net.browse}
+                  </td>
+                </tr>
+              )}
               {rows.map((e, i) => {
                 const sel = selection.picked.has(i);
                 const glyph = glyphOf(e);
@@ -315,6 +364,14 @@ export function Pane({ filterRef, ...p }: PaneProps) {
                   </tr>
                 );
               })}
+              {/* Transfer stops a drawer's listing at DIR_CUT entries (§5): said as a last row nothing picks. */}
+              {listing.net?.cut && (
+                <tr data-testid="net-cut">
+                  <td colSpan={span} className={`${cell} text-[12px] whitespace-normal`} style={{ ...cellStyle, color: 'var(--muted)' }}>
+                    Only the first {DIR_CUT} entries are shown
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
           {rows.length === 0 && (

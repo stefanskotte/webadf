@@ -18,9 +18,11 @@ import { formatPath, PANE_DEVICES, parsePath } from '@/lib/files/path';
 import type { OpItem, OpRequest } from '@/lib/files/ops';
 import type { Added } from '@/lib/files/driver';
 import {
-  acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, offersUndo, placeOf,
+  acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, netVolumeReason,
+  offersUndo, placeOf,
 } from '@/lib/files/pane-rules';
-import { netPollMs, NET_MOVE_IN, NET_PICK_BOARD } from '@/lib/files/net-rules';
+import { boardNameFor, isNetVolume, netBoardRoot, netPollMs, nextAsk, NET_MOVE_IN, NET_OPEN_VOLUME, NET_PICK_BOARD, NET_READ_ONLY } from '@/lib/files/net-rules';
+import { errorWords } from '@/lib/remote-browse';
 import { COLLECTIONS_STAY, createAdfReason, filingNoun, filingReason, shelfOf, shelfOfRow, shelfReasons } from '@/lib/files/shelf-rules';
 import { stashPollMs, trackArriving, withStalls, type ArrivingSeen } from '@/lib/files/arriving';
 import { netDropRefusal, sendToBoard } from '@/lib/files/net-send';
@@ -37,14 +39,14 @@ import { Pane } from './pane';
 import { ButtonBank } from './button-bank';
 import { DiskStrip } from './disk-strip';
 import { DropReview } from './drop-review';
-import { CopyToPicker } from './copy-to-picker';
+import { CopyToPicker, type ListResult } from './copy-to-picker';
 import { StashDropZone } from './stash-drop-zone';
 import { SendDropZone } from './send-drop-zone';
 import type { SendTarget } from '@/lib/send-ui';
 import { useStashUpload, type StashUploadResult } from './use-stash-upload';
 import { sameStashName } from '@/lib/files/stash-paths';
 import { isSignedOutAnswer, SIGNED_OUT_TEXT } from '@/lib/signed-out';
-import { QUEUE_FOLDER } from '@/lib/remote-limits';
+import { PANE_ASK_MS, QUEUE_FOLDER } from '@/lib/remote-limits';
 import {
   ClashDialog, ConfirmDeleteDialog, InfoDialog, NameDialog, ProtectDialog, placeName, type Clash, type ClashChoice,
 } from './dialogs';
@@ -206,13 +208,21 @@ function wordsFor(code: unknown, detail: unknown): string {
 /** When each listing was read in this tab: an arriving STASH: row's stall clock runs on it. The server's first has none. */
 const readAt = new WeakMap<Listing, number>();
 
+type Fetched = { listing: Listing } | { gone: true } | { pending: string } | { error: string; code?: unknown; detail?: unknown };
+
 /**
  * `code`: the refusal's own code, for a caller that answers one differently (an archive that does not open); `detail`:
- * its detail (blob_unavailable names the disk).
+ * its detail (blob_unavailable names the disk). `pending`: the Amiga has been asked for this NET: listing and has not
+ * answered yet (202, NET: volumes spec 2026-10-30 §4.4) -- the label to show while asking again; never a listing.
+ * `fresh`: Refresh, which asks the Amiga again rather than take the 2-minute memory.
  */
-async function fetchListing(path: string): Promise<{ listing: Listing } | { gone: true } | { error: string; code?: unknown; detail?: unknown }> {
+async function fetchListing(path: string, fresh = false): Promise<Fetched> {
   try {
-    const res = await fetch(`/api/files/list?path=${encodeURIComponent(path)}`, { cache: 'no-store' });
+    const res = await fetch(`/api/files/list?path=${encodeURIComponent(path)}${fresh ? '&fresh=1' : ''}`, { cache: 'no-store' });
+    if (res.status === 202) {
+      const body = (await res.json().catch(() => null)) as { label?: unknown } | null;
+      return { pending: typeof body?.label === 'string' ? body.label : 'Reading from the Amiga…' };
+    }
     if (res.ok) {
       const listing = (await res.json()) as Listing;
       readAt.set(listing, Date.now());
@@ -220,10 +230,45 @@ async function fetchListing(path: string): Promise<{ listing: Listing } | { gone
     }
     if (res.status === 404 || res.status === 400) return { gone: true };
     const body = (await res.json().catch(() => null)) as { error?: unknown; detail?: unknown } | null;
-    return { error: wordsFor(body?.error, body?.detail), code: body?.error, detail: body?.detail };
+    // A NET: refusal's detail is the pane's whole sentence ("Object not found", "Switch on browsing in Transfer on
+    // A500"), as the page's first listing says it (first-listing.ts): never read through a disk's words.
+    const netWords = parsePath(path)?.device === 'NET' && typeof body?.detail === 'string' ? body.detail : null;
+    return { error: netWords ?? wordsFor(body?.error, body?.detail), code: body?.error, detail: body?.detail };
   } catch {
     return { error: refusalWords('failed') };
   }
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** "A500 didn't answer — Refresh to try again": a pending listing asked for PANE_GIVE_UP_MS without an answer. */
+const noAnswer = (path: string, l: Listing | null) => errorWords('timeout', '', boardNameFor(path, l));
+
+/**
+ * A listing, asked again every PANE_ASK_MS while the Amiga has not answered it (NET: volumes, spec 2026-10-30 §4.4)
+ * -- without `fresh` after the first ask: the request is already on its way -- until it lands, is refused, or
+ * PANE_GIVE_UP_MS pass (then `noAnswer`'s words, the board named from `named()`). `onPending` hears each label;
+ * `wanted` false (the pane went elsewhere) stops it at once with null, without a word.
+ */
+async function askUntilAnswered(path: string, o: {
+  fresh?: boolean; wanted(): boolean; onPending(label: string): void; named(): Listing | null;
+}): Promise<Exclude<Fetched, { pending: string }> | null> {
+  const started = Date.now();
+  let r = await fetchListing(path, o.fresh);
+  while ('pending' in r) {
+    if (!o.wanted()) return null;
+    o.onPending(r.pending);
+    await sleep(PANE_ASK_MS);
+    if (!o.wanted()) return null;
+    if (nextAsk(started, Date.now()) === 'give-up') return { error: noAnswer(path, o.named()) };
+    r = await fetchListing(path);
+  }
+  return r;
+}
+
+/** A listing for the Copy to… picker, which walks places rather than show a wait. Module-level: its identity never changes. */
+async function settledListing(path: string): Promise<ListResult> {
+  return (await askUntilAnswered(path, { wanted: () => true, onPending: () => {}, named: () => null }))!;
 }
 
 function firstState(path: string, listing: Listing | null, error: string | undefined, errorDisk?: string, pending?: string): PaneState {
@@ -364,16 +409,26 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    * A refusal with the code `stayOn` leaves the pane where it was and says so in a toast (an archive that does not
    * open: the person is still in its folder, and can download it). `select`: the path of a row to pick once the
    * listing lands (a disk just made, §4); the filter then clears so the row is drawn. Resolves true when the place was listed.
+   *
+   * A NET: listing the Amiga has not answered yet (NET: volumes, spec 2026-10-30 §4.4, §5) keeps the old rows (dimmed)
+   * under its label and is asked again every PANE_ASK_MS (without `fresh`: the request is already on its way) until it
+   * lands, is refused, or PANE_GIVE_UP_MS pass ("A500 didn't answer — Refresh to try again"). A newer load of the side
+   * (a navigation, a Swap) bumps `seq`, and this loop then stops without a word. `fresh`: Refresh.
    */
-  async function load(side: Side, path: string, opts: { stayOn?: RefusalCode; select?: string } = {}): Promise<boolean> {
+  async function load(side: Side, path: string, opts: { stayOn?: RefusalCode; select?: string; fresh?: boolean } = {}): Promise<boolean> {
     const { stayOn } = opts;
     const n = ++seq.current[side];
-    setPanes((ps) => ({ ...ps, [side]: { ...ps[side], path: stayOn ? ps[side].path : path, loading: true } }));
-    const r = await fetchListing(path);
-    if (n !== seq.current[side]) return false;
+    // Asking the same place again (Refresh, the page's pending first state) keeps its label up rather than flash "Loading…".
+    setPanes((ps) => ({ ...ps, [side]: { ...ps[side], path: stayOn ? ps[side].path : path, loading: true,
+      pending: ps[side].path === path ? ps[side].pending : null } }));
+    const r = await askUntilAnswered(path, {
+      fresh: opts.fresh, wanted: () => n === seq.current[side], named: () => latest.current.panes[side].listing,
+      onPending: (label) => setPanes((ps) => ({ ...ps, [side]: { ...ps[side], pending: label } })),
+    });
+    if (r === null || n !== seq.current[side]) return false;
     if (stayOn && 'code' in r && r.code === stayOn) {
       toast.error(r.error);
-      setPanes((ps) => ({ ...ps, [side]: { ...ps[side], loading: false } }));
+      setPanes((ps) => ({ ...ps, [side]: { ...ps[side], loading: false, pending: null } }));
       return false;
     }
     let selection: Selection = EMPTY_SELECTION;
@@ -448,6 +503,16 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
     // `load` only touches refs and state setters, so the listener never goes stale.
+  }, []);
+
+  // A pane the page opened pending (a NET: listing the Amiga had not answered, first-listing.ts) asks again from here,
+  // as a navigation does.
+  useEffect(() => {
+    for (const s of ['left', 'right'] as const) {
+      const p = latest.current.panes[s];
+      if (p.pending !== null && !p.listing) void load(s, p.path);
+    }
+    // Once, on mount: `load` reads refs and state setters only.
   }, []);
 
   /**
@@ -641,9 +706,17 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   // board's queue under NET: has rows too: Delete cancels or clears them and Info shows them; nothing else acts there.
   const inNet = netReadOnly(src);
   const board = netBoardOf(src);
+  // A volume of a board's Amiga (NET: volumes, spec 2026-10-30 §5) is read, never written, in phase 1: every command
+  // that writes says "Read-only for now", whatever is picked; Copy, Download and Info act on its rows.
+  const volumeRO = netVolumeReason(src);
+  const volume = isNetVolume(src);
+  // NET:/<board> lists its volumes and Queue: places to open, as LIBRARY: lists titles.
+  const boardRoot = !!src && netBoardRoot(src.path) !== null;
   function sourceReason(writable: boolean): string | null {
+    if (writable && volumeRO) return volumeRO;
     if (picked.length === 0) return 'Select something first';
-    if (inNet) return board ? null : 'Open a board to see what waits for it';
+    if (volume) return null;
+    if (inNet) return board ? null : boardRoot ? NET_OPEN_VOLUME : 'Open a board to see what waits for it';
     if (!holdsFiles(src)) return 'Only files and folders on a disk or in STASH: can be changed here — open one first';
     if (writable && !src!.writable) return readOnly(src!);
     return null;
@@ -658,7 +731,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     // A STASH: file that failed to arrive holds no bytes: a copy would skip it and still say done.
     const r = sourceReason(op === 'move') ?? failedReason(picked);
     if (r) return r;
-    if (!acceptsCopies(dst)) return dst && netReadOnly(dst) ? readOnly(dst) : 'Open a disk or STASH: on the other side';
+    if (!acceptsCopies(dst)) return isNetVolume(dst) ? NET_READ_ONLY : dst && netReadOnly(dst) ? readOnly(dst) : 'Open a disk or STASH: on the other side';
     if (!dst!.writable) return readOnly(dst!);
     if (op === 'move' && netBoardOf(dst)) return NET_MOVE_IN;   // C16: a send never takes the original away
     return null;
@@ -674,10 +747,10 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     copy: transferReason('copy'),
     move: transferReason('move'),
     delete: shelf ? shelf.delete : sourceReason(true),
-    rename: shelf ? shelf.rename : inNet ? NOT_IN_NET : one(sourceReason(true), 'rename it'),
-    makedir: shelf ? shelf.makedir : inNet ? NOT_IN_NET : !holdsFiles(src) ? 'Open a disk or STASH: to make a folder in it' : !src!.writable ? readOnly(src!) : null,
-    protect: inNet ? NOT_IN_NET : sourceReason(true),
-    info: inNet && !board ? NOT_IN_NET : one(sourceReason(false), 'see its details'),
+    rename: shelf ? shelf.rename : volumeRO ?? (inNet ? NOT_IN_NET : one(sourceReason(true), 'rename it')),
+    makedir: shelf ? shelf.makedir : volumeRO ?? (inNet ? NOT_IN_NET : !holdsFiles(src) ? 'Open a disk or STASH: to make a folder in it' : !src!.writable ? readOnly(src!) : null),
+    protect: volumeRO ?? (inNet ? NOT_IN_NET : sourceReason(true)),
+    info: inNet && !board && !volume ? NOT_IN_NET : one(sourceReason(false), 'see its details'),
     // One file by path; several, or a folder, as a .zip (spec §3.3).
     download: outOfNet ?? sourceReason(false) ?? failedReason(picked)
       ?? (downloadHref(picked, folderName).length > DOWNLOAD_URL_MAX ? 'Too many items to download at once — download their folder instead' : null),
@@ -685,7 +758,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     copyTo: collectionPicked ? COLLECTIONS_STAY : filingFrom ? null : outOfNet ?? sourceReason(false) ?? failedReason(picked),
     moveTo: collectionPicked ? COLLECTIONS_STAY : filingFrom ? null : outOfNet ?? sourceReason(true) ?? failedReason(picked),
     // Disk images in STASH: into the library (R8).
-    addlib: addToLibraryReason(src, picked),
+    addlib: volumeRO ?? addToLibraryReason(src, picked),
     // A blank disk in STASH:, or a new title on LIBRARY: or in a collection (§4).
     createadf: createAdfReason(src),
   };
@@ -704,7 +777,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     root: nav.root ? null : 'Already at the top',
     swap: null,
     filter: src ? null : 'Nothing is listed here',
-    showinfo: holdsFiles(src) ? null : 'Open a disk or STASH: to show or hide .info files',
+    showinfo: holdsFiles(src) || volume ? null : 'Open a disk or STASH: to show or hide .info files',
+    // Reads the source pane again; in NET: it asks the Amiga afresh (spec 2026-10-30 §5). Every pane has a place.
+    refresh: null,
   };
 
   // ---- running an operation -----------------------------------------------------------------------------------
@@ -895,7 +970,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     next();
   }
 
-  function act(cmd: Exclude<BankCommand, 'all' | 'none' | 'parent' | 'root' | 'swap' | 'filter' | 'showinfo'> | 'copyTo' | 'moveTo') {
+  function act(cmd: Exclude<BankCommand, 'all' | 'none' | 'parent' | 'root' | 'swap' | 'filter' | 'showinfo' | 'refresh'> | 'copyTo' | 'moveTo') {
     // While an operation runs a press says what runs (the status row's words), never silently nothing (Task 8 review).
     if (busy) { toast(busy, { id: 'files-busy' }); return; }
     const reason = reasons[cmd];
@@ -1044,6 +1119,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       case 'swap': swap(); return;
       case 'filter': filterRefs[active].current?.focus(); return;
       case 'showinfo': showInfo(hideInfo); return;   // hidden now → show
+      case 'refresh': void load(active, panes[active].path, { fresh: true }); return;
       default: act(cmd);
     }
   }
@@ -1071,6 +1147,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       case 'parent': if (nav.parent) navigate(active, nav.parent); return;
       case 'switch': activate(otherSide(active)); return;
       case 'find': filterRefs[active].current?.focus(); return;
+      case 'refresh': bank('refresh'); return;
       default: act(cmd);
     }
   }
@@ -1088,7 +1165,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       rootRef.current.focus({ preventScroll: true });
       return;
     }
-    const cmd = commandFor({ key: e.key, target, dialogOpen: dialog !== null, altKey: e.altKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey });
+    const cmd = commandFor({ key: e.key, target, dialogOpen: dialog !== null, altKey: e.altKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey });
     if (!cmd) return;
     if ((cmd === 'open' || cmd === 'pick') && target.matches(CONTROL)) return;
     // Tab switches panes only from the manager itself; on a control it moves focus as usual, and Shift+Tab always
@@ -1105,10 +1182,12 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     // Titles on LIBRARY: or in a collection drag, to be filed (Files 2 §3.2). A selection that holds a collection too
     // drags as well, and its drop says why it is refused (fix round 1): never a drag that silently does not start.
     const shelf = shelfOf(l) !== null && indexes.every((i) => rows[i]?.kind === 'title' || rows[i]?.kind === 'collection');
-    if ((!holdsFiles(l) && !shelf) || paths.length === 0) { e.preventDefault(); return; }
+    // A volume's rows drag too, as copies (NET: volumes, spec 2026-10-30 §5).
+    const volumeRows = isNetVolume(l);
+    if ((!holdsFiles(l) && !shelf && !volumeRows) || paths.length === 0) { e.preventDefault(); return; }
     activate(side);
     e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ from: side, paths }));
-    e.dataTransfer.effectAllowed = 'copyMove';
+    e.dataTransfer.effectAllowed = volumeRows ? 'copy' : 'copyMove';
   }
 
   /** The folder (or collection) row a drop landed on, else the folder the pane shows. */
@@ -1126,6 +1205,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   function dropFromComputer(side: Side, e: React.DragEvent) {
     const l = panes[side].listing;
     if (l && !l.disk && holdsFiles(l)) { dropIntoStash(side, l, e); return; }
+    if (isNetVolume(l)) { toast.error(NET_READ_ONLY); return; }
     if (l && netReadOnly(l)) { dropOnBoard(side, l, e); return; }
     if (!l?.disk) { toast.error('Open a disk to drop files into it'); return; }
     if (!l.writable) { toast.error(readOnly(l)); return; }
@@ -1330,7 +1410,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const l = panes[side].listing;
     const from = panes[data.from]?.listing ?? null;
     const dest = l ? dropFolder(l, e) : '';
-    const op = e.shiftKey ? 'move' : 'copy';
+    // Out of a volume a drag always copies (spec 2026-10-30 §5): Shift asks for nothing a volume can give.
+    const op = e.shiftKey && !isNetVolume(from) ? 'move' : 'copy';
     const pickedHere = from?.entries.filter((x) => data.paths.includes(x.path)) ?? [];
     // Onto LIBRARY:, a collection, or a collection row (Files 2 §3.2): titles, or disk images from STASH:, are filed.
     const row = l?.entries.find((x) => x.path === dest) ?? null;
@@ -1343,7 +1424,10 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       transfer(op, data.paths, dest, row ? row.name : where(l), null, filingNoun(from));
       return;
     }
-    if (!l || !acceptsCopies(l)) { toast.error(l && netReadOnly(l) ? readOnly(l) : 'Open a disk or STASH: to drop files into it'); return; }
+    if (!l || !acceptsCopies(l)) {
+      toast.error(isNetVolume(l) ? NET_READ_ONLY : l && netReadOnly(l) ? readOnly(l) : 'Open a disk or STASH: to drop files into it');
+      return;
+    }
     if (!l.writable) { toast.error(readOnly(l)); return; }
     if (data.paths.includes(dest)) return;                       // a folder dropped on itself
     if (data.from === side && dest === l.path) return;           // put back where it was picked up
@@ -1373,6 +1457,12 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const nameTaken = naming ? dialogListing!.entries.filter((e) => e.kind === 'collection').map((e) => e.name)
     : dialogListing?.entries.map((e) => e.name) ?? [];
 
+  /** The Queue of the board whose root a pane waits on or could not read, while it has no rows to open Queue from. */
+  const queueOf = (p: PaneState) => {
+    const b = netBoardRoot(p.path);
+    return b !== null && (p.error !== null || p.pending !== null) && p.listing?.path !== p.path ? `NET:/${b}/${QUEUE_FOLDER}` : null;
+  };
+
   function pane(side: Side) {
     const p = panes[side];
     // A disk whose image cannot be read has no listing, but still has its strip (History, Restore) from the database.
@@ -1382,7 +1472,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     return (
       // Below lg only the active side is drawn, as tall as its rows: the page scrolls, not a box inside it.
       <div className={`grid min-h-0 min-w-0 lg:grid-rows-[minmax(0,1fr)] ${active === side ? '' : 'max-lg:hidden'}`}>
-        <Pane side={side} active={active === side} listing={side === 'left' ? shownLeft : shownRight} loading={p.loading} error={p.error ?? p.pending}
+        <Pane side={side} active={active === side} listing={side === 'left' ? shownLeft : shownRight} loading={p.loading} error={p.error} pending={p.pending}
               // The Comment column: STASH: only by default (ruling 9), or always, or never (R3).
               sort={sortOf(p.listing, p.path)} selection={p.selection} showComment={showsComment(prefs.files.comments, p.listing?.path ?? p.path)}
               view={viewOf(p)} onFilter={(text) => setFilter(side, text)} onShowInfo={showInfo} filterRef={filterRefs[side]}
@@ -1400,6 +1490,11 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
               errorAction={p.gone ? (
                 <Button variant="outline" size="sm" onClick={() => navigate(side, deviceRoot(p.path))} data-testid={`pane-${side}-home`}>
                   Go to {deviceRoot(p.path)}
+                </Button>
+              ) : queueOf(p) ? (
+                // A board's root waits on its Amiga for the volumes; its send queue never does (spec 2026-10-30 §4.4).
+                <Button variant="outline" size="sm" onClick={() => navigate(side, queueOf(p)!)} data-testid={`pane-${side}-queue`}>
+                  Open Queue
                 </Button>
               ) : undefined} />
       </div>
@@ -1476,6 +1571,13 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
               <DropdownMenuContent side="top" align="end" data-testid="files-more-menu"
                                    className="w-[min(240px,calc(100vw-32px))] rounded-2xl"
                                    style={{ background: 'var(--surface)', color: 'var(--ink)', border: '1px solid var(--line)', boxShadow: 'var(--shadow-card)' }}>
+                {/* NET: volumes (spec 2026-10-30 §5): Refresh on the phone sheet, where no Ctrl-R reaches. Not a fifth
+                    button in the bar: at 375 px five do not fit their labels. */}
+                <DropdownMenuItem data-testid="files-more-refresh" aria-disabled={bankReasons.refresh !== null || busy !== null || undefined}
+                                  aria-describedby={busy !== null ? 'files-busy' : undefined}
+                                  onClick={() => bank('refresh')} className={cn(MENU_ITEM, 'h-11 sm:h-11 font-medium aria-disabled:opacity-50')}>
+                  Refresh
+                </DropdownMenuItem>
                 {([['rename', 'Rename…'], ['makedir', 'Makedir…'], ['createadf', 'Create ADF…'], ['protect', 'Protect…'], ['info', 'Info'],
                   ...(inStash ? [['addlib', 'Add to library']] as const : []), ['download', 'Download']] as const).map(([id, label]) => (
                   // Not disabled: a tap on one that cannot act now says why.
@@ -1545,7 +1647,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
                     }} />
       )}
       {dialog?.kind === 'pick' && (
-        <CopyToPicker op={dialog.op} count={dialog.sources.length} start={dialog.start} busy={dialogBusy} list={fetchListing}
+        <CopyToPicker op={dialog.op} count={dialog.sources.length} start={dialog.start} busy={dialogBusy} list={settledListing}
                       filing={(l) => filingReason(dialog.op, src, picked, shelfOf(l))}
                       onCancel={() => setDialog(null)} onPick={(l) => placePicked(dialog, l)} />
       )}

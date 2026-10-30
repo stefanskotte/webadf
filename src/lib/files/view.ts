@@ -5,6 +5,7 @@ import type { FilesCommentMode, UserPrefs } from '@/lib/user-prefs-schema';
 import { sortFsEntries, type FilesSort } from './sort';
 import type { Selection } from './selection';
 import { parsePath } from './path';
+import { QUEUE_FOLDER } from '@/lib/remote-limits';
 import type { FsEntry, Listing } from './types';
 import type { HelpTopicId } from '@/lib/help/topics';
 
@@ -56,9 +57,14 @@ export function paneFoot(a: { base: string; shown: number; total: number; infoHi
   return a.base;
 }
 
-/** R3: 'auto' shows the Comment column in STASH: only (increment 2 ruling 9). */
+/**
+ * R3: 'auto' shows the Comment column in STASH: (increment 2 ruling 9) and in a volume of a board's Amiga, whose files
+ * carry their comments (NET: volumes, spec 2026-10-30 §5) -- not on the board's root or in its Queue.
+ */
 export function showsComment(mode: FilesCommentMode, path: string): boolean {
-  return mode === 'always' || (mode === 'auto' && parsePath(path)?.device === 'STASH');
+  if (mode !== 'auto') return mode === 'always';
+  const p = parsePath(path);
+  return p?.device === 'STASH' || (p?.device === 'NET' && p.segments.length >= 2 && p.segments[1] !== QUEUE_FOLDER);
 }
 
 /** R2: with the setting off, only a delete inside a disk (versioned, Undo) skips the confirm. */

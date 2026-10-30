@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { holdsFiles, addToLibraryReason, offersUndo, placeOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly, failedReason, FAILED_ROW, deleteText, deleteWhere } from './pane-rules';
+import { holdsFiles, addToLibraryReason, offersUndo, placeOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly, failedReason, FAILED_ROW, deleteText, deleteWhere, netVolumeReason } from './pane-rules';
+import { NET_OPEN_VOLUME, NET_READ_ONLY } from './net-rules';
 import type { FsEntry, Listing } from './types';
 
 const L = (path: string, extra: Partial<Listing> = {}): Listing => ({ path, crumbs: [], entries: [], writable: true, readOnlyReason: null, disk: null, meta: '', ...extra });
@@ -120,6 +121,29 @@ describe('NET: in the panes (increment 3, Task 2)', () => {
   it('netReadOnly: nothing in NET: is renamed, protected or commented', () => {
     expect(netReadOnly(board())).toBe(true);
     expect(netReadOnly(L('STASH:'))).toBe(false);
+  });
+});
+
+describe('NET: volumes (spec 2026-10-30 §5)', () => {
+  const net = { board: 'b1', boardName: 'A500', volume: 'Work', amigaPath: 'Work:Programs', readAt: null, cut: false, browse: null };
+  const volume = L('NET:/b1/Work/Programs', { writable: false, readOnlyReason: NET_READ_ONLY, net });
+  const boardRoot = L('NET:/b1', { writable: false, readOnlyReason: NET_OPEN_VOLUME, net: { ...net, volume: null, amigaPath: null } });
+  it('a volume is read-only for now: every command that writes says so', () => {
+    expect(netVolumeReason(volume)).toBe('Read-only for now');
+    expect(netVolumeReason(boardRoot)).toBeNull();
+    expect(netVolumeReason(L('NET:/b1/Queue'))).toBeNull();
+    expect(netVolumeReason(L('STASH:'))).toBeNull();
+    expect(netVolumeReason(null)).toBeNull();
+  });
+  it('copies come out of a volume, never out of the queue (R5); the board itself is a list of places', () => {
+    expect(copyOutReason(volume)).toBeNull();
+    expect(copyOutReason(L('NET:/b1/Queue'))).toBe('Files waiting for the Amiga cannot be copied out');
+    expect(copyOutReason(boardRoot)).toBe('Open a volume or Queue');
+  });
+  it('nothing lands in a volume or on the board root', () => {
+    expect(acceptsCopies(volume)).toBe(false);
+    expect(acceptsCopies(boardRoot)).toBe(false);
+    expect(holdsFiles(volume)).toBe(false);
   });
 });
 

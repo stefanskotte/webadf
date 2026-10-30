@@ -24,12 +24,10 @@ import { amigaPathOf, volumeLabel, type EntryInfo, type VolumeInfo } from '@/lib
 import { QUEUE_FOLDER } from '@/lib/remote-limits';
 import { formatPath, parsePath, type FsPath } from './path';
 import { Pending, refuse, type FsCtx, type IncomingTop, type OpCtx, type OpItem, type Outcome, type VolumeDriver } from './driver';
-import { NET_COPY_OUT, NET_PICK_BOARD, netEmpty } from './net-rules';
+import { NET_COPY_OUT, NET_OPEN_VOLUME, NET_PICK_BOARD, NET_READ_ONLY, netEmpty } from './net-rules';
 import type { Crumb, FsEntry, Listing } from './types';
 
 const ROOT: Crumb = { label: 'NET:', path: 'NET:' };
-/** A volume's readOnlyReason, and what a write into one is refused with (§5: phase 1 reads only). */
-const NET_READ_ONLY = 'Read-only for now';
 const netPath = (...segs: string[]) => formatPath({ device: 'NET', segments: segs });
 const MB = 1024 * 1024;
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -117,7 +115,7 @@ async function listBoardRoot(ctx: FsCtx, t: SendTarget, now: number, opts: { fre
   });
   entries.push({ name: QUEUE_FOLDER, kind: 'dir', path: netPath(t.id, QUEUE_FOLDER), size: null, date: null, protection: null,
     comment: null, marks: [`${load.files} waiting`] });
-  return { path: netPath(t.id), crumbs: boardCrumbs(t), entries, writable: false, readOnlyReason: 'Open a volume or Queue', disk: null,
+  return { path: netPath(t.id), crumbs: boardCrumbs(t), entries, writable: false, readOnlyReason: NET_OPEN_VOLUME, disk: null,
     net: { board: t.id, boardName: t.name, volume: null, amigaPath: null, readAt, cut: false, browse: block },
     meta: block ?? `${volumes.length} ${volumes.length === 1 ? 'volume' : 'volumes'}` };
 }
