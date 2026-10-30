@@ -166,5 +166,7 @@ int rx_browse_on(const rx_session *s);    /* 1: requests are answered (switch on
 /* 1 when READY 3's flag no longer matches the switch (or the trust) and the connection is idle: the front end closes
    it, so the board reconnects and hears the new flag (plan ruling T1). */
 int rx_hello_stale(const rx_session *s);
+/* The protocol code for an AmigaDOS error (plan ruling T3); want_dir: the request wanted a drawer (DIR), not a file. */
+const char *rx_err_code(long err, int want_dir);
 
 #endif

@@ -223,6 +223,30 @@ static void req_done(rx_session *s, int cut) {
 static void put_date(rx_session *s, unsigned long d, unsigned long m, unsigned long t) {
     put_dec(s, d); puts_(s, "."); put_dec(s, m); puts_(s, "."); put_dec(s, t);
 }
+const char *rx_err_code(long err, int want_dir) {
+    switch (err) {
+    case RX_DOS_NOT_FOUND: case RX_DOS_DIR_NOT_FOUND: return "notfound";
+    case RX_DOS_IN_USE: return "busy";
+    case RX_DOS_READ_PROTECTED: return "denied";
+    case RX_DOS_WRONG_TYPE: return want_dir ? "notdir" : "isdir";
+    default: return "io";
+    }
+}
+/* A DOS error ends the request, in AmigaDOS's own words (Fault()). */
+static void req_fail(rx_session *s, long err, int want_dir) {
+    char text[80];
+    text[0] = 0;
+    s->fs->fault(s->fs->ctx, err, text, sizeof text);
+    if (!text[0]) strcpy(text, "error");
+    req_fail_text(s, rx_err_code(err, want_dir), text);
+}
+static void put_ent(rx_session *s, const rx_dent *e) {
+    char cm[RX_COMMENT_MAX + 1];
+    clean(e->comment, cm, sizeof cm);
+    puts_(s, "ENT "); puts_(s, s->req_id); puts_(s, e->is_dir ? " d " : " f "); put_dec(s, e->is_dir ? 0 : e->size);
+    puts_(s, " "); put_hex(s, e->prot); puts_(s, " "); put_date(s, e->days, e->mins, e->ticks);
+    puts_(s, " "); put_lenstr(s, e->name); puts_(s, " "); put_lenstr(s, cm); puts_(s, "\n");
+}
 static void req_start(rx_session *s) {
     s->req_kind = s->wait_kind; strcpy(s->req_id, s->wait_id); strcpy(s->req_path, s->wait_path);
     s->wait_kind = RX_REQ_NONE;
@@ -231,6 +255,11 @@ static void req_start(rx_session *s) {
         int k = s->fs->vols(s->fs->ctx, s->req_vols, RX_VOLS_MAX);
         if (k < 0) { req_fail_text(s, "io", "cannot read the volume list"); return; }
         s->req_nvols = k;
+    }
+    else if (s->req_kind == RX_REQ_DIR) {
+        long e = s->fs->dir_open(s->fs->ctx, s->req_path);
+        if (e) { req_fail(s, e, 1); return; }
+        s->req_open = 1;
     }
 }
 /* The answer goes out a line at a time, only while the buffer has room for one (spec §2.2 Long drawers): the rest
@@ -245,6 +274,18 @@ static void req_pump(rx_session *s) {
         puts_(s, "VOL "); puts_(s, s->req_id); puts_(s, " "); put_lenstr(s, v->name); puts_(s, " "); put_lenstr(s, v->device);
         puts_(s, " "); put_dec(s, v->size); puts_(s, " "); put_dec(s, v->free); puts_(s, " ");
         put_date(s, v->days, v->mins, v->ticks); puts_(s, "\n");
+        s->req_count++;
+    }
+    while (s->req_kind == RX_REQ_DIR && RX_OUT_MAX - s->out_n >= RX_REQ_ROOM) {
+        static rx_dent e;   /* static: the Amiga's stack is small */
+        long r;
+        memset(&e, 0, sizeof e);
+        r = s->fs->dir_next(s->fs->ctx, &e);
+        if (r < 0) { req_fail(s, -r, 1); break; }
+        if (r == 0) { req_done(s, 0); break; }
+        if (!rx_name_sendable(e.name)) continue;                 /* plan ruling T2 */
+        if (s->req_count == RX_ENT_MAX) { req_done(s, 1); break; }   /* a 1001st entry: cut (spec §2.2) */
+        put_ent(s, &e);
         s->req_count++;
     }
 }
@@ -353,6 +394,7 @@ int rx_up_add_tree(rx_upq *q, const rx_fs *fs, const char *local, const char *na
 /* --- protocol 2: the file going up (spec §3; plan ruling P7) --- */
 static int req_due(const rx_session *s);
 static void req_pump(rx_session *s);
+static void clean(const char *in, char *out, unsigned cap);
 static int put_due(const rx_session *s) {
     return s->upq && s->upq->n > 0 && s->up_phase == RX_UP_IDLE && !s->in_data && !s->up_closing && rx_uploads_on(s) &&
            s->req_kind == RX_REQ_NONE && s->wait_kind == RX_REQ_NONE;   /* requests first (plan ruling T5) */
@@ -390,10 +432,7 @@ static void up_put(rx_session *s) {
         puts_(s, "PUT "); put_dec(s, it.tag); puts_(s, " "); put_dec(s, s->up_info.size); puts_(s, " ");
         put_dec(s, s->up_info.days); puts_(s, "."); put_dec(s, s->up_info.mins); puts_(s, "."); put_dec(s, s->up_info.ticks);
         puts_(s, " "); put_hex(s, s->up_info.prot); puts_(s, " "); put_lenstr(s, it.name); puts_(s, " ");
-        { char cm[RX_COMMENT_MAX + 1]; unsigned i;   /* a control byte would end the PUT line early */
-          for (i = 0; s->up_info.comment[i] && i < RX_COMMENT_MAX; i++)
-              cm[i] = (unsigned char)s->up_info.comment[i] < 0x20 ? ' ' : s->up_info.comment[i];
-          cm[i] = 0; put_lenstr(s, cm); }
+        { char cm[RX_COMMENT_MAX + 1]; clean(s->up_info.comment, cm, sizeof cm); put_lenstr(s, cm); }
         puts_(s, "\n");
         return;
     }
@@ -628,6 +667,7 @@ static void on_line(rx_session *s, const char *line, unsigned len) {
     else if (is(t, n, "DONE")) on_done(s, &c);
     else if (is(t, n, "NO")) on_no(s, &c);
     else if (is(t, n, "VOLS")) on_request(s, &c, RX_REQ_VOLS);
+    else if (is(t, n, "DIR")) on_request(s, &c, RX_REQ_DIR);
     /* anything else: ignored, for newer boards and stray clients */
 }
 
