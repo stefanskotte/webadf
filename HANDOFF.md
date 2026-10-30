@@ -1485,7 +1485,8 @@ sharing shipped 2026-10-28; **Files SHIPPED 2026-10-29** (merge ef711fb, §4-fil
 opt-in browse setting in Transfer, read-only first), a firmware request queue beside xfer, a server driver; ~2-5 s per
 folder. Phase 1 list + copy from the Amiga; phase 2 writes. Needs a spec (brainstorm first).
 (1b) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there. Backlog (operator 2026-10-30): clicking a pane's left edge goes up one level in that pane, as in Directory Opus; at a
-root it does nothing.
+root it does nothing. Backlog (operator 2026-10-30): the disk strip's History button should read as a toggle (it opens and
+closes the History panel), e.g. with a caret.
 (2) **Sharing follow-ups:** A500 bench of the first-write rule; Send to Amiga from a remote disk end to end; the one-off
 local remote-mount 404; OMV back to `latest` after the next web-* release; the sharing deferred minors.
 (3) **Web app, smaller:** "Put on a disk" from From the Amiga; .lzh dropped onto a disk in Browse; documentation for
