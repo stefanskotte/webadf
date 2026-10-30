@@ -297,7 +297,7 @@ describe('/api/files', () => {
     const r = await POST_OPS(json({ op: 'copy', sources: ['STASH:/Mods', 'STASH:/Notes.txt'], dest: 'NET:/devN', onClash: 'ask' }));
     expect(r.status).toBe(200);
     expect(await r.json()).toMatchObject({ items: [{ ok: true }, { ok: true }], queued: 2 });
-    const l = await GET_LIST(req('/api/files/list?path=NET:/devN'));
+    const l = await GET_LIST(req('/api/files/list?path=NET:/devN/Queue'));
     expect(l.status).toBe(200);
     expect((await l.json()).queue).toEqual({ deviceId: 'devN', files: 2, bytes: 10 });
     const moved = await POST_OPS(json({ op: 'move', sources: ['STASH:/Notes.txt'], dest: 'NET:/devN', onClash: 'ask' }));
@@ -305,8 +305,26 @@ describe('/api/files', () => {
     expect(await moved.json()).toEqual({ error: 'unsupported', detail: 'Files sent to the Amiga stay where they are — use Copy' });
     asOrg('o2');
     expect((await GET_LIST(req('/api/files/list?path=NET:/devN'))).status).toBe(404);
+    expect((await GET_LIST(req('/api/files/list?path=NET:/devN/Queue'))).status).toBe(404);
     expect((await POST_OPS(json({ op: 'copy', sources: ['STASH:/Notes.txt'], dest: 'NET:/devN', onClash: 'ask' }))).status).toBe(404);
     asOrg('o1');
+  });
+  it('NET: volumes (spec 2026-10-30 §4.4): a listing the Amiga has not answered is 202 with its label, never cached; Refresh asks again', async () => {
+    const now = new Date();
+    await getDb().insert(devices).values({ id: 'devV', orgId: 'o1', name: 'Vol bench', tokenHash: 'hV', firmwareVersion: '1.22.0+gabc',
+      lastSeenAt: now, sendRx: 'c', sendRxAt: now, rxProto: 3, browseOn: true });
+    const r = await GET_LIST(req('/api/files/list?path=' + encodeURIComponent('NET:/devV/Work/Programs')));
+    expect(r.status).toBe(202);
+    expect(r.headers.get('cache-control')).toBe('no-store');
+    expect(await r.json()).toEqual({ pending: true, label: 'Reading Work:Programs from Vol bench…' });
+    const { takeWaiting, answerPiece } = await import('@/lib/remote-requests');
+    const [row] = await takeWaiting(getDb(), 'devV');
+    await answerPiece(getDb(), 'devV', row.id, { piece: 0, lines: [`DONE ${row.id} 0`], last: true });
+    const done = await GET_LIST(req('/api/files/list?path=' + encodeURIComponent('NET:/devV/Work/Programs')));
+    expect(done.status).toBe(200);
+    expect((await done.json()).net).toMatchObject({ amigaPath: 'Work:Programs', cut: false });
+    const again = await GET_LIST(req('/api/files/list?fresh=1&path=' + encodeURIComponent('NET:/devV/Work/Programs')));
+    expect(again.status).toBe(202);
   });
   it('lists STASH: and 422s an unreadable archive, with the refusal\'s detail when it has one', async () => {
     expect((await GET_LIST(req('/api/files/list?path=STASH:'))).status).toBe(200);

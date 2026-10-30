@@ -4,6 +4,7 @@ import { libraryEligible } from '@/lib/from-amiga-ui';
 import { isActiveTransferText } from '@/lib/send-ui';
 import { parsePath } from './path';
 import { NET_COPY_OUT } from './net-rules';
+import { QUEUE_FOLDER } from '@/lib/remote-limits';
 import type { FsEntry, Listing } from './types';
 
 const inStash = (path: string) => parsePath(path)?.device === 'STASH';
@@ -17,10 +18,13 @@ export function holdsFiles(l: Listing | null): boolean {
   return !!l && (l.disk !== null || inStash(l.path));
 }
 
-/** The board a NET:/<board> listing is the queue of; null for NET: itself and anywhere else. */
+/**
+ * The board a NET:/<board>/Queue listing is the queue of (NET: volumes, spec 2026-10-30 §4.3); null for NET: itself, a
+ * board's root, its volumes and anywhere else.
+ */
 export function netBoardOf(l: Listing | null): string | null {
   const p = l ? parsePath(l.path) : null;
-  return p?.device === 'NET' && p.segments.length === 1 ? p.segments[0] : null;
+  return p?.device === 'NET' && p.segments.length === 2 && p.segments[1] === QUEUE_FOLDER ? p.segments[0] : null;
 }
 
 /**
@@ -82,7 +86,8 @@ export function offersUndo(op: 'copy' | 'move', sources: readonly string[], dest
 export function placeOf(l: Listing | null): string {
   if (l?.disk) return l.disk.label;
   if (l?.library) return l.crumbs.at(-1)?.label ?? 'LIBRARY:';
-  if (netBoardOf(l)) return l!.crumbs.at(-1)?.label ?? 'the board';
+  // The board's crumb, before its Queue crumb (NET: volumes, spec 2026-10-30 §4.3).
+  if (netBoardOf(l)) return l!.crumbs.at(-2)?.label ?? 'the board';
   return l && inStash(l.path) ? 'STASH:' : 'the other side';
 }
 

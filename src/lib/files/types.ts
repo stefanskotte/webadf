@@ -6,9 +6,10 @@ import type { AdfEntry } from '@/lib/adffs';
 import type { ExistingEntry } from '@/lib/staging';
 /**
  * 'archive': a .lha/.lzh/.zip in STASH:, a file that also opens as a read-only folder. 'board': a board under NET:.
- * 'collection': a Library collection under LIBRARY:, a folder of titles (Files 2).
+ * 'collection': a Library collection under LIBRARY:, a folder of titles (Files 2). 'volume': a volume of a board's Amiga
+ * under NET:/<board> (NET: volumes, spec 2026-10-30), opened like a folder.
  */
-export type EntryKind = 'title' | 'disk' | 'dir' | 'file' | 'archive' | 'board' | 'collection';
+export type EntryKind = 'title' | 'disk' | 'dir' | 'file' | 'archive' | 'board' | 'collection' | 'volume';
 export type FsEntry = {
   name: string; kind: EntryKind; path: string;
   size: number | null; date: string | null; protection: string | null; comment: string | null;
@@ -48,6 +49,12 @@ export type Listing = {
   library?: { level: 'root' | 'collection' | 'title' | 'disk'; collectionId: string | null };
   /** Inside a disk: the disk's own path, with its collection prefix ("new in vN" and the drop folder read under it). */
   diskBase?: string | null;
+  /**
+   * NET:/<board> and its volumes (spec 2026-10-30 §5): the board, the volume and Amiga path shown (null at the board),
+   * when the remembered answer was read (null when nothing was read), whether Transfer cut it at 1000 entries, and
+   * `browse`: null when the board can be browsed, else the words why not.
+   */
+  net?: { board: string; boardName: string; volume: string | null; amigaPath: string | null; readAt: number | null; cut: boolean; browse: string | null };
 };
 export type RefusalCode =
   | 'not_found' | 'read_only' | 'mounted' | 'disk_full' | 'name_exists' | 'bad_name' | 'comment_too_long'

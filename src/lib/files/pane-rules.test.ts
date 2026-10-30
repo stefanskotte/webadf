@@ -69,10 +69,12 @@ describe('placeOf', () => {
 });
 
 describe('NET: in the panes (increment 3, Task 2)', () => {
-  const board = (extra: Partial<Listing> = {}) => L('NET:/b1', { crumbs: [{ label: 'NET:', path: 'NET:' }, { label: 'A500 bench', path: 'NET:/b1' }],
+  // A board's queue is its Queue folder since NET: volumes (spec 2026-10-30 §4.3).
+  const board = (extra: Partial<Listing> = {}) => L('NET:/b1/Queue', { crumbs: [{ label: 'NET:', path: 'NET:' }, { label: 'A500 bench', path: 'NET:/b1' },
+    { label: 'Queue', path: 'NET:/b1/Queue' }],
     queue: { deviceId: 'b1', files: 0, bytes: 0 }, ...extra });
   const net = () => L('NET:', { writable: false, readOnlyReason: 'Open a board to send files to it' });
-  const row = (marks: string[]) => E('a.txt', 'file', { path: 'NET:/b1/t1', marks });
+  const row = (marks: string[]) => E('a.txt', 'file', { path: 'NET:/b1/Queue/t1', marks });
 
   it('holdsFiles stays false in NET: (C2: no folders, no drag out, no STASH: commit); acceptsCopies takes a board', () => {
     expect(holdsFiles(board())).toBe(false);
@@ -85,6 +87,8 @@ describe('NET: in the panes (increment 3, Task 2)', () => {
     expect(acceptsCopies(null)).toBe(false);
     expect(netBoardOf(board())).toBe('b1');
     expect(netBoardOf(net())).toBeNull();
+    expect(netBoardOf(L('NET:/b1'))).toBeNull();
+    expect(netBoardOf(L('NET:/b1/Work'))).toBeNull();
     expect(netBoardOf(L('STASH:'))).toBeNull();
   });
 
@@ -109,8 +113,8 @@ describe('NET: in the panes (increment 3, Task 2)', () => {
 
   it('a copy into NET: names the board, and offers no Undo', () => {
     expect(placeOf(board())).toBe('A500 bench');
-    expect(offersUndo('copy', ['LIBRARY:/g/d/a'], 'NET:/b1')).toBe(false);
-    expect(offersUndo('copy', ['STASH:/a'], 'NET:/b1')).toBe(false);
+    expect(offersUndo('copy', ['LIBRARY:/g/d/a'], 'NET:/b1/Queue')).toBe(false);
+    expect(offersUndo('copy', ['STASH:/a'], 'NET:/b1/Queue')).toBe(false);
   });
 
   it('netReadOnly: nothing in NET: is renamed, protected or commented', () => {

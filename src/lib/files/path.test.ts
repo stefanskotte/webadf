@@ -102,10 +102,12 @@ describe('the panes\' devices (increment 2 R1, increment 3)', () => {
 
 describe('filesHrefForBoard (increment 3, R10/R11)', () => {
   it('opens STASH: on the left and the board under NET: on the right, with the pane asked for active', () => {
+    // NET: volumes (spec 2026-10-30 §4.3): the board's send queue is its Queue folder.
     const href = filesHrefForBoard('dev 1', 'right');
-    expect(href).toBe('/files?left=STASH:&right=NET%3A%2Fdev%201&active=right');
+    expect(href).toBe('/files?left=STASH:&right=NET%3A%2Fdev%201%2FQueue&active=right');
     const q = new URL(href, 'http://x').searchParams;
-    expect([q.get('left'), q.get('right'), q.get('active')]).toEqual(['STASH:', 'NET:/dev 1', 'right']);
-    expect(filesHrefForBoard('b2', 'left')).toBe('/files?left=STASH:&right=NET%3A%2Fb2&active=left');
+    expect([q.get('left'), q.get('right'), q.get('active')]).toEqual(['STASH:', 'NET:/dev 1/Queue', 'right']);
+    expect(filesHrefForBoard('b2', 'left')).toBe('/files?left=STASH:&right=NET%3A%2Fb2%2FQueue&active=left');
+    expect(filesHrefForBoard('d1', 'right')).toBe('/files?left=STASH:&right=NET%3A%2Fd1%2FQueue&active=right');
   });
 });

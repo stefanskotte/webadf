@@ -39,6 +39,13 @@ export type CopyMove = { op: 'copy' | 'move'; sources: string[]; dest: string; o
 export class Refused extends Error {
   constructor(readonly refusal: Refusal, readonly status: number) { super(refusal.code); }
 }
+/**
+ * NET: volumes (spec 2026-10-30 §4.4): a listing the board's Amiga has been asked for and not answered yet. The list
+ * route answers it 202 with the label ("Reading Work:Programs from A500…"); the pane asks again.
+ */
+export class Pending extends Error {
+  constructor(readonly label: string) { super('pending'); }
+}
 export function refuse(code: RefusalCode, status: number, detail?: string): never {
   throw new Refused(detail ? { code, detail } : { code }, status);
 }
@@ -76,7 +83,8 @@ export function itemResult(source: string, fn: () => void): OpItem {
 
 export interface VolumeDriver {
   readonly device: Device;
-  list(ctx: FsCtx, p: FsPath): Promise<Listing | null>;                // null = not found (404)
+  /** null = not found (404). `fresh`: NET: volumes ask the Amiga again rather than reuse a remembered answer (Refresh). */
+  list(ctx: FsCtx, p: FsPath, opts?: { fresh?: boolean }): Promise<Listing | null>;
   read(ctx: FsCtx, p: FsPath): Promise<FileBytes | null>;              // a file's bytes + meta; null for a folder or not found
   collect(ctx: FsCtx, p: FsPath): Promise<IncomingItem[] | null>;      // one entry walked, for a copy to another device
   within?(ctx: OpCtx, req: CopyMove): Promise<Outcome>;                // copy/move with every source and the dest on this device

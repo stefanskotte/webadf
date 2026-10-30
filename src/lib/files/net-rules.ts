@@ -5,6 +5,7 @@ import { parsePath } from './path';
 import type { Listing } from './types';
 import { isActiveTransferText } from '@/lib/send-ui';
 import { SEND_FILE_MAX, SEND_QUEUE_MAX_BYTES, SEND_QUEUE_MAX_FILES } from '@/lib/send-limits';
+import { QUEUE_FOLDER } from '@/lib/remote-limits';
 
 export const NET_REFRESH_ACTIVE_MS = 3_000;
 export const NET_REFRESH_IDLE_MS = 10_000;
@@ -18,10 +19,13 @@ export const netEmpty = (path: string) => `${path} is empty`;
 /** NET: itself lists boards and takes nothing: its `readOnlyReason`. */
 export const NET_PICK_BOARD = 'Open a board to send files to it';
 
-/** How often a pane showing `l` re-reads it: NET:/<board> only; faster while anything waits or sends. */
+/**
+ * How often a pane showing `l` re-reads it: a board's queue (NET:/<board>/Queue) only; faster while anything waits or
+ * sends. A board's volumes are read on request (spec 2026-10-30), never polled.
+ */
 export function netPollMs(l: Listing | null): number | null {
   const p = l && parsePath(l.path);
-  if (!p || p.device !== 'NET' || p.segments.length !== 1) return null;
+  if (!p || p.device !== 'NET' || p.segments.length !== 2 || p.segments[1] !== QUEUE_FOLDER) return null;
   return l.entries.some((e) => e.marks[0] !== undefined && isActiveTransferText(e.marks[0])) ? NET_REFRESH_ACTIVE_MS : NET_REFRESH_IDLE_MS;
 }
 

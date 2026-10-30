@@ -8,7 +8,7 @@ import {
 const NOW = 1_800_000_000_000;
 const t = (over: Partial<SendTarget> = {}): SendTarget => ({
   id: 'a', name: 'Bench', macAddress: '28:CD:C1:19:6A:38', defaultName: false, online: true,
-  lastSeenAt: NOW - 5_000, network: true, rx: 'c', rxAt: NOW - 10_000, ...over,
+  lastSeenAt: NOW - 5_000, network: true, rx: 'c', rxAt: NOW - 10_000, firmwareVersion: '1.21.1+gabc', rxProto: null, browseOn: false, ...over,
 });
 const row = (over: Partial<TransferView> = {}): TransferView => ({
   id: 'x', path: 'Café.lha', sizeBytes: 1000, status: 'queued', bytesSent: 0, savedAs: null, errorCode: null,

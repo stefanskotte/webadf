@@ -44,6 +44,7 @@ import type { SendTarget } from '@/lib/send-ui';
 import { useStashUpload, type StashUploadResult } from './use-stash-upload';
 import { sameStashName } from '@/lib/files/stash-paths';
 import { isSignedOutAnswer, SIGNED_OUT_TEXT } from '@/lib/signed-out';
+import { QUEUE_FOLDER } from '@/lib/remote-limits';
 import {
   ClashDialog, ConfirmDeleteDialog, InfoDialog, NameDialog, ProtectDialog, placeName, type Clash, type ClashChoice,
 } from './dialogs';
@@ -400,7 +401,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   /** Files were queued for a board from the Send zone: a pane showing its queue reads it again. */
   function sentTo(deviceId: string) {
     const { panes: cur } = latest.current;
-    for (const side of ['left', 'right'] as const) if (cur[side].path === `NET:/${deviceId}`) void load(side, cur[side].path);
+    for (const side of ['left', 'right'] as const) if (cur[side].path === `NET:/${deviceId}/${QUEUE_FOLDER}`) void load(side, cur[side].path);
   }
 
   function navigate(side: Side, path: string) {
@@ -1411,7 +1412,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       <div className="grid min-w-0 max-sm:grid-cols-2 max-sm:gap-x-2.5 max-sm:gap-y-2 sm:contents">
         <SendDropZone targets={send.targets} initialBoard={send.initialBoard} serverNow={send.serverNow} onSent={sentTo}
                       paneQueues={[panes.left.listing?.queue, panes.right.listing?.queue]}
-                      onShowQueue={(id) => navigate('right', `NET:/${id}`)} />
+                      onShowQueue={(id) => navigate('right', `NET:/${id}/${QUEUE_FOLDER}`)} />
       </div>
     </div>
     <div ref={rootRef} tabIndex={0} onKeyDown={onKeyDown} data-testid="files-manager" aria-label="File manager"

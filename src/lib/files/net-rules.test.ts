@@ -9,11 +9,14 @@ describe('netPollMs', () => {
   it('polls a board queue fast while something waits or sends, slowly otherwise, and nothing elsewhere', () => {
     expect(NET_REFRESH_ACTIVE_MS).toBe(3_000);
     expect(NET_REFRESH_IDLE_MS).toBe(10_000);
-    expect(netPollMs(L('NET:/b1', [['Waiting']]))).toBe(3_000);
+    expect(netPollMs(L('NET:/b1/Queue', [['Waiting']]))).toBe(3_000);
     // C6: the sending text carries its percentage, so the rule must not match exact words only.
-    expect(netPollMs(L('NET:/b1', [['Delivered · saved as a.txt'], ['Sending 40 %']]))).toBe(3_000);
-    expect(netPollMs(L('NET:/b1', [['Delivered · saved as a.txt'], ['Cancelled'], ['Expired · the Amiga did not take it within 24 h']]))).toBe(10_000);
-    expect(netPollMs(L('NET:/b1'))).toBe(10_000);
+    expect(netPollMs(L('NET:/b1/Queue', [['Delivered · saved as a.txt'], ['Sending 40 %']]))).toBe(3_000);
+    expect(netPollMs(L('NET:/b1/Queue', [['Delivered · saved as a.txt'], ['Cancelled'], ['Expired · the Amiga did not take it within 24 h']]))).toBe(10_000);
+    expect(netPollMs(L('NET:/b1/Queue'))).toBe(10_000);
+    // NET: volumes (spec 2026-10-30): a board's root and its volumes are read on request, never polled.
+    expect(netPollMs(L('NET:/b1', [['Waiting']]))).toBeNull();
+    expect(netPollMs(L('NET:/b1/Work/Programs', [['Waiting']]))).toBeNull();
     expect(netPollMs(L('NET:'))).toBeNull();
     expect(netPollMs(L('STASH:'))).toBeNull();
     expect(netPollMs(L('LIBRARY:/g1/d1'))).toBeNull();

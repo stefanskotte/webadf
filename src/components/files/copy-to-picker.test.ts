@@ -32,7 +32,7 @@ describe('CopyToPicker (Files increment 1, Task 10)', () => {
   });
 
   it('NET: boards are places; inside one, Copy sends and Move is refused (increment 3, Task 2)', () => {
-    const board = listing({ path: 'NET:/b1', disk: null, queue: { deviceId: 'b1', files: 0, bytes: 0 } });
+    const board = listing({ path: 'NET:/b1/Queue', disk: null, queue: { deviceId: 'b1', files: 0, bytes: 0 } });
     expect(pickReason('copy', board)).toBeNull();
     expect(pickReason('move', board)).toBe('Files sent to the Amiga stay where they are — use Copy');
     expect(pickReason('copy', listing({ path: 'NET:', disk: null, writable: false, readOnlyReason: 'Open a board to send files to it' })))

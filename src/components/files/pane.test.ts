@@ -231,10 +231,10 @@ describe('Pane (Files increment 1, Task 7)', () => {
     expect(html).not.toContain('Drop files');
 
     const queue: Listing = {
-      path: 'NET:/b1', crumbs: [{ label: 'NET:', path: 'NET:' }, { label: 'A500 bench', path: 'NET:/b1' }], writable: true, readOnlyReason: null, disk: null,
+      path: 'NET:/b1/Queue', crumbs: [{ label: 'NET:', path: 'NET:' }, { label: 'A500 bench', path: 'NET:/b1' }, { label: 'Queue', path: 'NET:/b1/Queue' }], writable: true, readOnlyReason: null, disk: null,
       meta: '1 waiting · 0.0 of 16 MB', queue: { deviceId: 'b1', files: 1, bytes: 5 },
       // C17: two rows may share a name, and a name may hold a /.
-      entries: [entry('Mods/a.mod', 'file', { path: 'NET:/b1/t1', marks: ['Waiting'] }), entry('Mods/a.mod', 'file', { path: 'NET:/b1/t2', marks: ['Delivered · saved as a_2.mod'] })],
+      entries: [entry('Mods/a.mod', 'file', { path: 'NET:/b1/Queue/t1', marks: ['Waiting'] }), entry('Mods/a.mod', 'file', { path: 'NET:/b1/Queue/t2', marks: ['Delivered · saved as a_2.mod'] })],
     };
     const q = render({ listing: queue });
     expect(rows(q)).toHaveLength(2);
