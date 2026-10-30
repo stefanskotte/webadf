@@ -1,5 +1,5 @@
 {
-  "id": "4b985501-261f-4471-b631-398048cf16f1",
+  "id": "23f5813a-5180-4f4d-8366-4d2f1f9e7820",
   "prevId": "a1e5768c-f358-4e8c-b2b8-55d5ee9cfc6b",
   "version": "7",
   "dialect": "postgresql",
@@ -3974,6 +3974,21 @@
           "columns": [
             {
               "expression": "fetch_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "remote_requests_upload_idx": {
+          "name": "remote_requests_upload_idx",
+          "columns": [
+            {
+              "expression": "upload_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

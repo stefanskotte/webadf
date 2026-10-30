@@ -65,6 +65,10 @@ describe('remote_requests schema', () => {
       and column_name in ('req_version','rx_proto','browse_on') order by column_name`);
     expect(c.rows.map((r) => r.column_name)).toEqual(['browse_on', 'req_version', 'rx_proto']);
   });
+  it('indexes upload_id: every chunk of every upload looks its get up by it', async () => {
+    const i = await getDb().execute(sql`select indexdef from pg_indexes where tablename = 'remote_requests' and indexname = 'remote_requests_upload_idx'`);
+    expect(i.rows.map((r) => r.indexdef)).toEqual([expect.stringContaining('(upload_id)')]);
+  });
 });
 
 // NET: volumes (spec §4.2-4.4): listing reuse, the 2-minute memory, answers in pieces, timeouts.

@@ -32,4 +32,6 @@ export const remoteRequests = pgTable('remote_requests', {
   index('remote_requests_device_idx').on(t.deviceId, t.status, t.createdAt),
   index('remote_requests_path_idx').on(t.deviceId, t.kind, t.amigaPath, t.createdAt),
   index('remote_requests_fetch_idx').on(t.fetchId),
+  // Every chunk of every upload looks up its get (if any) by upload_id.
+  index('remote_requests_upload_idx').on(t.uploadId),
 ]);

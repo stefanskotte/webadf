@@ -25,4 +25,5 @@ ALTER TABLE "devices" ADD COLUMN "browse_on" boolean DEFAULT false NOT NULL;--> 
 ALTER TABLE "remote_requests" ADD CONSTRAINT "remote_requests_device_id_devices_id_fk" FOREIGN KEY ("device_id") REFERENCES "public"."devices"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "remote_requests_device_idx" ON "remote_requests" USING btree ("device_id","status","created_at");--> statement-breakpoint
 CREATE INDEX "remote_requests_path_idx" ON "remote_requests" USING btree ("device_id","kind","amiga_path","created_at");--> statement-breakpoint
-CREATE INDEX "remote_requests_fetch_idx" ON "remote_requests" USING btree ("fetch_id");
+CREATE INDEX "remote_requests_fetch_idx" ON "remote_requests" USING btree ("fetch_id");--> statement-breakpoint
+CREATE INDEX "remote_requests_upload_idx" ON "remote_requests" USING btree ("upload_id");
