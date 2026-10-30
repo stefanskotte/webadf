@@ -33,11 +33,16 @@ describe('parseAnswerLine', () => {
 });
 
 describe('amigaPathOf', () => {
-  it('turns NET: segments below the board into an Amiga path', () => {
-    expect(amigaPathOf(['Work'])).toEqual({ volume: 'Work', amigaPath: 'Work:' });
-    expect(amigaPathOf(['RAM Disk', 'T'])).toEqual({ volume: 'RAM Disk', amigaPath: 'RAM Disk:T' });
-    expect(amigaPathOf(['Work', 'Würfel Spiel', 'a.lha'])).toEqual({ volume: 'Work', amigaPath: 'Work:Würfel Spiel/a.lha' });
-    expect(amigaPathOf(['Empty (DF1:)', 'c'])).toEqual({ volume: 'Empty (DF1:)', amigaPath: 'Empty (DF1:):c' });
+  it('turns NET: segments below the board into an Amiga path, and the path as the pane shows it', () => {
+    expect(amigaPathOf(['Work'])).toEqual({ volume: 'Work', amigaPath: 'Work:', shown: 'Work:' });
+    expect(amigaPathOf(['RAM Disk', 'T'])).toEqual({ volume: 'RAM Disk', amigaPath: 'RAM Disk:T', shown: 'RAM Disk:T' });
+    expect(amigaPathOf(['Work', 'Würfel Spiel', 'a.lha'])).toEqual({ volume: 'Work', amigaPath: 'Work:Würfel Spiel/a.lha', shown: 'Work:Würfel Spiel/a.lha' });
+  });
+  // Final review ruling: Transfer sends plain volume names; a duplicate's label "Name (DF1:)" is the server's, and a
+  // path through it goes to Transfer as the device's path, which AmigaDOS resolves.
+  it('a path through a labelled volume goes to the Amiga by its device; the label is kept', () => {
+    expect(amigaPathOf(['Empty (DF1:)', 'c'])).toEqual({ volume: 'Empty (DF1:)', amigaPath: 'DF1:c', shown: 'Empty (DF1:):c' });
+    expect(amigaPathOf(['Queue (DH2:)', 'a', 'b'])).toEqual({ volume: 'Queue (DH2:)', amigaPath: 'DH2:a/b', shown: 'Queue (DH2:):a/b' });
   });
   it('refuses names AmigaDOS would not take', () => {
     expect(amigaPathOf([])).toBeNull();
@@ -69,7 +74,8 @@ describe('fix round 1: name rules', () => {
     expect(amigaPathOf(['Work:Secret (DF0:)', 'c'])).toBeNull();
     expect(amigaPathOf(['Bad\u0001 (DF0:)'])).toBeNull();
     expect(amigaPathOf(['.. (DF0:)'])).toBeNull();
-    expect(amigaPathOf(['Empty (DF1:)'])).toEqual({ volume: 'Empty (DF1:)', amigaPath: 'Empty (DF1:):' });
+    expect(amigaPathOf(['Empty (DF1:)'])).toEqual({ volume: 'Empty (DF1:)', amigaPath: 'DF1:', shown: 'Empty (DF1:):' });
+    expect(amigaPathOf(['Empty (DF 1:)'])).toBeNull();
   });
   it('refuses "." and ".." as ENT or VOL names', () => {
     expect(parseAnswerLine('r1', 'ENT r1 f 1 0 1.1.1 2:.. 0:')).toBeNull();

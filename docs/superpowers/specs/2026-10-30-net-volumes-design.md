@@ -44,9 +44,12 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
 
 - **Volumes:** from the DOS list (`LockDosList(LDF_VOLUMES|LDF_READ)`), only volumes with a mounted handler task; the
   device is the handler's device name (`DF0:`, `DH1:`); size and free come from `Info()`, in bytes (0 when unknown).
-  A second volume with the same name (case-insensitive, intl-aware) is sent as `Name (DF1:)`; Transfer resolves that
-  form back when it appears in a path.
-- **Paths:** `<Volume>:<drawer>/<file>` as AmigaDOS takes them; empty after the colon = the volume's root.
+  Every volume is sent by its plain name, duplicates included (final review ruling, 2026-10-30): the server labels a
+  second volume with the same name (case-insensitive), and a volume named `Queue`, as `Name (DF1:)`; Transfer never
+  sends nor needs to resolve that form.
+- **Paths:** `<Volume>:<drawer>/<file>` as AmigaDOS takes them; empty after the colon = the volume's root. A path
+  through a volume the server labelled arrives as the device's path (`DF1:c`, not `Empty (DF1:):c`), which AmigaDOS
+  resolves to the volume in that drive.
 - **Codes:** `off` (browsing switched off), `notfound`, `notdir`, `isdir` (GET of a drawer), `busy` (object in use),
   `toolarge` (over 4 MB), `denied` (read-protected), `bad` (malformed command), `io` (any other DOS error). The text is
   AmigaDOS's own message (`Fault()`), or a short English one for `off`/`bad`/`toolarge`.
@@ -72,7 +75,7 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
 ### 2.4 Testing
 
 - Host tests of the core (`pnpm receive:test`): parsing each command, each refusal code, the drain-paced drawer
-  listing (a full buffer pauses and resumes without loss), the 1000 cut, the duplicate-name form both ways, off/on.
+  listing (a full buffer pauses and resumes without loss), the 1000 cut, two volumes with one name (both sent plain), off/on.
 - Fake-board scenarios (`scenarios.ts`) for VOLS, DIR, GET, and a request waiting behind a file.
 - FS-UAE runs on 2.04, 3.1 and 3.2: a drawer of over 1000 entries, two floppies with the same name, browsing off.
 - The build pin (`receive.sha256`) is renewed; the driver disk carries Transfer 2.3.
@@ -121,7 +124,9 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
 - `NET:/<deviceId>/Queue/<transferId>`: the send queue. Old `NET:/<deviceId>/<transferId>` paths and
   `filesHrefForBoard` links go there.
 - `NET:/<deviceId>/<Volume>/<drawer>/…`: a volume. The driver turns it into `Volume:drawer/…`; each segment must pass
-  `amigaNameProblem` (the volume segment may carry the ` (DF1:)` suffix).
+  `amigaNameProblem` (the volume segment may carry the ` (DF1:)` suffix: the name before it must pass, the device must
+  match `[A-Za-z0-9_.-]{1,30}:`). Through a suffixed volume the path sent to Transfer, and the one requests are stored
+  and remembered under, is the device's (`DF1:drawer/…`); the pane still shows the label.
 - A volume really named `Queue` is shown as `Queue (DH2:)` (its device).
 
 ### 4.4 Listing

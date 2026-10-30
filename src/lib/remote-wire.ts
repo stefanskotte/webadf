@@ -92,17 +92,24 @@ export function parseAnswerLine(rid: string, line: string): AnswerLine | null {
   return null;
 }
 
-// A duplicate volume is labelled "Name (DEVn:)" (volumeLabel). Transfer resolves that form (spec §2.2), so the
-// device suffix is exempt from the ':' rule, but the name before it must still be a name.
+// A duplicate volume (and one named Queue) is labelled "Name (DEVn:)" here (volumeLabel); Transfer sends and knows
+// only plain names (spec §2.2, final review ruling). The device suffix is exempt from the ':' rule, but the name before
+// it must still be a name.
 const SUFFIXED = /^(.+) \(([A-Za-z0-9_.-]{1,30}:)\)$/;
 
-export function amigaPathOf(segments: string[]): { volume: string; amigaPath: string } | null {
+/**
+ * NET: segments below the board as an Amiga path. `amigaPath` is what Transfer is sent, and what a request is stored
+ * and remembered under: through a labelled volume it is the device's path ("DF1:c"), which AmigaDOS resolves to the
+ * volume in that drive. `shown` is the path in the pane's words, by the volume's label ("Empty (DF1:):c").
+ */
+export function amigaPathOf(segments: string[]): { volume: string; amigaPath: string; shown: string } | null {
   if (segments.length === 0) return null;
   const [volume, ...rest] = segments;
   const m = SUFFIXED.exec(volume);
   if (!(m ? amigaNameProblem(m[1]) === null : amigaNameProblem(volume) === null)) return null;
   for (const s of rest) if (amigaNameProblem(s) !== null) return null;
-  return { volume, amigaPath: `${volume}:${rest.join('/')}` };
+  const below = rest.join('/');
+  return { volume, amigaPath: m ? `${m[2]}${below}` : `${volume}:${below}`, shown: `${volume}:${below}` };
 }
 
 export function volumeLabel(v: VolumeInfo, all: VolumeInfo[]): string {

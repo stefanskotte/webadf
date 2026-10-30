@@ -383,6 +383,22 @@ describe('NET: volumes', () => {
     expect((await rows('dir', 'Work:Programs')).length).toBe(2);
   });
 
+  // Final review ruling: Transfer sends plain names; the server labels duplicates, and a path through a label goes to
+  // Transfer as the device's path. The pane still shows the label.
+  it('two volumes with one name: labelled by device, and a drawer on one is asked for by its device path', async () => {
+    await takeWaiting(getDb(), 'b1');   // what earlier cases left asked, so the answer below is the volumes'
+    await pendingOf('NET:/b1', { fresh: true });
+    await answer((rid) => [`VOL ${rid} 5:Empty 4:DF0: ${MB} ${MB} 9000.0.0`, `VOL ${rid} 5:Empty 4:DF1: ${MB} ${2 * MB} 9000.0.0`, `DONE ${rid} 2`]);
+    expect((await netDriver.list(ctx, P('NET:/b1')))!.entries.map((e) => e.name)).toEqual(['Empty (DF0:)', 'Empty (DF1:)', 'Queue']);
+    expect(await pendingOf('NET:/b1/Empty (DF1:)/c')).toBe(`Reading Empty (DF1:):c from ${NAME}…`);
+    expect((await rows('dir', 'DF1:c')).map((r) => r.status)).toEqual(['waiting']);
+    await answer((rid) => [`ENT ${rid} f 10 0 9100.0.0 3:Dir 0:`, `DONE ${rid} 1`]);
+    const l = (await netDriver.list(ctx, P('NET:/b1/Empty (DF1:)/c')))!;
+    expect(l.entries.map((e) => e.path)).toEqual(['NET:/b1/Empty (DF1:)/c/Dir']);
+    expect(l).toMatchObject({ meta: '2.0 MB free', net: { volume: 'Empty (DF1:)', amigaPath: 'Empty (DF1:):c' } });
+    expect(l.crumbs.slice(2)).toEqual([{ label: 'Empty (DF1:):', path: 'NET:/b1/Empty (DF1:)' }, { label: 'c', path: 'NET:/b1/Empty (DF1:)/c' }]);
+  });
+
   it('a name the Amiga cannot hold is not found; another org\'s board is not found', async () => {
     expect(await netDriver.list(ctx, { device: 'NET', segments: ['b1', 'Work', 'a:b'] })).toBeNull();
     expect(await netDriver.list({ orgId: 'o2', userId: 'u2' }, P('NET:/b1'))).toBeNull();

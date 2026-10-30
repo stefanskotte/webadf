@@ -129,7 +129,10 @@ async function volumeFree(t: SendTarget, volume: string, now: number): Promise<s
   return v ? freeText(v) : '';
 }
 
-/** NET:/<board>/<Volume>/<drawer>/… (§4.4, §4.6): a drawer as Transfer listed it; refused with the pane's words. */
+/**
+ * NET:/<board>/<Volume>/<drawer>/… (§4.4, §4.6): a drawer as Transfer listed it; refused with the pane's words. Asked
+ * and remembered by the path Transfer is sent (a labelled volume's device path); shown by the volume's label.
+ */
 async function listVolume(ctx: FsCtx, t: SendTarget, segs: string[], now: number, opts: { fresh?: boolean }): Promise<Listing | null> {
   const at = amigaPathOf(segs);
   if (!at) return null;
@@ -143,14 +146,14 @@ async function listVolume(ctx: FsCtx, t: SendTarget, segs: string[], now: number
     if (code === 'timeout') refuse('failed', 504, words);
     refuse('read_only', 409, words);
   }
-  if (s.state !== 'ready') throw new Pending(`Reading ${at.amigaPath} from ${t.name}…`);
+  if (s.state !== 'ready') throw new Pending(`Reading ${at.shown} from ${t.name}…`);
   const entries = answerOf(s.row).entries.map((e): FsEntry => ({ name: e.name, kind: e.dir ? 'dir' : 'file',
     path: netPath(t.id, ...segs, e.name), size: e.dir ? null : e.size, date: e.date, protection: protectionString(e.protection),
     comment: e.comment || null, marks: [] }));
   const crumbs: Crumb[] = [...boardCrumbs(t), { label: `${at.volume}:`, path: netPath(t.id, at.volume) },
     ...segs.slice(1).map((name, i) => ({ label: name, path: netPath(t.id, ...segs.slice(0, i + 2)) }))];
   return { path: netPath(t.id, ...segs), crumbs, entries, writable: false, readOnlyReason: NET_READ_ONLY, disk: null,
-    net: { board: t.id, boardName: t.name, volume: at.volume, amigaPath: at.amigaPath, readAt: now - s.ageMs, cut: !!s.row.cut, browse: null },
+    net: { board: t.id, boardName: t.name, volume: at.volume, amigaPath: at.shown, readAt: now - s.ageMs, cut: !!s.row.cut, browse: null },
     meta: await volumeFree(t, at.volume, now) };
 }
 

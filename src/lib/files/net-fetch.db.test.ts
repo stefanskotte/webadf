@@ -112,6 +112,16 @@ describe('startFetch: one get per file', () => {
     expect(await version()).toBe(v0 + 1);
   });
 
+  // Final review ruling: a path through a labelled duplicate volume is fetched (and its listing remembered) by the
+  // device's path, the one the pane's listing asked with.
+  it('a drawer on a labelled volume is walked and fetched by its device path', async () => {
+    await remember('DF1:', [ent('S', 0, true)]);
+    await remember('DF1:S', [ent('Startup-Sequence', 99)]);
+    const r = await copy(['NET:/b1/Empty (DF1:)/S'], 'STASH:');
+    expect(r).toMatchObject({ kind: 'done', items: [{ ok: true }] });
+    expect((await gets()).map((g) => [g.amigaPath, (g.target as { rel: string[] }).rel])).toEqual([['DF1:S/Startup-Sequence', ['S', 'Startup-Sequence']]]);
+  });
+
   it('a drawer with no remembered listing is refused conflict; nothing is asked of the board', async () => {
     await getDb().delete(remoteRequests).where(eq(remoteRequests.amigaPath, 'Work:Sub'));
     const r = await copy([W('a.lha'), W('Sub')], 'STASH:/In');
