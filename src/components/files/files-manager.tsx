@@ -891,7 +891,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
 
   function act(cmd: Exclude<BankCommand, 'all' | 'none' | 'parent' | 'root' | 'swap' | 'filter' | 'showinfo'> | 'copyTo' | 'moveTo') {
     // While an operation runs a press says what runs (the status row's words), never silently nothing (Task 8 review).
-    if (busy) { toast(busy); return; }
+    if (busy) { toast(busy, { id: 'files-busy' }); return; }
     const reason = reasons[cmd];
     if (reason) { toast.error(reason); return; }
     const side = active;
@@ -1027,7 +1027,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
 
   /** A bank command, on the source (active) pane. One that cannot apply says why (its button is aria-disabled, §2.3). */
   function bank(cmd: BankCommand) {
-    if (busy) { toast(busy); return; }
+    if (busy) { toast(busy, { id: 'files-busy' }); return; }
     const reason = bankReasons[cmd];
     if (reason) { toast.error(reason); return; }
     switch (cmd) {

@@ -135,8 +135,6 @@ export function SendDropZone({ targets, initialBoard, serverNow, paneQueues = []
       help={<HelpTip topic="send" className={SEND_HELP} />} disabled={busy !== null}
       disk={{ color: 'blue', set: 'Any file · 4 MB', title: 'To the Amiga' }} tileCol="full"
       hint="Any file up to 4 MB, or a folder. It waits in NET: until Transfer on the Amiga takes it."
-      // From lg the hint shows its first sentence only; the second stays while no receiver line says what happens.
-      keepHint={line === null}
       // Read before this handler returns: the browser empties the DataTransfer after it (drop-reader.ts).
       onItems={(items) => void send(fromItems(readDroppedItems(items)))}>
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 max-sm:contents lg:flex-1 lg:justify-end lg:gap-y-1">

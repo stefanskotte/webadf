@@ -424,7 +424,11 @@ test('while an operation runs the bank says what runs: each command is described
   // Enter on a focused command says it too, never silently nothing.
   await page.getByTestId('files-rename').focus();
   await page.keyboard.press('Enter');
-  await expect(toast(page, words)).toHaveCount(2);
+  // One toast: a repeat replaces it rather than stacking. Counted once, after the repeat has had time to draw: a
+  // retrying count would also pass once the first of two stacked toasts timed out.
+  await page.waitForTimeout(500);
+  expect(await toast(page, words).count()).toBe(1);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   release();
   await expect(toast(page, /^Copied 1 item/)).toBeVisible({ timeout: 15_000 });
   await expect(info).not.toHaveAttribute('aria-describedby', /files-busy/);
