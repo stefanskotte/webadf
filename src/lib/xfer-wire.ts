@@ -7,3 +7,8 @@
 export function buildXfer(v: number, ip: string | null): { v: number; ip?: string } {
   return ip ? { v, ip } : { v };
 }
+
+/** The `req` object of the poll body (NET: volumes, spec 2026-10-30 §3): the request queue's cursor. */
+export function buildReq(v: number): { v: number } {
+  return { v };
+}

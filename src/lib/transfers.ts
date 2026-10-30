@@ -208,9 +208,16 @@ export async function expireTransfers(db: Db, now = new Date()): Promise<{ expir
   });
 }
 
-export async function recordSendRx(db: Db, deviceId: string, rx: 'c' | 'r' | 'u' | '-', now = new Date()): Promise<void> {
-  await db.update(devices).set({ sendRx: rx, sendRxAt: now }).where(and(eq(devices.id, deviceId),
-    sql`(${devices.sendRx} is distinct from ${rx} or ${devices.sendRxAt} is null or ${devices.sendRxAt} < ${new Date(now.getTime() - 30_000)})`));
+/** `cap` (NET: volumes): Transfer's protocol and browse flag from the poll's rxv/browse; a change counts like a new rx. */
+export async function recordSendRx(
+  db: Db, deviceId: string, rx: 'c' | 'r' | 'u' | '-', now = new Date(), cap?: { proto: number; browse: boolean },
+): Promise<void> {
+  const capChanged = cap
+    ? sql` or ${devices.rxProto} is distinct from ${cap.proto} or ${devices.browseOn} is distinct from ${cap.browse}`
+    : sql``;
+  await db.update(devices).set({ sendRx: rx, sendRxAt: now, ...(cap ? { rxProto: cap.proto, browseOn: cap.browse } : {}) })
+    .where(and(eq(devices.id, deviceId),
+      sql`(${devices.sendRx} is distinct from ${rx} or ${devices.sendRxAt} is null or ${devices.sendRxAt} < ${new Date(now.getTime() - 30_000)}${capChanged})`));
 }
 
 /** What still counts against the board's limits: active rows not past their expiry (a lapsed row never moves again). */

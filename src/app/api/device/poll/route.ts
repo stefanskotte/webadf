@@ -1,5 +1,5 @@
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
-import { buildXfer } from '@/lib/xfer-wire';
+import { buildXfer, buildReq } from '@/lib/xfer-wire';
 import {
   readDesired, readPollTick, readFirmwareInstruction, touchLastSeen, markNetNextSent,
 } from '@/lib/mount';
@@ -135,9 +135,22 @@ export async function GET(request: Request) {
       ? Number(xferAckRaw)
       : 0;
   const rx = new URL(request.url).searchParams.get('rx');
+  // rxv / browse (NET: volumes): Transfer's protocol and whether it answers requests, recorded with rx.
+  const rxv = new URL(request.url).searchParams.get('rxv');
+  const browse = new URL(request.url).searchParams.get('browse');
   if (xferAck !== null && rx !== null && /^[cru-]$/.test(rx)) {
-    await recordSendRx(getDb(), device.deviceId, rx as 'c' | 'r' | 'u' | '-');
+    await recordSendRx(getDb(), device.deviceId, rx as 'c' | 'r' | 'u' | '-', new Date(),
+      rxv === '2' || rxv === '3' ? { proto: Number(rxv), browse: browse === '1' } : undefined);
   }
+
+  // reqAck (NET: volumes, spec 2026-10-30 §3): the cursor of the request queue the board last fetched. ABSENT means a
+  // board that cannot browse -- never woken for requests, never sent `req`. Parsed like xferAck.
+  const reqAckRaw = new URL(request.url).searchParams.get('reqAck');
+  const reqAck = reqAckRaw === null
+    ? null
+    : /^\d+$/.test(reqAckRaw) && Number.isSafeInteger(Number(reqAckRaw))
+      ? Number(reqAckRaw)
+      : 0;
 
   const deadline = Date.now() + HOLD_MS;
   for (;;) {
@@ -184,6 +197,8 @@ export async function GET(request: Request) {
     const df1Moved = df1Ack !== null && tick.df1Version !== df1Ack;
     // INEQUALITY again: a re-paired board's higher ack is reset by the body that carries xfer.v.
     const xferMoved = xferAck !== null && tick.sendVersion !== xferAck;
+    // INEQUALITY, as above: the board fetches GET /api/device/req when req.v moves past what it fetched.
+    const reqMoved = reqAck !== null && tick.reqVersion !== reqAck;
 
     // Network mode (spec 2026-10-12 §2, pre-flight I2): the driver disk goes out as `next` only once the
     // board has REPORTED running Network for the current setting -- never on the choice alone, which would
@@ -206,7 +221,7 @@ export async function GET(request: Request) {
     // device echoes it back as mountedVersion and the server reads that for an
     // upload's not_mounted/behind verdict (HANDOFF 4g), so bumping it could
     // strand an Amiga write that was mid-session. See spec 4.2.
-    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved || displayMoved || driveMoved || netNextMoved || df1Moved || xferMoved) {
+    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved || displayMoved || driveMoved || netNextMoved || df1Moved || xferMoved || reqMoved) {
       const state = await readDesired(device.deviceId);
       if (!state) return notFound();
       // Multi-disk spec §3.3 / plan R1: the disk the board should preload.
@@ -299,6 +314,8 @@ export async function GET(request: Request) {
           // Plus the Amiga's last address (R17): 1.16.0 seeds its sorter with it after a reboot. Older senders ignore
           // `ip`; the object stays under their 48-byte buffer (buildXfer, measured in device-limits.test.ts).
           ...(xferAck !== null ? { xfer: buildXfer(tick.sendVersion, tick.netAmigaIpLast) } : {}),
+          // The request queue's cursor (NET: volumes): on every body to a board that sent reqAck.
+          ...(reqAck !== null ? { req: buildReq(tick.reqVersion) } : {}),
           ...(nfc
             ? {
                 nfcWrite: {

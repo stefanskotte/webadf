@@ -62,7 +62,7 @@ const get = (qs = '') => new Request(`http://test/api/device/poll${qs}`);
 const baseTick = (over: Partial<PollTick> = {}): PollTick => ({
   version: 1, instructionVersion: 0, instructionAck: 0, nfcWriteSeq: 0, displayVersion: 0, secondDriveVersion: 0, secondDrive: 'off',
   secondDriveReported: null, secondDriveAppliedVersion: null, netNextSentVersion: null,
-  df1Version: 0, sendVersion: 0, df1Sha256: null, netDriverSeenAt: null, netAmigaIpLast: null, ...over,
+  df1Version: 0, sendVersion: 0, reqVersion: 0, df1Sha256: null, netDriverSeenAt: null, netAmigaIpLast: null, ...over,
 });
 
 beforeEach(() => {
@@ -734,9 +734,51 @@ describe('GET /api/device/poll -- xfer (PaulaNET Phase 4: files sent to the Amig
     const { GET } = await import('./route');
     await GET(get('?since=1&xferAck=0&rx=c'));
     expect(recordSendRx).toHaveBeenCalledTimes(1);
-    expect(recordSendRx).toHaveBeenCalledWith(expect.anything(), 'dev-1', 'c');
+    expect(recordSendRx).toHaveBeenCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), undefined);
     recordSendRx.mockClear();
     await GET(get('?since=1&xferAck=0&rx=zz'));
+    expect(recordSendRx).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/device/poll -- req (NET: volumes, spec 2026-10-30 §3)', () => {
+  it('wakes a board that sent reqAck=0 while requests wait, and carries req.v', async () => {
+    readPollTick.mockResolvedValue(baseTick({ reqVersion: 2 }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&reqAck=0'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ req: { v: 2 } });
+  });
+  it('holds a board whose reqAck matches while nothing else moved', async () => {
+    vi.useFakeTimers();
+    try {
+      readPollTick.mockResolvedValue(baseTick({ reqVersion: 2 }));
+      const { GET } = await import('./route');
+      const p = GET(get('?since=1&reqAck=2'));
+      await vi.advanceTimersByTimeAsync(26_000);
+      expect((await p).status).toBe(204);
+    } finally { vi.useRealTimers(); }
+  });
+  it('never sends req, nor wakes, a board that sent no reqAck', async () => {
+    readPollTick.mockResolvedValue(baseTick({ reqVersion: 2, instructionVersion: 1, instructionAck: 0 }));
+    const { GET } = await import('./route');
+    expect(await (await GET(get('?since=1'))).json()).not.toHaveProperty('req');
+  });
+  it('carries req.v on a body woken by something else', async () => {
+    readPollTick.mockResolvedValue(baseTick({ reqVersion: 2, instructionVersion: 1, instructionAck: 0 }));
+    const { GET } = await import('./route');
+    expect(await (await GET(get('?since=1&reqAck=2'))).json()).toMatchObject({ req: { v: 2 } });
+  });
+  it('records Transfer\'s protocol and browse flag with rx, only when xferAck and a valid rx are present', async () => {
+    readPollTick.mockResolvedValue(baseTick({ sendVersion: 1 }));
+    const { GET } = await import('./route');
+    await GET(get('?since=1&xferAck=0&rx=c&rxv=3&browse=1'));
+    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 3, browse: true });
+    await GET(get('?since=1&xferAck=0&rx=c&rxv=2&browse=0'));
+    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 2, browse: false });
+    recordSendRx.mockClear();
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0 }));   // wakes at once, so no hold
+    await GET(get('?since=1&rx=c&rxv=3&browse=1'));
     expect(recordSendRx).not.toHaveBeenCalled();
   });
 });
