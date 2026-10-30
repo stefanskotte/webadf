@@ -246,7 +246,8 @@ async function fetchListing(path: string, fresh = false): Promise<Fetched> {
 }
 
 /** "A500 didn't answer — Refresh to try again": a pending listing asked for PANE_GIVE_UP_MS without an answer. */
-const noAnswer = (path: string, l: Listing | null) => errorWords('timeout', '', boardNameFor(path, l));
+const noAnswer = (path: string, l: Listing | null, boards?: readonly { id: string; name: string }[]) =>
+  errorWords('timeout', '', boardNameFor(path, l, boards));
 
 /** A listing for the Copy to… picker, which walks places rather than show a wait. Module-level: its identity never changes. */
 async function settledListing(path: string): Promise<ListResult> {
@@ -416,7 +417,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       pending: ps[side].path === path ? ps[side].pending : null } }));
     const r = await askUntilAnswered<Exclude<Fetched, { pending: string }>>(path, {
       ask: fetchListing, fresh: opts.fresh, wanted: () => alive.current && n === seq.current[side],
-      giveUp: () => ({ error: noAnswer(path, latest.current.panes[side].listing) }),
+      giveUp: () => ({ error: noAnswer(path, latest.current.panes[side].listing, send.targets) }),
       onPending: (label) => setPanes((ps) => ({ ...ps, [side]: { ...ps[side], pending: label } })),
     });
     if (r === null || n !== seq.current[side]) return false;
@@ -921,7 +922,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       const at = a.path;
       const r = await askUntilAnswered<Exclude<Fetched, { pending: string }>>(at, {
         ask: fetchListing, fresh: a.fresh, wanted: () => alive.current, onPending: (label) => setBusy(label),
-        giveUp: () => { const { panes: cur, active: side } = latest.current; return { error: noAnswer(at, cur[side].listing) }; },
+        giveUp: () => { const { panes: cur, active: side } = latest.current; return { error: noAnswer(at, cur[side].listing, send.targets) }; },
       });
       if (r === null) return '';
       if (!('listing' in r)) return 'gone' in r ? GONE : r.error;

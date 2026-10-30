@@ -36,12 +36,13 @@ export function netBoardRoot(path: string): string | null {
 
 /**
  * The board's name for a NET: path, from a listing on screen that knows it (a listing of that board, or NET: with the
- * board's row), else the board's id: the "didn't answer" words name it before anything of it was read.
+ * board's row), else `boards`, else the board's id: the "didn't answer" words name it before anything of it was read.
  */
-export function boardNameFor(path: string, l: Listing | null): string {
+export function boardNameFor(path: string, l: Listing | null, boards: readonly { id: string; name: string }[] = []): string {
   const id = parsePath(path)?.segments[0] ?? path;
   if (l?.net?.board === id) return l.net.boardName;
-  return l?.entries.find((e) => e.kind === 'board' && e.path === `NET:/${id}`)?.name ?? id;
+  // `boards`: the page's boards (its Send targets), for a pane opened straight at a volume nothing on screen names.
+  return l?.entries.find((e) => e.kind === 'board' && e.path === `NET:/${id}`)?.name ?? boards.find((b) => b.id === id)?.name ?? id;
 }
 
 /** The title bar of a volume pane (§5): "A500 · Work:Programs"; null at the board and anywhere else. */

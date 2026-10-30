@@ -85,5 +85,8 @@ describe('NET: volumes in the pane (spec 2026-10-30 §5)', () => {
     expect(boardNameFor('NET:/d', boards)).toBe('A1200');
     expect(boardNameFor('NET:/d/Work', { ...L('NET:/e'), net: net({ board: 'e' }) })).toBe('d');
     expect(boardNameFor('NET:/d', null)).toBe('d');
+    // Opened straight at a volume, nothing on screen names the board: the page's boards do (Task 9 e2e).
+    expect(boardNameFor('NET:/d/Work', null, [{ id: 'e', name: 'A1200' }, { id: 'd', name: 'A500' }])).toBe('A500');
+    expect(boardNameFor('NET:/d/Work', { ...L('NET:/d'), net: net({ volume: null, amigaPath: null }) }, [{ id: 'd', name: 'Old' }])).toBe('A500');
   });
 });
