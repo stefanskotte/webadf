@@ -74,6 +74,14 @@ export const SCENARIOS: Scenario[] = [
       const b = await connect(p, h);
       b.list([{ id: 'l1', path: 'a', data: hello }, { id: 'l2', path: 'b/c', data: hello }]);
       const ok = await b.ping(); await b.close(); return ok ? null : 'no PONG after LIST'; } },
+  // Protocol 3, browsing off (the default; spec 2026-10-30 §2.3): the hello says so and every request is refused.
+  { name: 'browse-off', run: async (p, _d, h) => {
+      const b = await connect(p, h, { v: 3 });
+      try {
+        if (b.browse) return 'READY 3 1 with browsing off';
+        const a = await b.request('VOLS o1');
+        return a.join('|') === 'ERR o1 off 27:browsing is off in Transfer' ? null : `got ${JSON.stringify(a)}`;
+      } finally { await b.close(); } } },
 ];
 
 export async function runScenarios(port: number, dir: string, opts: { host?: string; only?: string[]; uae?: boolean } = {}) {
@@ -196,6 +204,123 @@ export async function runUploadScenarios(port: number, ctl: UpCtl, opts: { host?
   const out: { name: string; ok: boolean; detail: string }[] = [];
   for (const s of UP_SCENARIOS) {
     if (opts.only && !opts.only.includes(s.name)) continue;
+    try { const err = await s.run(port, opts.host ?? '127.0.0.1', ctl); out.push({ name: s.name, ok: err === null, detail: err ?? '' }); }
+    catch (e) { out.push({ name: s.name, ok: false, detail: String(e) }); }
+  }
+  return out;
+}
+
+// --- Browsing (spec 2026-10-30 §2): the board's side of VOLS, DIR and GET against Transfer with browsing on. ---
+
+/** Work:Programs/a.txt holds this; the fixture is the same on the POSIX build and in FS-UAE (uae-test.sh browse). */
+export const A_TXT = Buffer.from('hello from the Amiga\n');
+/**
+ * The POSIX build's volumes, under root:
+ * - Work (DH0:) holds Programs/a.txt, and Big/ with 1005 empty files f0000..f1004;
+ * - two volumes are named Empty, in DF0: and DF2:, each with a Which.txt saying "df0\n" or "df2\n".
+ *
+ * Returns the RX_VOLS value for rx_posix.
+ */
+export function makeBrowseFixture(root: string): string {
+  const w = path.join(root, 'Work');
+  fs.mkdirSync(path.join(w, 'Programs'), { recursive: true }); fs.mkdirSync(path.join(w, 'Big'));
+  fs.writeFileSync(path.join(w, 'Programs', 'a.txt'), A_TXT);
+  for (let i = 0; i < 1005; i++) fs.writeFileSync(path.join(w, 'Big', `f${String(i).padStart(4, '0')}`), '');
+  for (const d of ['0', '2']) { fs.mkdirSync(path.join(root, `Empty${d}`)); fs.writeFileSync(path.join(root, `Empty${d}`, 'Which.txt'), `df${d}\n`); }
+  return `Work|DH0:|${w};Empty|DF0:|${path.join(root, 'Empty0')};Empty|DF2:|${path.join(root, 'Empty2')}`;
+}
+/** How a browse scenario changes Transfer: the POSIX build reads stdin; FS-UAE cannot, so those scenarios are POSIX-only. */
+export interface BrowseCtl { browse?(on: boolean): void; send?(hostPath: string): void; dir?: string }
+export interface BrowseScenario { name: string; posixOnly?: boolean; run: (port: number, host: string, ctl: BrowseCtl) => Promise<string | null> }
+const lenp = (s: string) => `${Buffer.byteLength(s, 'latin1')}:${s}`;
+async function b3(p: number, h: string) {
+  const b = await connect(p, h, { v: 3 });
+  if (!b.browse) { await b.close(); throw new Error('READY 3 0: browsing is off'); }
+  return b;
+}
+const oneLine = (a: string[], want: RegExp) => (a.length === 1 && want.test(a[0]) ? null : `got ${JSON.stringify(a)}`);
+
+export const BROWSE_SCENARIOS: BrowseScenario[] = [
+  { name: 'b-vols', run: async (p, h) => { const b = await b3(p, h); try {
+      const a = await b.request('VOLS v1');
+      const vols = a.filter((l) => l.startsWith('VOL v1 '));
+      if (a[a.length - 1] !== `DONE v1 ${vols.length}`) return `ended ${a[a.length - 1]} after ${vols.length} VOL lines`;
+      if (!vols.some((l) => /^VOL v1 4:Work 4:DH0: \d+ \d+ \d+\.\d+\.\d+$/.test(l))) return `no Work in DH0: ${JSON.stringify(vols)}`;
+      const empties = vols.filter((l) => l.startsWith('VOL v1 5:Empty ')).map((l) => l.split(' ')[3]).sort();
+      return JSON.stringify(empties) === '["4:DF0:","4:DF2:"]' ? null : `the two Empty volumes, both plain: ${JSON.stringify(vols)}`;
+    } finally { await b.close(); } } },
+  { name: 'b-dir', run: async (p, h) => { const b = await b3(p, h); try {
+      const a = await b.request(`DIR d1 ${lenp('Work:Programs')}`);
+      return a.length === 2 && /^ENT d1 f 21 [0-9a-f]+ \d+\.\d+\.\d+ 5:a\.txt 0:$/.test(a[0]) && a[1] === 'DONE d1 1' ? null : `got ${JSON.stringify(a)}`;
+    } finally { await b.close(); } } },
+  { name: 'b-device-path', run: async (p, h) => { const b = await b3(p, h); try {
+      // The server sends a path through the second "Empty" as its device's path (spec §2.2): DF2: must be DF2's disk.
+      const a = await b.request(`DIR d2 ${lenp('DF2:')}`);
+      if (!a.some((l) => / 9:Which\.txt 0:$/.test(l)) || a[a.length - 1] !== 'DONE d2 1') return `DIR DF2: ${JSON.stringify(a)}`;
+      const g = await b.request(`GET g0 ${lenp('DF2:Which.txt')}`);
+      const tag = /^GOT g0 (\d+)$/.exec(g[0] ?? '')?.[1];
+      if (!tag) return `GET: ${JSON.stringify(g)}`;
+      const r = await b.takeUpload();
+      return r.ok && r.tag === tag && r.data.toString('latin1') === 'df2\n' ? null : `got ${JSON.stringify({ ...r, data: r.ok ? r.data.toString('latin1') : undefined })}`;
+    } finally { await b.close(); } } },
+  { name: 'b-cut', run: async (p, h) => { const b = await b3(p, h); try {
+      const a = await b.request(`DIR d3 ${lenp('Work:Big')}`, 300000);
+      const ents = a.filter((l) => l.startsWith('ENT d3 f 0 ')).length;
+      return ents === 1000 && a.length === 1001 && a[1000] === 'DONE d3 1000 cut' ? null : `${ents} entries, then ${a[a.length - 1]}`;
+    } finally { await b.close(); } } },
+  { name: 'b-notfound', run: async (p, h) => { const b = await b3(p, h); try {
+      return oneLine(await b.request(`DIR d4 ${lenp('Work:Nope')}`), /^ERR d4 notfound \d+:.+$/);
+    } finally { await b.close(); } } },
+  { name: 'b-notdir', run: async (p, h) => { const b = await b3(p, h); try {
+      return oneLine(await b.request(`DIR d5 ${lenp('Work:Programs/a.txt')}`), /^ERR d5 notdir \d+:.+$/);
+    } finally { await b.close(); } } },
+  { name: 'b-get', run: async (p, h) => { const b = await b3(p, h); try {
+      const g = await b.request(`GET g1 ${lenp('Work:Programs/a.txt')}`);
+      const tag = /^GOT g1 (\d+)$/.exec(g[0] ?? '')?.[1];
+      if (!tag || g.length !== 1) return `got ${JSON.stringify(g)}`;
+      const r = await b.takeUpload();
+      return r.ok && r.tag === tag && r.path === 'a.txt' && Buffer.compare(r.data, A_TXT) === 0 ? null : `got ${JSON.stringify({ ...r, data: undefined })}`;
+    } finally { await b.close(); } } },
+  { name: 'b-isdir', run: async (p, h) => { const b = await b3(p, h); try {
+      return oneLine(await b.request(`GET g2 ${lenp('Work:Programs')}`), /^ERR g2 isdir \d+:.+$/);
+    } finally { await b.close(); } } },
+  { name: 'b-bad', run: async (p, h) => { const b = await b3(p, h); try {
+      return oneLine(await b.request('DIR x1 nope'), /^ERR x1 bad 11:bad request$/);
+    } finally { await b.close(); } } },
+  // Spec §2.2 Order: a request arriving while a file goes up waits, and is answered once the file is done.
+  { name: 'b-waits-behind-a-file', posixOnly: true, run: async (p, h, ctl) => {
+      const f = path.join(ctl.dir!, 'Wait.bin'); fs.writeFileSync(f, bytes(100000, 31));
+      ctl.send!(f);
+      const b = await b3(p, h);
+      try {
+        b.write('VOLS w1');   // Transfer has sent the PUT already: this request waits behind the file
+        const r = await b.takeUpload();
+        if (!r.ok) return `upload: ${JSON.stringify({ ...r, data: undefined })}`;
+        const a = await b.answer('w1');
+        return a[a.length - 1].startsWith('DONE w1 ') ? null : `got ${JSON.stringify(a)}`;
+      } finally { await b.close(); } } },
+  // Plan ruling T1: switching browsing off closes an idle connection, so the board hears READY 3 0 when it reconnects.
+  { name: 'b-switch-reconnects', posixOnly: true, run: async (p, h, ctl) => {
+      let b = await b3(p, h);
+      ctl.browse!(false);
+      if (!(await b.closed(5000))) { await b.close(); return 'still open after switching off'; }
+      b = await connect(p, h, { v: 3 });
+      try {
+        if (b.browse) return 'READY 3 1 after switching off';
+        const a = await b.request('VOLS s1');
+        if (a.join('|') !== 'ERR s1 off 27:browsing is off in Transfer') return `got ${JSON.stringify(a)}`;
+        ctl.browse!(true);
+        if (!(await b.closed(5000))) return 'still open after switching on';
+      } finally { await b.close(); }
+      b = await connect(p, h, { v: 3 });
+      try { return b.browse ? null : 'READY 3 0 after switching on'; } finally { await b.close(); } } },
+];
+
+export async function runBrowseScenarios(port: number, ctl: BrowseCtl, opts: { host?: string; uae?: boolean; only?: string[] } = {}) {
+  const out: { name: string; ok: boolean; detail: string }[] = [];
+  for (const s of BROWSE_SCENARIOS) {
+    if (opts.only && !opts.only.includes(s.name)) continue;
+    if (s.posixOnly && opts.uae) continue;
     try { const err = await s.run(port, opts.host ?? '127.0.0.1', ctl); out.push({ name: s.name, ok: err === null, detail: err ?? '' }); }
     catch (e) { out.push({ name: s.name, ok: false, detail: String(e) }); }
   }

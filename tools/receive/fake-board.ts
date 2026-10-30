@@ -1,5 +1,6 @@
 // The board's side of the Receive protocol, for tests: protocol 1 (spec 2026-10-16 §2: hello, LIST, FILE + bytes, PING)
-// and protocol 2 (spec 2026-10-18 §3: the key in the hello, and PUT/TAKE/MORE/END/DONE/NO for files going up).
+// and protocol 2 (spec 2026-10-18 §3: the key in the hello, and PUT/TAKE/MORE/END/DONE/NO for files going up)
+// and protocol 3 (spec 2026-10-30 §2: READY 3 <b>; VOLS, DIR and GET answered with VOL/ENT/DONE/GOT/ERR).
 import net from 'node:net';
 import { crc32 } from 'node:zlib';
 
@@ -46,6 +47,16 @@ export interface Board {
   refuseWith(tag: string, code: string, text: string): void;
   /** Waits up to ms for a line; null if none came. */
   maybeLine(ms: number): Promise<string | null>;
+  /** READY 3's flag: the Amiga's owner lets the web app browse (protocol 3; false on 1 and 2). */
+  browse: boolean;
+  /** Protocol 3: sends a VOLS, DIR or GET line and returns its answer, up to DONE, ERR or GOT for its id. */
+  request(line: string, ms?: number): Promise<string[]>;
+  /** The answer lines of request id, up to DONE, ERR or GOT (lines for other ids, and PONG, are skipped). */
+  answer(id: string, ms?: number): Promise<string[]>;
+  /** Writes one line and does not wait. */
+  write(line: string): void;
+  /** True once the receiver closes the connection within ms. */
+  closed(ms: number): Promise<boolean>;
   close(): Promise<void>;   // resolves once the receiver has closed its side (or after 3 s)
 }
 
@@ -77,6 +88,11 @@ function byteReader(sock: net.Socket) {
       buf = buf.subarray(i + 1);
       return l;
     },
+    /** Waits up to ms for the receiver to close the connection; false if it stayed open. */
+    async closed(ms: number): Promise<boolean> {
+      try { await until(() => false, ms); } catch { return false; }
+      return true;
+    },
     async bytes(n: number, ms = 15000): Promise<Buffer | null> {
       if (!(await until(() => buf.length >= n, ms))) return null;
       const b = buf.subarray(0, n);
@@ -103,14 +119,31 @@ export function rawConnect(port: number, host = '127.0.0.1'): Promise<net.Socket
   });
 }
 
-export async function connect(port: number, host = '127.0.0.1', opts: { v?: 1 | 2; key?: string } = {}): Promise<Board> {
+export async function connect(port: number, host = '127.0.0.1', opts: { v?: 1 | 2 | 3; key?: string } = {}): Promise<Board> {
   const v = opts.v ?? 1;
   const sock = await rawConnect(port, host);
   const rd = byteReader(sock);
-  sock.write(v >= 2 ? `WEBADF 2 ${opts.key ?? BOARD_KEY}\n` : 'WEBADF 1\n');
+  sock.write(v >= 2 ? `WEBADF ${v} ${opts.key ?? BOARD_KEY}\n` : 'WEBADF 1\n');
   const hello = await rd.line();
-  if (hello !== `READY ${v}`) throw new Error(`expected READY ${v}, got ${JSON.stringify(hello)}`);
+  const m3 = v === 3 ? /^READY 3 ([01])$/.exec(hello ?? '') : null;
+  if (v === 3 ? !m3 : hello !== `READY ${v}`) throw new Error(`expected READY ${v}, got ${JSON.stringify(hello)}`);
+  const answer = async (id: string, ms = 60000) => {
+    const out: string[] = [];
+    for (;;) {
+      const l = await rd.line(ms);
+      if (l === null) throw new Error(`closed during the answer to ${id}: ${JSON.stringify(out.slice(-3))}`);
+      const [verb, rid] = l.split(' ');
+      if (rid !== id) continue;
+      out.push(l);
+      if (verb === 'DONE' || verb === 'ERR' || verb === 'GOT') return out;
+    }
+  };
   return {
+    browse: m3 ? m3[1] === '1' : false,
+    request(line, ms) { sock.write(Buffer.from(`${line}\n`, 'latin1')); return answer(line.split(' ')[1], ms); },
+    answer,
+    write(line) { sock.write(Buffer.from(`${line}\n`, 'latin1')); },
+    closed: (ms) => rd.closed(ms),
     list(files) {
       sock.write(Buffer.from(`LIST ${files.length}\n` + files.map((f) => `${f.id} ${f.data.length} ${lp(f.path)}\n`).join(''), 'latin1'));
     },

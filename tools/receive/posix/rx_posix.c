@@ -1,5 +1,7 @@
 /* Receive's host front end: the core over BSD sockets and POSIX files. For tests and CI, not for users.
    Usage: rx_posix <folder> <port> [<key file>]   (port 0 = any; prints "LISTEN <port>")
+   env: RX_VOLS="<name>|<device>|<host folder>;..." (protocol 3 volumes), RX_BROWSE=1 (browsing on at start);
+   stdin also: "BROWSE 1" / "BROWSE 0" (spec 2026-10-30 §2.3).
    stdin: "SEND <host path>" (a file or a folder, as a drop), "TRUST", "CANCEL <tag>" (protocol 2, spec 2026-10-18). */
 #define _POSIX_C_SOURCE 200809L
 #include <dirent.h>
@@ -10,6 +12,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -18,7 +21,7 @@
 #include <unistd.h>
 #include "rx_proto.h"
 
-typedef struct { const char *root; FILE *fh; FILE *rh; } pctx;
+typedef struct { const char *root; FILE *fh; FILE *rh; DIR *dh; char dpath[1024]; } pctx;
 
 /* folder + "/" + rel, with Latin-1 bytes >= 0x80 as UTF-8 (a host name must be UTF-8 on macOS). */
 static void join(pctx *c, const char *rel, char *out, size_t cap) {
@@ -38,6 +41,43 @@ static void to_latin1(const char *in, char *out, size_t cap) {
         else { out[n++] = '_'; p++; while ((*p & 0xC0) == 0x80) p++; }
     }
     out[n] = 0;
+}
+/* Protocol 3: the volumes this host build pretends to have (RX_VOLS). "Work:x/y" or "DF2:x" is that folder's x/y. */
+typedef struct { char name[64], dev[32], dir[512]; } pvol;
+static pvol g_vols[8]; static int g_nvols;
+static void vols_load(void) {
+    const char *e = getenv("RX_VOLS"); char buf[4096], *p, *save = NULL;
+    if (!e) return;
+    snprintf(buf, sizeof buf, "%s", e);
+    for (p = strtok_r(buf, ";", &save); p && g_nvols < 8; p = strtok_r(NULL, ";", &save)) {
+        char *a = strchr(p, '|'), *b = a ? strchr(a + 1, '|') : NULL;
+        if (!a || !b) continue;
+        *a = 0; *b = 0;
+        snprintf(g_vols[g_nvols].name, 64, "%s", p); snprintf(g_vols[g_nvols].dev, 32, "%s", a + 1);
+        snprintf(g_vols[g_nvols].dir, 512, "%s", b + 1);
+        g_nvols++;
+    }
+}
+/* An Amiga path as a host path; a path without ':' is a host path already (SEND). -1: no such volume. The first
+   volume of a name wins, as in AmigaDOS. */
+static int host_path(const char *local, char *out, size_t cap) {
+    const char *colon = strchr(local, ':');
+    if (!colon) { snprintf(out, cap, "%s", local); return 0; }
+    size_t n = (size_t)(colon - local);
+    for (int i = 0; i < g_nvols; i++) {
+        size_t dn = strlen(g_vols[i].dev) - 1;
+        if ((strlen(g_vols[i].name) == n && strncasecmp(g_vols[i].name, local, n) == 0) ||
+            (dn == n && strncasecmp(g_vols[i].dev, local, n) == 0)) {
+            snprintf(out, cap, "%s/%s", g_vols[i].dir, colon + 1);
+            return 0;
+        }
+    }
+    return -1;
+}
+static void amiga_date(time_t mtime, unsigned long *d, unsigned long *m, unsigned long *t) {
+    long s = (long)mtime - 252460800L;   /* AmigaDOS counts from 1978-01-01 */
+    if (s < 0) s = 0;
+    *d = (unsigned long)(s / 86400); *m = (unsigned long)(s % 86400 / 60); *t = (unsigned long)(s % 60 * 50);
 }
 static int p_folder_ok(void *x) { struct stat st; return stat(((pctx *)x)->root, &st) == 0 && S_ISDIR(st.st_mode); }
 static unsigned long p_free(void *x) {
@@ -67,14 +107,16 @@ static int p_set_meta(void *x, const char *rel, unsigned long prot, const char *
     (void)x; printf("META %s %lx %s\n", rel, prot, comment); return 0;
 }
 /* Protocol 2: host paths are given as they are (absolute or from the working folder). */
-static int p_is_dir(void *x, const char *local) { struct stat st; (void)x; if (stat(local, &st) != 0) return -1; return S_ISDIR(st.st_mode) ? 1 : 0; }
+static int p_is_dir(void *x, const char *local) {
+    struct stat st; char hp[1024]; (void)x;
+    if (host_path(local, hp, sizeof hp) != 0 || stat(hp, &st) != 0) return -1; return S_ISDIR(st.st_mode) ? 1 : 0; }
 static int p_list(void *x, const char *local, rx_list_fn each, void *u) {
-    DIR *d = opendir(local); struct dirent *e; char p[1024]; struct stat st;
+    DIR *d; struct dirent *e; char p[1024], hp[1024]; struct stat st;
     (void)x;
-    if (!d) return -1;
+    if (host_path(local, hp, sizeof hp) != 0 || !(d = opendir(hp))) return -1;
     while ((e = readdir(d)) != NULL) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-        snprintf(p, sizeof p, "%s/%s", local, e->d_name);
+        snprintf(p, sizeof p, "%s/%s", hp, e->d_name);
         if (stat(p, &st) != 0) continue;
         each(u, e->d_name, S_ISDIR(st.st_mode));   /* host names as they are: the scenarios' drawers are ASCII */
     }
@@ -82,19 +124,68 @@ static int p_list(void *x, const char *local, rx_list_fn each, void *u) {
     return 0;
 }
 static int p_open_r(void *x, const char *local, rx_finfo *info) {
-    pctx *c = x; struct stat st;
-    if (stat(local, &st) != 0 || S_ISDIR(st.st_mode)) return -1;
-    c->rh = fopen(local, "rb");
+    pctx *c = x; struct stat st; char hp[1024];
+    if (host_path(local, hp, sizeof hp) != 0 || stat(hp, &st) != 0 || S_ISDIR(st.st_mode)) return -1;
+    c->rh = fopen(hp, "rb");
     if (!c->rh) return -1;
-    long t = (long)st.st_mtime - 252460800L;   /* AmigaDOS counts from 1978-01-01 */
-    if (t < 0) t = 0;
     info->size = (unsigned long)st.st_size; info->prot = 0;
-    info->days = (unsigned long)(t / 86400); info->mins = (unsigned long)(t % 86400 / 60); info->ticks = (unsigned long)(t % 60 * 50);
+    amiga_date(st.st_mtime, &info->days, &info->mins, &info->ticks);
     info->comment[0] = 0;
     return 0;
 }
 static long p_read(void *x, unsigned char *b, unsigned long n) { size_t k = fread(b, 1, n, ((pctx *)x)->rh); return ferror(((pctx *)x)->rh) ? -1 : (long)k; }
 static void p_close_r(void *x) { pctx *c = x; if (c->rh) { fclose(c->rh); c->rh = NULL; } }
+
+static int p_vols(void *x, rx_vol *out, int max) {
+    (void)x;
+    int n = g_nvols < max ? g_nvols : max;
+    for (int i = 0; i < n; i++) {
+        memset(&out[i], 0, sizeof out[i]);
+        snprintf(out[i].name, sizeof out[i].name, "%s", g_vols[i].name);
+        snprintf(out[i].device, sizeof out[i].device, "%s", g_vols[i].dev);
+        out[i].size = 901120; out[i].free = 450560; out[i].days = 17000;
+    }
+    return n;
+}
+static long p_dir_open(void *x, const char *path) {
+    pctx *c = x; struct stat st;
+    if (host_path(path, c->dpath, sizeof c->dpath) != 0 || stat(c->dpath, &st) != 0) return RX_DOS_NOT_FOUND;
+    if (!S_ISDIR(st.st_mode)) return RX_DOS_WRONG_TYPE;
+    c->dh = opendir(c->dpath);
+    return c->dh ? 0 : RX_DOS_READ_PROTECTED;
+}
+static long p_dir_next(void *x, rx_dent *e) {
+    pctx *c = x; struct dirent *d; char p[1200]; struct stat st;
+    while ((d = readdir(c->dh)) != NULL) {
+        if (!strcmp(d->d_name, ".") || !strcmp(d->d_name, "..")) continue;
+        snprintf(p, sizeof p, "%s/%s", c->dpath, d->d_name);
+        if (stat(p, &st) != 0) continue;
+        memset(e, 0, sizeof *e);
+        to_latin1(d->d_name, e->name, sizeof e->name);
+        e->is_dir = S_ISDIR(st.st_mode); e->size = e->is_dir ? 0 : (unsigned long)st.st_size;
+        amiga_date(st.st_mtime, &e->days, &e->mins, &e->ticks);
+        return 1;
+    }
+    return 0;
+}
+static void p_dir_close(void *x) { pctx *c = x; if (c->dh) { closedir(c->dh); c->dh = NULL; } }
+static long p_stat(void *x, const char *path, rx_finfo *info, int *is_dir) {
+    char hp[1024]; struct stat st;
+    (void)x;
+    if (host_path(path, hp, sizeof hp) != 0 || stat(hp, &st) != 0) return RX_DOS_NOT_FOUND;
+    *is_dir = S_ISDIR(st.st_mode);
+    info->size = (unsigned long)st.st_size; info->prot = access(hp, R_OK) == 0 ? 0 : 8;
+    amiga_date(st.st_mtime, &info->days, &info->mins, &info->ticks);
+    info->comment[0] = 0;
+    return 0;
+}
+static void p_fault(void *x, long err, char *text, unsigned cap) {
+    (void)x;
+    if (err == RX_DOS_NOT_FOUND) snprintf(text, cap, "object not found");
+    else if (err == RX_DOS_WRONG_TYPE) snprintf(text, cap, "object is wrong type");
+    else if (err == RX_DOS_READ_PROTECTED) snprintf(text, cap, "file is read protected");
+    else snprintf(text, cap, "error %ld", err);
+}
 
 static const char *g_keyfile;
 static void on_event(void *u, const rx_event *e) {
@@ -114,6 +205,10 @@ static void on_event(void *u, const rx_event *e) {
     case RX_EV_UP_BEGIN: printf("UP_BEGIN %u %s %lu\n", e->tag, e->path, e->bytes); break;
     case RX_EV_UP_DONE: printf("UP_DONE %u %s\n", e->tag, e->path); break;
     case RX_EV_UP_FAILED: printf("UP_FAILED %u %s %s\n", e->tag, e->code ? e->code : "-", e->text ? e->text : ""); break;
+    case RX_EV_REQ:
+        printf("REQ %s %s %lu%s %s\n", e->code, e->path && e->path[0] ? e->path : "-", e->size, e->bytes ? " cut" : "",
+               e->text ? e->text : "ok");
+        break;
     default: break;
     }
 }
@@ -136,7 +231,7 @@ static void command(char *l, rx_upq *q, rx_fs *fs, rx_session *s, int connected)
         if (!connected || rx_trust_now(s) != 0) q->trust_next = 1;
     } else if (!strncmp(l, "CANCEL ", 7)) {
         rx_up_cancel(s, q, (unsigned)strtoul(l + 7, NULL, 10));
-    }
+    } else if (!strcmp(l, "BROWSE 1") || !strcmp(l, "BROWSE 0")) q->browse = l[7] == '1';
 }
 
 int main(int argc, char **argv) {
@@ -148,7 +243,7 @@ int main(int argc, char **argv) {
     pctx ctx = { 0 };
     rx_fs fs = { &ctx, p_folder_ok, p_free, p_exists, p_make_dir, p_open_w, p_write, p_close_w, p_rename, p_remove, p_set_meta,
                  p_is_dir, p_list, p_open_r, p_read, p_close_r,
-                 NULL, NULL, NULL, NULL, NULL, NULL };   /* protocol 3: none until Q.browse (Task 4) */
+                 p_vols, p_dir_open, p_dir_next, p_dir_close, p_stat, p_fault };   /* protocol 3, used only while Q.browse */
     struct sockaddr_in a;
     socklen_t al = sizeof a;
     int one = 1, ls, cl = -1, stdin_open = 1;
@@ -165,6 +260,8 @@ int main(int argc, char **argv) {
         if (f) { if (fgets(key, sizeof key, f)) key[strcspn(key, "\r\n")] = 0; fclose(f); }
     }
     rx_upq_init(&Q, key);
+    vols_load();
+    Q.browse = getenv("RX_BROWSE") && getenv("RX_BROWSE")[0] == '1';
     rx_init(&S, &fs, on_event, &S);
     ls = socket(AF_INET, SOCK_STREAM, 0);
     setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
@@ -212,6 +309,7 @@ int main(int argc, char **argv) {
                 else if (k > 0 && send_all(cl, o, (size_t)k) != 0) bad = 1;
             }
         }
+        if (cl >= 0 && !bad && rx_hello_stale(&S)) bad = 1;   /* the switch changed: the board reconnects (ruling T1) */
         if (cl >= 0 && bad) { rx_disconnected(&S); close(cl); cl = -1; }
         if (FD_ISSET(ls, &r)) {
             int ns = accept(ls, NULL, NULL);
