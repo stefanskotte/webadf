@@ -85,8 +85,11 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
 - **Wake:** the poll query gains `reqAck=<n>` (the request cursor last fetched). When the server's `reqVersion`
   differs, the poll answers `req:{v}` (same inequality rule as `xfer`). Firmware without `reqAck` is never sent
   requests.
-- **Fetch:** `GET /api/device/req` returns up to 8 waiting requests as protocol lines (`VOLS`, `DIR`, `GET`). One HTTPS
-  request per `as_step()` still holds.
+- **Fetch:** `GET /api/device/req` returns up to 8 waiting requests as protocol lines (`VOLS`, `DIR`, `GET`), listings
+  (`VOLS`/`DIR`) before files (`GET`), each oldest first. When requests still wait after a fetch, the server bumps
+  `req_version` again in the same transaction, so the board is woken for the rest: the board must ack (`reqAck`) the `v`
+  it saw in the poll BEFORE its fetch, never a later one (final review, 2026-10-30). One HTTPS request per `as_step()`
+  still holds.
 - **Relay:** one request at a time to Transfer, only on a protocol 3 connection. A file moving either way finishes
   first; then requests go before queued downloads (someone is waiting in a browser).
 - **Answers:** reply lines are gathered in a 32 KB PSRAM buffer and posted to `POST /api/device/req/<rid>` as
@@ -108,7 +111,8 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
   (`waiting`|`sent`|`done`|`failed`), error_code, error_text, answer (jsonb: volumes or entries), pieces received,
   cut (bool), copy target (jsonb, GET only: destination path and clash rule), upload_id (GET), created_at, sent_at,
   answered_at.
-- `devices.req_version` (integer, default 0), bumped in the same transaction as a new request.
+- `devices.req_version` (integer, default 0), bumped in the same transaction as a new request, and again by a board's
+  fetch that leaves requests waiting (§3 Fetch).
 - Rows older than 24 h are deleted when a new request is added (no new cron; self-host identical).
 
 ### 4.2 Board routes (device auth as today; a board sees only its own requests)
@@ -133,9 +137,11 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
 
 1. The NET: driver looks for a `done` answer for the same board, kind and path (case-insensitive) younger than 2 minutes;
    if found it lists it, with its age.
-2. Otherwise it reuses a `waiting`/`sent` request for that path, or adds one, and answers `pending <rid>`.
-3. The pane asks `GET /api/files/net/request/<rid>` every 500 ms; after 20 s it stops with "A500 didn't answer".
-4. Refresh (`fresh`) skips step 1.
+2. Otherwise it reuses a `waiting`/`sent` request for that path, or adds one, and answers 202 `pending` (plan ruling P1:
+   the list route itself, no request id).
+3. The pane asks the same list URL every 500 ms; after 20 s it stops with "A500 didn't answer".
+4. Refresh (`fresh`) skips step 1, and replaces a pending request older than 20 s (failed `timeout`) instead of sharing
+   it.
 - The board must be online, on firmware 1.22+ and reported protocol 3 with browsing on; otherwise the driver answers
   the reason at once without adding a request.
 
