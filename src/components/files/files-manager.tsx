@@ -31,7 +31,7 @@ import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
 import { diskRelative, identityToConfirm, undoTarget, withAddedIn, type OpVersion } from '@/lib/files/edit-rules';
-import { createClosesDialog, dropBlocked, fetchDownload, navTargets, oneAtATime, opTitle, reloadsBoth, skippedItems, skippedWords, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
+import { createClosesDialog, dropBlocked, fetchDownload, fetchStatus, navTargets, oneAtATime, opTitle, reloadsBoth, skippedItems, skippedWords, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
 import { addedIn } from '@/lib/disk-history/added-in';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
 import { isFileDrag } from '@/components/disks/native-drop';
@@ -322,6 +322,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const [infoSaver] = useState(latestSaver);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [opBusy, setBusy] = useState<string | null>(null);
+  // Copies out of NET: volumes, as the board fetches them (spec 2026-10-30 §4.5): one status line each, after the busy
+  // line. Several may run at once (they queue on the board); a finished one's summary stays until the next one starts.
+  const [fetchLines, setFetchLines] = useState<{ id: string; line: string; finished: boolean }[]>([]);
   // Files from the computer into STASH: (the top drop zone, or a pane in STASH:) keep the manager busy as an op does.
   const stash = useStashUpload();
   const busy = opBusy ?? stash.busy;
@@ -355,6 +358,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const seq = useRef<Record<Side, number>>({ left: 0, right: 0 });
   // False once the manager unmounts: a NET: listing still being asked for stops re-asking (askUntilAnswered's `wanted`).
   const alive = useRef(true);
+  // The progress polls' timers (watchFetch), cleared on unmount.
+  const fetchTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
   // For the popstate listener and the NET: poll, which outlive a render.
   // R5: where a pane the address does not name opens (Back to a bare /files too).
   const defaults = paneDefaults(prefs.files.panes);
@@ -493,7 +498,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       const p = latest.current.panes[s];
       if (p.pending !== null && !p.listing) void load(s, p.path);
     }
-    return () => { alive.current = false; };
+    const timers = fetchTimers.current;
+    return () => { alive.current = false; timers.forEach(clearTimeout); timers.clear(); };
     // Once, on mount: `load` reads refs and state setters only.
   }, []);
 
@@ -734,7 +740,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     protect: volumeRO ?? (inNet ? NOT_IN_NET : sourceReason(true)),
     info: inNet && !board && !volume ? NOT_IN_NET : one(sourceReason(false), 'see its details'),
     // One file by path; several, or a folder, as a .zip (spec §3.3).
+    // Out of a volume, one file at a time: it is copied into the STASH: root first (plan P8).
     download: outOfNet ?? sourceReason(false) ?? failedReason(picked)
+      ?? (volume && (picked.length !== 1 || picked[0].kind !== 'file') ? 'Select one file to download' : null)
       ?? (downloadHref(picked, folderName).length > DOWNLOAD_URL_MAX ? 'Too many items to download at once — download their folder instead' : null),
     // The phone's Copy to… / Move to…: the place is picked afterwards, so only the source is checked here.
     copyTo: collectionPicked ? COLLECTIONS_STAY : filingFrom ? null : outOfNet ?? sourceReason(false) ?? failedReason(picked),
@@ -766,8 +774,12 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
 
   // ---- running an operation -----------------------------------------------------------------------------------
 
-  /** `queued`: how many files a copy into a board's queue queued (C3), a folder being several. */
-  type Outcome = { kind: 'done'; items: OpItem[]; versions: OpVersion[]; added: Added[]; queued?: number } | { kind: 'clashes'; clashes: Clash[] }
+  /**
+   * `queued`: how many files a copy into a board's queue queued (C3), a folder being several. `fetching`: a copy out of
+   * a NET: volume, whose files the board fetches from now on (spec 2026-10-30 §4.5): GET /api/files/net/fetch/<id>.
+   */
+  type Fetching = { id: string; files: number };
+  type Outcome = { kind: 'done'; items: OpItem[]; versions: OpVersion[]; added: Added[]; queued?: number; fetching?: Fetching } | { kind: 'clashes'; clashes: Clash[] }
     | { kind: 'refused'; words?: string };
 
   /** `inline`: a refusal code the caller says itself (a collection name clash, under the field): no toast for it. */
@@ -780,7 +792,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       // Signed out, the fetch lands on the sign-in page (a 200 that is not JSON): said so, and nothing changes.
       if (isSignedOutAnswer(res)) { toast.error(SIGNED_OUT_TEXT); return { kind: 'refused' }; }
       const body = (await res.json().catch(() => null)) as {
-        items?: OpItem[]; versions?: OpVersion[]; added?: Added[]; queued?: number; error?: unknown; detail?: unknown; clashes?: Clash[];
+        items?: OpItem[]; versions?: OpVersion[]; added?: Added[]; queued?: number; fetching?: Fetching; error?: unknown; detail?: unknown; clashes?: Clash[];
       } | null;
       if (res.status === 409 && body?.error === 'clashes' && body.clashes) return { kind: 'clashes', clashes: body.clashes };
       if (!res.ok || !body?.items) {
@@ -789,7 +801,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
         if (reloadsBoth(body?.error)) reloadBoth();
         return { kind: 'refused' };
       }
-      return { kind: 'done', items: body.items, versions: body.versions ?? [], added: body.added ?? [], ...(body.queued !== undefined ? { queued: body.queued } : {}) };
+      return { kind: 'done', items: body.items, versions: body.versions ?? [], added: body.added ?? [], ...(body.queued !== undefined ? { queued: body.queued } : {}),
+        ...(body.fetching ? { fetching: body.fetching } : {}) };
     } catch {
       toast.error(refusalWords('failed'));
       return { kind: 'refused' };
@@ -859,13 +872,86 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    */
   type Run = { op: 'copy' | 'move'; dest: string; where: string; undo: boolean; target: string | null; queued?: number;
     /** What the toast counts: items, or for a filing titles or disks (filingNoun). */
-    count?: (n: number) => string };
+    count?: (n: number) => string;
+    /** Copies out of a NET: volume this run started (§4.5): their progress is the status row's, not a toast's. */
+    fetches?: number };
 
   function transfer(op: 'copy' | 'move', sources: string[], dest: string, where: string, target: string | null, count?: (n: number) => string) {
     if (busy) return;
+    const run: Run = { op, dest, where, undo: offersUndo(op, sources, dest), target, ...(count ? { count } : {}) };
     // R4: the Files setting's answer goes with the first request; only 'ask' (the default) can come back as clashes.
-    void runGroups({ op, dest, where, undo: offersUndo(op, sources, dest), target, ...(count ? { count } : {}) },
-      [{ onClash: prefs.files.onClash, sources }], [], []);
+    const groups: TransferGroup[] = [{ onClash: prefs.files.onClash, sources }];
+    // Out of a NET: volume, the picked drawers are listed afresh first: the server expands a drawer only from a listing
+    // the Amiga gave in the last 2 minutes (plan P3).
+    const { panes: cur } = latest.current;
+    const from = [cur.left.listing, cur.right.listing].find((l) => isNetVolume(l) && sources.every((x) => l!.entries.some((e) => e.path === x)));
+    const drawers = from ? from.entries.filter((e) => e.kind === 'dir' && sources.includes(e.path)).map((e) => e.path) : [];
+    if (!drawers.length) { void runGroups(run, groups, [], []); return; }
+    void (async () => {
+      setBusy(`Reading ${baseName(drawers[0])}…`);
+      const failed = await walkDrawers(drawers, from!);
+      setBusy(null);
+      if (failed === null) void runGroups(run, groups, [], []);
+      else if (failed) showFetchLine(`walk-${Date.now()}`, failed, true);
+    })();
+  }
+
+  /**
+   * Every drawer under `drawers`, listed with `fresh` on each one's first ask (the pending loop, its label in the status
+   * row), so the server remembers them all (P3); nothing is collected here. Null when all were read; else the words of
+   * the first that was not ('' when the manager went away).
+   */
+  async function walkDrawers(drawers: string[], from: Listing): Promise<string | null> {
+    const todo = [...drawers];
+    for (let path = todo.shift(); path !== undefined; path = todo.shift()) {
+      const at = path;
+      const r = await askUntilAnswered<Exclude<Fetched, { pending: string }>>(at, {
+        ask: fetchListing, fresh: true, wanted: () => alive.current, onPending: (label) => setBusy(label),
+        giveUp: () => ({ error: noAnswer(at, from) }),
+      });
+      if (r === null) return '';
+      if (!('listing' in r)) return 'gone' in r ? GONE : r.error;
+      todo.push(...r.listing.entries.filter((e) => e.kind === 'dir').map((e) => e.path));
+    }
+    return null;
+  }
+
+  /** One copy's line in the status row; a new copy's first line lets go of the summaries of those already finished. */
+  function showFetchLine(id: string, line: string, finished: boolean) {
+    setFetchLines((cur) => {
+      const i = cur.findIndex((x) => x.id === id);
+      if (i >= 0) return cur.map((x, k) => (k === i ? { id, line, finished } : x));
+      return [...cur.filter((x) => !x.finished), { id, line, finished }];
+    });
+  }
+
+  /**
+   * A copy out of a volume as the board fetches it (§4.5): GET /api/files/net/fetch/<id> every second, its fetchStatus
+   * in the status row, until it is finished or the manager unmounts. Then the summary stays, a pane showing `dest` reads
+   * it again, and `then` hears the last progress (Download, P8). The busy lock is not held: the person may go on.
+   */
+  function watchFetch(f: Fetching, dest: string, then?: (p: { done: number; arrived: string[] }) => void) {
+    const again = () => {
+      if (!alive.current) return;
+      const t = setTimeout(() => { fetchTimers.current.delete(t); void tick(); }, 1000);
+      fetchTimers.current.add(t);
+    };
+    const tick = async () => {
+      let res: Response;
+      try { res = await fetch(`/api/files/net/fetch/${encodeURIComponent(f.id)}`, { cache: 'no-store' }); } catch { again(); return; }
+      if (!alive.current) return;
+      if (isSignedOutAnswer(res)) { showFetchLine(f.id, SIGNED_OUT_TEXT, true); return; }
+      const p = (await res.json().catch(() => null)) as
+        { total: number; done: number; failed: { name: string; reason: string }[]; waiting: number; board: string; arrived: string[] } | null;
+      if (!res.ok || !p) { if (res.status >= 500) { again(); return; } showFetchLine(f.id, refusalWords('failed'), true); return; }
+      const s = fetchStatus(p, p.board);
+      showFetchLine(f.id, s.line, s.finished);
+      if (!s.finished) { again(); return; }
+      const { panes: cur } = latest.current;
+      for (const side of ['left', 'right'] as const) if (cur[side].path === dest) void refresh(side);
+      then?.(p);
+    };
+    void tick();
   }
 
   /**
@@ -880,6 +966,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       if (r.kind === 'done') {
         done.push(...r.items); versions.push(...r.versions);
         if (r.queued !== undefined) run.queued = (run.queued ?? 0) + r.queued;
+        if (r.fetching) { run.fetches = (run.fetches ?? 0) + 1; watchFetch(r.fetching, run.dest); }
         continue;
       }
       if (r.kind === 'clashes') {
@@ -893,6 +980,19 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
 
   /** Several requests saved several versions: Undo of the last alone would undo only part of the run, so none. */
   function finishRun(run: Run, done: OpItem[], versions: OpVersion[]) {
+    // Out of a volume the files have not arrived yet: the status row says how it goes. Only what was skipped or refused
+    // at once (a clash answered Skip, a non-disk onto LIBRARY:) is a toast now.
+    if (run.fetches) {
+      const failed = done.filter((i): i is Extract<OpItem, { ok: false }> => !i.ok);
+      const skipped = done.filter((i) => i.ok && i.skipped).length;
+      if (skipped) toast(skippedWords(skipped));
+      if (failed.length) {
+        toast.error(`${items(failed.length)} could not be copied.`, {
+          description: <ul data-testid="files-failures">{failed.map((f) => <li key={f.source}>{baseName(f.source)}: {refusalWords(f.refusal.code, f.refusal.detail)}</li>)}</ul>,
+        });
+      }
+      return;
+    }
     // A copy into a board's queue says how many FILES it queued (a folder is several): "Queued 3 files to A500 bench."
     const said = (n: number) => (run.queued !== undefined ? `Queued ${files(run.queued)} to ${run.where}.` : `${verbs[run.op][1]} ${(run.count ?? items)(n)} to ${run.where}.`);
     if (done.length) void report(done, said, run.target, versions, { undo: run.undo, ...(run.count ? { count: run.count } : {}) });
@@ -974,7 +1074,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       case 'info': setDialog({ kind: 'info', side, entry: picked[0] }); return;
       case 'copyTo': setDialog({ kind: 'pick', op: 'copy', sources, start: panes[otherSide(side)].path }); return;
       case 'moveTo': setDialog({ kind: 'pick', op: 'move', sources, start: panes[otherSide(side)].path }); return;
-      case 'download': void download(downloadHref(picked, folderName)); return;
+      case 'download': if (volume) void downloadFromVolume(picked[0]); else void download(downloadHref(picked, folderName)); return;
       case 'addlib': void addToLibrary(picked); return;
       case 'createadf': setDialog({ kind: 'create', side }); return;
     }
@@ -1060,6 +1160,23 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     } finally {
       setBusy(null);
     }
+  }
+
+  /**
+   * Download of a volume's file (plan P8): a one-file copy into the STASH: root (keep both on a clash), and once the
+   * board has fetched it, the STASH: download of where it arrived. The copy stays in STASH:, like any other (§4.5). A
+   * failure is the status row's summary, which names the reason.
+   */
+  async function downloadFromVolume(e: FsEntry) {
+    const r = await post({ op: 'copy', sources: [e.path], dest: 'STASH:', onClash: 'keep-both' }, `Copying ${e.name} to STASH:…`);
+    if (r.kind !== 'done') return;
+    const f = r.items[0];
+    if (f && !f.ok) { toast.error(`${e.name}: ${refusalWords(f.refusal.code, f.refusal.detail)}`); return; }
+    if (!r.fetching) return;
+    watchFetch(r.fetching, 'STASH:', (p) => {
+      const at = p.arrived[0];
+      if (p.done > 0 && at) void download(`/api/files/download?path=${encodeURIComponent(at)}`);
+    });
   }
 
   /**
@@ -1575,7 +1692,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
           {/* The one status row (§2.3): progress such as "Copying 3 of 12…". */}
           <p role="status" id="files-busy" data-testid="files-busy"
              className="px-3 py-0.5 text-[12px] max-lg:pb-2 max-lg:text-center max-lg:empty:hidden lg:min-h-[22px] lg:border-t"
-             style={{ borderColor: 'var(--line)', color: 'var(--muted)' }}>{busy ?? ''}</p>
+             style={{ borderColor: 'var(--line)', color: 'var(--muted)' }}>{busy ?? fetchLines.map((x) => x.line).join(' · ')}</p>
         </div>
       </div>
 

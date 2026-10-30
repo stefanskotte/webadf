@@ -135,3 +135,14 @@ export function navTargets(listing: { crumbs: { path: string }[] } | null, path:
   const up = p && parentOf(p);
   return up ? { parent: formatPath(up), root: `${p.device}:` } : { parent: null, root: null };
 }
+
+/**
+ * The status row of a copy out of a NET: volume (spec 2026-10-30 §4.5), from GET /api/files/net/fetch/<id>: the file
+ * now on its way while any wait, then the summary, naming the first failure ("; …" when there are more).
+ */
+export function fetchStatus(p: { total: number; done: number; failed: { name: string; reason: string }[]; waiting: number }, board: string): { line: string; finished: boolean } {
+  if (p.waiting > 0) return { line: `Copying ${Math.min(p.done + p.failed.length + 1, p.total)} of ${p.total} from ${board}…`, finished: false };
+  const [first, ...more] = p.failed;
+  const failed = first ? `, ${p.failed.length} failed: ${first.name}: ${first.reason}${more.length ? '; …' : ''}` : '';
+  return { line: `Copied ${p.done}${failed}`, finished: true };
+}
