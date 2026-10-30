@@ -43,6 +43,7 @@ export function ButtonBank(p: {
                       aria-disabled={off || undefined} title={reason ?? undefined}
                       aria-describedby={[p.busy ? 'files-busy' : null, reason !== null ? `files-why-${cmd}` : null].filter(Boolean).join(' ') || undefined}
                       aria-pressed={cmd === 'showinfo' ? p.showInfo : undefined}
+                      style={cmd === 'showinfo' && p.showInfo ? { background: 'var(--ink)', color: 'var(--surface)', borderColor: 'var(--ink)' } : undefined}
                       className="h-auto min-h-6 w-full py-0.5 leading-tight whitespace-normal aria-disabled:cursor-default aria-disabled:opacity-50">
                 {BANK_LABEL[cmd]}
               </Button>

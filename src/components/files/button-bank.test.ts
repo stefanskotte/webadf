@@ -6,8 +6,8 @@ import { ButtonBank } from './button-bank';
 
 const noop = () => {};
 const none = Object.fromEntries(BANK_GRID.filter((c): c is BankCommand => c !== null).map((c) => [c, null])) as Record<BankCommand, string | null>;
-const render = (reasons: Partial<Record<BankCommand, string | null>>, busy = false) => renderToStaticMarkup(createElement(ButtonBank, {
-  device: 'LIBRARY', reasons: { ...none, ...reasons }, busy, showInfo: true, primaryCopy: false, onDevice: noop, onCommand: noop,
+const render = (reasons: Partial<Record<BankCommand, string | null>>, busy = false, showInfo = true) => renderToStaticMarkup(createElement(ButtonBank, {
+  device: 'LIBRARY', reasons: { ...none, ...reasons }, busy, showInfo, primaryCopy: false, onDevice: noop, onCommand: noop,
 }));
 const tagOf = (html: string, testid: string) => html.match(new RegExp(`<[a-z]+\\b[^>]*data-testid="${testid}"[^>]*>`))?.[0];
 const attr = (tag: string, name: string) => tag.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1];
@@ -44,5 +44,14 @@ describe('ButtonBank (Files 2 §2.3)', () => {
     const html = render({});
     expect([...html.matchAll(/data-testid="files-dev-([A-Z]+)"/g)].map((m) => m[1])).toEqual(['STASH', 'LIBRARY', 'NET']);
     expect(attr(tagOf(html, 'files-dev-LIBRARY')!, 'aria-pressed')).toBe('true');
+  });
+  it('Show .info looks pressed when .info files are shown, like the device column\'s pressed button', () => {
+    const on = tagOf(render({}, false, true), 'files-showinfo')!;
+    expect(attr(on, 'aria-pressed')).toBe('true');
+    expect(attr(on, 'style')).toMatch(/background:var\(--ink\)/);
+    expect(attr(on, 'style')).toMatch(/color:var\(--surface\)/);
+    const off = tagOf(render({}, false, false), 'files-showinfo')!;
+    expect(attr(off, 'aria-pressed')).toBe('false');
+    expect(attr(off, 'style') ?? '').not.toMatch(/--ink\)/);
   });
 });
