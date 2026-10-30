@@ -124,4 +124,13 @@ describe('Create ADF in LIBRARY:', () => {
     expect(await make('LIBRARY:/c9', 'X')).toMatchObject({ kind: 'refused', refusal: { code: 'not_found' } });
     expect((await getDb().select().from(games)).length).toBe(before);
   });
+  it('a stale link: a title or disk that does not exist is not_found, not "go up"; a real one still says go up', async () => {
+    const before = (await getDb().select().from(games)).length;
+    const [g] = await getDb().select().from(games).limit(1);
+    const [d] = await getDb().select().from(disks).where(eq(disks.gameId, g.id)).limit(1);
+    expect(await make('LIBRARY:/gone-title/gone-disk', 'X')).toMatchObject({ kind: 'refused', refusal: { code: 'not_found' } });
+    expect(await make(`LIBRARY:/${g.id}/gone-disk`, 'X')).toMatchObject({ kind: 'refused', refusal: { code: 'not_found' } });
+    if (d) expect(await make(`LIBRARY:/${g.id}/${d.id}`, 'X')).toMatchObject({ kind: 'refused', refusal: { detail: 'Go up to the library or a collection' } });
+    expect((await getDb().select().from(games)).length).toBe(before);
+  });
 });

@@ -45,7 +45,7 @@ export const HELP_TOPICS = {
         <p>
           <strong>Folders.</strong> In the table, the library&apos;s first page lists each collection as a folder,
           before the titles that are in no collection. Open a folder to
-          see its titles; <em>↑ Library</em> takes you back. <em>All titles</em> has the same way back.
+          see its titles; <em>↑ Library</em> takes you back. <em>All titles</em> does too. Collection names must differ, ignoring case.
         </p>
         <p>
           <strong>Pages.</strong> 48 titles to a page, unless you change <em>Per page</em> or{' '}
@@ -88,14 +88,13 @@ export const HELP_TOPICS = {
           folders, then the titles in none.
         </p>
         <p>
-          <strong>Source and destination.</strong> The pane you last clicked is the source, with the dark title bar. The
-          buttons below act on it: <em>Copy</em> and <em>Move</em> go to the other pane; the device column takes it to
+          <strong>Source and destination.</strong> The pane you last clicked is the source, with the dark title bar. <em>Copy</em> and <em>Move</em> go to the other pane; the device column takes it to
           STASH:, LIBRARY: or NET:. Dragging rows across copies; to move, hold Shift after the drag has started. When a
           name is already there, choose Replace, Skip or Keep both.
         </p>
         <p>
-          <strong>Filing.</strong> Move a title onto a collection to file it there and out of the one it was in; Copy files it
-          in both. Move to LIBRARY: takes it out of its collection. Makedir on LIBRARY: makes a collection. Disk
+          <strong>Filing.</strong> Move a title onto a collection to file it there and out of the one it was in (one already there is
+          skipped); Copy files it in both. Move to LIBRARY: takes it out of its collection. Makedir on LIBRARY: makes a collection. Disk
           images copied from STASH: join the library. <em>Create ADF…</em> makes a blank disk.
         </p>
         <p>

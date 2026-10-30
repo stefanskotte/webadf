@@ -390,6 +390,7 @@ function RenameField({ collection, onEnd, inline = false }: {
   const [busy, setBusy] = useState(false);
   const [clash, setClash] = useState(false);
   const ended = useRef(false);
+  const clashed = useRef<string | null>(null);   // the text the server refused: a blur with it unchanged asks nothing
   const field = useRef<HTMLInputElement>(null);
   // Opened from the ⋯ menu, which hands focus back to its trigger as it closes: take it after that (two frames).
   useEffect(() => {
@@ -398,10 +399,11 @@ function RenameField({ collection, onEnd, inline = false }: {
     return () => { cancelAnimationFrame(outer); cancelAnimationFrame(inner); };
   }, []);
 
-  async function submit(refocus: boolean) {
+  async function submit(refocus: boolean, fromBlur = false) {
     if (ended.current) return;   // Enter then the unmount's blur: one request
-    ended.current = true;
     const trimmed = name.trim();
+    if (fromBlur && clashed.current === trimmed) return;   // after a clash only Enter or a changed name tries again
+    ended.current = true;
     if (!trimmed || trimmed === collection.name) { onEnd(refocus); return; }
     setBusy(true);
     let keepOpen = false;
@@ -422,6 +424,7 @@ function RenameField({ collection, onEnd, inline = false }: {
         if (res.status === 409 && body.error === 'name_exists') {
           ended.current = false;   // still open: the next Enter or blur tries again
           keepOpen = true;
+          clashed.current = trimmed;
           setClash(true);
           return;
         }
@@ -451,7 +454,7 @@ function RenameField({ collection, onEnd, inline = false }: {
         aria-invalid={clash || undefined}
         aria-describedby={clash ? `collection-rename-error-${collection.id}` : undefined}
         onChange={(e) => { setName(e.target.value); setClash(false); }}
-        onBlur={() => void submit(false)}
+        onBlur={() => void submit(false, true)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') { e.preventDefault(); void submit(true); }
           if (e.key === 'Escape') { e.preventDefault(); ended.current = true; onEnd(true); }

@@ -394,4 +394,12 @@ describe('Files help (increment 4)', () => {
   it('the new topics never say drive in their title or short (the help filter test pins drive to four topics)', () => {
     for (const id of ['files', 'stash-net'] as const) expect(HELP_TOPICS[id].title + HELP_TOPICS[id].short).not.toMatch(/drive/i);
   });
+
+  it('files says a title already in the target collection is skipped and stays put', () => {
+    expect(bodyText('files').replace(/\s+/g, ' ')).toMatch(/already (there|in it)[^.]*skipped|skipped[^.]*already/i);
+  });
+
+  it('library says collection names must differ, ignoring case', () => {
+    expect(bodyText('library').replace(/\s+/g, ' ')).toMatch(/names? must differ[^.]*case/i);
+  });
 });

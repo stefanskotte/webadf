@@ -2,6 +2,9 @@
 // Create ADF… in Files (Files 2 §4): a blank image `<Name>.adf` into a STASH: folder (through the STASH: store, so it
 // counts toward the org's 500 files / 256 MB and follows the clash setting), or a new title with one blank disk into
 // LIBRARY: or a collection. Never in NET:, a title's disk list, a disk or an archive. SERVER ONLY.
+import { and, eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { disks } from '@/db/schema/catalog';
 import { formatVolume } from '@/lib/adffs/format';
 import { createBlankDisk } from '@/lib/blank-disk';
 import { parsePath } from './path';
@@ -33,7 +36,13 @@ export async function createAdf(ctx: OpCtx, req: CreateAdfRequest): Promise<Outc
   const at = await placeInLibrary(ctx, p.segments);
   if (!at) refuse('not_found', 404);
   // A foreign or deleted collection id reads as a title id: no such title is not found, not "go up" (§7).
-  if (at.level === 'title' && !(await titleExists(ctx, at.gameId))) refuse('not_found', 404);
+  if ((at.level === 'title' || at.level === 'disk') && !(await titleExists(ctx, at.gameId))) refuse('not_found', 404);
+  // Likewise a disk that is not on the title: a stale link is not found, not "go up".
+  if (at.level === 'disk') {
+    const [d] = await getDb().select({ id: disks.id }).from(disks)
+      .where(and(eq(disks.id, at.diskId), eq(disks.gameId, at.gameId), eq(disks.orgId, ctx.orgId))).limit(1);
+    if (!d) refuse('not_found', 404);
+  }
   if (at.level === 'title' || at.level === 'disk') refuse('unsupported', 400, GO_UP);
   const made = await createBlankDisk(ctx.orgId, { volumeName: name, filesystem: req.filesystem, density: req.density,
     collectionId: at.level === 'collection' ? at.collection.id : null, mustFile: true });

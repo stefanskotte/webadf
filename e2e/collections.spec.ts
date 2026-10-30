@@ -223,10 +223,22 @@ test('a name another collection has, in any case, is refused inline and the type
   await page.getByTestId(`collection-rename-${gamesId}`).click();
   const input = railRow(page, gamesId).locator('input');
   await expect(input).toBeVisible();
+  const patches: string[] = [];
+  page.on('request', (r) => { if (r.method() === 'PATCH' && r.url().includes(`/api/collections/${gamesId}`)) patches.push(r.url()); });
   await input.fill(`demos ${run}`);
   await input.press('Enter');
   await expect(page.getByTestId('collection-rename-error')).toHaveText('A collection with that name already exists.');
   await expect(input).toHaveValue(`demos ${run}`);
+  // After a clash, clicking elsewhere (a blur) with the same text sends nothing and leaves the field open with the
+  // message; only Enter (or a changed name) tries again.
+  await input.evaluate((el) => (el as HTMLInputElement).blur());
+  await expect(input).toBeVisible();
+  await expect(page.getByTestId('collection-rename-error')).toBeVisible();
+  await page.waitForTimeout(300);
+  expect(patches.length).toBe(1);
+  await input.focus();
+  await input.press('Enter');
+  await expect.poll(() => patches.length).toBe(2);
   await input.press('Escape');
   await expect(railRow(page, gamesId).getByTestId('collection-name')).toHaveText(`Games ${run}`);
   expect((await getDb().select().from(collections).where(eq(collections.id, gamesId)))[0].name).toBe(`Games ${run}`);
