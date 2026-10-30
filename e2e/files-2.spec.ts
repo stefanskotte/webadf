@@ -268,6 +268,7 @@ test('Move a title between collections and back to the root', async ({ page }) =
   // The left pane (the source) to LIBRARY:'s root by the device column; then the right pane the source, Move → root.
   await page.getByTestId('files-dev-LIBRARY').click();
   await expect(crumb(page, 'left', 1)).toHaveCount(0);
+  await expect(row(page, 'left', 'Demos')).toBeVisible();            // the root has loaded (a root-only row)
   await expect(row(page, 'left', `Alpha-${tag}`)).toHaveCount(0);   // filed: not among the root's titles
   await row(page, 'right', `Alpha-${tag}`).click();
   await expect(page.getByTestId('pane-right-title')).toHaveAttribute('data-role', 'source');
@@ -429,6 +430,7 @@ test('Create ADF in STASH:, LIBRARY: root and a collection; refused on NET:', as
   await openFiles(page, 'STASH:', 'NET:', 'left');
   const create = page.getByTestId('files-createadf');
   const dialog = page.getByTestId('files-create-adf');
+  expect((await page.request.patch('/api/me/prefs', { data: { files: { onClash: 'ask' } } })).ok()).toBe(true);   // explicit, not the default
 
   // STASH:: Work, OFS → Work.adf, picked, the keys back on the manager.
   await create.click();
@@ -442,6 +444,7 @@ test('Create ADF in STASH:, LIBRARY: root and a collection; refused on NET:', as
   await expect.poll(() => activeTestId(page)).toBe('files-manager');
   const [up] = await getDb().select({ sha: amigaUploads.blobSha256 }).from(amigaUploads)
     .where(and(eq(amigaUploads.orgId, orgId), eq(amigaUploads.path, 'Work.adf'), ne(amigaUploads.status, 'deleted')));
+  expect(up).toBeTruthy();
   const made = await diskStore.read(up.sha!);
   expect(made.length).toBe(901_120);
   expect([...made.subarray(0, 4)]).toEqual([0x44, 0x4f, 0x53, 0x00]);   // DOS\0: OFS
@@ -575,7 +578,7 @@ test('a disk inside a collection path: copy a file in, Undo, and "new in v1"', a
   expect(await storedNames(t1.diskId)).toContain('note.txt');
 
   await copied.getByRole('button', { name: 'Undo' }).click();
-  await expect(page.getByText('Undone')).toBeVisible({ timeout: 15_000 });
+  await expect(toast(page, 'Undone')).toBeVisible({ timeout: 15_000 });
   await expect(row(page, 'right', 'note.txt')).toHaveCount(0);
   expect(await storedNames(t1.diskId)).not.toContain('note.txt');
 });

@@ -767,9 +767,12 @@ test('the Files 2 pairs are legible: title bars over LIBRARY:, a collection row,
     ['Create ADF…', '[data-testid="files-createadf"]'],
     ['Show .info (pressed)', '[data-testid="files-showinfo"]'],
   ]);
+  const look = () => page.getByTestId('files-showinfo').evaluate((el) => { const c = getComputedStyle(el); return `${c.backgroundColor}|${c.color}`; });
+  const pressedLook = await look();
   await page.getByTestId('files-showinfo').click();
   await expect(page.getByTestId('files-showinfo')).toHaveAttribute('aria-pressed', 'false');
   await page.mouse.move(0, 0);
+  expect(await look(), 'pressed and not pressed must look different').not.toBe(pressedLook);
   await legible(page, 'files2', [['Show .info (not pressed)', '[data-testid="files-showinfo"]']]);
   await page.getByTestId('files-showinfo').click();   // back as it was: the setting is the account's
 
