@@ -40,7 +40,8 @@ describe('help topics', () => {
       const text = bodyText(id);
       const words = text.split(/\s+/).filter(Boolean).length;
       expect(words).toBeGreaterThanOrEqual(60);
-      expect(words).toBeLessThanOrEqual(280);
+      // files covers two panes, the bank, filing and (NET: volumes) browsing the Amiga: it alone may run longer.
+      expect(words).toBeLessThanOrEqual(id === 'files' ? 360 : 280);
       expect(text).not.toMatch(BANNED);
     });
   }
@@ -397,15 +398,16 @@ describe('Files help (increment 4)', () => {
 
   it('files says how to browse the Amiga: its needs, Refresh, the Queue folder, and read-only for now (NET: volumes)', () => {
     const b = bodyText('files').replace(/\s+/g, ' ');
-    for (const w of ['Browsing the Amiga', 'firmware 1.22', 'Transfer 2.3', 'browsing switched on', 'Refresh', 'Ctrl-R',
-      'Queue', 'Read-only for now: copy files to STASH:, disk images to LIBRARY:']) expect(b).toContain(w);
+    for (const w of ['Browsing the Amiga', 'firmware 1.22', 'Transfer 2.3', 'browsing switched on', 'a few seconds',
+      '2 minutes', 'says when it was read', 'Refresh', 'Ctrl-R', 'Queue folder',
+      'Read-only for now: copy files to STASH:, or disk images to LIBRARY:']) expect(b).toContain(w);
     // Phase 1 is read-only: nothing may say the Amiga's disks take files.
     expect(b).not.toMatch(/(copy|move|write|save)[^.]*(to|onto|into) (the Amiga's|its Amiga's) (disks?|volumes?)|can be written/i);
   });
 
-  it("stash-net says a board's drawers take a few seconds and are remembered 2 minutes (NET: volumes)", () => {
+  it("stash-net points to Files for a board's volumes, and sends go into its Queue (NET: volumes)", () => {
     const b = bodyText('stash-net').replace(/\s+/g, ' ');
-    for (const w of ['a few seconds', '2 minutes', 'saying when it was read', 'Queue']) expect(b).toContain(w);
+    for (const w of ['Queue', 'Browsing the Amiga under Files']) expect(b).toContain(w);
   });
 
   it('files says a title already in the target collection is skipped and stays put', () => {

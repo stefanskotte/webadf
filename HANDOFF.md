@@ -1563,8 +1563,9 @@ row and Queue alone.
   browse columns in the DB). Existing NET specs moved to the /Queue path. A fix found by them: a pane opened straight at
   a volume that never answered named the board by its id in the give-up words; it now takes the name from the page's
   boards (boardNameFor's `boards`).
-- **Help:** `files` gains "Browsing the Amiga" (needs, Refresh/Ctrl-R, Queue, read-only for now); the 2-minute memory and
-  drawer speed went into `stash-net` (NET: panes' "?"), because `files` is held to 280 words (it was at 278).
+- **Help:** `files` gains "Browsing the Amiga" (needs, a few seconds a drawer, the 2-minute memory, Refresh/Ctrl-R, the
+  Queue folder, read-only for now); `stash-net` points to it. `files` alone may run to 360 words (topics.test.ts; it is
+  at 355), every other topic keeps 280 (controller ruling, Task 9 fix round 1).
 - **Owed:** Transfer 2.3 and firmware 1.22 plans; the A500 bench (spec §7: browsable, drawer two levels down, copies to
   STASH:/LIBRARY: and a drawer, a >1000-entry drawer's cut row, browsing off with Queue still sending, Quit Transfer
   mid-listing).
