@@ -132,10 +132,11 @@ static int hex_key(const char *t, unsigned n, char *out) {
     return 1;
 }
 static void emit_trust(rx_session *s, const char *code) { emit_full(s, RX_EV_TRUST, 0, 0, 0, 0, 0, 0, code, s->peer_key); }
-/* "WEBADF <v> [<key>]": READY 1 to a protocol 1 board (or a stray WEBADF), READY 2 to a protocol 2 one; then the key
-   decides whether this connection may upload. Downloads work either way. */
+/* "WEBADF <v> [<key>]": READY 1 to a protocol 1 board (or a stray WEBADF), READY 2 to a protocol 2 one, READY 3 <b> to
+   protocol 3 and newer (spec 2026-10-30 §2.1: b = 1 while requests will be answered); then the key decides whether
+   this connection may upload and browse. Downloads work either way. */
 static void on_hello(rx_session *s, cur *c) {
-    const char *t; unsigned n; unsigned long v = 1;
+    const char *t; unsigned n; unsigned long v = 1; const char *code = 0;
     if (tok(c, &t, &n) && !num(t, n, 10, &v)) v = 1;
     s->peer_key[0] = 0;
     if (v < 2) {
@@ -145,17 +146,21 @@ static void on_hello(rx_session *s, cur *c) {
         if (s->upq) emit_trust(s, "old");
         return;
     }
-    s->peer_v = 2;
-    puts_(s, "READY 2\n");
+    s->peer_v = v >= 3 ? 3 : 2;
     if (!tok(c, &t, &n) || !hex_key(t, n, s->peer_key)) s->peer_key[0] = 0;
-    emit(s, RX_EV_HELLO, 0, 0, 0, 0, 0);
-    if (!s->upq) { s->trust = RX_TRUST_NONE; return; }
-    if (!s->peer_key[0]) { s->trust = RX_TRUST_OTHER; emit_trust(s, "other"); }
+    if (!s->upq) s->trust = RX_TRUST_NONE;
+    else if (!s->peer_key[0]) { s->trust = RX_TRUST_OTHER; code = "other"; }
     else if (!s->upq->trusted[0] || s->upq->trust_next) {
         strcpy(s->upq->trusted, s->peer_key); s->upq->trust_next = 0;
-        s->trust = RX_TRUST_OK; emit_trust(s, "new");
-    } else if (strcmp(s->upq->trusted, s->peer_key) == 0) { s->trust = RX_TRUST_OK; emit_trust(s, "ok"); }
-    else { s->trust = RX_TRUST_OTHER; emit_trust(s, "other"); }
+        s->trust = RX_TRUST_OK; code = "new";
+    } else if (strcmp(s->upq->trusted, s->peer_key) == 0) { s->trust = RX_TRUST_OK; code = "ok"; }
+    else { s->trust = RX_TRUST_OTHER; code = "other"; }
+    if (s->peer_v == 3) {
+        s->hello_browse = rx_browse_on(s);
+        puts_(s, s->hello_browse ? "READY 3 1\n" : "READY 3 0\n");
+    } else puts_(s, "READY 2\n");
+    emit(s, RX_EV_HELLO, 0, 0, 0, 0, 0);
+    if (code) emit_trust(s, code);
 }
 
 void rx_attach(rx_session *s, rx_upq *q) { s->upq = q; }
@@ -172,6 +177,105 @@ void rx_key4(const char *key, char out[5]) {
     unsigned i;
     for (i = 0; i < 4 && key && key[i]; i++) out[i] = (char)(key[i] >= 'a' && key[i] <= 'f' ? key[i] - 'a' + 'A' : key[i]);
     out[i] = 0;
+}
+
+/* --- protocol 3: requests (spec 2026-10-30 §2.2) --- */
+static const char *const REQ_WORD[] = { "", "vols", "dir", "get" };
+int rx_browse_on(const rx_session *s) { return s->upq && s->upq->browse && s->peer_v >= 3 && s->trust == RX_TRUST_OK; }
+/* A request starts only with nothing moving: a file being received or going up finishes first (spec §2.2 Order). */
+static int req_idle(const rx_session *s) { return !s->in_data && s->up_phase == RX_UP_IDLE && !s->up_closing; }
+int rx_hello_stale(const rx_session *s) {
+    return s->peer_v >= 3 && s->hello_browse != rx_browse_on(s) && req_idle(s) &&
+           s->req_kind == RX_REQ_NONE && s->wait_kind == RX_REQ_NONE && s->out_n == 0;
+}
+/* in, without control bytes (a newline would end the line early), into out[cap]. */
+static void clean(const char *in, char *out, unsigned cap) {
+    unsigned i;
+    for (i = 0; in[i] && i + 1 < cap; i++) out[i] = (unsigned char)in[i] < 0x20 ? ' ' : in[i];
+    out[i] = 0;
+}
+/* "ERR <id> <code> <len>:<text>" (unlike FILE's ERR, the text is length-prefixed). */
+static void req_err(rx_session *s, const char *id, const char *code, const char *text) {
+    char t[80];
+    clean(text, t, sizeof t);
+    puts_(s, "ERR "); puts_(s, id[0] ? id : "-"); puts_(s, " "); puts_(s, code); puts_(s, " "); put_lenstr(s, t); puts_(s, "\n");
+}
+static void emit_req(rx_session *s, int kind, const char *id, const char *path, unsigned long count, int cut, const char *why) {
+    emit_full(s, RX_EV_REQ, id, path, count, (unsigned long)cut, why, 0, REQ_WORD[kind], 0);
+}
+static void req_end(rx_session *s) {
+    if (s->req_open) { s->fs->dir_close(s->fs->ctx); s->req_open = 0; }
+    s->req_kind = RX_REQ_NONE;
+}
+/* The request being answered fails: its ERR, the owner told, the drawer let go. */
+static void req_fail_text(rx_session *s, const char *code, const char *text) {
+    req_err(s, s->req_id, code, text);
+    emit_req(s, s->req_kind, s->req_id, s->req_path, s->req_count, 0, text);
+    req_end(s);
+}
+static void req_done(rx_session *s, int cut) {
+    puts_(s, "DONE "); puts_(s, s->req_id); puts_(s, " "); put_dec(s, s->req_count);
+    if (cut) puts_(s, " cut");
+    puts_(s, "\n");
+    emit_req(s, s->req_kind, s->req_id, s->req_path, s->req_count, cut, 0);
+    req_end(s);
+}
+static void put_date(rx_session *s, unsigned long d, unsigned long m, unsigned long t) {
+    put_dec(s, d); puts_(s, "."); put_dec(s, m); puts_(s, "."); put_dec(s, t);
+}
+static void req_start(rx_session *s) {
+    s->req_kind = s->wait_kind; strcpy(s->req_id, s->wait_id); strcpy(s->req_path, s->wait_path);
+    s->wait_kind = RX_REQ_NONE;
+    s->req_i = 0; s->req_count = 0; s->req_open = 0;
+    if (s->req_kind == RX_REQ_VOLS) {
+        int k = s->fs->vols(s->fs->ctx, s->req_vols, RX_VOLS_MAX);
+        if (k < 0) { req_fail_text(s, "io", "cannot read the volume list"); return; }
+        s->req_nvols = k;
+    }
+}
+/* The answer goes out a line at a time, only while the buffer has room for one (spec §2.2 Long drawers): the rest
+   waits for the next pass, so memory stays flat however long the answer. */
+static void req_pump(rx_session *s) {
+    if (s->req_kind == RX_REQ_NONE && s->wait_kind != RX_REQ_NONE && req_idle(s)) req_start(s);
+    while (s->req_kind == RX_REQ_VOLS && RX_OUT_MAX - s->out_n >= RX_REQ_ROOM) {
+        const rx_vol *v;
+        if (s->req_i >= (unsigned)s->req_nvols) { req_done(s, 0); break; }
+        v = &s->req_vols[s->req_i++];
+        if (!rx_name_sendable(v->name) || !rx_device_sendable(v->device)) continue;   /* plan rulings T2, T11 */
+        puts_(s, "VOL "); puts_(s, s->req_id); puts_(s, " "); put_lenstr(s, v->name); puts_(s, " "); put_lenstr(s, v->device);
+        puts_(s, " "); put_dec(s, v->size); puts_(s, " "); put_dec(s, v->free); puts_(s, " ");
+        put_date(s, v->days, v->mins, v->ticks); puts_(s, "\n");
+        s->req_count++;
+    }
+}
+static int req_due(const rx_session *s) {
+    if (s->req_kind != RX_REQ_NONE) return RX_OUT_MAX - s->out_n >= RX_REQ_ROOM;
+    return s->wait_kind != RX_REQ_NONE && req_idle(s);
+}
+/* An Amiga path to read: "<volume>:<rest>", no control byte. */
+static int local_path_ok(const char *p) {
+    const char *q;
+    if (!p[0] || p[0] == ':' || !strchr(p, ':')) return 0;
+    for (q = p; *q; q++) if ((unsigned char)*q < 0x20 || (unsigned char)*q == 0x7f) return 0;
+    return 1;
+}
+static void refuse_req(rx_session *s, int kind, const char *id, const char *path, const char *code, const char *text) {
+    req_err(s, id, code, text);
+    emit_req(s, kind, id[0] ? id : "-", path, 0, 0, text);
+}
+/* "VOLS <rid>", "DIR <rid> <len>:<path>", "GET <rid> <len>:<path>": refused at once, or kept to be answered when
+   nothing moves (at most one waits: plan ruling T6). */
+static void on_request(rx_session *s, cur *c, int kind) {
+    const char *t; unsigned n; char id[RX_ID_MAX + 1], path[RX_LOCAL_MAX + 1];
+    id[0] = 0; path[0] = 0;
+    if (!tok(c, &t, &n) || !id_ok(t, n)) { refuse_req(s, kind, "", "", "bad", "bad request"); return; }
+    memcpy(id, t, n); id[n] = 0;
+    if ((kind != RX_REQ_VOLS && (!lenstr(c, path, sizeof path, 0) || !local_path_ok(path))) || c->p < c->end) {
+        refuse_req(s, kind, id, path, "bad", "bad request"); return;
+    }
+    if (!rx_browse_on(s)) { refuse_req(s, kind, id, path, "off", "browsing is off in Transfer"); return; }
+    if (s->wait_kind != RX_REQ_NONE) { refuse_req(s, kind, id, path, "busy", "another request is waiting"); return; }
+    s->wait_kind = kind; strcpy(s->wait_id, id); strcpy(s->wait_path, path);
 }
 
 /* --- protocol 2: the queue (in memory only: spec §2) --- */
@@ -247,8 +351,11 @@ int rx_up_add_tree(rx_upq *q, const rx_fs *fs, const char *local, const char *na
 
 
 /* --- protocol 2: the file going up (spec §3; plan ruling P7) --- */
+static int req_due(const rx_session *s);
+static void req_pump(rx_session *s);
 static int put_due(const rx_session *s) {
-    return s->upq && s->upq->n > 0 && s->up_phase == RX_UP_IDLE && !s->in_data && !s->up_closing && rx_uploads_on(s);
+    return s->upq && s->upq->n > 0 && s->up_phase == RX_UP_IDLE && !s->in_data && !s->up_closing && rx_uploads_on(s) &&
+           s->req_kind == RX_REQ_NONE && s->wait_kind == RX_REQ_NONE;   /* requests first (plan ruling T5) */
 }
 /* Ends the file going up: closed, and the front end told. */
 static void up_finish(rx_session *s, int kind, const char *text, const char *code, const char *stored) {
@@ -378,13 +485,14 @@ static void on_no(rx_session *s, cur *c) {
 int rx_take_output(rx_session *s, char *dst, unsigned cap) {
     if (s->up_closing) return -1;
     if (s->up_phase == RX_UP_SKIP || s->up_phase == RX_UP_DATA) return up_bytes(s, (unsigned char *)dst, cap);
+    req_pump(s);
     if (s->out_n == 0) up_put(s);
     return (int)take_lines(s, dst, cap);
 }
 int rx_want_output(const rx_session *s) {
     if (s->up_closing || s->up_phase == RX_UP_SKIP) return 1;
     if (s->up_phase == RX_UP_DATA) return s->up_sent < s->up_credit;
-    return s->out_n > 0 || put_due(s);
+    return s->out_n > 0 || put_due(s) || req_due(s);
 }
 int rx_up_cancel(rx_session *s, rx_upq *q, unsigned tag) {
     unsigned i;
@@ -519,6 +627,7 @@ static void on_line(rx_session *s, const char *line, unsigned len) {
     else if (is(t, n, "MORE")) on_more(s, &c);
     else if (is(t, n, "DONE")) on_done(s, &c);
     else if (is(t, n, "NO")) on_no(s, &c);
+    else if (is(t, n, "VOLS")) on_request(s, &c, RX_REQ_VOLS);
     /* anything else: ignored, for newer boards and stray clients */
 }
 
@@ -567,6 +676,8 @@ void rx_disconnected(rx_session *s) {
         emit(s, RX_EV_FAILED, s->cur_id, s->cur_path, s->cur_size, 0, "connection lost");
     }
     if (s->up_phase != RX_UP_IDLE) up_finish(s, RX_EV_UP_FAILED, s->up_cancel ? "cancelled" : "connection lost", "local", 0);
+    if (s->req_kind != RX_REQ_NONE) { emit_req(s, s->req_kind, s->req_id, s->req_path, s->req_count, 0, "connection lost"); req_end(s); }
+    s->wait_kind = RX_REQ_NONE; s->hello_browse = 0;
     s->up_closing = 0; s->proto_err = 0;
     s->peer_v = 0; s->trust = RX_TRUST_NONE;
     s->line_n = 0; s->list_expect = 0; s->out_n = 0;

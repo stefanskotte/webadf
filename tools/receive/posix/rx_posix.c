@@ -147,7 +147,8 @@ int main(int argc, char **argv) {
     static unsigned in_n;
     pctx ctx = { 0 };
     rx_fs fs = { &ctx, p_folder_ok, p_free, p_exists, p_make_dir, p_open_w, p_write, p_close_w, p_rename, p_remove, p_set_meta,
-                 p_is_dir, p_list, p_open_r, p_read, p_close_r };
+                 p_is_dir, p_list, p_open_r, p_read, p_close_r,
+                 NULL, NULL, NULL, NULL, NULL, NULL };   /* protocol 3: none until Q.browse (Task 4) */
     struct sockaddr_in a;
     socklen_t al = sizeof a;
     int one = 1, ls, cl = -1, stdin_open = 1;

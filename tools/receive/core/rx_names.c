@@ -76,3 +76,25 @@ void rx_base_name(const char *path, char *out) {
     memcpy(out, path + start, n - start);
     out[n - start] = 0;
 }
+
+int rx_name_sendable(const char *name) {
+    size_t n = strlen(name), i;
+    int blank = 1;
+    if (n == 0 || n > RX_PART_MAX || strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return 0;
+    for (i = 0; i < n; i++) {
+        unsigned char ch = (unsigned char)name[i];
+        if (ch < 0x20 || ch == 0x7f || (ch >= 0x80 && ch < 0xa0) || ch == ':' || ch == '/') return 0;
+        if (ch != ' ' && ch != 0xa0) blank = 0;
+    }
+    return !blank;
+}
+int rx_device_sendable(const char *dev) {
+    size_t n = strlen(dev), i;
+    if (n < 2 || n > RX_PART_MAX + 1 || dev[n - 1] != ':') return 0;
+    for (i = 0; i + 1 < n; i++) {
+        char ch = dev[i];
+        if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '.' || ch == '-'))
+            return 0;
+    }
+    return 1;
+}

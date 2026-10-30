@@ -14,4 +14,10 @@ int rx_candidate(const char *path, unsigned n, char *out);
 void rx_base_name(const char *path, char *out);
 /* Decimal digits of v and a NUL into out (>= 11 bytes); returns the number of digits. */
 unsigned rx_utoa(unsigned long v, char *out);
+/* 1 if the web app takes name as a NET: name (src/lib/files/path.ts amigaNameProblem): 1..30 bytes, no byte < 0x20,
+   0x7f or 0x80-0x9f, no ':' or '/', not "." or "..", not only spaces (0x20 or 0xa0). Plan ruling T2. */
+int rx_name_sendable(const char *name);
+/* 1 if dev is a device name the web app takes: 1..30 bytes of [A-Za-z0-9_.-], then ':' (remote-wire.ts DEVICE). */
+int rx_device_sendable(const char *dev);
+
 #endif
