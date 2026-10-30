@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { diskVersions } from '@/db/schema/disk-history';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
@@ -200,3 +201,31 @@ test('a filed title: Files… opens its disk inside its first collection, and th
     await page.request.delete(`/api/collections/${first}`);
   }
 });
+
+for (const vp of [{ width: 1440, height: 900 }, { width: 1280, height: 800 }]) {
+  test(`the open History stays inside its pane and clear of the bank at ${vp.width}x${vp.height}`, async ({ page }) => {
+    await page.setViewportSize(vp);
+    const { orgId } = await signUpFresh(page);
+    const tag = runTag();
+    // A short pane (an empty disk) with 16 versions: the panel at its max height is taller than the room below the strip.
+    const { gameId, diskId, sha256 } = await seedRealDisk(orgId, tag);
+    await getDb().insert(diskVersions).values(Array.from({ length: 16 }, (_, seq) => ({
+      id: randomUUID(), diskId, orgId, seq, kind: 'snapshot', blobSha256: sha256, imageSha256: sha256,
+      source: seq === 0 ? 'original' : 'browser', sectorCount: 0,
+    })));
+    await page.goto(`/files?left=LIBRARY:&right=${encodeURIComponent(`LIBRARY:/${gameId}/${diskId}`)}&active=right`);
+    await managerReady(page);
+    await page.getByTestId('disk-strip-right').getByTestId('disk-strip-history-toggle').click();
+    const panel = page.getByTestId('disk-strip-history');
+    await expect(panel).toBeVisible();
+    const box = (await panel.boundingBox())!;
+    const pane = (await page.getByTestId('pane-right').boundingBox())!;
+    const bank = (await page.getByTestId('files-bank').boundingBox())!;
+    expect(box.y + box.height).toBeLessThanOrEqual(bank.y);
+    expect(box.y + box.height).toBeLessThanOrEqual(pane.y + pane.height);
+    expect(box.x).toBeGreaterThanOrEqual(pane.x);
+    expect(box.x + box.width).toBeLessThanOrEqual(pane.x + pane.width);
+    // Not just clipped: the panel's own box is what shrank, and it scrolls inside.
+    expect(await panel.evaluate((el) => getComputedStyle(el).overflowY)).toBe('auto');
+  });
+}

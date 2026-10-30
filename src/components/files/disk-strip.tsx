@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
 import type { DiskInfo, StripData } from '@/lib/files/types';
 import { holderText, type MountChoice } from '@/lib/mount-choice';
@@ -70,6 +70,23 @@ export function DiskStrip({ side, disk, data, onChanged }: DiskStripProps) {
   const askedForHistory = useSyncExternalStore(noSubscribe, () => window.location.hash === '#disk-history', () => false);
   const [toggled, setToggled] = useState<boolean | null>(null);
   const historyOpen = toggled ?? (side === 'right' && askedForHistory);
+  // From lg the panel stays inside its pane (the bank and the other pane sit under and beside it): its height is the
+  // room from its top to the pane's foot, and it scrolls inside. Below lg the page scrolls it instead (no cap here).
+  const panelWrap = useRef<HTMLDivElement>(null);
+  const [room, setRoom] = useState<number | null>(null);
+  useEffect(() => {
+    const wrap = panelWrap.current;
+    const pane = wrap?.closest('section');
+    if (!historyOpen || !wrap || !pane) return;
+    const wide = window.matchMedia('(min-width: 1024px)');
+    const measure = () => setRoom(wide.matches ? Math.max(0, Math.floor(pane.getBoundingClientRect().bottom - wrap.getBoundingClientRect().top - 8)) : null);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(pane);
+    ro.observe(wrap.parentElement!);
+    wide.addEventListener('change', measure);
+    return () => { ro.disconnect(); wide.removeEventListener('change', measure); };
+  }, [historyOpen]);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(disk.volumeName ?? '');
@@ -204,10 +221,10 @@ export function DiskStrip({ side, disk, data, onChanged }: DiskStripProps) {
           a bar's height (and a gutter) further down, so the page scrolls the whole panel clear of the bar; it lets
           taps through, so the strip of pane it covers stays usable. */}
       {historyOpen && (
-        <div className="pointer-events-none absolute top-full right-2 z-20 mt-1 w-[min(380px,calc(100%-16px))] max-lg:pb-[calc(4.5rem+env(safe-area-inset-bottom)+8px)]">
+        <div ref={panelWrap} className="pointer-events-none absolute top-full right-2 z-20 mt-1 w-[min(380px,calc(100%-16px))] max-lg:pb-[calc(4.5rem+env(safe-area-inset-bottom)+8px)]">
         <div data-testid="disk-strip-history"
              className="pointer-events-auto max-h-[min(520px,60dvh)] overflow-y-auto rounded-[20px]"
-             style={{ boxShadow: '0 12px 24px rgb(0 0 0 / .12)' }}>
+             style={{ boxShadow: '0 12px 24px rgb(0 0 0 / .12)', ...(room !== null ? { maxHeight: `min(${room}px, 520px, 60dvh)` } : {}) }}>
           <RestoreProvider diskId={disk.diskId} viewingSeq={null} currentHref={`/disks/${disk.diskId}/files`} onRestored={onChanged}>
             {data.historyUnavailable ? (
               <div className="p-4 text-[13px]" style={{ background: 'var(--surface)', color: 'var(--amber-text)' }}
