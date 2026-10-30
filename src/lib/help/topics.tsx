@@ -83,24 +83,27 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          <strong>Three places.</strong> <em>STASH:</em> holds loose files you drop here or your Amiga sends.{' '}
-          <em>NET:</em> lists your boards; copying into one sends to its Amiga. <em>LIBRARY:</em> shows your collections as
-          folders, then the titles in none.
+          <strong>Three places.</strong> <em>STASH:</em> holds loose files, dropped here or sent by your Amiga.{' '}
+          <em>NET:</em> lists your boards. <em>LIBRARY:</em> shows your collections as folders, then the titles in none.
         </p>
         <p>
-          <strong>Source and destination.</strong> The pane you last clicked is the source, with the dark title bar. <em>Copy</em> and <em>Move</em> go to the other pane; the device column takes it to
-          STASH:, LIBRARY: or NET:. Dragging rows across copies; to move, hold Shift after the drag has started. When a
-          name is already there, choose Replace, Skip or Keep both.
+          <strong>Source and destination.</strong> The pane you last clicked is the source, with the dark title bar. <em>Copy</em> and <em>Move</em> go to the other pane; the device column changes its place.
+          Dragging rows copies; to move, hold Shift after the drag has started. A name already there asks: Replace, Skip
+          or Keep both.
         </p>
         <p>
-          <strong>Filing.</strong> Move a title onto a collection to file it there and out of the one it was in (one already there is
-          skipped); Copy files it in both. Move to LIBRARY: takes it out of its collection. Makedir on LIBRARY: makes a collection. Disk
+          <strong>Filing.</strong> Move a title onto a collection to file it there, out of its old one (one already there is
+          skipped); Copy files it in both; Move to LIBRARY: unfiles it. Makedir on LIBRARY: makes a collection. Disk
           images copied from STASH: join the library. <em>Create ADF…</em> makes a blank disk.
         </p>
         <p>
-          <strong>Inside a disk.</strong> The strip shows the drive, <em>Mount</em>, <em>History</em> and{' '}
+          <strong>Inside a disk.</strong> The strip has <em>Mount</em>, <em>History</em> and{' '}
           <em>⬇ ADF</em>. Each change saves one new version, with Undo; <em>Eject to edit</em> a disk in a drive.{' '}
-          <em>Protect</em> sets bits; <em>Info</em> shows details. Type in a filter box; <em>Show .info</em> hides or shows icon files.
+          <em>Protect</em> sets bits; <em>Info</em> shows details. Type in a filter box; <em>Show .info</em> shows icon files.
+        </p>
+        <p>
+          <strong>Browsing the Amiga.</strong> A board holds its Amiga&apos;s volumes, then <em>Queue</em> (what you send).
+          It needs firmware 1.22 and Transfer 2.3 with browsing switched on. <em>Refresh</em> (Ctrl-R) reads again. Read-only for now: copy files to STASH:, disk images to LIBRARY:.
         </p>
         <p>
           <strong>Keys.</strong> ↑ and ↓ move, Space picks, Enter opens, Backspace goes up, Tab switches pane, / filters,
@@ -111,7 +114,7 @@ export const HELP_TOPICS = {
           <em>Copy to…</em> and <em>Move to…</em> ask where.
         </p>
         <GoodToKnow items={[
-          'Settings › Account › Files sets the opening panes, .info files, the Comment column, the delete confirm and the answer when a name is already there.',
+          'Settings › Account › Files sets how Files opens and acts.',
         ]} />
       </>
     ),
@@ -555,15 +558,16 @@ export const HELP_TOPICS = {
           <strong>Disk images.</strong> <em>Add to library</em> makes an ADF, DSK, ADZ, DMS, DMZ or HFE file a library disk.
         </p>
         <p>
-          <strong>NET:</strong> lists your boards on firmware 1.15.0 or newer. Copy files or folders into a board to send
-          them to its Amiga: each waits there until Transfer takes it, marked waiting, sending, delivered or failed.
-          Delete cancels a file still waiting or sending, or clears a finished one. On firmware 1.19.0 or newer a board&apos;s row shows
+          <strong>NET:</strong> lists your boards on firmware 1.15.0 or newer. Copy files or folders into a board&apos;s{' '}
+          <em>Queue</em> to send them to its Amiga: each waits there until Transfer takes it, marked waiting, sending, delivered or failed.
+          Delete cancels a file still waiting or sending, or clears a finished one. A board&apos;s volumes are read through
+          Transfer: a drawer takes a few seconds, and one read in the last 2 minutes opens at once, saying when it was read. On firmware 1.19.0 or newer a board&apos;s row shows
           four digits of its key (<em>key AB12</em>), the digits Transfer shows.
         </p>
         <GoodToKnow items={[
           'STASH: holds up to 500 files or 256 MB for your organization, and keeps each file 30 days. A file can be 20 MB from your computer, 4 MB from the Amiga.',
           'Up to 4 MB a file, and 32 files or 16 MB waiting for one board.',
-          'Nothing is copied out of NET:, and a copy into it leaves the original where it was.',
+          'Nothing is copied out of a board’s Queue, and a copy into it leaves the original where it was.',
           'STASH: keeps no versions: a delete there cannot be undone.',
         ]} />
       </>

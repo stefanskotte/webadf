@@ -767,7 +767,7 @@ test('C7-06c Files at 390: each zone stays a named region, and the Send zone sti
   // The zone reads a drop's entries (folders too), so the drop carries them as a browser's does.
   await synthDrop(page, [{ name: 'c7-drop.txt', kind: 'file', content: 'x' }], '[data-testid="files-drop-send"]');
   await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'Queued 1 file for C7 Upload' })).toBeVisible({ timeout: 15_000 });
-  const listed = await page.request.get(`/api/files/list?path=${encodeURIComponent(`NET:/${deviceId}`)}`);
+  const listed = await page.request.get(`/api/files/list?path=${encodeURIComponent(`NET:/${deviceId}/Queue`)}`);
   expect(((await listed.json()) as { entries: { name: string }[] }).entries.map((e) => e.name)).toEqual(['c7-drop.txt']);
 });
 

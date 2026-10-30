@@ -488,7 +488,7 @@ test('the Files NET: pairs are legible: Send zone title, hint, board and receive
   // The oldest two taken: Wait.txt was queued first, so it is delivered; Done.txt fails; Full.txt waits.
   await boardTakesNext(request, token, { ok: true, savedAs: 'Wait_2.txt' });
   await boardTakesNext(request, token, { ok: false, code: 'space', text: 'disk full' });
-  await page.goto(`/files?${new URLSearchParams({ left: 'NET:', right: `NET:/${deviceId}`, active: 'right' })}`);
+  await page.goto(`/files?${new URLSearchParams({ left: 'NET:', right: `NET:/${deviceId}/Queue`, active: 'right' })}`);
   await hydrated(page, 'files-manager', 'onKeyDown');
   await expect(page.getByTestId('files-send-receiver')).toBeVisible();
   await expect(page.locator('[data-testid="pane-right"] [data-testid="pane-row"][data-name="Wait.txt"]')).toContainText('Delivered', { timeout: 15_000 });

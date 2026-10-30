@@ -73,9 +73,14 @@ test('NET: in the panes: a board row with its key; Copy → queues, the pane fol
   await expect(page.getByTestId('files-copy')).toBeDisabled();
   await expect(page.getByTestId('files-copy')).toHaveAttribute('title', 'Open a board to send files to it.');
 
+  // Inside the board (NET: volumes, spec 2026-10-30 §4.3): its volumes (none on 1.19.0, which says why), then Queue.
   await board.dblclick();
   await expect(page.getByTestId('pane-right-crumb-1')).toHaveText('A500 bench');
-  await expect(page).toHaveURL(new RegExp(`right=NET%3A%2F${deviceId}`));
+  await expect(page).toHaveURL(new RegExp(`right=NET%3A%2F${deviceId}(&|$)`));
+  await expect(page.getByTestId('net-browse-reason')).toHaveText('Firmware 1.22 or newer is needed');
+  await rowAt(page, 'right', 'Queue').dblclick();
+  await expect(page.getByTestId('pane-right-crumb-2')).toHaveText('Queue');
+  await expect(page).toHaveURL(new RegExp(`right=NET%3A%2F${deviceId}%2FQueue`));
 
   // Move into NET: is refused in words (C16); Copy sends both, the folder's file by its path.
   await rowAt(page, 'left', 'notes.txt').click();
@@ -161,7 +166,7 @@ test('Send files to the Amiga: a file and a folder dropped on the zone queue wit
 
   // Show queue takes the right pane to the board, listing what was queued.
   await toast(page, 'Queued 2 files for A500 bench').getByRole('button', { name: 'Show queue' }).click();
-  await expect(page).toHaveURL(new RegExp(`right=NET%3A%2F${deviceId}`));
+  await expect(page).toHaveURL(new RegExp(`right=NET%3A%2F${deviceId}%2FQueue`));
   await expect(rowAt(page, 'right', 'Mods/enigma.mod')).toContainText('Waiting', { timeout: LIVE });
 
   // The picker sends too, and a pane showing the board reloads.
@@ -201,7 +206,7 @@ test('a file dropped on the Send zone waits in NET:, the board takes it, and its
   const sent = toast(page, 'Queued 1 file for Bench');
   await expect(sent).toBeVisible({ timeout: LIVE });
   await sent.getByRole('button', { name: 'Show queue' }).click();
-  await expect.poll(() => panes(page).right).toBe(`NET:/${deviceId}`);
+  await expect.poll(() => panes(page).right).toBe(`NET:/${deviceId}/Queue`);
   await expect(rowAt(page, 'right', 'hello.txt')).toContainText('Waiting', { timeout: LIVE });
   expect(await boardQueue(request, token)).toMatch(/^NEXT \S+ 11 [0-9a-f]+ [0-9a-f]+ 9:hello\.txt 0:\n/);
 
@@ -239,7 +244,7 @@ test('more than 32 files for one board are refused whole: from the computer, and
   const { orgId } = await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request, 'Bench');
   await boardSays(request, token);
-  await openFiles(page, 'STASH:', `NET:/${deviceId}`, 'left');
+  await openFiles(page, 'STASH:', `NET:/${deviceId}/Queue`, 'left');
   const words = "The board's queue holds 32 files / 16 MB; wait for it to empty or cancel some.";
   const many = Array.from({ length: 33 }, (_, i) => ({ name: `f${String(i).padStart(2, '0')}.txt`, content: `file ${i}` }));
 
@@ -273,12 +278,12 @@ test('the device card\'s lines open Files: the send line on the board\'s queue, 
   await page.goto('/devices');
   await expect(page.getByTestId(`device-send-${deviceId}`)).toContainText('1 file waiting');
   await page.getByTestId(`device-send-${deviceId}`).click();
-  await expect.poll(() => panes(page)).toEqual({ path: '/files', left: 'STASH:', right: `NET:/${deviceId}`, active: 'right' });
+  await expect.poll(() => panes(page)).toEqual({ path: '/files', left: 'STASH:', right: `NET:/${deviceId}/Queue`, active: 'right' });
   await expect(rowAt(page, 'right', 'a.txt')).toContainText('Waiting', { timeout: LIVE });
 
   await page.goto('/devices');
   await page.getByTestId(`device-upload-${deviceId}`).click();
-  await expect.poll(() => panes(page)).toEqual({ path: '/files', left: 'STASH:', right: `NET:/${deviceId}`, active: 'left' });
+  await expect.poll(() => panes(page)).toEqual({ path: '/files', left: 'STASH:', right: `NET:/${deviceId}/Queue`, active: 'left' });
   await expect(rowAt(page, 'left', 'Up.txt')).toBeVisible({ timeout: LIVE });
 });
 
@@ -290,11 +295,11 @@ test('the Upload page\'s URLs land in Files: ?board= on the queue, ?from= on STA
   const hop = await page.request.get(`/ingest?board=${deviceId}`, { maxRedirects: 0 });
   expect(hop.status()).toBe(307);
   await page.goto(`/ingest?board=${deviceId}`);
-  await expect.poll(() => panes(page)).toEqual({ path: '/files', left: 'STASH:', right: `NET:/${deviceId}`, active: 'right' });
+  await expect.poll(() => panes(page)).toEqual({ path: '/files', left: 'STASH:', right: `NET:/${deviceId}/Queue`, active: 'right' });
   await expect(page.getByTestId('pane-right-crumb-1')).toHaveText('Bench');
 
   await page.goto(`/ingest?from=${deviceId}`);
-  await expect.poll(() => panes(page)).toEqual({ path: '/files', left: 'STASH:', right: `NET:/${deviceId}`, active: 'left' });
+  await expect.poll(() => panes(page)).toEqual({ path: '/files', left: 'STASH:', right: `NET:/${deviceId}/Queue`, active: 'left' });
 
   await page.goto('/ingest');
   await expect.poll(() => new URL(page.url()).pathname).toBe('/files');

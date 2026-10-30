@@ -1478,12 +1478,13 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
-**Current order (re-checked 2026-10-29).** The redesign roadmap (Phases A-C) is DONE (2026-10-23..27); library
+**Current order (re-checked 2026-10-30).** The redesign roadmap (Phases A-C) is DONE (2026-10-23..27); library
 sharing shipped 2026-10-28; **Files SHIPPED 2026-10-29** (merge ef711fb, §4-files below). Open, in order:
-(1) **Remote volumes on NET:** (operator, 2026-10-29: web first, this next) -- browse the Amiga's own volumes as
-`NET:<board>/Work:...` like ASL's Volumes list. Research done: extend Transfer (new verbs VOLS/DIR/GET, `READY 3` gate,
-opt-in browse setting in Transfer, read-only first), a firmware request queue beside xfer, a server driver; ~2-5 s per
-folder. Phase 1 list + copy from the Amiga; phase 2 writes. Needs a spec (brainstorm first).
+(1) **NET: volumes, phase 1 (read-only)** -- spec docs/superpowers/specs/2026-10-30-net-volumes-design.md. Step 1
+(server + web against a fake board) DONE on branch feat/net-volumes (§4-net-volumes below; inert until a board sends
+`reqAck`). Next, each merging on its own (spec §6): (a) Transfer 2.3 (protocol 3, FS-UAE), a plan first; (b) firmware
+1.22.0 TEST build (the request queue beside xfer), a plan first; (c) the A500 bench (spec §7); (d) release, driver disk
+with Transfer 2.3, README screenshots. Phase 2 (writes) after.
 (1b) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there. Backlog (operator 2026-10-30): clicking a pane's left edge goes up one level in that pane, as in Directory Opus; at a
 root it does nothing. Backlog (operator 2026-10-30): the disk strip's History button should read as a toggle (it opens and
 closes the History panel), e.g. with a caret.
@@ -1541,6 +1542,32 @@ Library's multi-select Move removes it from its source instead); no Undo for fil
 menu's History link and HFE "Open it" keep the unfiled LIBRARY:/<title>/<disk> form (works). README screenshots of
 Files, Adding disks and Settings need regenerating (`PORT=3100 pnpm screenshots`, live DB). Remaining master flakes:
 library-table "a row carries the card controls", help "Enter opens the ?".
+**§4-net-volumes. NET: VOLUMES, SERVER/WEB STEP -- 2026-10-30 (branch feat/net-volumes; merge commit: see git log).**
+Spec docs/superpowers/specs/2026-10-30-net-volumes-design.md, plan docs/superpowers/plans/2026-10-30-net-volumes-web.md.
+NET:/<board> lists the Amiga's volumes (Transfer's order, "DH1: · 41.0 MB free") then **Queue** -- the send queue moved
+to NET:/<board>/Queue (old NET:/<board>/<transferId> paths and every filesHrefForBoard link still land there). A volume
+or drawer is read through a remote request (remote_requests, **migration 0053 -- NOT yet applied to production: apply
+it at the merge**; devices.req_version/rx_proto/browse_on): board routes GET /api/device/req and POST
+/api/device/req/<rid>; an answer is remembered 2 minutes ("read 40 s ago"), Refresh (bank row 3 col 5, Ctrl/Cmd-R, the
+phone's More sheet) asks afresh; the pane gives up after 20 s ("A500 didn't answer — Refresh to try again"). Copy out
+of a volume to STASH: or LIBRARY: is one GET per file, the board's upload carrying `request`, progress on the status
+row ("Copying 3 of 12 from A500…" / "Copied 12"); Download = a one-file copy into STASH: then its download. Read-only:
+Move/Delete/Rename/Makedir/Protect/Add to library say "Read-only for now". **Inert until firmware 1.22
+sends `reqAck`** (the poll answers `req` only to a board that sent it); browsing needs fw >= 1.22.0, Transfer protocol 3
+reported (rxv=3) with browsing on (browse=1), Transfer running, board online -- else the board root shows the reason
+row and Queue alone.
+- **For the firmware plan:** the poll body is now 1627 of 1664 bytes with `req` added -- 37 bytes of headroom
+  (measured in device-limits.test.ts). Anything more in the poll body needs the buffer grown first.
+- **e2e:** e2e/files-net-volumes.spec.ts (7, desktop) and .mobile.spec.ts (3) drive a fake board through the device
+  routes (e2e/amiga-board.ts boardServes / boardTakesRequests / boardAnswers; e2e/device-helpers.ts setBrowse sets the
+  browse columns in the DB). Existing NET specs moved to the /Queue path. A fix found by them: a pane opened straight at
+  a volume that never answered named the board by its id in the give-up words; it now takes the name from the page's
+  boards (boardNameFor's `boards`).
+- **Help:** `files` gains "Browsing the Amiga" (needs, Refresh/Ctrl-R, Queue, read-only for now); the 2-minute memory and
+  drawer speed went into `stash-net` (NET: panes' "?"), because `files` is held to 280 words (it was at 278).
+- **Owed:** Transfer 2.3 and firmware 1.22 plans; the A500 bench (spec §7: browsable, drawer two levels down, copies to
+  STASH:/LIBRARY: and a drawer, a >1000-entry drawer's cut row, browsing off with Queue still sending, Quit Transfer
+  mid-listing).
 **Parked/deferred by the operator:** PaulaNET compression (LZSA2, pre-encode N+1); proof of possession at ingest.
 Entries below marked SHIPPED/FIXED/FOLDED are kept for their history only.
 

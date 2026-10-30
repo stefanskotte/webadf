@@ -126,7 +126,7 @@ test('a file from one board is sent to another by a copy into its NET: queue', a
   const den = await pairDevice(page, request, 'Den');
   await boardSays(request, token); await boardSays(request, den.token, '1.19.0+gabc1234', 'cd34');
   await boardUploads(request, token, 'Docs/Note.txt', Buffer.from('note'));
-  await openFiles(page, 'STASH:', `NET:/${den.deviceId}`);
+  await openFiles(page, 'STASH:', `NET:/${den.deviceId}/Queue`);
   await row(page, 'Docs').click();
   await page.getByTestId('files-copy').click();
   await expect(toast(page, 'Queued 1 file to Den.')).toBeVisible({ timeout: LIVE });
@@ -155,7 +155,7 @@ test("every board's files show with their board, the device card's line, and the
   await expect.poll(() => {
     const u = new URL(page.url());
     return [u.pathname, u.searchParams.get('left'), u.searchParams.get('right'), u.searchParams.get('active')];
-  }).toEqual(['/files', 'STASH:', `NET:/${bench.deviceId}`, 'left']);
+  }).toEqual(['/files', 'STASH:', `NET:/${bench.deviceId}/Queue`, 'left']);
   await expect(row(page, 'Bench.txt')).toBeVisible({ timeout: LIVE });
   await expect(row(page, 'Den.txt')).toBeVisible();
 });
@@ -217,7 +217,7 @@ test('a file that fails its CRC shows as failed, is neither copied, downloaded n
   expect(close.status()).toBe(409);
   expect(await close.json()).toEqual({ code: 'crc' });
   // The board's queue on the right: a copy there would otherwise be offered.
-  await openFiles(page, 'STASH:', `NET:/${deviceId}`);
+  await openFiles(page, 'STASH:', `NET:/${deviceId}/Queue`);
   await row(page, 'Disks').dblclick();
   const f = row(page, 'Damaged.adf');
   await expect(f).toContainText('failed — damaged on the way: send it again');

@@ -27,7 +27,7 @@ async function boardSays(request: APIRequestContext, token: string, rx: 'c' | 'r
 
 /** Files with STASH: on the left and the board's queue on the right, hydrated so a pick has its change handler. */
 async function openQueue(page: Page, deviceId: string) {
-  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: `NET:/${deviceId}`, active: 'left' })}`);
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: `NET:/${deviceId}/Queue`, active: 'left' })}`);
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-testid="files-manager"]');
     return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
@@ -102,6 +102,7 @@ test('Delete takes a waiting file out of the board\'s queue; a Delete after deli
   await boardTakesNext(request, token, { ok: true, savedAs: 'Two.bin' });
   await expect(qRow(page, 'Two.bin')).toContainText('Delivered · saved as Two.bin', { timeout: LIVE });
   expect((await transferOf(deviceId, 'Two.bin')).status).toBe('delivered');
+  // The old NET:/<board>/<id> form an open tab may still hold is honoured (NET: volumes, spec 2026-10-30 §4.3).
   const late = await page.request.post('/api/files/ops', { data: { op: 'delete', sources: [`NET:/${deviceId}/${two.id}`] } });
   expect(late.status()).toBe(200);
   expect(await late.json()).toMatchObject({ items: [{ ok: true }] });
@@ -165,7 +166,7 @@ test('Files: a folder copied from a disk into NET:/<board> queues its files with
   const { deviceId, token } = await pairDevice(page, request, 'Bench');
   await boardSays(request, token, 'c');
   const { gameId, diskId } = await seedSendDisk(orgId, `S${runTag().slice(0, 6)}`);
-  await page.goto(`/files?${new URLSearchParams({ left: `LIBRARY:/${gameId}/${diskId}`, right: `NET:/${deviceId}`, active: 'left' })}`);
+  await page.goto(`/files?${new URLSearchParams({ left: `LIBRARY:/${gameId}/${diskId}`, right: `NET:/${deviceId}/Queue`, active: 'left' })}`);
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-testid="files-manager"]');
     return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
@@ -198,7 +199,7 @@ test('a title page: Send .adf to Amiga queues the whole disk as <name>.adf, and 
   const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');
   expect(q).toContain(` 901120 ${`${title}-1.adf`.length}:${title}-1.adf\n`);
   await sent.getByRole('button', { name: 'See queue' }).click();
-  await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe(`NET:/${deviceId}`);
+  await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe(`NET:/${deviceId}/Queue`);
   await expect(qRow(page, `${title}-1.adf`)).toContainText('Waiting', { timeout: LIVE });
 });
 
@@ -216,7 +217,7 @@ test('the board\'s card says what waits and whether Transfer runs, and links to 
   await expect.poll(() => {
     const u = new URL(page.url());
     return [u.pathname, u.searchParams.get('right'), u.searchParams.get('active')];
-  }).toEqual(['/files', `NET:/${deviceId}`, 'right']);
+  }).toEqual(['/files', `NET:/${deviceId}/Queue`, 'right']);
   await expect(page.getByTestId('pane-right-crumb-1')).toHaveText('Bench');
   await expect(qRow(page, 'a.txt')).toContainText('Waiting', { timeout: LIVE });
   await expect(page.getByTestId('files-send-board')).toContainText('Bench');
@@ -239,7 +240,7 @@ test('a long queue: the waiting file is first by date, and Delete clears the fin
   await post('Delivered.bin'); await boardTakesNext(request, token, { ok: true, savedAs: 'Delivered.bin' });
   await post('Failed.bin'); await boardTakesNext(request, token, { ok: false, code: 'space', text: 'disk full' });
   // Cancelled through Files' Delete, as the pane's Delete sends it.
-  const cancel = async (id: string) => (await page.request.post('/api/files/ops', { data: { op: 'delete', sources: [`NET:/${deviceId}/${id}`] } })).status();
+  const cancel = async (id: string) => (await page.request.post('/api/files/ops', { data: { op: 'delete', sources: [`NET:/${deviceId}/Queue/${id}`] } })).status();
   for (let i = 0; i < 11; i++) expect(await cancel(await post(`C${i}.bin`))).toBe(200);
   const waiting = await post('Waiting.bin');
 
