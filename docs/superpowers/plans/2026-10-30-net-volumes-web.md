@@ -228,7 +228,7 @@ describe('requestLine', () => {
   it('writes VOLS, DIR and GET with length-prefixed Latin-1 paths', () => {
     expect(requestLine({ id: 'r1', kind: 'vols', amigaPath: '' })).toBe('VOLS r1\n');
     expect(requestLine({ id: 'r1', kind: 'dir', amigaPath: 'Work:Programs' })).toBe('DIR r1 13:Work:Programs\n');
-    expect(requestLine({ id: 'r1', kind: 'get', amigaPath: 'Work:Würfel Spiel/a.lha' })).toBe('GET r1 22:Work:Würfel Spiel/a.lha\n');
+    expect(requestLine({ id: 'r1', kind: 'get', amigaPath: 'Work:Würfel Spiel/a.lha' })).toBe('GET r1 23:Work:Würfel Spiel/a.lha\n');
   });
 });
 
