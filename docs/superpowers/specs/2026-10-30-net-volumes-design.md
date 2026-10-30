@@ -70,7 +70,7 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
 - **The switch:** `ENVARC:webadf/Browse` (`1`/`0`, copied to `ENV:`), a checkbox in the window ("Let the web app
   browse my disks (read-only)"), and a `BROWSE/S` Shell switch (this run; with `SAVE` also stored). Default off.
 - **What the owner sees:** the window's status line shows the last request: "Web: listed Work:Programs",
-  "Web: listed volumes", "Web: copied Work:a.lha"; from the Shell one line per request.
+  "Web: listed volumes", "Web: copying Work:a.lha"; from the Shell one line per request.
 
 ### 2.4 Testing
 
