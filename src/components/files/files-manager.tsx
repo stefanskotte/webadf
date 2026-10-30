@@ -28,7 +28,7 @@ import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
 import { diskRelative, identityToConfirm, undoTarget, withAddedIn, type OpVersion } from '@/lib/files/edit-rules';
-import { createClosesDialog, dropBlocked, fetchDownload, oneAtATime, opTitle, reloadsBoth, skippedItems, skippedWords, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
+import { createClosesDialog, dropBlocked, fetchDownload, navTargets, oneAtATime, opTitle, reloadsBoth, skippedItems, skippedWords, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
 import { addedIn } from '@/lib/disk-history/added-in';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
 import { isFileDrag } from '@/components/disks/native-drop';
@@ -266,14 +266,15 @@ function shown(l: Listing | null, marks: ReadonlyMap<string, number>, arr: { see
 
 /**
  * One button of the phone bar. A finger gets no tooltip, so a button that cannot act now is not `disabled`: it looks
- * dimmed (aria-disabled) and a tap says why (act() toasts the reason).
+ * dimmed (aria-disabled) and a tap says why (act() toasts the reason). While an operation runs it is described by the
+ * status row, and a tap toasts what runs.
  */
 function PhoneButton({ id, label, reason, busy, onClick, primary = false }: {
   id: string; label: string; reason: string | null; busy: boolean; onClick(): void; primary?: boolean;
 }) {
   return (
     <Button variant={primary ? 'default' : 'outline'} onClick={onClick} data-testid={`files-phone-${id}`}
-            aria-disabled={reason !== null || busy || undefined}
+            aria-disabled={reason !== null || busy || undefined} aria-describedby={busy ? 'files-busy' : undefined}
             className="min-h-11 min-w-0 flex-1 px-1.5 aria-disabled:opacity-50 lg:hidden">
       {label}
     </Button>
@@ -686,15 +687,15 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const inStash = !!src && deviceOf(src.path) === 'stash';
 
   // The bank's grid (Files 2 §2.3): the commands above, plus the ones that pick, move about and show.
-  const crumbsNow = src?.crumbs ?? [];
-  const atTop = crumbsNow.length > 1 ? null : 'Already at the top';
+  // A pane showing an error has no listing: Parent and Root then go up from its path (Task 8 review).
+  const nav = navTargets(src, panes[active].path);
   const bankReasons: Record<BankCommand, string | null> = {
     copy: reasons.copy, move: reasons.move, delete: reasons.delete, rename: reasons.rename, makedir: reasons.makedir,
     protect: reasons.protect, info: reasons.info, download: reasons.download, addlib: reasons.addlib, createadf: reasons.createadf,
     all: rowsOf(active).length === 0 ? 'Nothing here to select' : null,
     none: picked.length === 0 ? 'Nothing is selected' : null,
-    parent: atTop,
-    root: atTop,
+    parent: nav.parent ? null : 'Already at the top',
+    root: nav.root ? null : 'Already at the top',
     swap: null,
     filter: src ? null : 'Nothing is listed here',
     showinfo: holdsFiles(src) ? null : 'Open a disk or STASH: to show or hide .info files',
@@ -889,7 +890,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   }
 
   function act(cmd: Exclude<BankCommand, 'all' | 'none' | 'parent' | 'root' | 'swap' | 'filter' | 'showinfo'> | 'copyTo' | 'moveTo') {
-    if (busy) return;
+    // While an operation runs a press says what runs (the status row's words), never silently nothing (Task 8 review).
+    if (busy) { toast(busy); return; }
     const reason = reasons[cmd];
     if (reason) { toast.error(reason); return; }
     const side = active;
@@ -1025,14 +1027,14 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
 
   /** A bank command, on the source (active) pane. One that cannot apply says why (its button is aria-disabled, §2.3). */
   function bank(cmd: BankCommand) {
-    if (busy) return;
+    if (busy) { toast(busy); return; }
     const reason = bankReasons[cmd];
     if (reason) { toast.error(reason); return; }
     switch (cmd) {
       case 'all': setSelection(active, () => selectAll(rowsOf(active).length)); return;
       case 'none': setSelection(active, () => EMPTY_SELECTION); return;
       case 'parent': command('parent', false); return;
-      case 'root': navigate(active, deviceRoot(panes[active].path)); return;
+      case 'root': if (nav.root) navigate(active, nav.root); return;
       case 'swap': swap(); return;
       case 'filter': filterRefs[active].current?.focus(); return;
       case 'showinfo': showInfo(hideInfo); return;   // hidden now → show
@@ -1060,11 +1062,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       case 'down': setSelection(active, (s) => moveCursor(s, 1, count, shift)); return;
       case 'pick': if (count) setSelection(active, (s) => togglePick(s, s.cursor)); return;
       case 'open': if (count) openRow(active, sel.cursor); return;
-      case 'parent': {
-        const crumbs = src?.crumbs ?? [];
-        if (crumbs.length > 1) navigate(active, crumbs[crumbs.length - 2].path);
-        return;
-      }
+      case 'parent': if (nav.parent) navigate(active, nav.parent); return;
       case 'switch': activate(otherSide(active)); return;
       case 'find': filterRefs[active].current?.focus(); return;
       default: act(cmd);
@@ -1475,7 +1473,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
                 {([['rename', 'Rename…'], ['makedir', 'Makedir…'], ['createadf', 'Create ADF…'], ['protect', 'Protect…'], ['info', 'Info'],
                   ...(inStash ? [['addlib', 'Add to library']] as const : []), ['download', 'Download']] as const).map(([id, label]) => (
                   // Not disabled: a tap on one that cannot act now says why.
-                  <DropdownMenuItem key={id} data-testid={`files-more-${id}`} aria-disabled={reasons[id] !== null || undefined}
+                  <DropdownMenuItem key={id} data-testid={`files-more-${id}`} aria-disabled={reasons[id] !== null || busy !== null || undefined}
+                                    aria-describedby={busy !== null ? 'files-busy' : undefined}
                                     onClick={() => act(id)} className={cn(MENU_ITEM, 'h-11 sm:h-11 font-medium aria-disabled:opacity-50')}>
                     {label}
                   </DropdownMenuItem>
@@ -1484,7 +1483,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
             </DropdownMenu>
           </div>
           {/* The one status row (§2.3): progress such as "Copying 3 of 12…". */}
-          <p role="status" data-testid="files-busy"
+          <p role="status" id="files-busy" data-testid="files-busy"
              className="px-3 py-0.5 text-[12px] max-lg:pb-2 max-lg:text-center max-lg:empty:hidden lg:min-h-[22px] lg:border-t"
              style={{ borderColor: 'var(--line)', color: 'var(--muted)' }}>{busy ?? ''}</p>
         </div>

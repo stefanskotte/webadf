@@ -36,8 +36,10 @@ export const TILE_LOOK = 'max-sm:h-24 max-sm:w-full max-sm:flex-col max-sm:justi
  * line to the right, so the panes and the button bank get the height. A line the controls add (a status, a warning,
  * a board list) wraps under the strip only while it says something.
  */
-export function DropCard({ testId, headingId, title, help, hint, disk, tileCol, disabled, onFiles, onItems, children }: {
+export function DropCard({ testId, headingId, title, help, hint, keepHint = false, disk, tileCol, disabled, onFiles, onItems, children }: {
   testId: string; headingId: string; title: string; help?: React.ReactNode; hint: React.ReactNode;
+  /** From lg the hint's rest stays on screen too, when no other line says it (the Send zone with no receiver line). */
+  keepHint?: boolean;
   disk: { color: DiskColor; set: string; title: string }; tileCol: 1 | 2 | 'full'; disabled?: boolean;
   onFiles?: (files: FileList) => void;
   /** In place of onFiles, for a card that takes folders: the drop's items, to read before the handler returns. */
@@ -68,7 +70,7 @@ export function DropCard({ testId, headingId, title, help, hint, disk, tileCol, 
             {help}
           </div>
           <div data-testid={`${testId}-hint`} className="text-[13px] max-sm:order-1 max-sm:col-span-2 max-sm:text-[12px] lg:text-[12px] lg:leading-snug" style={{ color: 'var(--muted)' }}>
-            {h ? <>{h.first}{h.rest && <span className="max-sm:hidden lg:sr-only">{` ${h.rest}`}</span>}</> : hint}
+            {h ? <>{h.first}{h.rest && <span className={keepHint ? 'max-sm:hidden' : 'max-sm:hidden lg:sr-only'}>{` ${h.rest}`}</span>}</> : hint}
           </div>
         </div>
         {children}

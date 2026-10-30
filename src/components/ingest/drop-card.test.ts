@@ -39,6 +39,9 @@ describe('DropCard below sm (C7 spec §7, Ruling 19)', () => {
   it('the 34 px disk sits in the tile cell of its column, under the label (no pointer events)', () => {
     expect(render({ tileCol: 2 })).toMatch(/<span aria-hidden="true" class="[^"]*pointer-events-none[^"]*max-sm:col-start-2 max-sm:row-start-1[^"]*sm:hidden"/);
   });
+  it('keepHint: from lg the rest of the hint stays on screen too (Task 8 review: the Send zone with no receiver line)', () => {
+    expect(render({ keepHint: true })).toContain('A hint.<span class="max-sm:hidden"> A second sentence.</span>');
+  });
   it('a phone keeps the first sentence of the hint; the rest is there from sm, and only for a screen reader from lg', () => {
     const html = render();
     expect(html).toContain('data-testid="dropzone-hint"');

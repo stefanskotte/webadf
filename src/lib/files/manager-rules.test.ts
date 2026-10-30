@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  createClosesDialog, dropBlocked, fetchDownload, oneAtATime, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems, TOO_BIG_WORDS, BUSY_DROP, DIALOG_DROP,
+  createClosesDialog, dropBlocked, navTargets, fetchDownload, oneAtATime, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems, TOO_BIG_WORDS, BUSY_DROP, DIALOG_DROP,
 } from './manager-rules';
 import type { OpItem } from './driver';
 import type { Listing } from './types';
@@ -142,5 +142,20 @@ describe('oneAtATime (Enter and a click cannot submit twice)', () => {
     expect(once(() => Promise.reject(new Error('x')))).toBe(true);
     await Promise.resolve(); await Promise.resolve();
     expect(once(() => Promise.resolve())).toBe(true);
+  });
+});
+
+describe('navTargets (Parent and Root; Task 8 review: from the path when an error left nothing listed)', () => {
+  const crumbs = (...paths: string[]) => paths.map((path) => ({ label: path, path }));
+  it('from the listing\'s crumbs', () => {
+    const l = { crumbs: crumbs('LIBRARY:', 'LIBRARY:/c', 'LIBRARY:/c/g') };
+    expect(navTargets(l, 'LIBRARY:/c/g')).toEqual({ parent: 'LIBRARY:/c', root: 'LIBRARY:' });
+    expect(navTargets({ crumbs: crumbs('STASH:') }, 'STASH:')).toEqual({ parent: null, root: null });
+  });
+  it('an errored pane (no listing) goes up from its path: Root works from a deep place', () => {
+    expect(navTargets(null, 'STASH:/a/b/c')).toEqual({ parent: 'STASH:/a/b', root: 'STASH:' });
+    expect(navTargets(null, 'LIBRARY:/g')).toEqual({ parent: 'LIBRARY:', root: 'LIBRARY:' });
+    expect(navTargets(null, 'NET:')).toEqual({ parent: null, root: null });
+    expect(navTargets(null, 'nonsense')).toEqual({ parent: null, root: null });
   });
 });

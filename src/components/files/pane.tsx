@@ -149,7 +149,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
             {metaOf(listing)}
           </span>
         )}
-        <HelpTip topic={p.help} className={listing ? '' : 'ml-auto'} />
+        <HelpTip topic={p.help} onInk={p.active} className={listing ? '' : 'ml-auto'} />
       </div>
       {/* The tools row: the chips (below lg), the filter and Show .info, the read-only line. With no listing only the
           chips are left, so from lg the row goes. */}

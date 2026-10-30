@@ -296,6 +296,10 @@ describe('the filter and Show .info (increment 4)', () => {
     expect(html.indexOf('data-testid="pane-left-title"')).toBeLessThan(html.indexOf('data-testid="help-tip-files"'));
     expect(html.indexOf('data-testid="help-tip-files"')).toBeLessThan(html.indexOf('data-testid="pane-left-filter"'));
   });
+  it('the ? on the dark source bar uses the on-ink look; on the destination the usual one (Task 8 review)', () => {
+    expect(tagOf(render({ active: true }), 'help-tip-files')).toContain('hover:bg-(--on-ink-fill)');
+    expect(tagOf(render({ active: false }), 'help-tip-files')).toContain('hover:bg-(--ink)');
+  });
   it('the ? names the device: stash-net in STASH:, files in a disk', () => {
     expect(render({ listing: stashListing, help: 'stash-net' })).toContain('data-testid="help-tip-stash-net"');
     expect(render({ help: 'files' })).toContain('data-testid="help-tip-files"');

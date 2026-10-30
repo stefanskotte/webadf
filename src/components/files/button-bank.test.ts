@@ -32,6 +32,14 @@ describe('ButtonBank (Files 2 §2.3)', () => {
   it('while an operation runs every command is aria-disabled', () => {
     expect(attr(tagOf(render({}, true), 'files-info')!, 'aria-disabled')).toBe('true');
   });
+  it('while an operation runs each command is described by the status row, which says what runs (Task 8 review)', () => {
+    const html = render({ rename: 'Select one item to rename it' }, true);
+    expect(attr(tagOf(html, 'files-info')!, 'aria-describedby')).toBe('files-busy');
+    // A command with its own reason too: both are read.
+    expect(attr(tagOf(html, 'files-rename')!, 'aria-describedby')!.split(' ')).toEqual(['files-busy', 'files-why-rename']);
+    // The busy state wins the tooltip: what runs now, not what would be wrong after.
+    expect(attr(tagOf(render({}), 'files-info')!, 'aria-describedby')).toBeUndefined();
+  });
   it('the device column: STASH:, LIBRARY:, NET:, the source pane\'s pressed', () => {
     const html = render({});
     expect([...html.matchAll(/data-testid="files-dev-([A-Z]+)"/g)].map((m) => m[1])).toEqual(['STASH', 'LIBRARY', 'NET']);

@@ -9,7 +9,8 @@ import { PANE_DEVICES, type Device } from '@/lib/files/path';
  * spec D1) and the six-by-three grid. Presentational: the manager decides every reason and runs every command. A
  * command that cannot apply is aria-disabled, not `disabled` (spec §2.3): it stays focusable, its reason is its tooltip
  * and its description (a visually hidden line a screen reader reads), and a click or Enter still reaches the manager,
- * which says the reason in a toast as the phone's More menu does. While an operation runs nothing is sent. The device
+ * which says the reason in a toast as the phone's More menu does. While an operation runs every command is described by
+ * the status row (`files-busy`, which says what runs) and a click or Enter toasts that line -- never silently nothing. The device
  * column comes first in the tab order. From lg only; below lg the pane's chips and the
  * phone bar do this. 24 px rows (WCAG 2.2's target size, the mock-up's height), so the bank takes little from the panes.
  */
@@ -37,10 +38,10 @@ export function ButtonBank(p: {
           const off = reason !== null || p.busy;
           return (
             <span key={cmd} className="flex min-w-0">
-              <Button size="sm" data-testid={`files-${cmd}`} onClick={() => { if (!p.busy) p.onCommand(cmd); }}
+              <Button size="sm" data-testid={`files-${cmd}`} onClick={() => p.onCommand(cmd)}
                       variant={cmd === 'delete' ? 'destructive' : cmd === 'copy' && p.primaryCopy ? 'default' : 'outline'}
                       aria-disabled={off || undefined} title={reason ?? undefined}
-                      aria-describedby={reason !== null ? `files-why-${cmd}` : undefined}
+                      aria-describedby={[p.busy ? 'files-busy' : null, reason !== null ? `files-why-${cmd}` : null].filter(Boolean).join(' ') || undefined}
                       aria-pressed={cmd === 'showinfo' ? p.showInfo : undefined}
                       className="h-auto min-h-6 w-full py-0.5 leading-tight whitespace-normal aria-disabled:cursor-default aria-disabled:opacity-50">
                 {BANK_LABEL[cmd]}

@@ -4,6 +4,7 @@ import { SIGNED_OUT_TEXT } from '@/lib/signed-out';
 import { ZIP_MAX_BYTES, type ClashChoice } from './transfer';
 import type { Listing } from './types';
 import type { OpItem } from './driver';
+import { formatPath, parentOf, parsePath } from './path';
 
 /**
  * The disk whose strip a pane shows: the disk its listing is inside, else -- when the listing failed because the image
@@ -118,4 +119,19 @@ export function oneAtATime(): (go: () => Promise<unknown>) => boolean {
     go().catch(() => {}).finally(() => { running = false; });
     return true;
   };
+}
+
+/**
+ * Where Parent and Root go from a pane (Files 2 §2.3), null at the top. From the listing's crumbs (their paths may run
+ * through a collection); a pane showing an error has no listing, so then from its path -- Root must still work from a
+ * deep place that is gone (Task 8 review).
+ */
+export function navTargets(listing: { crumbs: { path: string }[] } | null, path: string): { parent: string | null; root: string | null } {
+  if (listing) {
+    const c = listing.crumbs;
+    return c.length > 1 ? { parent: c[c.length - 2].path, root: c[0].path } : { parent: null, root: null };
+  }
+  const p = parsePath(path);
+  const up = p && parentOf(p);
+  return up ? { parent: formatPath(up), root: `${p.device}:` } : { parent: null, root: null };
 }

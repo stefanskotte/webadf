@@ -43,6 +43,15 @@ async function storedNames(diskId: string): Promise<string[]> {
 const row = (page: Page, side: 'left' | 'right', name: string) =>
   page.getByTestId(`pane-${side}`).getByTestId('pane-row').filter({ hasText: name });
 
+/** Files at the given places, hydrated so taps reach React's handlers (as files.spec.ts's). */
+async function openFiles(page: Page, left: string, right: string, active: 'left' | 'right') {
+  await page.goto(`/files?${new URLSearchParams({ left, right, active })}`);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="files-manager"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  });
+}
+
 test('at 390: one pane, the side switch, the bottom bar; Copy to… copies a file into the other disk', async ({ page }) => {
   test.setTimeout(90_000);
   const { orgId } = await signUpFresh(page);
@@ -457,3 +466,62 @@ test('at 390: a long History over a short pane scrolls clear of the tab bar -- i
     [v0.x + v0.width / 2, v0.y + v0.height / 2])).toBe(true);
   await noSideways(page);
 });
+
+test('below lg: three device chips at the top of the shown pane, Create ADF… under More, 44 px targets (Files 2 §2.1)', async ({ page }) => {
+  await signUpFresh(page);
+  await openFiles(page, 'STASH:', 'LIBRARY:', 'right');
+  const pane = page.getByTestId('pane-right');
+  const chips = pane.locator('[data-testid^="pane-right-dev-"]');
+  await expect(chips).toHaveText(['STASH:', 'LIBRARY:', 'NET:']);
+  for (const c of await chips.all()) expect((await c.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await expect(page.getByTestId('files-bank')).toBeHidden();
+  // The title bar is the source's.
+  await expect(page.getByTestId('pane-right-title')).toHaveAttribute('data-role', 'source');
+  // A chip moves the shown pane to the device's root.
+  await pane.getByTestId('pane-right-dev-STASH').tap();
+  await expect(page.getByTestId('pane-right-crumb-0')).toHaveText('STASH:');
+  // Create ADF… under More makes Untitled.adf in STASH:.
+  await page.getByTestId('files-more').tap();
+  const item = page.getByTestId('files-more-createadf');
+  // Polled: the menu opens with a 95 % zoom, so a measure taken mid-animation reads 43 px.
+  await expect.poll(async () => (await item.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await item.tap();
+  await expect(page.getByTestId('files-create-adf-name')).toHaveValue('Untitled');
+  await page.getByTestId('files-create-adf-submit').tap();
+  await expect(row(page, 'right', 'Untitled.adf')).toHaveAttribute('aria-selected', 'true');
+  // Every control of the title bar and the bar is a finger's size, and on a tablet width as well.
+  for (const width of [390, 820]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.getByTestId('files-bank')).toBeHidden();
+    const targets = [page.getByTestId('pane-right-up'), page.getByTestId('pane-right-crumb-0'), ...await chips.all(),
+      page.getByTestId('files-phone-copy'), page.getByTestId('files-phone-move'), page.getByTestId('files-phone-delete'), page.getByTestId('files-more')];
+    for (const t of targets) expect((await t.boundingBox())!.height, `${await t.getAttribute('data-testid')} at ${width}`).toBeGreaterThanOrEqual(44);
+  }
+});
+
+test('below lg, while an operation runs the bar says what runs: described by the status row, a tap toasts it (Task 8 review)', async ({ page }) => {
+  await signUpFresh(page);
+  await openFiles(page, 'STASH:', 'LIBRARY:', 'left');
+  await page.getByTestId('files-more').tap();
+  await page.getByTestId('files-more-createadf').tap();
+  await page.getByTestId('files-create-adf-submit').tap();
+  await expect(row(page, 'left', 'Untitled.adf')).toBeVisible();
+  // Add to library is held at the server's door until the checks are done.
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  await page.route('**/api/files/ops', async (route) => { await held; await route.continue(); });
+  await page.getByTestId('pane-addlib-Untitled.adf').tap();
+  const status = page.getByTestId('files-busy');
+  await expect(status).not.toHaveText('');
+  const words = (await status.textContent())!;
+  const del = page.getByTestId('files-phone-delete');
+  await expect(del).toHaveAttribute('aria-disabled', 'true');
+  await expect(del).toHaveAccessibleDescription(words);
+  await del.tap({ force: true });   // aria-disabled: Playwright would wait for it to be enabled
+  await expect(page.locator('[data-sonner-toast]').filter({ hasText: words })).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  release();
+  await expect(status).toHaveText('');
+  await page.unroute('**/api/files/ops');
+});
+

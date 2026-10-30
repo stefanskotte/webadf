@@ -672,6 +672,17 @@ test('the Files pairs are legible: pane headers, selected row, buttons, sort hea
     ['strip usage', '[data-testid="disk-strip-left"] [data-testid="disk-strip-usage"]'],
     ['read-only line (inactive pane)', '[data-testid="pane-right-readonly"]'],
   ]);
+  // The "?" on the dark source bar, open: its glyph legible on the on-ink fill, and the circle told from the ink bar by
+  // its outline (Task 8 review: ink on ink merged into the bar).
+  const tip = page.getByTestId('pane-left-title').getByTestId('help-tip-files');
+  await tip.click();
+  await expect(tip).toHaveAttribute('data-popup-open', '');
+  await legible(page, 'files', [['"?" on the source bar (open)', '[data-testid="pane-left-title"] [data-testid="help-tip-files"] > span']]);
+  const ring = await tip.evaluate((el) => ({ bg: getComputedStyle(el).backgroundColor, bar: getComputedStyle(el.parentElement!).backgroundColor, shadow: getComputedStyle(el).boxShadow }));
+  expect(ring.bg).not.toBe(ring.bar);
+  expect(ring.shadow).not.toBe('none');
+  await page.keyboard.press('Escape');
+  await page.mouse.move(0, 0);
   // A disabled button is exempt (WCAG 1.4.3, inactive controls) and drawn at half opacity: measured with that
   // opacity, logged, and required to say why it is off.
   const off = await page.evaluate(() => {

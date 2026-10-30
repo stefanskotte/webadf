@@ -398,3 +398,50 @@ test('a download over the cap says so in words and saves nothing; a smaller one 
   const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('files-download').click()]);
   expect(dl.suggestedFilename()).toMatch(/\.zip$/);
 });
+
+test('while an operation runs the bank says what runs: each command is described by the status row, a click toasts it (Task 8 review)', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const tag = runTag();
+  const a = await seedTitle(orgId, `BusyA-${tag}`);
+  const b = await seedTitle(orgId, `BusyB-${tag}`, []);
+  await openFiles(page, b.path, a.path, 'right');
+  // The copy is held at the server's door until the checks are done.
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  await page.route('**/api/files/ops', async (route) => { await held; await route.continue(); });
+  await row(page, 'right', 'ReadMe').click();
+  await page.getByTestId('files-copy').click();
+  const status = page.getByTestId('files-busy');
+  await expect(status).not.toHaveText('');
+  const words = (await status.textContent())!;
+  const info = page.getByTestId('files-info');
+  await expect(info).toHaveAttribute('aria-disabled', 'true');
+  await expect(info).toHaveAttribute('aria-describedby', /\bfiles-busy\b/);
+  await expect(info).toHaveAccessibleDescription(words);
+  await info.click({ force: true });   // aria-disabled: Playwright would wait for it to be enabled
+  await expect(toast(page, words)).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  // Enter on a focused command says it too, never silently nothing.
+  await page.getByTestId('files-rename').focus();
+  await page.keyboard.press('Enter');
+  await expect(toast(page, words)).toHaveCount(2);
+  release();
+  await expect(toast(page, /^Copied 1 item/)).toBeVisible({ timeout: 15_000 });
+  await expect(info).not.toHaveAttribute('aria-describedby', /files-busy/);
+  await page.unroute('**/api/files/ops');
+});
+
+test('a pane showing an error still goes up: Parent and Root from its path (Task 8 review)', async ({ page }) => {
+  await signUpFresh(page);
+  await openFiles(page, 'STASH:/Nope/Deeper', 'LIBRARY:', 'left');
+  await expect(page.getByTestId('pane-left-error')).toBeVisible();
+  await expect(page.getByTestId('files-parent')).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(page.getByTestId('files-root')).not.toHaveAttribute('aria-disabled', 'true');
+  await page.getByTestId('files-parent').click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('left')).toBe('STASH:/Nope');
+  await expect(page.getByTestId('pane-left-error')).toBeVisible();
+  await page.getByTestId('files-root').click();
+  await expect(page.getByTestId('pane-left-crumb-0')).toHaveText('STASH:');
+  await expect(page.getByTestId('pane-left-error')).toHaveCount(0);
+});
+
