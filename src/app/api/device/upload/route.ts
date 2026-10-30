@@ -12,6 +12,8 @@ const body = z.object({
   protection: z.number().int().min(0).max(0xFFFFFFFF),
   path: z.string().min(1).max(1024),
   comment: z.string().max(400).default(''),
+  // NET: volumes (spec 2026-10-30 §4.5): the get this file answers; the file is stored at that copy's target.
+  request: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/).optional(),
 });
 const STATUS = { size: 413, full: 409, name: 400 } as const;
 

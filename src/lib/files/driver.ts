@@ -18,9 +18,12 @@ export type Added = { source: string; gameId: string; diskId: string };
 /**
  * `written`: the sources a write actually placed (not skipped, not refused). A move between devices removes only these
  * (ruling 1); runOp does not pass it on. `queued`: how many files a copy into NET:/<board> queued (increment 3, C3), a
- * folder being several, so the pane can say "Queued 3 files".
+ * folder being several, so the pane can say "Queued 3 files". `fetching`: a copy out of a NET: volume (spec 2026-10-30
+ * §4.5): the fetch id its progress is read by, and how many files it asked the Amiga for.
  */
-export type Outcome = { kind: 'done'; items: OpItem[]; added?: Added[]; written?: string[]; queued?: number } | { kind: 'clashes'; clashes: Clash[] };
+export type Outcome =
+  | { kind: 'done'; items: OpItem[]; added?: Added[]; written?: string[]; queued?: number; fetching?: { id: string; files: number } }
+  | { kind: 'clashes'; clashes: Clash[] };
 export type FileBytes = { name: string; bytes: Uint8Array; date: Date | null; protection: string; comment: string | null };
 /**
  * One entry of a copy, a folder before what it holds; rel[0] is the copied entry's own name. `sha256` when the bytes are

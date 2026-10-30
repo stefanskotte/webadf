@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { getDb } from '@/db';
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
 import { closeUpload } from '@/lib/amiga-uploads';
+import { placeFetched } from '@/lib/files/net-fetch';
 
 export const maxDuration = 60;
 
@@ -28,7 +29,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   }
   const p = body.safeParse(json);
   if (!p.success) return Response.json({ code: 'server' }, { status: 400 });
-  const r = await closeUpload(getDb(), device.deviceId, id, p.data.crc32);
-  if (r.ok) return Response.json({ name: r.name }, { headers: { 'cache-control': 'no-store' } });
+  const db = getDb();
+  const r = await closeUpload(db, device.deviceId, id, p.data.crc32);
+  if (r.ok) {
+    // A file a Files copy fetched (NET: volumes §4.5) is placed now (a repeat close finds its get settled already).
+    await placeFetched(db, id);
+    return Response.json({ name: r.name }, { headers: { 'cache-control': 'no-store' } });
+  }
   return Response.json({ code: r.code }, { status: r.status });
 }

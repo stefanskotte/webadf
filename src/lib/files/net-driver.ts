@@ -34,6 +34,11 @@ const netPath = (...segs: string[]) => formatPath({ device: 'NET', segments: seg
 const MB = 1024 * 1024;
 const iso = (ms: number) => new Date(ms).toISOString();
 
+/** NET:/<board>/<Volume>/<entry>…: a file or drawer on a volume (not the volume itself, nor Queue): what a copy fetches (§4.5). */
+export function isNetVolumePath(p: FsPath): boolean {
+  return p.device === 'NET' && p.segments.length >= 3 && p.segments[1] !== QUEUE_FOLDER;
+}
+
 // ---- list -----------------------------------------------------------------------------------------------------
 
 /** Whether `id` is a transfer of this org on this board: an old NET:/<board>/<transferId> path (§4.3). */
@@ -86,7 +91,7 @@ type Answer = { volumes: VolumeInfo[]; entries: EntryInfo[] };
 const answerOf = (row: RemoteRow) => (row.answer ?? { volumes: [], entries: [] }) as Answer;
 
 /** §4.4: null when the board can be browsed now, else the first missing thing in the pane's words. */
-const browseOf = (t: SendTarget, now: number) => browseBlock({ online: t.online, firmware: t.firmwareVersion, rx: t.rx,
+export const browseOf = (t: SendTarget, now: number) => browseBlock({ online: t.online, firmware: t.firmwareVersion, rx: t.rx,
   rxProto: t.rxProto, browseOn: t.browseOn, name: t.name, offlineWords: targetState(t, now) });
 
 /**
