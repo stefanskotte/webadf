@@ -109,15 +109,16 @@ static int p_set_meta(void *x, const char *rel, unsigned long prot, const char *
 /* Protocol 2: host paths are given as they are (absolute or from the working folder). */
 static int p_is_dir(void *x, const char *local) {
     struct stat st; char hp[1024]; (void)x;
-    if (host_path(local, hp, sizeof hp) != 0 || stat(hp, &st) != 0) return -1; return S_ISDIR(st.st_mode) ? 1 : 0; }
+    if (host_path(local, hp, sizeof hp) != 0 || stat(hp, &st) != 0) return -1;
+    return S_ISDIR(st.st_mode) ? 1 : 0;
+}
 static int p_list(void *x, const char *local, rx_list_fn each, void *u) {
     DIR *d; struct dirent *e; char p[1024], hp[1024]; struct stat st;
     (void)x;
     if (host_path(local, hp, sizeof hp) != 0 || !(d = opendir(hp))) return -1;
     while ((e = readdir(d)) != NULL) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-        snprintf(p, sizeof p, "%s/%s", hp, e->d_name);
-        if (stat(p, &st) != 0) continue;
+        if (snprintf(p, sizeof p, "%s/%s", hp, e->d_name) >= (int)sizeof p || stat(p, &st) != 0) continue;
         each(u, e->d_name, S_ISDIR(st.st_mode));   /* host names as they are: the scenarios' drawers are ASCII */
     }
     closedir(d);
@@ -136,13 +137,14 @@ static int p_open_r(void *x, const char *local, rx_finfo *info) {
 static long p_read(void *x, unsigned char *b, unsigned long n) { size_t k = fread(b, 1, n, ((pctx *)x)->rh); return ferror(((pctx *)x)->rh) ? -1 : (long)k; }
 static void p_close_r(void *x) { pctx *c = x; if (c->rh) { fclose(c->rh); c->rh = NULL; } }
 
+static void cpy(char *d, size_t n, const char *s) { size_t k = strlen(s); if (k >= n) k = n - 1; memcpy(d, s, k); d[k] = 0; }
 static int p_vols(void *x, rx_vol *out, int max) {
     (void)x;
     int n = g_nvols < max ? g_nvols : max;
     for (int i = 0; i < n; i++) {
         memset(&out[i], 0, sizeof out[i]);
-        snprintf(out[i].name, sizeof out[i].name, "%s", g_vols[i].name);
-        snprintf(out[i].device, sizeof out[i].device, "%s", g_vols[i].dev);
+        cpy(out[i].name, sizeof out[i].name, g_vols[i].name);
+        cpy(out[i].device, sizeof out[i].device, g_vols[i].dev);
         out[i].size = 901120; out[i].free = 450560; out[i].days = 17000;
     }
     return n;
@@ -158,8 +160,7 @@ static long p_dir_next(void *x, rx_dent *e) {
     pctx *c = x; struct dirent *d; char p[1200]; struct stat st;
     while ((d = readdir(c->dh)) != NULL) {
         if (!strcmp(d->d_name, ".") || !strcmp(d->d_name, "..")) continue;
-        snprintf(p, sizeof p, "%s/%s", c->dpath, d->d_name);
-        if (stat(p, &st) != 0) continue;
+        if (snprintf(p, sizeof p, "%s/%s", c->dpath, d->d_name) >= (int)sizeof p || stat(p, &st) != 0) continue;
         memset(e, 0, sizeof *e);
         to_latin1(d->d_name, e->name, sizeof e->name);
         e->is_dir = S_ISDIR(st.st_mode); e->size = e->is_dir ? 0 : (unsigned long)st.st_size;
