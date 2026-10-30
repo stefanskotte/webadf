@@ -6,21 +6,22 @@
  * (tools/paulanet-driver/, plan 2026-10-18) and its PaulaNET Config is his, unmodified: both used by his permission
  * under his terms (third-party/paulanet/); they are not MIT.
  */
-export const PAULANET_DISK_SHA256 = '9f58337d1a8bde3da2cce4fc26e97eed9ca77f9c16b12c58fea0373e898699fa';
+export const PAULANET_DISK_SHA256 = 'efecdfb9782826337ec9f159d66df971c966994f30502dab3ffe69a60b115ee5';
 export const PAULANET_DISK_BYTES = 901_120;
 /**
- * The driver disk before Transfer 2.2 (2026-10-22: an upload waits out a 5-minute network outage): Transfer 2.1.
+ * The driver disk before Transfer 2.3 (2026-10-30: browsing the Amiga's volumes from the web app): Transfer 2.2.
  */
-export const PAULANET_DISK_PREVIOUS = '36bce70c114ad2eff6cdbb720ffaeabdbf79856592211080b437f7ac3110f796';
+export const PAULANET_DISK_PREVIOUS = '9f58337d1a8bde3da2cce4fc26e97eed9ca77f9c16b12c58fea0373e898699fa';
 /**
- * Every older driver disk, newest first: PAULANET_DISK_PREVIOUS, then the disk before Transfer 2.1 (the LZ4 driver and
+ * Every older driver disk, newest first: PAULANET_DISK_PREVIOUS, then the disk before Transfer 2.2 (Transfer 2.1), then the disk before Transfer 2.1 (the LZ4 driver and
  * Receive 2), then the disk before Receive 2 (the LZ4 driver and Receive 1), then the disk before the LZ4 driver (Receive 1), then the disk before Receive (Phase 3). Each is still
  * valid: a board whose Amiga is online keeps it until the Amiga is off (driverDiskFor, R16), so it is served
  * (isDriverDisk: the board's net route and the person's /api/paulanet-disk?sha256=), kept by the blob GC
  * (ALWAYS_REFERENCED_BLOBS) and named on the card (driverDiskLine).
  */
 export const PAULANET_DISK_OLDER: readonly string[] = [
-  PAULANET_DISK_PREVIOUS, '6e799db55e95a52900bff0ea6e3155b7787a44bcd5c5371510522cff0d5820f9',
+  PAULANET_DISK_PREVIOUS, '36bce70c114ad2eff6cdbb720ffaeabdbf79856592211080b437f7ac3110f796',
+  '6e799db55e95a52900bff0ea6e3155b7787a44bcd5c5371510522cff0d5820f9',
   '1ca4f4cb402042e9c842bcf7af91fb86cf5587125ba64134b26f4d25d35a352d',
   'fb363d45c3b6c26592ada627c1cddc68b32c93c003a82328617a487dce5aa287',
   '05170a83c279157fc50a2a9a595f4caf1ec194253127d93232f6fd5bfc008c9e',

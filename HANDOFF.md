@@ -1576,6 +1576,41 @@ row and Queue alone.
 - **Owed:** Transfer 2.3 and firmware 1.22 plans; the A500 bench (spec §7: browsable, drawer two levels down, copies to
   STASH:/LIBRARY: and a drawer, a >1000-entry drawer's cut row, browsing off with Queue still sending, Quit Transfer
   mid-listing).
+- **Transfer 2.3 (2026-10-30, step 2 of spec §6; branch feat/transfer-2-3, merge commit: see git log).** Plan
+  docs/superpowers/plans/2026-10-30-transfer-2-3-browsing.md. Shipped: the Amiga program answers protocol 3 -- `READY 3 <b>`
+  hello, `VOLS`, `DIR` (first 1000 entries, then `cut`), `GET` (GOT, then the file goes up as a request upload) -- read-only,
+  behind the browse switch (`ENVARC:webadf/Browse`, checkbox "Let the web app browse my disks (read-only)", `BROWSE/S`),
+  version `Transfer 2.3 (30.10.2026)`. Commits: 8bab3db (hello, switch, refusals, VOLS), 4afd011 (DIR), f9eb5df (GET),
+  6dc6da1 (host build, fake board, scenarios), c18d4c4 (Amiga side), 9abc2be (stale-hello close waits for net.c's buffer),
+  and the Task 6 commit (FS-UAE browse mode, pin, docs, driver disk).
+  - **FS-UAE `uae-test.sh <ks> browse`** (A500 with DH0:, two floppies both named Empty in DF0:/DF2:, Work:Big with 1005
+    files): 3.2, 3.1 and 2.04 each pass all nine (b-vols, b-dir, b-device-path, b-cut, b-notfound, b-notdir, b-get, b-isdir,
+    b-bad) and "BROWSE without SAVE stored nothing"; 3.1 once more on the pinned binary. `shell` (3.1): all PASS incl.
+    browse-off; `send` (3.1): all PASS, ver.log reads Transfer 2.3 (send-scenarios.ts expected 2.2, now 2.3). Fixture
+    finding: two disks formatted in the same second have one name AND one volume date, and AmigaDOS mounts them as ONE
+    volume (the second Empty vanished from VOLS); the fixture formats them 3 s apart.
+  - **Window screenshot:** the gui mode (3.2) with BROWSE shows the checkbox ticked, nothing overlapping, and the status
+    line "Web: listed Work:Up" (tools/receive/uae/browse-demo.ts; scratchpad transfer-2.3-window.png).
+  - **Build pin:** tools/receive/dist/Transfer sha256 e66660020d868b4ede98d2f6aeefe82836a80a7576a6e69ddf515bca9396eec9
+    (46736 bytes); a second build is byte-identical (deterministic).
+  - **Driver disk:** efecdfb9782826337ec9f159d66df971c966994f30502dab3ffe69a60b115ee5 (901120 bytes); 9f58337d (Transfer 2.2)
+    is now PAULANET_DISK_PREVIOUS, 36bce70c (2.1) heads the older list. **Not yet in the disk store: the controller runs
+    scripts/paulanet-disk-upload.ts before pushing master** (production serves the new digest as soon as it is live).
+  - **Plan rulings:** T1 a changed switch (or a TRUST that changes the key) closes an idle connection so the board
+    reconnects and hears READY 3 <b>; T2 names the web app would refuse are left out of VOLS/DIR and not counted; T3 DOS
+    errors map to notfound (204/205), busy (202), denied (224), notdir/isdir (212), else io with AmigaDOS's words; T4 a
+    GET's file not yet gone up when the connection drops leaves the queue; T5 requests go before queued uploads (never
+    while one moves); T6 a second request while one waits gets `ERR busy`; T7 a GET whose name cannot go up gets `ERR io`;
+    T8 DOS requesters are silenced (pr_WindowPtr -1) in browsing calls and every upload read; T9 the checkbox stores at
+    once, `BROWSE` is for one run, `BROWSE SAVE` stores, `SAVE` alone leaves the switch, the window switches it off;
+    T10 the driver disk is re-pinned in Task 6 (the self-host image fails on a pin mismatch; inert while browsing is off);
+    T11 a volume whose device cannot be named is left out; RAM Disk's size is 0, free = free memory less 64 KB.
+  - **Controller rulings from reviews:** (a) the net.c stale-hello close also waits for net.c's own send buffer
+    (o_off == o_len) (Task 5 review); (b) a GET's file that fails after GOT adds a failed row in the window; (c)
+    test_proto.c's junk-line test uses POST now (GET is a verb; a stray HTTP "GET /" gets one `ERR - bad` line).
+  - **Observed in FS-UAE:** every volume in VOLS gets a device (Ram Disk RAM:, Workbench3.2 DF1:, Work DH0:); RAM Disk
+    shows size 0; an empty drive is not listed.
+  - **Next: firmware 1.22.0 (spec §3), then the A500 bench (§7).**
 **Parked/deferred by the operator:** PaulaNET compression (LZSA2, pre-encode N+1); proof of possession at ingest.
 Entries below marked SHIPPED/FIXED/FOLDED are kept for their history only.
 
