@@ -35,7 +35,7 @@ export const HELP_TOPICS = {
       <>
         <p>
           <strong>Adding disks.</strong> Drop disk images, folders of them or .zip and .lha files anywhere on the
-          page, or use <em>Add disks</em>, which also takes a URL. A tray below says what each did; one it already had reads Added too.
+          page, or use <em>Add disks</em>, which also takes a URL. A tray below says what each did.
         </p>
         <p>
           <strong>Grid or table.</strong> The grid and table buttons at the top switch views and keep the
@@ -55,7 +55,7 @@ export const HELP_TOPICS = {
           <strong>Controls.</strong> A card&apos;s or a row&apos;s <em>⋯</em> menu has, in order: mount or eject
           (with a board), write to an NFC tag (with a reader), version history, move to a collection, remove from
           the collection (inside one) and delete. A disk in a drive shows a DF0 pill: in the grid on the card&apos;s picture, in the table after
-          the name, amber <em>DF0…</em> while it is fetching.
+          the name, amber <em>DF0…</em> while it is fetching. A title made here can be renamed in place.
         </p>
         <p>
           <strong>Filing.</strong> Drag a card or a row onto a collection in the list, or use{' '}
