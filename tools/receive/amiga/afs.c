@@ -149,7 +149,11 @@ static long a_read(void *x, unsigned char *b, unsigned long n) {
     quiet_off(w);
     return got < 0 ? -1 : (long)got;
 }
-static void a_close_r(void *x) { afs_ctx *c = x; if (c->rh) { Close(c->rh); c->rh = 0; } }
+/* Quiet too (plan ruling T8): closing a file on a disk taken out mid-copy must not put up a requester. */
+static void a_close_r(void *x) {
+    afs_ctx *c = x;
+    if (c->rh) { APTR w = quiet_on(); Close(c->rh); c->rh = 0; quiet_off(w); }
+}
 /* --- Protocol 3 (spec 2026-10-30 §2.2): browsing, read-only, shared locks only --- */
 static void bstr(BSTR b, char *out, unsigned cap) {
     const UBYTE *p = (const UBYTE *)BADDR(b);
@@ -219,10 +223,13 @@ static void fill_dent(const struct FileInfoBlock *f, rx_dent *e) {
     strncpy(e->name, (const char *)f->fib_FileName, sizeof e->name - 1); e->name[sizeof e->name - 1] = 0;
     strncpy(e->comment, (const char *)f->fib_Comment, RX_COMMENT_MAX); e->comment[RX_COMMENT_MAX] = 0;
 }
+/* Quiet too (plan ruling T8): letting go of a drawer on a disk taken out mid-listing must not put up a requester. */
 static void a_dir_close(void *x) {
     afs_ctx *c = x;
+    APTR w = quiet_on();
     if (c->dfib) { FreeDosObject(DOS_FIB, c->dfib); c->dfib = NULL; }
     if (c->dl) { UnLock(c->dl); c->dl = 0; }
+    quiet_off(w);
 }
 static long a_dir_open(void *x, const char *path) {
     afs_ctx *c = x;
