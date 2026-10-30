@@ -110,10 +110,10 @@ protection, step to the next disk or eject.*
 
 *A title page: facts and screenshots from Demozoo, then each disk with its actions.*
 
-![The Files page: STASH: in the left pane, the SysInfo disk in the right pane with its files, the button column between them, and the disk's History open](docs/screenshots/disk-files.png)
+![The Files page: STASH: in the left pane, the SysInfo disk in the right pane as the source with its dark title bar and its History open, and under both panes the device column (STASH:, LIBRARY:, NET:) and the grid of buttons](docs/screenshots/disk-files.png)
 
-*Files: two panes, as in a Workbench file manager, over STASH:, NET: and LIBRARY:. Each edit to a disk is a new
-version in its History.*
+*Files: two panes in the Directory Opus style over STASH:, NET: and LIBRARY: (collections are folders there). The pane
+you last clicked is the source; the buttons under the panes act on it. Each edit to a disk is a new version in its History.*
 
 ![The Devices page: the A500 board online and up to date, its drive drawing with the OLED showing 9 Fingers, the disk in the drive, and the Second drive (DF1) choices](docs/screenshots/devices.png)
 
