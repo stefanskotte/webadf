@@ -29,7 +29,7 @@ const { remoteRequests } = await import('@/db/schema/remote-requests');
 const { formatVolume } = await import('@/lib/adffs/format');
 const { insertStash, listStash } = await import('@/lib/stash');
 const { createCollection } = await import('@/lib/collections');
-const { takeWaiting, answerPiece } = await import('@/lib/remote-requests');
+const { takeWaiting, answerPiece, addGets } = await import('@/lib/remote-requests');
 const { openUpload, storeChunk, closeUpload } = await import('@/lib/amiga-uploads');
 const { UPLOAD_AREA_MAX_FILES } = await import('@/lib/amiga-upload-limits');
 const { diskStore } = await import('@/lib/storage');
@@ -266,6 +266,25 @@ describe('placement as the upload closes', () => {
     expect(u2.path).toBe('Games_1.adf');
     const filed = await getDb().select().from(collectionGames).where(eq(collectionGames.collectionId, made.id));
     expect(filed).toHaveLength(1);
+  });
+
+  // Final review: any refused open of a get settles it with the reason, so the copy does not wait 10 minutes and
+  // then say "stopped answering".
+  it('an open refused for its size or its name fails that get with words that say why', async () => {
+    await copy([W('a.lha')], 'STASH:/In');
+    const [a] = await gets();
+    await takeWaiting(getDb(), 'b1');
+    await answerPiece(getDb(), 'b1', a.id, { piece: 0, lines: [`GOT ${a.id} 7`], last: true });
+    expect(await openUpload(getDb(), dev, { size: 5 * MB, date: '1.2.3', protection: 0, path: 'Work:a.lha', comment: '', request: a.id }))
+      .toEqual({ ok: false, code: 'size' });
+    expect(await getRow(a.id)).toMatchObject({ status: 'failed', errorCode: 'toolarge', errorText: 'over 4 MB' });
+
+    const [n] = await addGets(getDb(), { orgId: 'o1', deviceId: 'b1', fetchId: 'fn',
+      files: [{ amigaPath: 'Work:x', target: { dest: 'STASH:', rel: [], replace: false, library: null } }] });
+    await takeWaiting(getDb(), 'b1');
+    expect(await openUpload(getDb(), dev, { size: 7, date: '1.2.3', protection: 0, path: 'Work:x', comment: '', request: n }))
+      .toEqual({ ok: false, code: 'name' });
+    expect(await getRow(n)).toMatchObject({ status: 'failed', errorCode: 'bad', errorText: 'the name could not be used' });
   });
 
   it('STASH: full: the open is refused and that get fails; the others wait on', async () => {

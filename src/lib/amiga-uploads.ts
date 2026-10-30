@@ -25,21 +25,28 @@ const FROM_AMIGA = [eq(amigaUploads.source, 'amiga'), eq(amigaUploads.kind, 'fil
 
 /** `request`: the get this upload answers (NET: volumes, spec 2026-10-30 §4.5): the file is stored at the copy's target. */
 export type OpenInput = { size: number; date: string; protection: number; path: string; comment: string; request?: string };
-export type OpenResult = { ok: true; id: string; offset: number } | { ok: false; code: 'size' | 'full' | 'name' };
+type OpenFail = 'size' | 'full' | 'name';
+export type OpenResult = { ok: true; id: string; offset: number } | { ok: false; code: OpenFail };
 
 /** Resumes the same file from the same board (path, size, date) within 24 h, or opens a new one within the org's limits. */
 export async function openUpload(db: Db, dev: { deviceId: string; orgId: string }, a: OpenInput, now = new Date()): Promise<OpenResult> {
-  if (!Number.isSafeInteger(a.size) || a.size < 0 || a.size > UPLOAD_FILE_MAX) return { ok: false, code: 'size' };
   // A fetched file (§4.5) goes where the copy said: the STASH: folder's segments, then its path below the copied entry.
   const get = a.request === undefined ? null : await getForUpload(db, dev.deviceId, a.request);
   if (a.request !== undefined && !get) return { ok: false, code: 'name' };
+  // Any refusal fails the get with why: this file fails, the copy's other files go on (each is its own get), and the
+  // copy never waits out the 10 minutes to say "stopped answering" (final review).
+  const refused = async (code: OpenFail, why: { code: string; text: string }): Promise<OpenResult> => {
+    if (get) await settleGet(db, get.id, { ok: false, ...why }, now);
+    return { ok: false, code };
+  };
+  if (!Number.isSafeInteger(a.size) || a.size < 0) return refused('size', { code: 'bad', text: 'the board sent a size webadf could not read' });
+  if (a.size > UPLOAD_FILE_MAX) return refused('size', { code: 'toolarge', text: 'over 4 MB' });
   const target = get?.target as GetTarget | undefined;
   const path = cleanAmigaPath(target ? [...(parsePath(target.dest)?.segments ?? []), ...target.rel].join('/') : a.path);
-  if (!path) return { ok: false, code: 'name' };
+  if (!path) return refused('name', { code: 'bad', text: 'the name could not be used' });
   const comment = a.comment.replace(/[^\x20-\x7e\xa0-\xff]/g, '').slice(0, 79);
   const r = await openRow(db, dev, a, path, comment, get?.id ?? null, now);
-  // The area is full: this file fails, the copy's other files go on (each is its own get).
-  if (!r.ok && r.code === 'full' && get) await settleGet(db, get.id, { ok: false, code: 'full', text: 'STASH: is full' }, now);
+  if (!r.ok) return refused(r.code, r.code === 'full' ? { code: 'full', text: 'STASH: is full' } : { code: 'bad', text: 'it could not be stored' });
   return r;
 }
 
