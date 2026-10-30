@@ -4,7 +4,7 @@ import { and, asc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 import type { Db } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { remoteRequests } from '@/db/schema/remote-requests';
-import { FAILED_SHOWN_MS, GET_TIMEOUT_MS, LIST_TIMEOUT_MS, REMEMBER_MS, REQUEST_KEEP_MS, REQ_FETCH_MAX } from './remote-limits';
+import { FAILED_SHOWN_MS, GET_TIMEOUT_MS, LIST_TIMEOUT_MS, PANE_GIVE_UP_MS, REMEMBER_MS, REQUEST_KEEP_MS, REQ_FETCH_MAX } from './remote-limits';
 import { newRequestId, parseAnswerLine, type EntryInfo, type VolumeInfo } from './remote-wire';
 
 export type RemoteRow = typeof remoteRequests.$inferSelect;
@@ -71,14 +71,21 @@ export async function latestFor(db: Db, deviceId: string, kind: 'vols' | 'dir', 
 export async function requestListing(
   db: Db, a: { orgId: string; deviceId: string; kind: 'vols' | 'dir'; amigaPath: string; fresh: boolean }, now = new Date(),
 ): Promise<ListingState> {
+  // Two panes on one drawer share one request; a visit within the memory reuses the answer, a Refresh does not. A
+  // Refresh after the pane gave up (PANE_GIVE_UP_MS) asks again: the stuck request fails `timeout` (final review).
+  const stuck = (s: ListingState) => a.fresh && s.state === 'pending' && now.getTime() - s.row.createdAt.getTime() >= PANE_GIVE_UP_MS;
+  const keep = (s: ListingState) => (s.state === 'pending' && !stuck(s)) || (s.state !== 'none' && s.state !== 'pending' && !a.fresh);
   const cur = await latestFor(db, a.deviceId, a.kind, a.amigaPath, now);
-  // Two panes on one drawer share one request; a visit within the memory reuses the answer, a Refresh does not.
-  if (cur.state === 'pending' || (cur.state !== 'none' && !a.fresh)) return cur;
+  if (keep(cur)) return cur;
   return db.transaction(async (tx) => {
     // Serialise on the board (the row bumped below), then look again: a concurrent ask may have inserted meanwhile.
     await tx.select({ id: devices.id }).from(devices).where(eq(devices.id, a.deviceId)).for('update');
     const again = await latestFor(tx as unknown as Db, a.deviceId, a.kind, a.amigaPath, now);
-    if (again.state === 'pending' || (again.state !== 'none' && !a.fresh)) return again;
+    if (keep(again)) return again;
+    if (again.state === 'pending') {
+      await tx.update(remoteRequests).set({ status: 'failed', errorCode: 'timeout', errorText: '', answeredAt: now })
+        .where(eq(remoteRequests.id, again.row.id));
+    }
     await tx.delete(remoteRequests).where(lt(remoteRequests.createdAt, ms(now, REQUEST_KEEP_MS)));
     const [row] = await tx.insert(remoteRequests).values({
       id: newRequestId(), orgId: a.orgId, deviceId: a.deviceId, kind: a.kind, amigaPath: a.amigaPath, createdAt: now,
@@ -102,15 +109,25 @@ export async function addGets(
   });
 }
 
+// A listing a pane waits on goes before a copy's gets (final review): 64 gets must not starve it for minutes.
+const listingsFirst = sql`case when ${remoteRequests.kind} = 'get' then 1 else 0 end`;
+const handOrder = (r: RemoteRow) => (r.kind === 'get' ? 1 : 0);
+
+/**
+ * The board's GET /api/device/req: at most REQ_FETCH_MAX waiting requests, listings first, then oldest first. The
+ * board fetches only when req_version moves (§4.2), so when any are left waiting the version is bumped again here.
+ */
 export async function takeWaiting(db: Db, deviceId: string, now = new Date()): Promise<RemoteRow[]> {
   return db.transaction(async (tx) => {
-    const picked = await tx.select({ id: remoteRequests.id }).from(remoteRequests)
-      .where(and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.status, 'waiting')))
-      .orderBy(asc(remoteRequests.createdAt)).limit(REQ_FETCH_MAX).for('update', { skipLocked: true });
+    const waiting = and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.status, 'waiting'));
+    const picked = await tx.select({ id: remoteRequests.id }).from(remoteRequests).where(waiting)
+      .orderBy(listingsFirst, asc(remoteRequests.createdAt), asc(remoteRequests.id)).limit(REQ_FETCH_MAX).for('update', { skipLocked: true });
     if (picked.length === 0) return [];
     const rows = await tx.update(remoteRequests).set({ status: 'sent', sentAt: now, activeAt: now })
       .where(inArray(remoteRequests.id, picked.map((p) => p.id))).returning();
-    return rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const [left] = await tx.select({ id: remoteRequests.id }).from(remoteRequests).where(waiting).limit(1);
+    if (left) await tx.update(devices).set({ reqVersion: sql`${devices.reqVersion} + 1` }).where(eq(devices.id, deviceId));
+    return rows.sort((a, b) => handOrder(a) - handOrder(b) || a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
   });
 }
 

@@ -1,5 +1,9 @@
 import { expect, type APIRequestContext } from '@playwright/test';
 import { crc32 } from 'node:zlib';
+import { eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { devices } from '@/db/schema/devices';
+import { hashDeviceToken } from '@/lib/device-token';
 import { authHeader } from './device-helpers';
 
 // A simulated board over its own routes (status, open, chunk, close), as Transfer 2.1 drives them: what
@@ -129,17 +133,30 @@ export async function boardServesOne(request: APIRequestContext, token: string, 
   await boardUploads(request, token, name, file.data, AMIGA_DATE, r.id);
 }
 
+/** The board's req.v as its status poll reads it (spec 2026-10-30 §4.2): the devices row its token names. */
+async function reqVersionOf(token: string): Promise<number> {
+  const [d] = await getDb().select({ v: devices.reqVersion }).from(devices).where(eq(devices.tokenHash, hashDeviceToken(token)));
+  expect(d, 'the board is paired').toBeDefined();
+  return d.v;
+}
+
 /**
- * The board and Transfer at work: every 300 ms it takes the waiting requests and answers each from `fs`, until `until()`
- * or `maxMs` pass. Resolves with every request it served, in order; a test awaits it so a failed answer fails the test.
+ * The board and Transfer at work: every 300 ms it reads req.v and, as firmware 1.22.0 does, takes the waiting requests
+ * only when req.v has moved since it last took them (reqAck), answering each from `fs`, until `until()` or `maxMs` pass.
+ * Resolves with every request it served, in order; a test awaits it so a failed answer fails the test.
  */
 export async function boardServes(request: APIRequestContext, token: string, fs: Record<string, FakeEntry[]>, until: () => boolean,
   served: BoardRequest[] = [], maxMs = 30_000): Promise<BoardRequest[]> {
   const end = Date.now() + maxMs;
+  let ack: number | null = null;
   while (!until() && Date.now() < end) {
-    for (const r of await boardTakesRequests(request, token)) {
-      await boardServesOne(request, token, fs, r);
-      served.push(r);
+    const v = await reqVersionOf(token);
+    if (v !== ack) {
+      ack = v;
+      for (const r of await boardTakesRequests(request, token)) {
+        await boardServesOne(request, token, fs, r);
+        served.push(r);
+      }
     }
     await new Promise((ok) => setTimeout(ok, 300));
   }

@@ -99,6 +99,32 @@ describe('the request store', () => {
     expect(await takeWaiting(getDb(), deviceId, at(21))).toHaveLength(1);
   });
 
+  // Final review: addGets wakes the board once, and a take hands out at most 8 -- the board must be woken again while
+  // any wait, and a listing asked meanwhile must not starve behind the copy's gets.
+  it('20 gets: a take hands out 8 and wakes the board again; the last take wakes nobody', async () => {
+    const tg = { dest: 'STASH:', rel: ['x'], replace: false, library: null };
+    await addGets(getDb(), { orgId, deviceId, fetchId: 'f20', files: Array.from({ length: 20 }, (_, i) => ({ amigaPath: `Work:g${i}`, target: tg })) }, t0);
+    const v1 = await reqVersionOf(deviceId);
+    expect(await takeWaiting(getDb(), deviceId, at(1))).toHaveLength(8);
+    expect(await reqVersionOf(deviceId)).toBe(v1 + 1);
+    expect(await takeWaiting(getDb(), deviceId, at(2))).toHaveLength(8);
+    expect(await reqVersionOf(deviceId)).toBe(v1 + 2);
+    expect(await takeWaiting(getDb(), deviceId, at(3))).toHaveLength(4);
+    expect(await reqVersionOf(deviceId)).toBe(v1 + 2);
+    expect(await takeWaiting(getDb(), deviceId, at(4))).toEqual([]);
+    expect(await reqVersionOf(deviceId)).toBe(v1 + 2);
+  });
+
+  it('a listing asked behind 12 waiting gets is handed out in the next take, first', async () => {
+    const tg = { dest: 'STASH:', rel: ['x'], replace: false, library: null };
+    await addGets(getDb(), { orgId, deviceId, fetchId: 'f12', files: Array.from({ length: 12 }, (_, i) => ({ amigaPath: `Work:g${i}`, target: tg })) }, t0);
+    const d = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:Later', fresh: false }, at(1));
+    const taken = await takeWaiting(getDb(), deviceId, at(2));
+    expect(taken).toHaveLength(8);
+    expect(taken[0].id).toBe(ridOf(d));
+    expect(taken.slice(1).every((r) => r.kind === 'get')).toBe(true);
+  });
+
   it('an answer in two pieces becomes a ready listing; a repeat piece changes nothing; a gap is 409', async () => {
     const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:', fresh: false }, t0);
     const rid = ridOf(p);
@@ -144,6 +170,23 @@ describe('the request store', () => {
     const f = await requestListing(getDb(), { orgId, deviceId, kind: 'vols', amigaPath: '', fresh: true }, at(131));
     expect(f.state).toBe('pending');
     expect(f.state === 'pending' && f.row.id).not.toBe(rid2);
+  });
+
+  // Final review: Refresh after the pane gave up (20 s) asks again rather than share the stuck request for up to 60 s.
+  it('fresh fails a pending request older than the pane waits and asks again; a younger one is shared', async () => {
+    const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:Stuck', fresh: false }, t0);
+    await takeWaiting(getDb(), deviceId, t0);
+    const young = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:Stuck', fresh: true }, at(19));
+    expect(young.state === 'pending' && young.row.id).toBe(ridOf(p));
+    const v = await reqVersionOf(deviceId);
+    const again = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:Stuck', fresh: true }, at(21));
+    expect(again.state).toBe('pending');
+    expect(again.state === 'pending' && again.row.id).not.toBe(ridOf(p));
+    expect(await rowOf(ridOf(p))).toMatchObject({ status: 'failed', errorCode: 'timeout' });
+    expect(await reqVersionOf(deviceId)).toBe(v + 1);
+    // Without fresh, a pending request is still shared however old (until the 60 s timeout).
+    const shared = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:Stuck', fresh: false }, at(45));
+    expect(shared.state === 'pending' && shared.row.id).toBe(ridOf(again));
   });
 
   it('a malformed line fails the request with bad', async () => {
