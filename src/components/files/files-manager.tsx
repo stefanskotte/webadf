@@ -21,7 +21,8 @@ import {
   acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, netVolumeReason,
   offersUndo, placeOf,
 } from '@/lib/files/pane-rules';
-import { boardNameFor, isNetVolume, netBoardRoot, netPollMs, nextAsk, NET_MOVE_IN, NET_OPEN_VOLUME, NET_PICK_BOARD, NET_READ_ONLY } from '@/lib/files/net-rules';
+import { askUntilAnswered } from '@/lib/files/ask-listing';
+import { boardNameFor, isNetVolume, netBoardRoot, netPollMs, NET_MOVE_IN, NET_OPEN_VOLUME, NET_PICK_BOARD, NET_READ_ONLY } from '@/lib/files/net-rules';
 import { errorWords } from '@/lib/remote-browse';
 import { COLLECTIONS_STAY, createAdfReason, filingNoun, filingReason, shelfOf, shelfOfRow, shelfReasons } from '@/lib/files/shelf-rules';
 import { stashPollMs, trackArriving, withStalls, type ArrivingSeen } from '@/lib/files/arriving';
@@ -46,7 +47,7 @@ import type { SendTarget } from '@/lib/send-ui';
 import { useStashUpload, type StashUploadResult } from './use-stash-upload';
 import { sameStashName } from '@/lib/files/stash-paths';
 import { isSignedOutAnswer, SIGNED_OUT_TEXT } from '@/lib/signed-out';
-import { PANE_ASK_MS, QUEUE_FOLDER } from '@/lib/remote-limits';
+import { QUEUE_FOLDER } from '@/lib/remote-limits';
 import {
   ClashDialog, ConfirmDeleteDialog, InfoDialog, NameDialog, ProtectDialog, placeName, type Clash, type ClashChoice,
 } from './dialogs';
@@ -239,36 +240,12 @@ async function fetchListing(path: string, fresh = false): Promise<Fetched> {
   }
 }
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
 /** "A500 didn't answer — Refresh to try again": a pending listing asked for PANE_GIVE_UP_MS without an answer. */
 const noAnswer = (path: string, l: Listing | null) => errorWords('timeout', '', boardNameFor(path, l));
 
-/**
- * A listing, asked again every PANE_ASK_MS while the Amiga has not answered it (NET: volumes, spec 2026-10-30 §4.4)
- * -- without `fresh` after the first ask: the request is already on its way -- until it lands, is refused, or
- * PANE_GIVE_UP_MS pass (then `noAnswer`'s words, the board named from `named()`). `onPending` hears each label;
- * `wanted` false (the pane went elsewhere) stops it at once with null, without a word.
- */
-async function askUntilAnswered(path: string, o: {
-  fresh?: boolean; wanted(): boolean; onPending(label: string): void; named(): Listing | null;
-}): Promise<Exclude<Fetched, { pending: string }> | null> {
-  const started = Date.now();
-  let r = await fetchListing(path, o.fresh);
-  while ('pending' in r) {
-    if (!o.wanted()) return null;
-    o.onPending(r.pending);
-    await sleep(PANE_ASK_MS);
-    if (!o.wanted()) return null;
-    if (nextAsk(started, Date.now()) === 'give-up') return { error: noAnswer(path, o.named()) };
-    r = await fetchListing(path);
-  }
-  return r;
-}
-
 /** A listing for the Copy to… picker, which walks places rather than show a wait. Module-level: its identity never changes. */
 async function settledListing(path: string): Promise<ListResult> {
-  return (await askUntilAnswered(path, { wanted: () => true, onPending: () => {}, named: () => null }))!;
+  return (await askUntilAnswered<ListResult>(path, { ask: fetchListing, wanted: () => true, onPending: () => {}, giveUp: () => ({ error: noAnswer(path, null) }) }))!;
 }
 
 function firstState(path: string, listing: Listing | null, error: string | undefined, errorDisk?: string, pending?: string): PaneState {
@@ -376,6 +353,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const filterRefs = { left: useRef<HTMLInputElement>(null), right: useRef<HTMLInputElement>(null) };
   // A pane's newest request wins: a slow listing that lands after a newer one is dropped.
   const seq = useRef<Record<Side, number>>({ left: 0, right: 0 });
+  // False once the manager unmounts: a NET: listing still being asked for stops re-asking (askUntilAnswered's `wanted`).
+  const alive = useRef(true);
   // For the popstate listener and the NET: poll, which outlive a render.
   // R5: where a pane the address does not name opens (Back to a bare /files too).
   const defaults = paneDefaults(prefs.files.panes);
@@ -421,8 +400,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     // Asking the same place again (Refresh, the page's pending first state) keeps its label up rather than flash "Loading…".
     setPanes((ps) => ({ ...ps, [side]: { ...ps[side], path: stayOn ? ps[side].path : path, loading: true,
       pending: ps[side].path === path ? ps[side].pending : null } }));
-    const r = await askUntilAnswered(path, {
-      fresh: opts.fresh, wanted: () => n === seq.current[side], named: () => latest.current.panes[side].listing,
+    const r = await askUntilAnswered<Exclude<Fetched, { pending: string }>>(path, {
+      ask: fetchListing, fresh: opts.fresh, wanted: () => alive.current && n === seq.current[side],
+      giveUp: () => ({ error: noAnswer(path, latest.current.panes[side].listing) }),
       onPending: (label) => setPanes((ps) => ({ ...ps, [side]: { ...ps[side], pending: label } })),
     });
     if (r === null || n !== seq.current[side]) return false;
@@ -506,12 +486,14 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   }, []);
 
   // A pane the page opened pending (a NET: listing the Amiga had not answered, first-listing.ts) asks again from here,
-  // as a navigation does.
+  // as a navigation does. On unmount every listing still asked for is let go: a pending one stops re-asking.
   useEffect(() => {
+    alive.current = true;
     for (const s of ['left', 'right'] as const) {
       const p = latest.current.panes[s];
       if (p.pending !== null && !p.listing) void load(s, p.path);
     }
+    return () => { alive.current = false; };
     // Once, on mount: `load` reads refs and state setters only.
   }, []);
 
