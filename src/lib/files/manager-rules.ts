@@ -146,3 +146,20 @@ export function fetchStatus(p: { total: number; done: number; failed: { name: st
   const failed = first ? `, ${p.failed.length} failed: ${first.name}: ${first.reason}${more.length ? '; …' : ''}` : '';
   return { line: `Copied ${p.done}${failed}`, finished: true };
 }
+
+/**
+ * What a copy out of a volume asks before it is posted (Task 8 fix round 1): the server expands each source from the
+ * listing of its drawer remembered within 2 minutes (plan P3), so the source drawer `from` is asked first -- from memory
+ * while it holds, from the Amiga once it has run out -- then each picked drawer (and, as they are read, its drawers)
+ * fresh. A resend after the Clash dialog asks them all from memory: they were just read, unless the answer was slow.
+ */
+export function asksBeforeCopy(from: string, drawers: string[], resend: boolean): { path: string; fresh: boolean }[] {
+  return [{ path: from, fresh: false }, ...drawers.map((path) => ({ path, fresh: !resend }))];
+}
+
+/** The first picked source the re-listed source drawer no longer holds, as the Amiga says it; null when all are there. */
+export function pickGone(entries: { path: string }[], sources: string[]): string | null {
+  const there = new Set(entries.map((e) => e.path.toLowerCase()));
+  const gone = sources.find((s) => !there.has(s.toLowerCase()));
+  return gone === undefined ? null : `${gone.slice(gone.lastIndexOf('/') + 1)}: Object not found`;
+}

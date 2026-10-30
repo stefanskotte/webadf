@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  createClosesDialog, dropBlocked, fetchStatus, navTargets, fetchDownload, oneAtATime, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems, TOO_BIG_WORDS, BUSY_DROP, DIALOG_DROP,
+  asksBeforeCopy, createClosesDialog, dropBlocked, fetchStatus, navTargets, pickGone, fetchDownload, oneAtATime, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems, TOO_BIG_WORDS, BUSY_DROP, DIALOG_DROP,
 } from './manager-rules';
 import type { OpItem } from './driver';
 import type { Listing } from './types';
@@ -175,5 +175,22 @@ describe('fetchStatus (NET: volumes §4.5: the status row of a copy out of a vol
       .toBe('Copying 3 of 3 from A500…');
     expect(fetchStatus({ total: 3, done: 1, failed: [{ name: 'a', reason: 'r' }, { name: 'b', reason: 's' }], waiting: 0 }, 'A500'))
       .toEqual({ line: 'Copied 1, 2 failed: a: r; …', finished: true });
+  });
+});
+
+describe('asksBeforeCopy and pickGone (Task 8 fix round 1: the source drawer is asked before every copy out of a volume)', () => {
+  const from = 'NET:/b1/Work/Games';
+  it('asks the source drawer from memory first, then the picked drawers fresh -- from memory on a resend', () => {
+    expect(asksBeforeCopy(from, [], false)).toEqual([{ path: from, fresh: false }]);
+    expect(asksBeforeCopy(from, [`${from}/A`, `${from}/B`], false))
+      .toEqual([{ path: from, fresh: false }, { path: `${from}/A`, fresh: true }, { path: `${from}/B`, fresh: true }]);
+    expect(asksBeforeCopy(from, [`${from}/A`], true)).toEqual([{ path: from, fresh: false }, { path: `${from}/A`, fresh: false }]);
+  });
+
+  it('a pick no longer in the re-listed source is "Object not found", named', () => {
+    const entries = [{ path: `${from}/x.lha` }, { path: `${from}/A` }];
+    expect(pickGone(entries, [`${from}/x.lha`, `${from}/A`])).toBeNull();
+    expect(pickGone(entries, [`${from}/X.LHA`])).toBeNull();   // AmigaDOS names ignore case
+    expect(pickGone(entries, [`${from}/x.lha`, `${from}/gone.txt`])).toBe('gone.txt: Object not found');
   });
 });

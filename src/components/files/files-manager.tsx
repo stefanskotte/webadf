@@ -31,7 +31,7 @@ import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
 import { diskRelative, identityToConfirm, undoTarget, withAddedIn, type OpVersion } from '@/lib/files/edit-rules';
-import { createClosesDialog, dropBlocked, fetchDownload, fetchStatus, navTargets, oneAtATime, opTitle, reloadsBoth, skippedItems, skippedWords, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
+import { asksBeforeCopy, createClosesDialog, dropBlocked, fetchDownload, fetchStatus, navTargets, pickGone, oneAtATime, opTitle, reloadsBoth, skippedItems, skippedWords, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
 import { addedIn } from '@/lib/disk-history/added-in';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
 import { isFileDrag } from '@/components/disks/native-drop';
@@ -117,6 +117,8 @@ type Dialog =
     count?: (n: number) => string;
     clashes: Clash[]; at: number;
     choices: Record<string, ClashChoice>;
+    /** A copy out of a NET: volume: what is asked again before the answers are sent (Task 8 fix round 1). */
+    volume?: VolumeCopy;
     /** Requests still to send once these clashes are answered, and the outcomes (and versions) of those already sent. */
     rest: TransferGroup[]; done: OpItem[]; versions: OpVersion[];
   }
@@ -140,6 +142,9 @@ type Dialog =
    */
   | { kind: 'stash-clash'; dir: string; items: DroppedItem[]; clashes: Clash[]; at: number; choices: Record<string, ClashChoice>;
       later: StashGroup[]; done: StashUploadResult; skipped: Set<string> };
+
+/** A copy out of a NET: volume: the drawer its sources are in, and the picked drawers among them (asksBeforeCopy). */
+type VolumeCopy = { from: string; drawers: string[] };
 
 /** Dropped items going to STASH: with one clash answer. */
 type StashGroup = { onClash: 'ask' | ClashChoice; items: DroppedItem[] };
@@ -321,7 +326,11 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const [hideInfo, setHideInfo] = useState(prefs.hideInfo);
   const [infoSaver] = useState(latestSaver);
   const [dialog, setDialog] = useState<Dialog | null>(null);
-  const [opBusy, setBusy] = useState<string | null>(null);
+  const [opBusy, setOpBusy] = useState<string | null>(null);
+  // The lock as it is NOW, for a step that starts outside a click (a finished Download's file, Task 8 fix round 1):
+  // it takes the lock only when it is free, and so never clears another operation's.
+  const busyNow = useRef<string | null>(null);
+  const setBusy = (label: string | null) => { busyNow.current = label; setOpBusy(label); };
   // Copies out of NET: volumes, as the board fetches them (spec 2026-10-30 §4.5): one status line each, after the busy
   // line. Several may run at once (they queue on the board); a finished one's summary stays until the next one starts.
   const [fetchLines, setFetchLines] = useState<{ id: string; line: string; finished: boolean }[]>([]);
@@ -874,44 +883,50 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     /** What the toast counts: items, or for a filing titles or disks (filingNoun). */
     count?: (n: number) => string;
     /** Copies out of a NET: volume this run started (§4.5): their progress is the status row's, not a toast's. */
-    fetches?: number };
+    fetches?: number;
+    volume?: VolumeCopy };
 
   function transfer(op: 'copy' | 'move', sources: string[], dest: string, where: string, target: string | null, count?: (n: number) => string) {
     if (busy) return;
     const run: Run = { op, dest, where, undo: offersUndo(op, sources, dest), target, ...(count ? { count } : {}) };
     // R4: the Files setting's answer goes with the first request; only 'ask' (the default) can come back as clashes.
     const groups: TransferGroup[] = [{ onClash: prefs.files.onClash, sources }];
-    // Out of a NET: volume, the picked drawers are listed afresh first: the server expands a drawer only from a listing
-    // the Amiga gave in the last 2 minutes (plan P3).
+    // Out of a NET: volume, what the server expands the sources from is asked first (readyToCopy).
     const { panes: cur } = latest.current;
     const from = [cur.left.listing, cur.right.listing].find((l) => isNetVolume(l) && sources.every((x) => l!.entries.some((e) => e.path === x)));
-    const drawers = from ? from.entries.filter((e) => e.kind === 'dir' && sources.includes(e.path)).map((e) => e.path) : [];
-    if (!drawers.length) { void runGroups(run, groups, [], []); return; }
-    void (async () => {
-      setBusy(`Reading ${baseName(drawers[0])}…`);
-      const failed = await walkDrawers(drawers, from!);
-      setBusy(null);
-      if (failed === null) void runGroups(run, groups, [], []);
-      else if (failed) showFetchLine(`walk-${Date.now()}`, failed, true);
-    })();
+    if (from) run.volume = { from: from.path, drawers: from.entries.filter((e) => e.kind === 'dir' && sources.includes(e.path)).map((e) => e.path) };
+    void readyToCopy(run.volume, sources, false).then((ok) => { if (ok) void runGroups(run, groups, [], []); });
   }
 
   /**
-   * Every drawer under `drawers`, listed with `fresh` on each one's first ask (the pending loop, its label in the status
-   * row), so the server remembers them all (P3); nothing is collected here. Null when all were read; else the words of
-   * the first that was not ('' when the manager went away).
+   * Before a copy out of a volume is posted (plan P3; Task 8 fix round 1): the server expands each source from the
+   * listing of its drawer remembered within 2 minutes, so the source drawer is asked (from memory while it holds), then
+   * every picked drawer and the drawers in it (asksBeforeCopy), the pending label in the status row; nothing is
+   * collected here. A pick the source no longer holds, or an ask that fails, stops it: its words stay in the status row.
+   * True to go on; true at once for any other copy.
    */
-  async function walkDrawers(drawers: string[], from: Listing): Promise<string | null> {
-    const todo = [...drawers];
-    for (let path = todo.shift(); path !== undefined; path = todo.shift()) {
-      const at = path;
+  async function readyToCopy(vol: VolumeCopy | undefined, sources: string[], resend: boolean): Promise<boolean> {
+    if (!vol) return true;
+    setBusy(`Reading ${baseName(vol.from)}…`);
+    const failed = await askBeforeCopy(vol, sources, resend);
+    setBusy(null);
+    if (failed) showFetchLine(`walk-${Date.now()}`, failed, true);
+    return failed === null;
+  }
+
+  /** readyToCopy's asks: null when all were read; else the words of the first that was not ('' once the manager went away). */
+  async function askBeforeCopy(vol: VolumeCopy, sources: string[], resend: boolean): Promise<string | null> {
+    const todo = asksBeforeCopy(vol.from, vol.drawers, resend);
+    for (let a = todo.shift(); a !== undefined; a = todo.shift()) {
+      const at = a.path;
       const r = await askUntilAnswered<Exclude<Fetched, { pending: string }>>(at, {
-        ask: fetchListing, fresh: true, wanted: () => alive.current, onPending: (label) => setBusy(label),
-        giveUp: () => ({ error: noAnswer(at, from) }),
+        ask: fetchListing, fresh: a.fresh, wanted: () => alive.current, onPending: (label) => setBusy(label),
+        giveUp: () => ({ error: noAnswer(at, latest.current.panes[active].listing) }),
       });
       if (r === null) return '';
       if (!('listing' in r)) return 'gone' in r ? GONE : r.error;
-      todo.push(...r.listing.entries.filter((e) => e.kind === 'dir').map((e) => e.path));
+      if (at === vol.from) { const gone = pickGone(r.listing.entries, sources); if (gone) return gone; continue; }
+      todo.push(...r.listing.entries.filter((e) => e.kind === 'dir').map((e) => ({ path: e.path, fresh: a.fresh })));
     }
     return null;
   }
@@ -1010,8 +1025,11 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     ranOp.current = true;
     setDialog(null);
     // Mixed answers send no request for the skipped sources; they are reported as skipped all the same.
-    void runGroups(d, [...clashGroups(d.sources, d.clashes.map((c) => c.source), choices), ...d.rest],
+    const go = () => void runGroups(d, [...clashGroups(d.sources, d.clashes.map((c) => c.source), choices), ...d.rest],
       [...d.done, ...skippedItems(d.sources, choices)], [...d.versions]);
+    // Out of a volume the answer may come after the 2-minute memory ran out: asked again first (Task 8 fix round 1).
+    if (!d.volume) { go(); return; }
+    void readyToCopy(d.volume, d.sources, true).then((ok) => { if (ok) go(); else if (d.done.length) finishRun(d, d.done, d.versions); });
   }
 
   /** Cancel stops the run here; anything an earlier request already did is still reported. */
@@ -1074,7 +1092,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       case 'info': setDialog({ kind: 'info', side, entry: picked[0] }); return;
       case 'copyTo': setDialog({ kind: 'pick', op: 'copy', sources, start: panes[otherSide(side)].path }); return;
       case 'moveTo': setDialog({ kind: 'pick', op: 'move', sources, start: panes[otherSide(side)].path }); return;
-      case 'download': if (volume) void downloadFromVolume(picked[0]); else void download(downloadHref(picked, folderName)); return;
+      case 'download': if (volume) void downloadFromVolume(picked[0], src!.path); else void download(downloadHref(picked, folderName)); return;
       case 'addlib': void addToLibrary(picked); return;
       case 'createadf': setDialog({ kind: 'create', side }); return;
     }
@@ -1146,7 +1164,10 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    * page saved as the file. One file is at most an HD disk's 1.76 MB and a zip at most the 4 MB cap, so memory is fine.
    */
   async function download(href: string) {
-    setBusy('Preparing the download…');
+    // A finished Download out of a volume lands here from its watcher, maybe while another operation runs: that one
+    // keeps the lock (and its label), and this download neither takes nor clears it (Task 8 fix round 1).
+    const mine = busyNow.current === null;
+    if (mine) setBusy('Preparing the download…');
     try {
       const r = await fetchDownload(href);
       if (!r.ok) { toast.error('words' in r ? r.words : wordsFor(r.code, r.detail)); return; }
@@ -1158,7 +1179,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       // The click has handed the bytes to the browser's download; the URL is not needed after this task.
       setTimeout(() => URL.revokeObjectURL(url), 0);
     } finally {
-      setBusy(null);
+      if (mine) setBusy(null);
     }
   }
 
@@ -1167,7 +1188,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    * board has fetched it, the STASH: download of where it arrived. The copy stays in STASH:, like any other (§4.5). A
    * failure is the status row's summary, which names the reason.
    */
-  async function downloadFromVolume(e: FsEntry) {
+  async function downloadFromVolume(e: FsEntry, from: string) {
+    if (!(await readyToCopy({ from, drawers: [] }, [e.path], false))) return;
     const r = await post({ op: 'copy', sources: [e.path], dest: 'STASH:', onClash: 'keep-both' }, `Copying ${e.name} to STASH:…`);
     if (r.kind !== 'done') return;
     const f = r.items[0];
