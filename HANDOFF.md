@@ -1480,8 +1480,11 @@ separately.
 
 **Current order (re-checked 2026-10-29).** The redesign roadmap (Phases A-C) is DONE (2026-10-23..27); library
 sharing shipped 2026-10-28; **Files SHIPPED 2026-10-29** (merge ef711fb, §4-files below). Open, in order:
-(1) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there; the
-tray's "Already in the library" wording (below).
+(1) **Remote volumes on NET:** (operator, 2026-10-29: web first, this next) -- browse the Amiga's own volumes as
+`NET:<board>/Work:...` like ASL's Volumes list. Research done: extend Transfer (new verbs VOLS/DIR/GET, `READY 3` gate,
+opt-in browse setting in Transfer, read-only first), a firmware request queue beside xfer, a server driver; ~2-5 s per
+folder. Phase 1 list + copy from the Amiga; phase 2 writes. Needs a spec (brainstorm first).
+(1b) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there.
 (2) **Sharing follow-ups:** A500 bench of the first-write rule; Send to Amiga from a remote disk end to end; the one-off
 local remote-mount 404; OMV back to `latest` after the next web-* release; the sharing deferred minors.
 (3) **Web app, smaller:** "Put on a disk" from From the Amiga; .lzh dropped onto a disk in Browse; documentation for
@@ -1524,6 +1527,18 @@ STASH: files in old From-the-Amiga lists. Roll forward instead.
 - **Deferred minors** (by increment, in the merged ledgers' summary in the 2026-10-29 session's final message): kept
 for polish, none user-blocking; the largest: Skip-only toast is a green success; move onto itself toasts "Moved";
 the '/' key relies on handler order; one extra DB round trip per /files load; 24 px pane "?" at 640-1023 px.
+**§4-files-2. FILES 2 SHIPPED -- 2026-10-30 (merge 1c93f5e).** Spec docs/superpowers/specs/2026-10-29-files-2-design.md,
+plan docs/superpowers/plans/2026-10-29-files-2.md. Directory Opus layout (source pane = dark title bar, destination =
+other pane, a 1 px line between, one 6x3 button grid under both panes with a device column STASH:/LIBRARY:/NET:; drop
+zones compact one-line strips from lg); LIBRARY: lists collections as folders first (Library order) then uncategorized
+titles; filing by Move/Copy/drag; Makedir/Rename/Delete collections in Files; Create ADF... in STASH:/LIBRARY: (not
+NET:); the Library tray says Added for every disk (no "already in the library"). **Collection names unique per org,
+ignoring case (operator), migration 0052 applied to production 2026-10-30** (renames duplicates to "Name (2)" first, so
+self-hosted servers migrate too). Rulings worth knowing: Files skips a title already in the target collection (the
+Library's multi-select Move removes it from its source instead); no Undo for filing or collection delete; the title
+menu's History link and HFE "Open it" keep the unfiled LIBRARY:/<title>/<disk> form (works). README screenshots of
+Files, Adding disks and Settings need regenerating (`PORT=3100 pnpm screenshots`, live DB). Remaining master flakes:
+library-table "a row carries the card controls", help "Enter opens the ?".
 **Parked/deferred by the operator:** PaulaNET compression (LZSA2, pre-encode N+1); proof of possession at ingest.
 Entries below marked SHIPPED/FIXED/FOLDED are kept for their history only.
 
