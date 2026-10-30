@@ -372,6 +372,15 @@ describe('Files help (increment 4)', () => {
       'one new version', 'Undo', 'Eject to edit', 'Protect', 'Info', 'filter box', 'Show .info', 'F5', 'F6', 'F7', 'F2', '/ filters',
       'Space', 'Backspace', 'Tab', 'Left', 'Right', 'Copy to…', 'Move to…', 'Settings › Account › Files']) expect(b).toContain(w);
   });
+  it('files names the source and destination, the device column, filing into collections and Create ADF (Files 2 §6)', () => {
+    const b = bodyText('files').replace(/\s+/g, ' ');
+    for (const w of ['source', 'dark title bar', 'device column', 'collections as folders', 'Move a title onto a collection',
+      'Copy files it in both', 'Makedir on LIBRARY: makes a collection', 'Create ADF…', 'STASH: join the library']) expect(b).toContain(w);
+    expect(b).not.toMatch(/→|←|middle column/);
+  });
+  it('library says a disk the library already had reads Added', () => {
+    expect(bodyText('library').replace(/\s+/g, ' ')).toContain('one it already had reads Added too');
+  });
   it('stash-net names the limits, archives, Add to library, the marks, sending by copy and the key digits', () => {
     const b = HELP_TOPICS['stash-net'].short + bodyText('stash-net').replace(/\s+/g, ' ');
     for (const w of ['30 days', '500 files', '256 MB', '20 MB', '4 MB', '32 files', '16 MB', 'read-only', 'Add to library',
