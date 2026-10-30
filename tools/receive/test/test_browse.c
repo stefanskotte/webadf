@@ -264,6 +264,89 @@ static void requests_go_before_queued_files(void) {
           "the listing first, then the owner's file");
 }
 
+static void file_line(char *dst, const char *id, const char *data, unsigned long len, const char *path) {
+    unsigned long crc = rx_crc32_update(0, (const unsigned char *)data, len);
+    sprintf(dst, "FILE %s %lu %lx 0 %u:%s 0:\n", id, len, crc, (unsigned)strlen(path), path);
+}
+static void a_file_is_got_then_goes_up_at_the_front(void) {
+    setup(1); F.days = 1; F.mins = 2; F.ticks = 3;
+    ff_put(&F, "Work:a.txt", "hello", 5, 0x40, "note");
+    ff_put(&F, "DH0:One", "1", 1, 0, ""); ff_put(&F, "DH0:Two", "2", 1, 0, "");
+    CHECK_EQ_INT(rx_up_add(&Q, "DH0:One", "One"), 1); CHECK_EQ_INT(rx_up_add(&Q, "DH0:Two", "Two"), 2);
+    hello3(); drain(); CHECK(strncmp(ob, "READY 3 1\nPUT 1 1 ", 18) == 0, ob);
+    feed("GET g1 10:Work:a.txt\n"); drain();
+    CHECK(strstr(ob, "GOT") == NULL, "the GET waits behind the file going up");
+    feed("TAKE 1 0 1\n"); drain(); feed("DONE 1 3:One\n"); drain();
+    CHECK(strcmp(ob, "GOT g1 3\nPUT 3 5 1.2.3 40 5:a.txt 4:note\n") == 0, ob);
+    CHECK_EQ_INT(Q.n, 1); CHECK_EQ_INT(Q.q[0].tag, 2);
+    { int i = last_req(); CHECK(i >= 0 && strcmp(ev_code[i], "get") == 0 && strcmp(ev_path[i], "Work:a.txt") == 0 && !ev_has_text[i], "the owner sees it"); }
+}
+static void get_refusals(void) {
+    static char b[RX_UP_BLOCK + 1];
+    setup(1); ff_add(&F, "Work:D", 1); ff_put(&F, "Work:locked", "x", 1, 0x08, ""); ff_put(&F, "Work:big", "x", 1, 0, "");
+    hello3(); drain();
+    feed("GET g2 9:Work:Nope\n"); drain(); CHECK(strcmp(ob, "ERR g2 notfound 13:dos error 205\n") == 0, ob);
+    feed("GET g3 6:Work:D\n"); drain(); CHECK(strcmp(ob, "ERR g3 isdir 13:dos error 212\n") == 0, ob);
+    feed("GET g4 11:Work:locked\n"); drain(); CHECK(strcmp(ob, "ERR g4 denied 13:dos error 224\n") == 0, ob);
+    F.stat_size = RX_FILE_MAX + 1;
+    feed("GET g5 8:Work:big\n"); drain(); CHECK(strcmp(ob, "ERR g5 toolarge 29:file too large (4 MB at most)\n") == 0, ob);
+    F.stat_size = 0;
+    feed("GET g6 4:Work\n"); drain(); CHECK(strcmp(ob, "ERR g6 bad 11:bad request\n") == 0, "no volume");
+    CHECK_EQ_INT(Q.n, 0);
+    /* a full queue: the GET is answered busy before any of the 64 starts */
+    setup(1); ff_put(&F, "Work:a", "x", 1, 0, ""); ff_put(&F, "DH0:f", "x", 1, 0, ""); hello3(); drain();
+    feed("GET g7 6:Work:a\n");
+    { int i; for (i = 0; i < RX_UP_MAX; i++) rx_up_add(&Q, "DH0:f", "f"); }
+    drain(); CHECK(strncmp(ob, "ERR g7 busy 22:too many files waiting\nPUT ", 42) == 0, ob);
+    /* the file went before its turn came: ERR io after the GOT */
+    setup(1); ff_put(&F, "Work:gone.txt", "x", 1, 0, ""); hello3(); drain();
+    feed("GET g8 13:Work:gone.txt\n");
+    { int k = rx_take_output(&S, b, sizeof b - 1); b[k > 0 ? k : 0] = 0; CHECK(strcmp(b, "GOT g8 1\n") == 0, b); }
+    ff_remove(&F, "Work:gone.txt");
+    drain(); CHECK(strcmp(ob, "ERR g8 io 20:cannot read the file\n") == 0, ob);
+    setup(0); hello3(); drain();
+    feed("GET g9 6:Work:a\n"); drain(); CHECK(strcmp(ob, "ERR g9 off 27:browsing is off in Transfer\n") == 0, ob);
+}
+static void a_request_right_after_a_files_last_byte(void) {
+    char l[300];
+    setup(1); vol("Work", "DH0:", 1, 1, 1); hello3(); drain();
+    file_line(l, "f1", "hello", 5, "In.txt"); feed(l); drain(); CHECK(strcmp(ob, "GO f1\n") == 0, ob);
+    feed("helloVOLS v1\n"); drain();
+    CHECK(strcmp(ob, "OK f1 6:In.txt\nVOL v1 4:Work 4:DH0: 1 1 1.2.3\nDONE v1 1\n") == 0, ob);
+}
+static void a_dropped_connection_forgets_get_files_not_yet_gone_up(void) {
+    static char b[RX_UP_BLOCK + 1];
+    setup(1); ff_put(&F, "Work:a.txt", "hello", 5, 0, "");
+    ff_put(&F, "DH0:One", "1", 1, 0, ""); ff_put(&F, "DH0:Two", "2", 1, 0, "");
+    rx_up_add(&Q, "DH0:One", "One"); rx_up_add(&Q, "DH0:Two", "Two");
+    hello3(); drain();
+    feed("GET g1 10:Work:a.txt\n");
+    feed("TAKE 1 0 1\n"); drain(); feed("DONE 1 3:One\n");
+    { int k = rx_take_output(&S, b, sizeof b - 1); b[k > 0 ? k : 0] = 0; CHECK(strcmp(b, "GOT g1 3\n") == 0, b); }
+    CHECK_EQ_INT(Q.n, 2); CHECK(strcmp(Q.q[0].rid, "g1") == 0, "the GET's file is first");
+    rx_disconnected(&S);
+    CHECK_EQ_INT(Q.n, 1); CHECK_EQ_INT(Q.q[0].tag, 2);
+    { int i, seen = 0; for (i = 0; i < n_ev; i++) if (ev[i].kind == RX_EV_UP_FAILED && ev[i].tag == 3 && strcmp(ev_text[i], "connection lost") == 0) seen = 1;
+      CHECK(seen, "the owner is told"); }
+}
+static void the_owners_words(void) {
+    rx_event e; char w[80];
+    memset(&e, 0, sizeof e); e.kind = RX_EV_REQ;
+    e.code = "vols"; e.path = ""; rx_req_words(&e, w, sizeof w); CHECK(strcmp(w, "listed volumes") == 0, w);
+    e.code = "dir"; e.path = "Work:Programs"; rx_req_words(&e, w, sizeof w); CHECK(strcmp(w, "listed Work:Programs") == 0, w);
+    e.bytes = 1; e.path = "Work:Big"; rx_req_words(&e, w, sizeof w); CHECK(strcmp(w, "listed Work:Big (first 1000)") == 0, w);
+    e.bytes = 0; e.code = "get"; e.path = "Work:a.lha"; rx_req_words(&e, w, sizeof w); CHECK(strcmp(w, "copied Work:a.lha") == 0, w);
+    e.code = "dir"; e.path = "Work:x"; e.text = "dos error 205"; rx_req_words(&e, w, sizeof w);
+    CHECK(strcmp(w, "could not list Work:x: dos error 205") == 0, w);
+    e.code = "vols"; e.path = ""; e.text = "cannot read the volume list"; rx_req_words(&e, w, sizeof w);
+    CHECK(strcmp(w, "could not list volumes: cannot read the volume list") == 0, w);
+    e.code = "get"; e.path = "Work:a"; e.text = "x"; rx_req_words(&e, w, sizeof w); CHECK(strcmp(w, "could not copy Work:a: x") == 0, w);
+    e.code = "dir"; e.text = NULL;
+    e.path = "Work:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    rx_req_words(&e, w, sizeof w); CHECK(strlen(w) == 7 + 40 && strcmp(w + strlen(w) - 3, "...") == 0, w);
+    rx_req_words(&e, w, 10); CHECK_EQ_INT(strlen(w), 9);
+}
+
 int main(void) {
     RUN(a_protocol_3_hello_answers_ready_3_with_the_switch); RUN(another_boards_key_hears_browsing_off);
     RUN(requests_while_off_are_refused_off); RUN(malformed_requests_are_bad);
@@ -276,5 +359,7 @@ int main(void) {
     RUN(latin1_names_go_out_byte_for_byte); RUN(comments_lose_control_bytes); RUN(drawer_errors_carry_amigados_words);
     RUN(a_drawer_that_fails_mid_listing_ends_with_err_and_lets_go); RUN(malformed_and_off_dir_requests);
     RUN(a_lost_connection_mid_listing_releases_the_drawer); RUN(requests_go_before_queued_files);
+    RUN(a_file_is_got_then_goes_up_at_the_front); RUN(get_refusals); RUN(a_request_right_after_a_files_last_byte);
+    RUN(a_dropped_connection_forgets_get_files_not_yet_gone_up); RUN(the_owners_words);
     return REPORT();
 }

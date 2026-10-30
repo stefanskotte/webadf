@@ -99,7 +99,10 @@ typedef void (*rx_event_fn)(void *uctx, const rx_event *ev);
 
 typedef struct rx_item { char id[RX_ID_MAX + 1]; unsigned long size; char path[RX_PATH_MAX + 1]; } rx_item;
 
-typedef struct rx_up_item { unsigned tag; char local[RX_LOCAL_MAX + 1]; char name[RX_PATH_MAX + 1]; } rx_up_item;
+typedef struct rx_up_item {
+    unsigned tag; char local[RX_LOCAL_MAX + 1]; char name[RX_PATH_MAX + 1];
+    char rid[RX_ID_MAX + 1];   /* a GET's request id (spec 2026-10-30 §2.2), "" for the owner's own files */
+} rx_up_item;
 /* The files waiting to go up, and the trusted board key: the front end's, outliving every connection. */
 typedef struct rx_upq {
     rx_up_item q[RX_UP_MAX]; unsigned n, next_tag;
@@ -153,6 +156,8 @@ int rx_busy(const rx_session *s);      /* 1 while a file is being received */
 /* Protocol 2 (spec 2026-10-18). */
 void rx_upq_init(rx_upq *q, const char *trusted);              /* trusted: ENVARC:webadf/BoardKey, or "" */
 unsigned rx_up_add(rx_upq *q, const char *local, const char *name);  /* tag, or 0: full, or a bad name */
+/* A GET's file (spec 2026-10-30 §2.2): first in the queue; rid ties its PUT to the request. Tag, or 0. */
+unsigned rx_up_add_front(rx_upq *q, const char *local, const char *name, const char *rid);
 int rx_upq_remove(rx_upq *q, unsigned tag);                    /* 1 removed */
 typedef void (*rx_added_fn)(void *u, const rx_up_item *it);
 /* A file, or a drawer walked (64 files at most, .info files skipped, sub-paths kept); files added, or -1. */
@@ -168,5 +173,8 @@ int rx_browse_on(const rx_session *s);    /* 1: requests are answered (switch on
 int rx_hello_stale(const rx_session *s);
 /* The protocol code for an AmigaDOS error (plan ruling T3); want_dir: the request wanted a drawer (DIR), not a file. */
 const char *rx_err_code(long err, int want_dir);
+/* An RX_EV_REQ in the owner's words (spec §2.3): "listed volumes", "listed Work:Programs", "copied Work:a.lha",
+   "could not list Work:x: <why>"; a path over 40 bytes ends "...". Cut to cap. */
+void rx_req_words(const rx_event *e, char *out, unsigned cap);
 
 #endif

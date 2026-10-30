@@ -247,6 +247,43 @@ static void put_ent(rx_session *s, const rx_dent *e) {
     puts_(s, " "); put_hex(s, e->prot); puts_(s, " "); put_date(s, e->days, e->mins, e->ticks);
     puts_(s, " "); put_lenstr(s, e->name); puts_(s, " "); put_lenstr(s, cm); puts_(s, "\n");
 }
+/* GET (spec §2.2): checked now, then GOT and the file first in the up-queue; it goes up by protocol 2 as soon as
+   nothing else moves. */
+static void get_start(rx_session *s) {
+    rx_finfo info; int is_dir = 0; long e; char name[RX_PART_MAX + 1]; unsigned tag;
+    memset(&info, 0, sizeof info);
+    e = s->fs->stat(s->fs->ctx, s->req_path, &info, &is_dir);
+    if (e) { req_fail(s, e, 0); return; }
+    if (is_dir) { req_fail(s, RX_DOS_WRONG_TYPE, 0); return; }
+    if (info.prot & 8UL) { req_fail(s, RX_DOS_READ_PROTECTED, 0); return; }   /* FIBF_READ set: not readable */
+    if (info.size > RX_FILE_MAX) { req_fail_text(s, "toolarge", "file too large (4 MB at most)"); return; }
+    rx_base_name(s->req_path, name);
+    tag = rx_up_add_front(s->upq, s->req_path, name, s->req_id);
+    if (!tag) {
+        if (s->upq->n >= RX_UP_MAX) req_fail_text(s, "busy", "too many files waiting");
+        else req_fail_text(s, "io", "cannot send that name");   /* plan ruling T7 */
+        return;
+    }
+    puts_(s, "GOT "); puts_(s, s->req_id); puts_(s, " "); put_dec(s, tag); puts_(s, "\n");
+    emit_req(s, RX_REQ_GET, s->req_id, s->req_path, 0, 0, 0);
+    req_end(s);
+}
+static void cat(char *out, unsigned cap, const char *str) {
+    size_t n = strlen(out);
+    while (*str && n + 1 < cap) out[n++] = *str++;
+    out[n] = 0;
+}
+void rx_req_words(const rx_event *e, char *out, unsigned cap) {
+    int get = strcmp(e->code, "get") == 0;
+    char p[44];
+    if (!cap) return;
+    out[0] = 0;
+    if (strcmp(e->code, "vols") == 0) strcpy(p, "volumes");
+    else if (strlen(e->path) > 40) { memcpy(p, e->path, 37); strcpy(p + 37, "..."); }
+    else strcpy(p, e->path);
+    if (e->text) { cat(out, cap, get ? "could not copy " : "could not list "); cat(out, cap, p); cat(out, cap, ": "); cat(out, cap, e->text); }
+    else { cat(out, cap, get ? "copied " : "listed "); cat(out, cap, p); if (e->bytes) cat(out, cap, " (first 1000)"); }
+}
 static void req_start(rx_session *s) {
     s->req_kind = s->wait_kind; strcpy(s->req_id, s->wait_id); strcpy(s->req_path, s->wait_path);
     s->wait_kind = RX_REQ_NONE;
@@ -261,6 +298,7 @@ static void req_start(rx_session *s) {
         if (e) { req_fail(s, e, 1); return; }
         s->req_open = 1;
     }
+    else get_start(s);
 }
 /* The answer goes out a line at a time, only while the buffer has room for one (spec §2.2 Long drawers): the rest
    waits for the next pass, so memory stays flat however long the answer. */
@@ -324,16 +362,21 @@ void rx_upq_init(rx_upq *q, const char *trusted) {
     memset(q, 0, sizeof *q);
     if (trusted && !hex_key(trusted, (unsigned)strlen(trusted), q->trusted)) q->trusted[0] = 0;
 }
-unsigned rx_up_add(rx_upq *q, const char *local, const char *name) {
+static unsigned up_add_at(rx_upq *q, unsigned at, const char *local, const char *name, const char *rid) {
     rx_up_item *it;
     if (q->n >= RX_UP_MAX || !local[0] || strlen(local) > RX_LOCAL_MAX || !rx_path_ok(name)) return 0;
-    it = &q->q[q->n++];
+    memmove(&q->q[at + 1], &q->q[at], (q->n - at) * sizeof q->q[0]);
+    q->n++;
+    it = &q->q[at];
     if (++q->next_tag > 999999999U) q->next_tag = 1;   /* the board reads 1-9 digits */
     it->tag = q->next_tag;
     strcpy(it->local, local);
     strcpy(it->name, name);
+    strcpy(it->rid, rid);
     return it->tag;
 }
+unsigned rx_up_add(rx_upq *q, const char *local, const char *name) { return up_add_at(q, q->n, local, name, ""); }
+unsigned rx_up_add_front(rx_upq *q, const char *local, const char *name, const char *rid) { return up_add_at(q, 0, local, name, rid); }
 int rx_upq_remove(rx_upq *q, unsigned tag) {
     unsigned i;
     for (i = 0; i < q->n; i++) if (q->q[i].tag == tag) {
@@ -420,11 +463,13 @@ static void up_put(rx_session *s) {
         rx_upq_remove(s->upq, it.tag);
         memset(&s->up_info, 0, sizeof s->up_info);
         if (s->fs->open_r(s->fs->ctx, it.local, &s->up_info) != 0) {
+            if (it.rid[0]) req_err(s, it.rid, "io", "cannot read the file");
             emit_up(s, RX_EV_UP_FAILED, &it, 0, 0, 0, "cannot read the file", "local");
             continue;
         }
         if (s->up_info.size > RX_FILE_MAX) {
             s->fs->close_r(s->fs->ctx);
+            if (it.rid[0]) req_err(s, it.rid, "toolarge", "file too large (4 MB at most)");
             emit_up(s, RX_EV_UP_FAILED, &it, 0, s->up_info.size, 0, "file too large (4 MB at most)", "local");
             continue;
         }
@@ -668,6 +713,7 @@ static void on_line(rx_session *s, const char *line, unsigned len) {
     else if (is(t, n, "NO")) on_no(s, &c);
     else if (is(t, n, "VOLS")) on_request(s, &c, RX_REQ_VOLS);
     else if (is(t, n, "DIR")) on_request(s, &c, RX_REQ_DIR);
+    else if (is(t, n, "GET")) on_request(s, &c, RX_REQ_GET);
     /* anything else: ignored, for newer boards and stray clients */
 }
 
@@ -718,6 +764,14 @@ void rx_disconnected(rx_session *s) {
     if (s->up_phase != RX_UP_IDLE) up_finish(s, RX_EV_UP_FAILED, s->up_cancel ? "cancelled" : "connection lost", "local", 0);
     if (s->req_kind != RX_REQ_NONE) { emit_req(s, s->req_kind, s->req_id, s->req_path, s->req_count, 0, "connection lost"); req_end(s); }
     s->wait_kind = RX_REQ_NONE; s->hello_browse = 0;
+    if (s->upq) {   /* a GET's file not yet gone up: after a reconnect the board no longer knows its tag (ruling T4) */
+        unsigned i = s->upq->n;
+        while (i-- > 0) if (s->upq->q[i].rid[0]) {
+            rx_up_item it = s->upq->q[i];
+            rx_upq_remove(s->upq, it.tag);
+            emit_up(s, RX_EV_UP_FAILED, &it, 0, 0, 0, "connection lost", "local");
+        }
+    }
     s->up_closing = 0; s->proto_err = 0;
     s->peer_v = 0; s->trust = RX_TRUST_NONE;
     s->line_n = 0; s->list_expect = 0; s->out_n = 0;
