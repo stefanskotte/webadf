@@ -48,6 +48,7 @@ not running wait on the server for 24 hours.
 
 In a Shell:
   Transfer RECEIVE [TO <folder>] [SAVE] [GUI] [TRUST] [BROWSE]
+                   [WRITE]
   Transfer SEND <files> [GUI] [TRUST]
   Transfer GUI
 RECEIVE is the default: plain Transfer receives too. TO uses a
@@ -72,8 +73,17 @@ from a Shell type
   Delete ENVARC:webadf/Browse ENV:webadf/Browse
 and start Transfer again without BROWSE.
 
+Writing (board firmware 1.23 or newer): also tick Let the web
+app change my disks, or use WRITE (it switches browsing on too),
+and Files can copy onto your disks, make drawers, rename, delete,
+protect and comment there. Nothing is forced: a write-protected
+or full disk, or a protected or open file, is reported, never
+asked about on the Amiga. WRITE SAVE keeps it on; unticking
+either box switches it off.
+
 Nothing is overwritten: a second Foo.lha arrives as Foo_2.lha,
-and nothing is written outside the folder. While Transfer runs,
+and nothing is written outside the folder unless writing is on.
+While Transfer runs,
 it listens on TCP port 6800, and any computer on your network
 can drop a file into the folder -- but files go out only to
 the trusted board.

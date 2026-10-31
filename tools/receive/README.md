@@ -2,7 +2,7 @@
 
 The Amiga program that moves files between webadf and a folder you choose, through the board: it saves files sent
 from the web app (receive) and sends files up to it (send); with browsing switched on, the web
-app can also read your disks (read-only). Until 2.1 it was called Receive; the sources stay in
+app can also read your disks, and with writing switched on too, change them. Until 2.1 it was called Receive; the sources stay in
 `tools/receive/`, and the settings files keep their names (`ReceiveDir`, `BoardKey`) so existing settings carry over. Spec:
 `docs/superpowers/specs/2026-10-16-paulanet-phase4-send-to-amiga-design.md` (protocol §2, the program §5).
 
@@ -13,15 +13,17 @@ buffers, the 13 KB session and an 8 KB stack (the deepest Shell path measured 3,
 requester); the window adds its 68 KB list and a 32 KB stack. A 512 KB Amiga is not enough, and not because of Transfer:
 with fast memory hidden (`NoFastMem`), `AddNetInterface` alone left 110 KB of chip memory, and once Transfer started the
 TCP/IP stack had too little left to send a 1000-entry listing. Transfer waits out ENOBUFS (out of network buffers)
-instead of dropping the connection.
+instead of dropping the connection. Transfer 2.5 adds 6.7 KB of code (49,396 B) and 548 B of fixed buffers (BSS
+24,340 B) to 2.4's, measured from the hunks; the Shell stack stays 8 KB (a drawer delete keeps its place in one path,
+with no recursion).
 
 ## Using it
 
 - **From Workbench:** double-click it (from a Shell: `Transfer GUI`). The window, titled *WebFloppy - Receive & Send*,
   shows the folder (**Choose…** opens a requester; **Save** stores it), the status, and the queue: waiting, receiving
   NN %, done, or failed with the reason. Close the window to stop; files still waiting stay queued on the server.
-- **From a Shell:** `Transfer [RECEIVE] [TO <folder>] [SAVE] [GUI] [SEND <files>] [TRUST] [BROWSE]` (template
-  `TO/K,SAVE/S,GUI/S,SEND/M,TRUST/S,RECEIVE/S,BROWSE/S`)
+- **From a Shell:** `Transfer [RECEIVE] [TO <folder>] [SAVE] [GUI] [SEND <files>] [TRUST] [BROWSE] [WRITE]` (template
+  `TO/K,SAVE/S,GUI/S,SEND/M,TRUST/S,RECEIVE/S,BROWSE/S,WRITE/S`)
   - `Transfer RECEIVE` receives; so does a plain `Transfer` (RECEIVE is the default), using the saved folder;
   - `Transfer SEND <files>` sends; `RECEIVE` and `SEND` together is refused with `Transfer: RECEIVE or SEND, not both`
     and return code 10;
@@ -47,9 +49,23 @@ instead of dropping the connection.
   a GET's file not yet sent: the board hears `ERR <rid> off`.
   Changing it closes the board's connection when idle, so the board reconnects and learns it. Needs board firmware
   1.22 or newer.
+- **Writing from the web app (protocol 4, spec 2026-10-31 §2):** with **Let the web app change my disks** also ticked
+  (it is greyed while browsing is off), or `Transfer WRITE` (which switches browsing on too), the web app's Files can
+  copy files onto any mounted volume (the boot volume included), and make drawers, rename and move within a volume,
+  delete (a drawer with its contents), set protection bits and comments. The board sends `FILE` with an absolute path
+  (`Work:Tools/x`) and `keep`, `replace` or `skip` for a name that exists (`replace` deletes the old file only after the
+  new one's CRC matched; one that cannot be deleted stays, and the copy fails), and `MKDIR`, `RENAME`, `DELETE`,
+  `PROTECT` and `NOTE`. Nothing is forced: a write-protected or full disk, a file protected from deletion or in use is
+  reported with AmigaDOS's words, never with a requester on the Amiga. A drawer delete stops at the first refusal and
+  says how many entries it removed. Each change is one Shell line or the status line: "Web: deleted Work:old (37)".
+  The switch is the file `ENVARC:webadf/Write` (`1`/`0`, copied to `ENV:`), stored at once by the checkbox; `WRITE`
+  is for one run, `WRITE SAVE` stores it (and browsing). Unticking browsing unticks writing. Off is the default.
+  Changing it closes the board's connection when idle, so the board reconnects and learns it. Needs board firmware
+  1.23 or newer.
 - **The folder setting** is the file `ENVARC:webadf/ReceiveDir`, copied to `ENV:webadf/ReceiveDir`. The default is
   `RAM:`.
-- **Nothing is overwritten:** a second `Foo.lha` arrives as `Foo_2.lha`. Nothing is written outside the folder.
+- **Nothing is overwritten:** a second `Foo.lha` arrives as `Foo_2.lha`. Nothing is written outside the folder,
+  unless writing is switched on (above).
 
 While `Transfer` runs, it listens on TCP port 6800 for the board.
 
@@ -69,7 +85,7 @@ While `Transfer` runs, it listens on TCP port 6800 for the board.
 pnpm receive:test                                # host tests of the core
 pnpm vitest run tools/receive/receive.int.test.ts  # the POSIX build against the fake board
 pnpm receive:build /tmp/Transfer                 # Docker cross-build; fails unless it matches receive.sha256
-pnpm receive:uae 204|31|32 [shell|gui|space|ram|send|browse]  # FS-UAE on Kickstart 2.04 / 3.1 (A1200) / 3.2 (A500)
+pnpm receive:uae 204|31|32 [shell|gui|space|ram|send|browse|write]  # FS-UAE on Kickstart 2.04 / 3.1 (A1200) / 3.2 (A500)
 ```
 
 - **The build** uses the amiga-gcc image pinned by digest in `build.sh`, and it is deterministic. After changing the

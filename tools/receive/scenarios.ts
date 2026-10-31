@@ -82,6 +82,16 @@ export const SCENARIOS: Scenario[] = [
         const a = await b.request('VOLS o1');
         return a.join('|') === 'ERR o1 off 27:browsing is off in Transfer' ? null : `got ${JSON.stringify(a)}`;
       } finally { await b.close(); } } },
+  // Protocol 4, both switches off (the default; spec 2026-10-31 §2.4): READY 4 0 0, and a write is refused readonly.
+  { name: 'write-off', run: async (p, _d, h) => {
+      const b = await connect(p, h, { v: 4 });
+      try {
+        if (b.browse || b.writable) return `READY 4 ${b.browse ? 1 : 0} ${b.writable ? 1 : 0} with both switches off`;
+        const a = await b.request('MKDIR w1 9:Work:Nope');
+        if (a.join('|') !== 'ERR w1 readonly 26:writing is off in Transfer') return `got ${JSON.stringify(a)}`;
+        const o = await b.send({ id: 'w2', path: 'Work:x', data: hello, mode: 'keep' });
+        return !o.ok && o.code === 'readonly' ? null : `FILE: ${JSON.stringify(o)}`;
+      } finally { await b.close(); } } },
 ];
 
 export async function runScenarios(port: number, dir: string, opts: { host?: string; only?: string[]; uae?: boolean } = {}) {
