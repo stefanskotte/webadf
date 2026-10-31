@@ -214,7 +214,7 @@ function wordsFor(code: unknown, detail: unknown): string {
 /** When each listing was read in this tab: an arriving STASH: row's stall clock runs on it. The server's first has none. */
 const readAt = new WeakMap<Listing, number>();
 
-type Fetched = { listing: Listing } | { gone: true } | { pending: string; behind?: boolean } | { error: string; code?: unknown; detail?: unknown };
+type Fetched = { listing: Listing } | { gone: true } | { pending: string; alive?: boolean } | { error: string; code?: unknown; detail?: unknown };
 
 /**
  * `code`: the refusal's own code, for a caller that answers one differently (an archive that does not open); `detail`:
@@ -226,8 +226,8 @@ async function fetchListing(path: string, fresh = false): Promise<Fetched> {
   try {
     const res = await fetch(`/api/files/list?path=${encodeURIComponent(path)}${fresh ? '&fresh=1' : ''}`, { cache: 'no-store' });
     if (res.status === 202) {
-      const body = (await res.json().catch(() => null)) as { label?: unknown; behind?: unknown } | null;
-      return { pending: typeof body?.label === 'string' ? body.label : 'Reading from the Amiga…', behind: body?.behind === true };
+      const body = (await res.json().catch(() => null)) as { label?: unknown; alive?: unknown } | null;
+      return { pending: typeof body?.label === 'string' ? body.label : 'Reading from the Amiga…', alive: body?.alive === true };
     }
     if (res.ok) {
       const listing = (await res.json()) as Listing;

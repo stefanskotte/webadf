@@ -260,6 +260,32 @@ describe('the request store', () => {
     expect(await rowOf(ridOf(p))).toMatchObject({ status: 'failed', errorCode: 'timeout' });
   });
 
+  // A500 bench 2026-10-31: a 1000-entry drawer arrives in three pieces over ~36 s, and RAM: lists at ~15 entries a
+  // second: a listing's 60 s run from its last piece, not from when the board took it.
+  it('a listing whose pieces keep arriving does not time out; 60 s after its last piece it does', async () => {
+    const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:big', fresh: false }, t0);
+    const rid = ridOf(p);
+    await takeWaiting(getDb(), deviceId, t0);
+    const ents = (n: number) => Array.from({ length: n }, (_, i) => `ENT ${rid} d 0 0 9100.0.0 5:d${String(i).padStart(4, '0')} 0:`);
+    await answerPiece(getDb(), deviceId, rid, { piece: 0, lines: ents(400), last: false }, at(40));
+    await answerPiece(getDb(), deviceId, rid, { piece: 1, lines: ents(400), last: false }, at(80));
+    await expireStale(getDb(), at(139));
+    expect((await rowOf(rid)).status).toBe('sent');
+    await expireStale(getDb(), at(141));
+    expect(await rowOf(rid)).toMatchObject({ status: 'failed', errorCode: 'timeout' });
+  });
+
+  it('Refresh shares a listing whose pieces are arriving, however old; one silent 20 s is asked again', async () => {
+    const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:big2', fresh: false }, t0);
+    const rid = ridOf(p);
+    await takeWaiting(getDb(), deviceId, t0);
+    await answerPiece(getDb(), deviceId, rid, { piece: 0, lines: [`ENT ${rid} d 0 0 9100.0.0 1:a 0:`], last: false }, at(30));
+    const shared = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:big2', fresh: true }, at(45));
+    expect(shared.state === 'pending' && shared.row.id).toBe(rid);
+    const again = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:big2', fresh: true }, at(51));
+    expect(again.state === 'pending' && again.row.id).not.toBe(rid);
+  });
+
   it('a copy that stopped moving holds no listing back', async () => {
     const t = { dest: 'STASH:', rel: ['a.adf'], replace: false, library: null };
     const [g] = await addGets(getDb(), { orgId, deviceId, fetchId: 'fd', files: [{ amigaPath: 'Work:a.adf', target: t }] }, t0);

@@ -332,7 +332,7 @@ describe('NET: volumes', () => {
   });
 
   // A500 bench 2026-10-31: Transfer answers nothing while a copy's file moves; a listing asked for meanwhile says it
-  // waits for the copy, and the pane does not give up on it (Pending.behind).
+  // waits for the copy, and the pane does not give up on it (Pending.alive).
   it('a drawer asked for while a copy moves says it waits for the copy', async () => {
     const [g] = await addGets(getDb(), { orgId: 'o1', deviceId: 'b1', fetchId: 'fbench', files: [{ amigaPath: 'Work:Big/a.adf',
       target: { dest: 'STASH:', rel: ['a.adf'], replace: false, library: null } }] });
@@ -343,12 +343,27 @@ describe('NET: volumes', () => {
       try { await netDriver.list(ctx, P('NET:/b1/Work/Later')); } catch (e) { thrown = e; }
       expect(thrown).toBeInstanceOf(Pending);
       expect((thrown as InstanceType<typeof Pending>).label).toBe(`Reading Work:Later from ${NAME} once it has copied a.adf…`);
-      expect((thrown as InstanceType<typeof Pending>).behind).toBe(true);
+      expect((thrown as InstanceType<typeof Pending>).alive).toBe(true);
     } finally { await settleGet(getDb(), g, { ok: true }); }
     const p = await (async () => { try { await netDriver.list(ctx, P('NET:/b1/Work/Later')); } catch (e) { return e; } return null; })();
     expect(p).toBeInstanceOf(Pending);
-    expect((p as InstanceType<typeof Pending>).behind).toBe(false);
+    expect((p as InstanceType<typeof Pending>).alive).toBe(false);
     await getDb().delete(remoteRequests).where(and(eq(remoteRequests.deviceId, 'b1'), inArray(remoteRequests.amigaPath, ['Work:Later', 'Work:Big/a.adf'])));
+  });
+
+  // A500 bench 2026-10-31: a 1000-entry drawer takes ~36 s; while its pieces arrive the label counts them and the pane
+  // does not give up.
+  it('a drawer whose answer is arriving says how many entries so far', async () => {
+    try { await netDriver.list(ctx, P('NET:/b1/Work/Big')); } catch { /* pending */ }
+    const [row] = await takeWaiting(getDb(), 'b1');
+    const ents = Array.from({ length: 400 }, (_, i) => `ENT ${row.id} d 0 0 9100.0.0 5:d${String(i).padStart(4, '0')} 0:`);
+    expect(await answerPiece(getDb(), 'b1', row.id, { piece: 0, lines: ents, last: false })).toEqual({ ok: true });
+    let thrown: unknown = null;
+    try { await netDriver.list(ctx, P('NET:/b1/Work/Big')); } catch (e) { thrown = e; }
+    expect(thrown).toBeInstanceOf(Pending);
+    expect((thrown as InstanceType<typeof Pending>).label).toBe(`Reading Work:Big from ${NAME}… 400 entries so far`);
+    expect((thrown as InstanceType<typeof Pending>).alive).toBe(true);
+    await getDb().delete(remoteRequests).where(eq(remoteRequests.id, row.id));
   });
 
   it('browsing off: no request, only Queue, and the words why', async () => {

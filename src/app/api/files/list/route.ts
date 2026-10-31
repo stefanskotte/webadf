@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   let listing: Awaited<ReturnType<typeof driver.list>>;
   try { listing = await driver.list({ orgId, userId }, p, { fresh }); } catch (e) {
     // Asked and not answered yet: the pane shows the label and asks again (never cached: the answer is on its way).
-    if (e instanceof Pending) return Response.json({ pending: true, label: e.label, ...(e.behind ? { behind: true } : {}) }, { status: 202, headers: { 'cache-control': 'no-store' } });
+    if (e instanceof Pending) return Response.json({ pending: true, label: e.label, ...(e.alive ? { alive: true } : {}) }, { status: 202, headers: { 'cache-control': 'no-store' } });
     if (e instanceof Refused) return Response.json({ error: e.refusal.code, ...(e.refusal.detail ? { detail: e.refusal.detail } : {}) }, { status: e.status });
     throw e;
   }
