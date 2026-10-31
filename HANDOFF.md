@@ -1485,8 +1485,9 @@ sharing shipped 2026-10-28; **Files SHIPPED 2026-10-29** (merge ef711fb, §4-fil
 `reqAck`). Next, each merging on its own (spec §6): (a) Transfer 2.3 (protocol 3, FS-UAE), a plan first; (b) firmware
 1.22.0 TEST build (the request queue beside xfer), a plan first; (c) the A500 bench (spec §7); (d) release, driver disk
 with Transfer 2.3, README screenshots. **Phase 2 (writes)** -- spec docs/superpowers/specs/2026-10-31-net-volumes-writes-design.md:
-step 1 (server + web) DONE on branch feat/net-writes-web (§4-net-writes below; migration 0054 to apply first; inert until
-a board reports rxv=4&write=1); Transfer 2.5 and firmware 1.23 built in parallel; then the A500 bench (spec §5).
+SHIPPED 2026-10-31 -- server/web merged 5c440cfc (migration 0054 applied to production), Transfer 2.5 merged 2341529d (driver
+disk 4b1cc536, 01485ce4), firmware 1.23.0 merged 4af240e6 and RELEASED seq 129 / fw-1.23.0; A500 bench 7/7 passed
+(§4-net-writes). Open: three UI gaps the bench found (branch fix/net-writes-ui in progress, see §4-net-writes).
 (1b) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there. Backlog (operator 2026-10-30): clicking a pane's left edge goes up one level in that pane, as in Directory Opus; at a
 root it does nothing. Backlog (operator 2026-10-30): the disk strip's History button should read as a toggle (it opens and
 closes the History panel), e.g. with a caret.
@@ -1544,7 +1545,27 @@ Library's multi-select Move removes it from its source instead); no Undo for fil
 menu's History link and HFE "Open it" keep the unfiled LIBRARY:/<title>/<disk> form (works). README screenshots of
 Files, Adding disks and Settings need regenerating (`PORT=3100 pnpm screenshots`, live DB). Remaining master flakes:
 library-table "a row carries the card controls", help "Enter opens the ?".
-**§4-net-writes. NET: VOLUMES PHASE 2 (WRITES), SERVER/WEB STEP -- 2026-10-31 (branch feat/net-writes-web, unmerged).**
+**§4-net-writes. NET: VOLUMES PHASE 2 (WRITES) -- SHIPPED 2026-10-31.** Merges: server/web 5c440cfc (0054 applied to
+production before the push), Transfer 2.5 2341529d (pin ade31ae5, 55,160 B; plan 2026-10-31-transfer-2-5-writes.md),
+driver disk 4b1cc536 (01485ce4; 7b0c7ed5 PREVIOUS), firmware 1.23.0 4af240e6 (plan 2026-10-31-firmware-1-23-net-writes.md)
+RELEASED seq 129 (1.23.0+gb3df99de) / GitHub fw-1.23.0. Wire ruling N1 (firmware): a copy onto a volume reaches the board as
+`NEXT <id> <size> <crc> <prot> <len>:<dest> <len>:<comment> <keep|replace|skip>` from /api/device/send/queue (the spec's
+"xfer.next" had no such field). **A500 bench 2026-10-31, all 7 PASSED** (driven via PiKVM + the signed-in web app; board on
+1.23.0, Transfer 2.5 from SYS:Downloads/Transfer25): (1) protocol 4 with write on reaches the server; (2) STASH:Keymaps (7
+files) copied into Workbench:WebTest, every row delivered (Transfer checks the CRC); (3) Makedir, Rename f->f2, a move
+between drawers as one RENAME, Protect (d-bit off), a comment -- each seen in a fresh listing (Makedir also with `list` on the
+Amiga); (4) a 597-entry drawer deleted in 89 s, progress every 100; a drawer delete stopping at a d-bit-off file says
+"Removed 3, then stopped at d: Protected against deletion"; (5) a copy onto a write-protected floppy (a library disk mounted
+WP by the board) -> "The disk is write-protected", no requester; (6) replace of a file held open (`run copy CON:... RAM:x`)
+-> "In use on the Amiga", the old file stays, no .webadf-rx left (note: `run >file wait` does NOT hold the file -- AmigaDOS's
+own delete removes it -- and the big TDH0: partition let an open-for-write file be replaced); (7) unticking writing in the
+window reached the server in 9 s; the pane said "Writing is off in Transfer." with the write buttons grey, reading still worked.
+Seen on the bench, being fixed (branch fix/net-writes-ui): arriving rows are not shown in the destination pane during a copy
+(spec §4.1); a drawer delete's pending label lacks "removed N so far"; a dead Amiga->web upload (Transfer stopped) kept naming
+itself in listings' "once it has copied X" text. Bench side effects: Transfer's first positional argument is SEND (not the
+folder) -- `Transfer SYS:Downloads` uploaded all of SYS:Downloads to the operator's STASH:Downloads (about 30 files); a
+library disk (Workbench3.2 disk 10) is left in DF0; Workbench:WebTest (Keymaps with cdn/f2/d, e) is left on the A500.
+**Server/web step detail (was: branch feat/net-writes-web):**
 Spec docs/superpowers/specs/2026-10-31-net-volumes-writes-design.md, plan docs/superpowers/plans/2026-10-31-net-writes-web.md
 (rulings W1-W13 and the ledger there). **Migration 0054 (drizzle/0054_net_writes.sql) -- NOT yet applied to production:
 apply it BEFORE pushing master** (transfers.amiga_dest/on_clash/job_id/move_source, devices.write_on). A volume of a board
