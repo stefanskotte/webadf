@@ -16,6 +16,8 @@ export const QUEUE_FOLDER = 'Queue';
 // NET: volumes phase 2 (spec 2026-10-31): writing to the Amiga's own disks.
 export const WRITE_FW = '1.23.0';
 export const WRITE_PROTO = 4;
+/** Spec 2026-10-31 §9: Transfer 2.6 (protocol 5) deletes exactly one object (`DELETE … one`); a move that copies needs it. */
+export const MOVE_PROTO = 5;
 export const ALIVE_PIECE_MS = 30_000;        // a listing arriving in pieces is alive while one came this recently (§4.4)
 export const WRITE_KINDS = ['mkdir', 'rename', 'delete', 'protect', 'note'] as const;
 export type WriteKind = (typeof WRITE_KINDS)[number];

@@ -800,8 +800,17 @@ describe('GET /api/device/poll -- req (NET: volumes, spec 2026-10-30 §3)', () =
     // Transfer merely gone: what waits keeps waiting (W3).
     await GET(get('?since=1&xferAck=0&rx=u'));
     expect(failWritesWhenOff).toHaveBeenCalledTimes(2);
-    await GET(get('?since=1&xferAck=0&rx=c&rxv=5&browse=1&write=1'));
+    await GET(get('?since=1&xferAck=0&rx=c&rxv=6&browse=1&write=1'));
     expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), undefined);
+  });
+  // Spec 2026-10-31 §9: firmware 1.23.1 with Transfer 2.6 says rxv=5 (everything protocol 4 does, plus DELETE ... one).
+  it('records protocol 5 with its write flag', async () => {
+    readPollTick.mockResolvedValue(baseTick({ sendVersion: 1 }));
+    const { GET } = await import('./route');
+    failWritesWhenOff.mockClear();
+    await GET(get('?since=1&xferAck=0&rx=c&rxv=5&browse=1&write=1'));
+    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 5, browse: true, write: true });
+    expect(failWritesWhenOff).not.toHaveBeenCalled();
   });
 });
 

@@ -136,12 +136,13 @@ export async function GET(request: Request) {
       : 0;
   const rx = new URL(request.url).searchParams.get('rx');
   // rxv / browse (NET: volumes): Transfer's protocol and whether it answers requests, recorded with rx. write (phase 2,
-  // fw 1.23, spec 2026-10-31 §3): whether Transfer 2.5 lets the web app change its disks (READY 4 <b> <w>).
+  // fw 1.23, spec 2026-10-31 §3): whether Transfer 2.5 lets the web app change its disks (READY 4 <b> <w>). rxv=5
+  // (fw 1.23.1 + Transfer 2.6, §9) is protocol 4 plus DELETE … one.
   const rxv = new URL(request.url).searchParams.get('rxv');
   const browse = new URL(request.url).searchParams.get('browse');
   const write = new URL(request.url).searchParams.get('write');
   if (xferAck !== null && rx !== null && /^[cru-]$/.test(rx)) {
-    const cap = rxv === '2' || rxv === '3' || rxv === '4' ? { proto: Number(rxv), browse: browse === '1', write: write === '1' } : undefined;
+    const cap = rxv === '2' || rxv === '3' || rxv === '4' || rxv === '5' ? { proto: Number(rxv), browse: browse === '1', write: write === '1' } : undefined;
     await recordSendRx(getDb(), device.deviceId, rx as 'c' | 'r' | 'u' | '-', new Date(), cap);
     // Transfer is there but cannot write (switched off, or too old): what waits to be written fails `readonly` now
     // rather than hang (plan W3). Transfer merely gone (rx not c) leaves it waiting.

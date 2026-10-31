@@ -96,6 +96,9 @@ describe('refusalWords for writes to the Amiga', () => {
     expect(refusalWords('read_only', 'Transfer is not running on A500')).toBe('Transfer is not running on A500.');
     expect(refusalWords('conflict', 'List the drawer again and retry')).toBe('List the drawer again and retry.');
     expect(refusalWords('unsupported', 'Move within one volume')).toBe('Move within one volume.');
+    // Spec 2026-10-31 §9: a Move off a volume on Transfer 2.5, and what a move kept.
+    expect(refusalWords('unsupported', 'Move needs Transfer 2.6 — use Copy')).toBe('Move needs Transfer 2.6 — use Copy.');
+    expect(refusalWords('conflict', 'Kept STASH:/Pack: something new is in it')).toBe('Kept STASH:/Pack: something new is in it.');
     expect(refusalWords('unsupported', 'Rename a volume on the Amiga')).toBe('Rename a volume on the Amiga.');
   });
 });

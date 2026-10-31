@@ -10,6 +10,11 @@ const notRunning = (name: string) => `Transfer is not running on ${name}`;
 export const WRITE_OFF = 'Writing is off in Transfer';
 export const WRITE_OLD_TRANSFER = 'Transfer 2.5 or newer writes to the Amiga';
 export const WRITE_OLD_FIRMWARE = 'Board firmware 1.23.0 or newer writes to the Amiga';
+/** Spec 2026-10-31 §9: a Move that copies off a volume removes only what it copied, which needs Transfer 2.6 (protocol 5). */
+export const MOVE_OLD_TRANSFER = 'Move needs Transfer 2.6 — use Copy';
+/** What a move left in its source because something new is in it (spec 2026-10-31 §9). */
+export const keptWords = (label: string) => `Kept ${label}: something new is in it`;
+export const isKeptWords = (s: string) => /^Kept .+: something new is in it$/.test(s);
 
 export type BrowseInput = {
   online: boolean; firmware: string | null; rx: string | null; rxProto: number | null; browseOn: boolean; name: string; offlineWords: string;
@@ -72,6 +77,7 @@ export function writeErrorWords(code: string, text: string, board: string): stri
     case 'readonly': return WRITE_OFF;
     case 'exists': return 'Already exists';
     case 'xvol': return 'Rename works within one volume';
+    case 'notempty': return 'The drawer is not empty';
     default: return errorWords(code, text, board);
   }
 }

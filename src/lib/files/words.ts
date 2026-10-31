@@ -2,6 +2,7 @@
 import { isMountedReason } from '../mount-wording';
 import type { RefusalCode } from './types';
 import { isNetWords, NET_COPY_OUT, NET_DROP_TO_STASH, NET_MOVE_IN, NET_OPEN_VOLUME, NET_PICK_BOARD, NET_READ_ONLY } from './net-rules';
+import { isKeptWords } from '../remote-browse';
 import { ADDED_UNFILED, COLLECTION_EXISTS, SHELF_WORDS } from './shelf-rules';
 
 const REMOVE_FAILED = 'copied, but the original could not be removed';
@@ -13,7 +14,7 @@ export function refusalWords(code: RefusalCode, detail?: string): string {
   // A move whose copy landed but whose removal was refused: the code is the removal's.
   if (detail === REMOVE_FAILED) return `Copied, but the original could not be removed — ${refusalWords(code)}`;
   // Why a board's Amiga cannot be read or written now, and NET: volumes' own refusals: the sentence as it is.
-  if (detail && (isNetWords(detail) || detail === NET_DROP_TO_STASH)) return `${detail}.`;
+  if (detail && (isNetWords(detail) || detail === NET_DROP_TO_STASH || isKeptWords(detail))) return `${detail}.`;
   switch (code) {
     case 'disk_full': return detail ? `Not enough room on the disk — ${detail}` : 'Not enough room on the disk.';
     case 'read_only':

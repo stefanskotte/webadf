@@ -56,6 +56,7 @@ describe('writing', () => {
     expect(writeErrorWords('denied', 'x', 'A500')).toBe('Protected against deletion');
     expect(writeErrorWords('busy', 'object in use', 'A500')).toBe('In use on the Amiga');
     expect(writeErrorWords('readonly', '', 'A500')).toBe('Writing is off in Transfer');
+    expect(writeErrorWords('notempty', 'Directory not empty', 'A500')).toBe('The drawer is not empty');
     expect(writeErrorWords('exists', '', 'A500')).toBe('Already exists');
     expect(writeErrorWords('xvol', '', 'A500')).toBe('Rename works within one volume');
     expect(writeErrorWords('notfound', '', 'A500')).toBe('Object not found');
