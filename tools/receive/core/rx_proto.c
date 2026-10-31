@@ -897,7 +897,9 @@ static int abs_file_start(rx_session *s, const char *id, unsigned long size) {
     if (k < 0) { refuse(s, id, s->cur_path, "folder", "cannot read the volume list"); return -1; }
     if (!k) { refuse(s, id, s->cur_path, "folder", "no such volume"); return -1; }
     memset(&info, 0, sizeof info);
-    if (s->fs->stat(s->fs->ctx, s->cur_path, &info, &is_dir) == 0) {
+    k = (int)s->fs->stat(s->fs->ctx, s->cur_path, &info, &is_dir);
+    if (k == 0 || k == RX_DOS_IN_USE) {   /* in use (open for writing): it cannot be examined, but it exists */
+        if (k) is_dir = 0;
         if (s->cur_mode == RX_MODE_SKIP) {
             puts_(s, "SKIP "); puts_(s, id); puts_(s, "\n");
             emit(s, RX_EV_SKIP, id, s->cur_path, size, 0, 0);

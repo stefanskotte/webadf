@@ -161,6 +161,18 @@ static void skip_answers_skip_and_takes_no_bytes(void) {
     CHECK(holds("Work:Keep.txt", "old") && !has("Work:" RX_TMP_NAME), "untouched");
     { int k = last_ev(RX_EV_SKIP); CHECK(k >= 0 && strcmp(ev_id[k], "s") == 0 && strcmp(ev_path[k], "Work:Keep.txt") == 0, "the owner sees it"); }
 }
+/* FS-UAE 3.2: a file open for writing (an exclusive lock) cannot be locked to look at, yet it exists. */
+static void a_file_in_use_still_exists(void) {
+    char l[400]; int i;
+    setup(1, 1); i = ff_put(&F, "Work:Open", "old", 3, 0, ""); F.e[i].busy = 1; hello4();
+    file4(l, "s", "new", 3, "Work:Open", "skip"); feed(l); drain();
+    CHECK(strcmp(ob, "SKIP s\n") == 0, ob);
+    file4(l, "k", "new", 3, "Work:Open", "keep"); feed(l); feed("new"); drain();
+    CHECK(strcmp(ob, "GO k\nOK k 11:Work:Open_2\n") == 0, ob);
+    file4(l, "r", "new", 3, "Work:Open", "replace"); feed(l); feed("new"); drain();
+    CHECK(strcmp(ob, "GO r\nERR r busy dos error 202\n") == 0, ob);
+    CHECK(holds("Work:Open", "old"), "kept");
+}
 static void skip_on_a_new_name_writes_it(void) {
     char l[400];
     setup(1, 1); hello4();
@@ -442,6 +454,7 @@ int main(void) {
     RUN(an_absolute_file_lands_on_its_volume); RUN(missing_drawers_are_made); RUN(keep_picks_a_free_name);
     RUN(replace_swaps_only_after_the_crc_matched); RUN(replace_keeps_the_old_file_when_it_cannot_be_deleted);
     RUN(skip_answers_skip_and_takes_no_bytes); RUN(skip_on_a_new_name_writes_it); RUN(a_drawer_of_that_name);
+    RUN(a_file_in_use_still_exists);
     RUN(writing_off_is_readonly); RUN(bad_absolute_files); RUN(a_write_protected_disk_is_wprot);
     RUN(a_full_volume_is_full); RUN(a_disk_full_mid_write_is_full); RUN(the_relative_file_is_unchanged);
     RUN(mkdir_makes_one_level); RUN(rename_within_a_volume_and_across_drawers); RUN(rename_across_volumes_is_xvol);

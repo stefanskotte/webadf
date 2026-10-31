@@ -320,11 +320,10 @@ export const BROWSE_SCENARIOS: BrowseScenario[] = [
 
 /**
  * The volumes the write scenarios expect, the same on the POSIX build and in FS-UAE (uae-test.sh write):
- * - Work (DH0:) holds Tools/ (empty), a.txt ("a\n"), Keep.txt ("old\n"), Old/ with 300 empty files f000..f299, and
- *   (FS-UAE only) Hold.txt, held open by a running command;
+ * - Work (DH0:) holds Tools/ (empty), a.txt ("a\n"), Keep.txt ("old\n"), Old/ with 300 empty files f000..f299;
  * - Prot (DF0:), a write-protected disk;
- * - Full (DF2:), a disk with less than 300 KB free; in FS-UAE it also holds Locked (its d-bit off) and Stuck/ with two
- *   files and Stuck/locked (its d-bit off).
+ * - Full (DF2:), a disk with less than 300 KB free; in FS-UAE it also holds Locked (its d-bit off), Stuck/ with two
+ *   files and Stuck/locked (its d-bit off), and Hold.txt (empty), held open by a running command.
  *
  * Writes the POSIX build's folders under root and returns the RX_VOLS value (RX_WPROT=Prot, RX_FULL=Full make the
  * other two).
@@ -432,9 +431,11 @@ export const WRITE_SCENARIOS: WriteScenario[] = [
       const a = await b.request(`DELETE d4 ${lenp('Full:Stuck')}`);
       return a.length === 2 && /^DEL d4 [0-2]$/.test(a[0]) && /^ERR d4 denied \d+:locked: .+$/.test(a[1]) ? null : `got ${JSON.stringify(a)}`;
     } finally { await b.close(); } } },
-  { name: 'w-replace-busy', uaeOnly: true, run: async (p, h, ctl) => { const b = await b4(p, h); try {
-      return expectErr(await b.send({ id: 'h1', path: 'Work:Hold.txt', data: hello, mode: 'replace' }), 'busy')
-        ?? (hostHolds(ctl, 'Hold.txt', '') && !fs.existsSync(onWork(ctl, '.webadf-rx')) ? null : 'Hold.txt changed or the temp left');
+  { name: 'w-replace-busy', uaeOnly: true, run: async (p, h) => { const b = await b4(p, h); try {
+      const err = expectErr(await b.send({ id: 'h1', path: 'Full:Hold.txt', data: hello, mode: 'replace' }), 'busy');
+      if (err) return err;
+      const a = await b.request(`DIR h2 ${lenp('Full:')}`);
+      return a.some((l) => / f 0 [0-9a-f]+ \S+ 8:Hold\.txt /.test(l)) && !a.some((l) => l.includes(' 10:.webadf-rx ')) ? null : `Full: lists ${JSON.stringify(a)}`;
     } finally { await b.close(); } } },
   { name: 'w-protocol-3', run: async (p, h, ctl) => { const b = await connect(p, h, { v: 3 }); try {
       if (!b.browse) return 'READY 3 0';

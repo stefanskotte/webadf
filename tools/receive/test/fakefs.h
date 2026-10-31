@@ -192,6 +192,7 @@ static long ff_stat(void *c, const char *path, rx_finfo *info, int *is_dir) {
     if (f->stat_err) return f->stat_err;
     i = ff_find(f, path);
     if (i < 0) return RX_DOS_NOT_FOUND;
+    if (f->e[i].busy) return FF_IN_USE;   /* as Lock() on a file opened for writing: it exists, but cannot be examined */
     *is_dir = f->e[i].is_dir;
     info->size = f->stat_size ? f->stat_size : f->e[i].len; info->prot = f->e[i].prot;
     info->days = f->days; info->mins = f->mins; info->ticks = f->ticks;

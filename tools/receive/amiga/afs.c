@@ -69,6 +69,7 @@ static int a_exists(void *x, const char *rel) {
     join(x, rel, p);
     l = Lock((STRPTR)p, SHARED_LOCK);
     if (l) UnLock(l);
+    else if (IoErr() == ERROR_OBJECT_IN_USE) l = 1;   /* open for writing elsewhere: it exists (FS-UAE 3.2) */
     quiet_off(w);
     return l ? 1 : 0;
 }
