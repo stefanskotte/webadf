@@ -2188,7 +2188,7 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     if (c->_send_on && plen > 0 && plen < (int)sizeof path)
         snprintf(path + plen, sizeof path - (size_t)plen, "&xferAck=%lu&rx=%c",
                  (unsigned long)c->_send_ack, c->_send_rx);
-    // NET: volumes (fw 1.22.0): reqAck after rx; rxv and browse only while Transfer is connected at protocol 2-4, and
+    // NET: volumes (fw 1.22.0): reqAck after rx; rxv and browse only while Transfer is connected at protocol 2-5, and
     // write beside them (fw 1.23.0, ruling N3: 0 below protocol 4, so the server is told when a 2.5 gives way to a 2.4).
     plen = (int)strnlen(path, sizeof path);
     if (c->_req_on && plen > 0 && plen < (int)sizeof path) {

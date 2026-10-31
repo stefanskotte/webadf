@@ -194,7 +194,7 @@ void as_set_req_version(amiga_send_t *s, uint32_t req_version);   // the poll's 
 bool as_req_capable(const amiga_send_t *s);
 uint32_t as_req_acked(const amiga_send_t *s);                      // the poll's reqAck
 int as_rx_proto(const amiga_send_t *s);                            // Transfer's protocol on the open connection, 0 = none
-bool as_browse(const amiga_send_t *s);                             // READY 3's or 4's browse flag
+bool as_browse(const amiga_send_t *s);                             // READY 3/4/5's browse flag
 bool as_write(const amiga_send_t *s);                              // READY 4/5's write flag (fw 1.23.0; spec 2026-10-31)
 
 #endif

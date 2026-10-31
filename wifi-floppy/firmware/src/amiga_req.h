@@ -23,7 +23,8 @@
 // AR_DELETE_ONE (fw 1.23.1, spec section 9): "DELETE <rid> <len>:<path> one" -- exactly that object, a drawer only when
 // empty; it goes to Transfer only at protocol 5.
 typedef enum { AR_NONE = 0, AR_VOLS, AR_DIR, AR_GET, AR_MKDIR, AR_RENAME, AR_DELETE, AR_PROTECT, AR_NOTE,
-               AR_DELETE_ONE } ar_kind_t;
+               AR_DELETE_ONE } ar_kind_t;   // RULE: the writes run AR_MKDIR..AR_DELETE_ONE (ar_kind_is_write); a new kind goes before AR_DELETE_ONE or the range grows
+_Static_assert(AR_DELETE_ONE == AR_NOTE + 1, "ar_kind_is_write counts AR_MKDIR..AR_DELETE_ONE as writes");
 bool ar_kind_is_write(ar_kind_t k);
 
 // A GET Transfer answered GOT: its file comes up later as an upload with this tag. err_owed: the GET failed after its
@@ -58,8 +59,8 @@ typedef struct as_req {
     ar_got_t got[AR_MAX];
     uint32_t got_seq;
     char late[AR_LATE_BYTES];         // a late ERR's body, built when it is posted
-    bool browse;                      // READY 3's or 4's browse flag: Transfer's switch, for the poll
-    bool write;                       // READY 4's write flag (fw 1.23.0): writes reach Transfer's disks
+    bool browse;                      // READY 3/4/5's browse flag: Transfer's switch, for the poll
+    bool write;                       // READY 4/5's write flag (fw 1.23.0): writes reach Transfer's disks
     // amiga_send.c's own flags, here so that SRAM does not grow (final review):
     bool quick;                       // a protocol 3 drop: the reconnect in AS_RETRY_WAITING_MS counts as work (I1)
     bool refetched;                   // fetched since the last request was taken: the next GET goes without (I2)
