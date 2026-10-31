@@ -1249,9 +1249,9 @@ void dc_set_send(device_client_t *c, uint32_t acked_version, char rx) {
 void dc_set_req(device_client_t *c, uint32_t acked_version, int proto, bool browse, bool write) {
     c->_req_on = true;
     c->_req_ack = acked_version;
-    c->_req_proto = (proto >= 2 && proto <= 4) ? (uint8_t)proto : 0;
+    c->_req_proto = (proto >= 2 && proto <= 5) ? (uint8_t)proto : 0;   // 5: Transfer 2.6 (fw 1.23.1)
     c->_req_browse = browse;
-    c->_req_write = write && proto == 4;
+    c->_req_write = write && (proto == 4 || proto == 5);
 }
 
 bool dc_drive_take(device_client_t *c, uint32_t *seq, df1_mode_t *mode) {

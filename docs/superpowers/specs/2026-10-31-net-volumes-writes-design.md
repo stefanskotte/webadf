@@ -243,3 +243,12 @@ steps, so a file put into the drawer while it was being emptied was deleted too.
 - **Delivery:** server (inert until rxv=5, except the protocol 4 Move refusal and the STASH:/LIBRARY: change), Transfer
   2.6 + driver disk, firmware 1.23.1 TEST, A500 bench (a file saved into a drawer during a Move and during a drawer
   Delete both survive), release.
+- **Amendments (firmware plan 2026-11-01, `docs/superpowers/plans/2026-11-01-firmware-1-23-1.md`):**
+  - **P1:** a `DELETE ... one` below protocol 5 is answered by the board `ERR <rid> old 31:Transfer 2.6 or newer is
+    needed` -- at protocol 3 and 4 alike (`old` before `readonly`); below 3 and unconnected as 1.23.0.
+  - **P2:** the line's tail after the path is exactly ` one` or nothing; any other tail makes the line malformed
+    (skipped, as any malformed request line). The length prefix decides: `DELETE d 10:Work:a one` is a drawer delete of
+    `Work:a one`.
+  - **P3:** `READY 4 <b> <w>` counts as protocol 4 for a protocol 4 or 5 hello; `READY 5` only for a protocol 5 hello;
+    any other READY as 1.23.0 (an unknown one, or one above the hello, is 1). Writing is the same at 4 and 5.
+  - **P4:** the poll's `rxv=5` is one digit: no buffer grows.
