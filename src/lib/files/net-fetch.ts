@@ -319,7 +319,9 @@ export type JobWrite = { kind: string; label: string; to: string | null; status:
   /** An icon taken along or a drawer a copy needed: said only when it failed. */
   quiet: boolean;
   /** A move's removal that kept a drawer because something new is in it (spec 2026-10-31 §9): said, not a failure. */
-  kept: boolean };
+  kept: boolean;
+  /** Transfer 2.6: where a stopped drawer delete left the rest when it could not rename the drawer back. */
+  restIn: string | null };
 /**
  * A job's progress. `total`/`done`/`failed`/`waiting`: its files -- gets (a copy out) and queue rows (a copy onto a
  * volume; a relayed file once handed over); `skipped`: queue rows Transfer skipped; `writes`: its one-line writes.
@@ -356,11 +358,13 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
   const writes: JobWrite[] = reqs.filter((r) => (WRITE_KINDS as readonly string[]).includes(r.kind)).map((r) => {
     const t = (r.target ?? {}) as WriteTarget;
     const status = r.status === 'waiting' ? 'waiting' : r.status === 'sent' ? 'running' : r.status === 'done' ? 'done' : 'failed';
-    const text = r.errorText ?? '';
+    // Transfer 2.6: a stopped drawer delete that could not rename the drawer back says where the rest is first.
+    const rest = r.kind === 'delete' ? /^the rest is in (\S+): ([\s\S]*)$/.exec(r.errorText ?? '') : null;
+    const text = rest ? rest[2] : r.errorText ?? '';
     const entry = r.kind === 'delete' && status === 'failed' && text.includes(': ') ? text.slice(0, text.indexOf(': ')) : null;
     return { kind: r.kind, label: t.label ?? r.amigaPath, to: t.to ?? null, status, removed: (r.answer as { removed?: number } | null)?.removed ?? 0,
       reason: status === 'failed' ? writeErrorWords(r.errorCode ?? '', text, board) : null, entry, quiet: !!(t.icon || t.ensure),
-      kept: status === 'done' && !!((r.answer as { kept?: boolean } | null)?.kept || t.kept) };
+      kept: status === 'done' && !!((r.answer as { kept?: boolean } | null)?.kept || t.kept), restIn: status === 'failed' && rest ? rest[1] : null };
   });
   const sentFailed = sent.filter((x) => x.status === 'failed' || x.status === 'expired' || x.status === 'cancelled').map((x) => ({
     name: x.path, reason: x.status === 'expired' ? `${board} did not take it within 24 h` : x.status === 'cancelled' ? 'cancelled'

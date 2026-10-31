@@ -151,7 +151,7 @@ export function fetchStatus(p: { total: number; done: number; failed: { name: st
 type JobWriteView = { kind: string; label: string; to: string | null; status: 'waiting' | 'running' | 'done' | 'failed'; removed: number;
   reason: string | null; entry: string | null; quiet: boolean;
   /** A move's removal that kept a drawer something new is in (spec 2026-10-31 §9). */
-  kept?: boolean };
+  kept?: boolean; restIn?: string | null };
 const RUNNING: Record<string, string> = { delete: 'Deleting', mkdir: 'Making', rename: 'Renaming', protect: 'Protecting', note: 'Setting the comment on' };
 
 /** One finished write in words: "Deleted Work:old (137)", "Made Work:New", "Renamed Work:a to Work:b". */
@@ -201,9 +201,10 @@ export function jobStatus(p: { total: number; done: number; failed: { name: stri
   for (const w of p.writes.filter((x) => x.status === 'done' && x.kept)) parts.push(keptWords(w.label));
   for (const w of p.writes.filter((x) => x.status === 'failed')) {
     // A drawer delete that stopped names the entry (Transfer's text, relative to the drawer); DEL 0: nothing removed.
-    parts.push(w.kind === 'delete' && w.entry
+    const rest = w.restIn ? ` — the rest is in ${w.restIn}` : '';
+    parts.push((w.kind === 'delete' && w.entry
       ? (w.removed > 0 ? `Removed ${w.removed}, then stopped at ${w.entry}: ${w.reason}` : `${w.label}: stopped at ${w.entry}: ${w.reason}`)
-      : `${w.label}: ${w.reason}`);
+      : `${w.label}: ${w.reason}`) + rest);
   }
   return { line: parts.join(' · ') || 'Done', finished: true };
 }

@@ -7,7 +7,7 @@
 // earlier read: applyDiskEdit hands the edit whatever the store holds now, and a path is what survives in between.
 import {
   applyBatch, blocksForFile, blocksForPlan, deleteEntry, moveEntry, readFile, readUsage, readVolume, renameEntry,
-  setComment, setProtection, type AdfEntry, type BatchOp, type CostItem, type WriteError, type WriteResult,
+  setComment, setProtection, type AdfEntry, type BatchOp, type CostItem, type WriteResult,
 } from '@/lib/adffs';
 import { sameName } from '@/lib/adffs/write';
 import { createHash } from 'node:crypto';

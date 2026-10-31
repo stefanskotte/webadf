@@ -192,8 +192,8 @@ describe('one-line writes on a volume', () => {
     await answerPiece(getDb(), 'w1', icon.id, { piece: 0, lines: [`DONE ${icon.id} 1`], last: true });
     const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!;
     expect(p.writes).toEqual([
-      { kind: 'delete', label: 'Work:old', to: null, status: 'failed', removed: 37, reason: 'In use on the Amiga', entry: 'Libs/foo.library', quiet: false, kept: false },
-      { kind: 'delete', label: 'Work:old.info', to: null, status: 'done', removed: 1, reason: null, entry: null, quiet: false, kept: false },
+      { kind: 'delete', label: 'Work:old', to: null, status: 'failed', removed: 37, reason: 'In use on the Amiga', entry: 'Libs/foo.library', quiet: false, kept: false, restIn: null },
+      { kind: 'delete', label: 'Work:old.info', to: null, status: 'done', removed: 1, reason: null, entry: null, quiet: false, kept: false, restIn: null },
     ]);
     expect(p).toMatchObject({ total: 0, board: 'A500', direction: 'from' });
   });
@@ -445,6 +445,19 @@ describe('moves', () => {
 });
 
 // Spec 2026-10-31 §9: a move removes only what it copied; a Move that copies off a volume needs Transfer 2.6.
+describe('Transfer 2.6 delete words', () => {
+  it('a drawer delete that stopped and could not rename the drawer back keeps where the rest is', async () => {
+    const r = await op({ op: 'delete', sources: [W('old')] });
+    const job = (r as { job: { id: string } }).job.id;
+    const [d] = (await writes()).filter((x) => x.amigaPath === 'Work:old');
+    await takeWaiting(getDb(), 'w1');
+    const text = 'the rest is in .webadf-del-0a1b2c3d: Libs/foo.library: object in use';
+    await answerPiece(getDb(), 'w1', d.id, { piece: 0, lines: [`DEL ${d.id} 37`, `ERR ${d.id} busy ${text.length}:${text}`], last: true });
+    const w = (await fetchProgress(getDb(), 'o1', job, new Date()))!.writes.find((x) => x.label === 'Work:old')!;
+    expect(w).toMatchObject({ status: 'failed', removed: 37, entry: 'Libs/foo.library', reason: 'In use on the Amiga', restIn: '.webadf-del-0a1b2c3d' });
+  });
+});
+
 describe('safe moves off a volume (protocol 5)', () => {
   beforeEach(async () => {
     await getDb().delete(remoteRequests);

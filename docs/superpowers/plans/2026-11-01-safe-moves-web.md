@@ -171,3 +171,5 @@ Run files-net-writes, files-net-volumes, files-net (desktop), plus `pnpm test`, 
 - Task 4: Ruling: a STASH: comment is compared against the queue row's cleaned comment; a comment cleaning changed counts as changed (kept) — cost if wrong: a rare file stays in STASH: after a move
 - Task 5: complete (tests: vitest src/lib/help → 118/118)
 - Task 5: Ruling: the files help topic's word cap raised 400 -> 415 for one sentence on what a Move removes — the existing paragraph's words are each asserted elsewhere — cost if wrong: a longer help body
+- Task 6: complete (e2e desktop files-net-writes 11/11; files-net-volumes + files-net 16/16; mobile files-net-volumes + files-net 5/5; files + files-2 + files-stash 36/36; pnpm test 4185 pass / 2 skipped; pnpm test:db 681/681)
+- Task 6: Ruling (coordinator, Transfer 2.6): a drawer named .webadf-del-<8 hex> (left by an interrupted delete) is listed as it is, marked "Left by an interrupted delete"; a stopped delete whose ERR text begins "the rest is in .webadf-del-…: " keeps that in the words ("… — the rest is in .webadf-del-…"), the entry read from what follows — cost if wrong: words

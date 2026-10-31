@@ -26,7 +26,7 @@ import { amigaPathOf, volumeLabel, type EntryInfo, type VolumeInfo } from '@/lib
 import { QUEUE_FOLDER } from '@/lib/remote-limits';
 import { formatPath, parsePath, type FsPath } from './path';
 import { Pending, refuse, type FsCtx, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome, type VolumeDriver } from './driver';
-import { NET_COPY_OUT, NET_OPEN_VOLUME, NET_PICK_BOARD, netEmpty } from './net-rules';
+import { NET_COPY_OUT, NET_OPEN_VOLUME, NET_PICK_BOARD, netEmpty, DELETE_LEFTOVER, isDeleteLeftover } from './net-rules';
 import {
   copyOntoVolume, isNetVolumeDir, isNetVolumePath, makedirOnVolume, mustRemoveOnVolume, removeOnVolume, renameOnVolume,
   setMetaOnVolume, writeOf,
@@ -235,7 +235,7 @@ async function listVolume(ctx: FsCtx, t: SendTarget, segs: string[], now: number
   if (s.state !== 'ready') throw await pendingOf(t, s.state === 'pending' ? s.row : null, at.shown, now);
   const listed = answerOf(s.row).entries.map((e): FsEntry => ({ name: e.name, kind: e.dir ? 'dir' : 'file',
     path: netPath(t.id, ...segs, e.name), size: e.dir ? null : e.size, date: e.date, protection: protectionString(e.protection),
-    comment: e.comment || null, marks: [] }));
+    comment: e.comment || null, marks: isDeleteLeftover(e.name) ? [DELETE_LEFTOVER] : [] }));
   const entries = await withArriving(t, segs, at.amigaPath, listed, now);
   const write = writeOf(t, now);
   const crumbs: Crumb[] = [...boardCrumbs(t), { label: `${at.volume}:`, path: netPath(t.id, at.volume) },
