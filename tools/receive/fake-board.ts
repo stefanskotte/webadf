@@ -1,6 +1,8 @@
 // The board's side of the Receive protocol, for tests: protocol 1 (spec 2026-10-16 §2: hello, LIST, FILE + bytes, PING)
 // and protocol 2 (spec 2026-10-18 §3: the key in the hello, and PUT/TAKE/MORE/END/DONE/NO for files going up)
-// and protocol 3 (spec 2026-10-30 §2: READY 3 <b>; VOLS, DIR and GET answered with VOL/ENT/DONE/GOT/ERR).
+// and protocol 3 (spec 2026-10-30 §2: READY 3 <b>; VOLS, DIR and GET answered with VOL/ENT/DONE/GOT/ERR)
+// and protocol 4 (spec 2026-10-31 §2: READY 4 <b> <w>; FILE with an absolute path and keep|replace|skip, SKIP; MKDIR,
+// RENAME, DELETE, PROTECT, NOTE answered with DONE/ERR, a drawer delete with DEL lines).
 import net from 'node:net';
 import { crc32 } from 'node:zlib';
 
@@ -10,6 +12,7 @@ const CHUNK = 16_384;
 
 export interface SendFile {
   id: string; path: string; data: Buffer; protection?: number; comment?: string;
+  mode?: 'keep' | 'replace' | 'skip';   // protocol 4: path is absolute (Vol:drawer/name)
   badCrc?: boolean;      // send a wrong CRC
   dropAfter?: number;    // close the socket after this many data bytes
 }
@@ -49,6 +52,8 @@ export interface Board {
   maybeLine(ms: number): Promise<string | null>;
   /** READY 3's flag: the Amiga's owner lets the web app browse (protocol 3; false on 1 and 2). */
   browse: boolean;
+  /** READY 4's second flag: ... and change its disks (protocol 4; false before). */
+  writable: boolean;
   /** Protocol 3: sends a VOLS, DIR or GET line and returns its answer, up to DONE, ERR or GOT for its id. */
   request(line: string, ms?: number): Promise<string[]>;
   /** The answer lines of request id, up to DONE, ERR or GOT (lines for other ids, and PONG, are skipped). */
@@ -119,14 +124,15 @@ export function rawConnect(port: number, host = '127.0.0.1'): Promise<net.Socket
   });
 }
 
-export async function connect(port: number, host = '127.0.0.1', opts: { v?: 1 | 2 | 3; key?: string } = {}): Promise<Board> {
+export async function connect(port: number, host = '127.0.0.1', opts: { v?: 1 | 2 | 3 | 4; key?: string } = {}): Promise<Board> {
   const v = opts.v ?? 1;
   const sock = await rawConnect(port, host);
   const rd = byteReader(sock);
   sock.write(v >= 2 ? `WEBADF ${v} ${opts.key ?? BOARD_KEY}\n` : 'WEBADF 1\n');
   const hello = await rd.line();
   const m3 = v === 3 ? /^READY 3 ([01])$/.exec(hello ?? '') : null;
-  if (v === 3 ? !m3 : hello !== `READY ${v}`) throw new Error(`expected READY ${v}, got ${JSON.stringify(hello)}`);
+  const m4 = v === 4 ? /^READY 4 ([01]) ([01])$/.exec(hello ?? '') : null;
+  if (v === 4 ? !m4 : v === 3 ? !m3 : hello !== `READY ${v}`) throw new Error(`expected READY ${v}, got ${JSON.stringify(hello)}`);
   const answer = async (id: string, ms = 60000) => {
     const out: string[] = [];
     for (;;) {
@@ -135,11 +141,12 @@ export async function connect(port: number, host = '127.0.0.1', opts: { v?: 1 | 
       const [verb, rid] = l.split(' ');
       if (rid !== id) continue;
       out.push(l);
-      if (verb === 'DONE' || verb === 'ERR' || verb === 'GOT') return out;
+      if (verb === 'DONE' || verb === 'ERR' || verb === 'GOT') return out;   // DEL lines are progress: kept, read on
     }
   };
   return {
-    browse: m3 ? m3[1] === '1' : false,
+    browse: m3 ? m3[1] === '1' : m4 ? m4[1] === '1' : false,
+    writable: m4 ? m4[2] === '1' : false,
     request(line, ms) { sock.write(Buffer.from(`${line}\n`, 'latin1')); return answer(line.split(' ')[1], ms); },
     answer,
     write(line) { sock.write(Buffer.from(`${line}\n`, 'latin1')); },
@@ -149,11 +156,12 @@ export async function connect(port: number, host = '127.0.0.1', opts: { v?: 1 | 
     },
     async send(f, o = {}) {
       const crc = (crc32(f.data) ^ (f.badCrc ? 1 : 0)) >>> 0;
-      const line = `FILE ${f.id} ${f.data.length} ${crc.toString(16)} ${(f.protection ?? 0).toString(16)} ${lp(f.path)} ${lp(f.comment ?? '')}\n`;
+      const line = `FILE ${f.id} ${f.data.length} ${crc.toString(16)} ${(f.protection ?? 0).toString(16)} ${lp(f.path)} ${lp(f.comment ?? '')}${f.mode ? ' ' + f.mode : ''}\n`;
       sock.write(Buffer.from(line, 'latin1'));
       const go = await rd.line();
       if (go === null) throw new Error('closed before GO');
       if (go.startsWith('ERR ')) return parseErr(go);
+      if (go === `SKIP ${f.id}`) return { id: f.id, ok: false, code: 'skip', text: '' };   // protocol 4: no bytes follow
       if (go !== `GO ${f.id}`) throw new Error(`expected GO ${f.id}, got ${go}`);
       const chunk = o.chunk ?? 4096;
       const stop = f.dropAfter ?? f.data.length;

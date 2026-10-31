@@ -82,6 +82,16 @@ export const SCENARIOS: Scenario[] = [
         const a = await b.request('VOLS o1');
         return a.join('|') === 'ERR o1 off 27:browsing is off in Transfer' ? null : `got ${JSON.stringify(a)}`;
       } finally { await b.close(); } } },
+  // Protocol 4, both switches off (the default; spec 2026-10-31 §2.4): READY 4 0 0, and a write is refused readonly.
+  { name: 'write-off', run: async (p, _d, h) => {
+      const b = await connect(p, h, { v: 4 });
+      try {
+        if (b.browse || b.writable) return `READY 4 ${b.browse ? 1 : 0} ${b.writable ? 1 : 0} with both switches off`;
+        const a = await b.request('MKDIR w1 9:Work:Nope');
+        if (a.join('|') !== 'ERR w1 readonly 26:writing is off in Transfer') return `got ${JSON.stringify(a)}`;
+        const o = await b.send({ id: 'w2', path: 'Work:x', data: hello, mode: 'keep' });
+        return !o.ok && o.code === 'readonly' ? null : `FILE: ${JSON.stringify(o)}`;
+      } finally { await b.close(); } } },
 ];
 
 export async function runScenarios(port: number, dir: string, opts: { host?: string; only?: string[]; uae?: boolean } = {}) {
@@ -315,6 +325,172 @@ export const BROWSE_SCENARIOS: BrowseScenario[] = [
       b = await connect(p, h, { v: 3 });
       try { return b.browse ? null : 'READY 3 0 after switching on'; } finally { await b.close(); } } },
 ];
+
+// --- Writing (spec 2026-10-31 §2): the board's side of protocol 4 against Transfer with browsing and writing on. ---
+
+/**
+ * The volumes the write scenarios expect, the same on the POSIX build and in FS-UAE (uae-test.sh write):
+ * - Work (DH0:) holds Tools/ (empty), a.txt ("a\n"), Keep.txt ("old\n"), Old/ with 300 empty files f000..f299;
+ * - Prot (DF0:), a write-protected disk;
+ * - Full (DF2:), a disk with less than 300 KB free; in FS-UAE it also holds Locked (its d-bit off), Stuck/ with two
+ *   files and Stuck/locked (its d-bit off), and Hold.txt (empty), held open by a running command.
+ *
+ * Writes the POSIX build's folders under root and returns the RX_VOLS value (RX_WPROT=Prot, RX_FULL=Full make the
+ * other two).
+ */
+export function makeWriteFixture(root: string): string {
+  const w = path.join(root, 'Work');
+  fs.mkdirSync(path.join(w, 'Tools'), { recursive: true }); fs.mkdirSync(path.join(w, 'Old'));
+  fs.writeFileSync(path.join(w, 'a.txt'), 'a\n'); fs.writeFileSync(path.join(w, 'Keep.txt'), 'old\n');
+  for (let i = 0; i < 300; i++) fs.writeFileSync(path.join(w, 'Old', `f${String(i).padStart(3, '0')}`), '');
+  // Linked/ holds a file and Libs, a link to Tools (the POSIX build only: w-delete-link)
+  fs.mkdirSync(path.join(w, 'Linked')); fs.writeFileSync(path.join(w, 'Linked', 'f'), 'f');
+  fs.symlinkSync(path.join(w, 'Tools'), path.join(w, 'Linked', 'Libs'));
+  fs.mkdirSync(path.join(root, 'Prot')); fs.mkdirSync(path.join(root, 'Full'));
+  return `Work|DH0:|${w};Prot|DF0:|${path.join(root, 'Prot')};Full|DF2:|${path.join(root, 'Full')}`;
+}
+/** work: the host folder that is Work:; write: switch writing (POSIX build only). */
+export interface WriteCtl { work: string; write?(on: boolean): void }
+export interface WriteScenario { name: string; uaeOnly?: boolean; posixOnly?: boolean; run: (port: number, host: string, ctl: WriteCtl) => Promise<string | null> }
+async function b4(p: number, h: string) {
+  const b = await connect(p, h, { v: 4 });
+  if (!b.writable) { await b.close(); throw new Error(`READY 4 ${b.browse ? 1 : 0} 0: writing is off`); }
+  return b;
+}
+const onWork = (ctl: WriteCtl, rel: string) => path.join(ctl.work, rel);
+const hostHolds = (ctl: WriteCtl, rel: string, want: string | Buffer) =>
+  fs.existsSync(onWork(ctl, rel)) && Buffer.compare(fs.readFileSync(onWork(ctl, rel)), Buffer.from(want)) === 0;
+/** The ENT line of name in drawer, or null. */
+async function ent(b: Awaited<ReturnType<typeof connect>>, drawer: string, name: string) {
+  const a = await b.request(`DIR e${Date.now() % 100000} ${lenp(drawer)}`);
+  return a.find((l) => l.includes(` ${lenp(name)} `)) ?? null;
+}
+const X_TXT = Buffer.from('copied onto the Amiga\n');
+
+export const WRITE_SCENARIOS: WriteScenario[] = [
+  { name: 'w-hello', run: async (p, h) => { const b = await connect(p, h, { v: 4 }); try {
+      return b.browse && b.writable ? null : `READY 4 ${b.browse ? 1 : 0} ${b.writable ? 1 : 0}`;
+    } finally { await b.close(); } } },
+  { name: 'w-file-new', run: async (p, h, ctl) => { const b = await b4(p, h); try {
+      return expectOk(await b.send({ id: 'n1', path: 'Work:Tools/x.txt', data: X_TXT, mode: 'keep' }), 'Work:Tools/x.txt')
+        ?? (hostHolds(ctl, 'Tools/x.txt', X_TXT) && !fs.existsSync(onWork(ctl, 'Tools/.webadf-rx')) ? null : 'not on the host, or the temp left');
+    } finally { await b.close(); } } },
+  { name: 'w-file-parents', run: async (p, h, ctl) => { const b = await b4(p, h); try {
+      return expectOk(await b.send({ id: 'n2', path: 'Work:New/Deep/y.txt', data: hello, mode: 'keep' }), 'Work:New/Deep/y.txt')
+        ?? (hostHolds(ctl, 'New/Deep/y.txt', hello) ? null : 'not on the host');
+    } finally { await b.close(); } } },
+  { name: 'w-file-keep', run: async (p, h, ctl) => { const b = await b4(p, h); try {
+      return expectOk(await b.send({ id: 'k1', path: 'Work:Keep.txt', data: Buffer.from('new\n'), mode: 'keep' }), 'Work:Keep_2.txt')
+        ?? (hostHolds(ctl, 'Keep.txt', 'old\n') && hostHolds(ctl, 'Keep_2.txt', 'new\n') ? null : 'the old file changed');
+    } finally { await b.close(); } } },
+  { name: 'w-file-replace', run: async (p, h, ctl) => { const b = await b4(p, h); try {
+      return expectOk(await b.send({ id: 'r1', path: 'Work:Keep.txt', data: Buffer.from('newer\n'), mode: 'replace' }), 'Work:Keep.txt')
+        ?? (hostHolds(ctl, 'Keep.txt', 'newer\n') && !fs.existsSync(onWork(ctl, 'Keep_3.txt')) ? null : 'not replaced in place');
+    } finally { await b.close(); } } },
+  { name: 'w-file-skip', run: async (p, h, ctl) => { const b = await b4(p, h); try {
+      const o = await b.send({ id: 's1', path: 'Work:Keep.txt', data: Buffer.from('skipped\n'), mode: 'skip' });
+      if (o.ok || o.code !== 'skip') return `got ${JSON.stringify(o)}`;
+      if (!(await b.ping())) return 'no PONG after SKIP: bytes were awaited';
+      return hostHolds(ctl, 'Keep.txt', 'newer\n') ? null : 'Keep.txt changed';
+    } finally { await b.close(); } } },
+  { name: 'w-file-wprot', run: async (p, h) => { const b = await b4(p, h); try {
+      return expectErr(await b.send({ id: 'p1', path: 'Prot:x.txt', data: hello, mode: 'keep' }), 'wprot');
+    } finally { await b.close(); } } },
+  { name: 'w-file-full', run: async (p, h) => { const b = await b4(p, h); try {
+      return expectErr(await b.send({ id: 'f1', path: 'Full:big.bin', data: bytes(300000, 41), mode: 'keep' }), 'full');
+    } finally { await b.close(); } } },
+  { name: 'w-mkdir', run: async (p, h, ctl) => { const b = await b4(p, h); try {
+      const a = await b.request(`MKDIR m1 ${lenp('Work:Made')}`);
+      if (a.join('|') !== 'DONE m1 1' || !fs.statSync(onWork(ctl, 'Made')).isDirectory()) return `MKDIR: ${JSON.stringify(a)}`;
+      return oneLine(await b.request(`MKDIR m2 ${lenp('Work:Made')}`), /^ERR m2 exists \d+:.+$/)
+        ?? oneLine(await b.request(`MKDIR m3 ${lenp('Work:No/Sub')}`), /^ERR m3 notfound \d+:.+$/);
+    } finally { await b.close(); } } },
+  { name: 'w-mkdir-wprot', run: async (p, h) => { const b = await b4(p, h); try {
+      return oneLine(await b.request(`MKDIR m4 ${lenp('Prot:New')}`), /^ERR m4 wprot \d+:.+$/);
+    } finally { await b.close(); } } },
+  { name: 'w-rename', run: async (p, h, ctl) => { const b = await b4(p, h); try {
+      const a = await b.request(`RENAME r1 ${lenp('Work:a.txt')} ${lenp('Work:Tools/a.txt')}`);
+      return a.join('|') === 'DONE r1 1' && hostHolds(ctl, 'Tools/a.txt', 'a\n') && !fs.existsSync(onWork(ctl, 'a.txt')) ? null : `got ${JSON.stringify(a)}`;
+    } finally { await b.close(); } } },
+  { name: 'w-rename-xvol', run: async (p, h, ctl) => { const b = await b4(p, h); try {
+      return oneLine(await b.request(`RENAME r2 ${lenp('Work:Tools/a.txt')} ${lenp('Full:a.txt')}`), /^ERR r2 xvol 30:rename works within one volume$/)
+        ?? (hostHolds(ctl, 'Tools/a.txt', 'a\n') ? null : 'the file moved');
+    } finally { await b.close(); } } },
+  { name: 'w-protect', run: async (p, h) => { const b = await b4(p, h); try {
+      const a = await b.request(`PROTECT p2 ${lenp('Work:Tools/x.txt')} 50`);
+      if (a.join('|') !== 'DONE p2 1') return `got ${JSON.stringify(a)}`;
+      const e = await ent(b, 'Work:Tools', 'x.txt');
+      return e && / f \d+ 50 /.test(e) ? null : `the listing says ${e}`;
+    } finally { await b.close(); } } },
+  { name: 'w-note', run: async (p, h) => { const b = await b4(p, h); try {
+      const a = await b.request(`NOTE c1 ${lenp('Work:Tools/x.txt')} ${lenp('from the web')}`);
+      if (a.join('|') !== 'DONE c1 1') return `got ${JSON.stringify(a)}`;
+      const e = await ent(b, 'Work:Tools', 'x.txt');
+      return e && e.endsWith(' 12:from the web') ? null : `the listing says ${e}`;
+    } finally { await b.close(); } } },
+  { name: 'w-delete-file', run: async (p, h, ctl) => { const b = await b4(p, h); try {
+      const a = await b.request(`DELETE d1 ${lenp('Work:Tools/x.txt')}`);
+      return a.join('|') === 'DONE d1 1' && !fs.existsSync(onWork(ctl, 'Tools/x.txt')) ? null : `got ${JSON.stringify(a)}`;
+    } finally { await b.close(); } } },
+  { name: 'w-delete-300', run: async (p, h, ctl) => { const b = await b4(p, h); try {
+      const a = await b.request(`DELETE d2 ${lenp('Work:Old')}`, 300000);
+      const want = [50, 100, 150, 200, 250, 300].map((n) => `DEL d2 ${n}`).concat('DONE d2 301');
+      return JSON.stringify(a) === JSON.stringify(want) && !fs.existsSync(onWork(ctl, 'Old')) ? null : `got ${JSON.stringify(a)}`;
+    } finally { await b.close(); } } },
+  // Final review C1: a link inside a drawer is removed as a link; its target is never entered.
+  { name: 'w-delete-link', posixOnly: true, run: async (p, h, ctl) => { const b = await b4(p, h); try {
+      const a = await b.request(`DELETE d5 ${lenp('Work:Linked')}`);
+      return a.join('|') === 'DONE d5 3' && !fs.existsSync(onWork(ctl, 'Linked')) && hostHolds(ctl, 'Tools/a.txt', 'a\n')
+        ? null : `got ${JSON.stringify(a)}; Tools holds ${fs.readdirSync(onWork(ctl, 'Tools')).join(',')}`;
+    } finally { await b.close(); } } },
+  { name: 'w-delete-denied', uaeOnly: true, run: async (p, h) => { const b = await b4(p, h); try {
+      return oneLine(await b.request(`DELETE d3 ${lenp('Full:Locked')}`), /^ERR d3 denied \d+:.+$/);
+    } finally { await b.close(); } } },
+  { name: 'w-delete-stops', uaeOnly: true, run: async (p, h) => { const b = await b4(p, h); try {
+      const a = await b.request(`DELETE d4 ${lenp('Full:Stuck')}`);
+      return a.length === 2 && /^DEL d4 [0-2]$/.test(a[0]) && /^ERR d4 denied \d+:locked: .+$/.test(a[1]) ? null : `got ${JSON.stringify(a)}`;
+    } finally { await b.close(); } } },
+  { name: 'w-replace-busy', uaeOnly: true, run: async (p, h) => { const b = await b4(p, h); try {
+      const err = expectErr(await b.send({ id: 'h1', path: 'Full:Hold.txt', data: hello, mode: 'replace' }), 'busy');
+      if (err) return err;
+      const a = await b.request(`DIR h2 ${lenp('Full:')}`);
+      return a.some((l) => / f 0 [0-9a-f]+ \S+ 8:Hold\.txt /.test(l)) && !a.some((l) => l.includes(' 10:.webadf-rx ')) ? null : `Full: lists ${JSON.stringify(a)}`;
+    } finally { await b.close(); } } },
+  { name: 'w-protocol-3', run: async (p, h, ctl) => { const b = await connect(p, h, { v: 3 }); try {
+      if (!b.browse) return 'READY 3 0';
+      return oneLine(await b.request(`MKDIR m5 ${lenp('Work:Never')}`), /^ERR m5 readonly 26:writing is off in Transfer$/)
+        ?? (fs.existsSync(onWork(ctl, 'Never')) ? 'made on protocol 3' : null);
+    } finally { await b.close(); } } },
+  // Changing the switch drops the idle connection so the board hears READY 4 1 0 (spec §2.4).
+  { name: 'w-off', posixOnly: true, run: async (p, h, ctl) => {
+      let b = await b4(p, h);
+      ctl.write!(false);
+      if (!(await b.closed(5000))) { await b.close(); return 'still open after switching writing off'; }
+      b = await connect(p, h, { v: 4 });
+      try {
+        if (!b.browse || b.writable) return `READY 4 ${b.browse ? 1 : 0} ${b.writable ? 1 : 0} after switching writing off`;
+        const a = await b.request(`MKDIR o1 ${lenp('Work:Off')}`);
+        if (a.join('|') !== 'ERR o1 readonly 26:writing is off in Transfer') return `got ${JSON.stringify(a)}`;
+        const o = await b.send({ id: 'o2', path: 'Work:off.txt', data: hello, mode: 'keep' });
+        if (o.ok || o.code !== 'readonly' || o.text !== 'writing is off in Transfer') return `FILE: ${JSON.stringify(o)}`;
+        ctl.write!(true);
+        if (!(await b.closed(5000))) return 'still open after switching writing on';
+      } finally { await b.close(); }
+      b = await connect(p, h, { v: 4 });
+      try { return b.writable ? null : 'READY 4 1 0 after switching on'; } finally { await b.close(); } } },
+];
+
+export async function runWriteScenarios(port: number, ctl: WriteCtl, opts: { host?: string; uae?: boolean; only?: string[] } = {}) {
+  const out: { name: string; ok: boolean; detail: string }[] = [];
+  for (const s of WRITE_SCENARIOS) {
+    if (opts.only && !opts.only.includes(s.name)) continue;
+    if (s.posixOnly && opts.uae) continue;
+    if (s.uaeOnly && !opts.uae) continue;
+    try { const err = await s.run(port, opts.host ?? '127.0.0.1', ctl); out.push({ name: s.name, ok: err === null, detail: err ?? '' }); }
+    catch (e) { out.push({ name: s.name, ok: false, detail: String(e) }); }
+  }
+  return out;
+}
 
 export async function runBrowseScenarios(port: number, ctl: BrowseCtl, opts: { host?: string; uae?: boolean; only?: string[] } = {}) {
   const out: { name: string; ok: boolean; detail: string }[] = [];

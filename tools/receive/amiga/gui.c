@@ -1,7 +1,8 @@
 /* Transfer's window (spec 2026-10-16 §5, 2026-10-18 §2): the folder, the board, and both directions in one list. It is
    an AppWindow: icons dropped on it go to the web app (a drawer walked, 64 files at most); Send... opens an asl
-   requester (several files on V38+, one on V37). A checkbox lets the web app browse the Amiga's disks (read-only); the
-   status line shows its last request. gadtools, asl and workbench only (V37). */
+   requester (several files on V38+, one on V37). A checkbox lets the web app browse the Amiga's disks (read-only), a
+   second one (only while browsing is on) lets it change them; the status line shows its last request. gadtools, asl
+   and workbench only (V37). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,9 +33,9 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *WorkbenchBase = NULL;
 struct IntuitionBase *IntuitionBase = NULL;
 struct GfxBase *GfxBase = NULL;
 
-enum { G_DIR, G_CHOOSE, G_SEND, G_RETRY, G_TRUST, G_SAVE, G_BROWSE, G_STATUS, G_LIST, G_N };
+enum { G_DIR, G_CHOOSE, G_SEND, G_RETRY, G_TRUST, G_SAVE, G_BROWSE, G_WRITE, G_STATUS, G_LIST, G_N };
 #define ROWS_MAX 96
-enum { ST_WAITING, ST_RECEIVING, ST_DONE, ST_FAILED, ST_UP_WAITING, ST_UP_MOVING, ST_UP_DONE, ST_UP_FAILED };
+enum { ST_WAITING, ST_RECEIVING, ST_DONE, ST_FAILED, ST_UP_WAITING, ST_UP_MOVING, ST_UP_DONE, ST_UP_FAILED, ST_SKIPPED };
 typedef struct { struct Node node; char id[RX_ID_MAX + 1]; unsigned tag; char name[RX_PATH_MAX + 1];
                  char local[RX_LOCAL_MAX + 1]; unsigned long size; int state; unsigned pct; char why[40]; char text[80]; } row;
 
@@ -83,6 +84,7 @@ static void row_text(row *r) {
     case ST_UP_WAITING: sprintf(r->text, "%s %s to web: waiting", nm, sz); break;
     case ST_UP_MOVING: sprintf(r->text, "%s %s to web: %u %%", nm, sz, r->pct); break;
     case ST_UP_DONE: sprintf(r->text, "%s %s to web: done", nm, sz); break;
+    case ST_SKIPPED: sprintf(r->text, "%s %s skipped (it exists)", nm, sz); break;
     default: sprintf(r->text, "%s %s to web: failed: %.24s", nm, sz, r->why); break;
     }
     r->node.ln_Name = r->text;
@@ -123,10 +125,15 @@ static void add_path(gui *G, const char *path) {
     afs_base_name(path, name);
     if (rx_up_add_tree(G->q, G->fs, path, name, on_added, G) <= 0) {
         row *r = add(G, "");
-        if (r) { strcpy(r->name, name); strncpy(r->local, path, RX_LOCAL_MAX); r->state = ST_UP_FAILED; strcpy(r->why, "cannot read it"); }
+        if (r) {
+            strcpy(r->name, name); strncpy(r->local, path, RX_LOCAL_MAX); r->state = ST_UP_FAILED;
+            strcpy(r->why, G->q->lost ? "not enough memory" : G->q->n >= RX_UP_MAX ? "too many files" : "cannot read it");
+        }
     }
     relist(G);
-    if (!G->connected && G->q->n) set_status(G, "Waiting for the board");
+    if (G->q->lost) {   /* spec 2026-10-31 §2.5: a failed malloc mid-walk says so */
+        char t[60]; sprintf(t, "not enough memory: %u files not queued", G->q->lost); set_status(G, t);
+    } else if (!G->connected && G->q->n) set_status(G, "Waiting for the board");
 }
 static void add_wbarg(gui *G, const struct WBArg *a) {
     char p[RX_LOCAL_MAX + 1];
@@ -194,6 +201,12 @@ static void on_event(void *u, const rx_event *e, rx_session *s) {
     case RX_EV_DONE:
         if ((r = find(G, e->id)) != NULL) { strcpy(r->name, e->path); r->state = ST_DONE; }
         if (G->has_pending) { afs_set_root(G->ctx, G->pending); G->has_pending = 0; }
+        if (strchr(e->path, ':')) { sprintf(t, "Web: copied to %.60s", e->path); set_status(G, t); }   /* protocol 4 */
+        break;
+    case RX_EV_SKIP:
+        if (!(r = find(G, e->id))) r = add(G, e->id);
+        if (r) { strcpy(r->name, e->path); r->size = e->size; r->state = ST_SKIPPED; }
+        sprintf(t, "Web: skipped %.50s (it exists)", e->path); set_status(G, t);
         break;
     case RX_EV_FAILED:
         if ((r = find(G, e->id)) != NULL) { r->state = ST_FAILED; strncpy(r->why, e->text ? e->text : "", sizeof r->why - 1); }
@@ -281,8 +294,18 @@ static void save(gui *G) {
    to hear it (rx_hello_stale, net.c). */
 static void set_browse(gui *G, int on) {
     G->q->browse = on;
+    /* spec 2026-10-31 §2.4: writing is usable only while browsing is on; unticking browsing unticks writing */
+    if (!on && G->q->write) { G->q->write = 0; cfg_write_save(0); }
+    if (G->win) GT_SetGadgetAttrs(G->g[G_WRITE], G->win, NULL, GTCB_Checked, (ULONG)(G->q->write ? TRUE : FALSE),
+                                  GA_Disabled, (ULONG)(on ? FALSE : TRUE), TAG_END);
     if (cfg_browse_save(on) != 0) set_status(G, on ? "Browsing on (not saved: ENVARC:)" : "Browsing off (not saved: ENVARC:)");
     else set_status(G, on ? "Browsing on: the web app can read your disks" : "Browsing off");
+}
+/* The writing switch (spec 2026-10-31 §2.4), stored at once as the browsing one; a connected board reconnects. */
+static void set_write(gui *G, int on) {
+    G->q->write = on && G->q->browse;
+    if (cfg_write_save(G->q->write) != 0) set_status(G, on ? "Writing on (not saved: ENVARC:)" : "Writing off (not saved: ENVARC:)");
+    else set_status(G, on ? "Writing on: the web app can change your disks" : "Writing off: the web app only reads");
 }
 static int on_signal(void *u, ULONG sigs) {
     gui *G = u; struct IntuiMessage *m; struct AppMessage *am; LONG i;
@@ -295,6 +318,7 @@ static int on_signal(void *u, ULONG sigs) {
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_CHOOSE) choose(G);
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_SAVE) save(G);
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_BROWSE) set_browse(G, (gad->Flags & GFLG_SELECTED) != 0);
+        else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_WRITE) set_write(G, (gad->Flags & GFLG_SELECTED) != 0);
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_SEND) send_files(G);
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_RETRY) retry_failed(G);
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_TRUST && rx_trust_now(G->s) != 0) set_status(G, "No board to trust yet");
@@ -355,6 +379,11 @@ static int build(gui *G, const char *dir) {
     ng.ng_GadgetText = (UBYTE *)"Let the web app browse my disks (read-only)"; ng.ng_GadgetID = G_BROWSE;
     ng.ng_Flags = PLACETEXT_RIGHT;
     G->g[G_BROWSE] = g = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, (ULONG)(G->q->browse ? TRUE : FALSE), TAG_END);
+    /* The writing switch (spec 2026-10-31 §2.4), under it, greyed while browsing is off. */
+    y = (UWORD)(y + gh + 4);
+    ng.ng_TopEdge = (WORD)y; ng.ng_GadgetText = (UBYTE *)"Let the web app change my disks"; ng.ng_GadgetID = G_WRITE;
+    G->g[G_WRITE] = g = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, (ULONG)(G->q->write ? TRUE : FALSE),
+                                     GA_Disabled, (ULONG)(G->q->browse ? FALSE : TRUE), TAG_END);
     ng.ng_Flags = PLACETEXT_IN;
     y = (UWORD)(y + gh + 4);
     ng.ng_LeftEdge = (WORD)x0; ng.ng_TopEdge = (WORD)y; ng.ng_Width = (WORD)(iw - 12); ng.ng_GadgetText = NULL; ng.ng_GadgetID = G_STATUS;
@@ -384,7 +413,7 @@ static void wait_window(gui *G) {
     }
 }
 
-int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int trust, int browse) {
+int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int trust, int browse, int write) {
     /* G (68 KB: 96 rows) and the session are malloc'd here, not static, so a Shell run never holds them (512 KB bench,
        spec 2026-10-30 §7 step 8); libnix frees them with the program. */
     static afs_ctx ctx; static rx_fs fs; static rx_upq q;
@@ -404,7 +433,7 @@ int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int 
     afs_init(&ctx, &fs, dir);
     cfg_key_load(key, sizeof key);
     rx_upq_init(&q, key);
-    q.browse = browse;
+    q.browse = browse; q.write = write && browse;
     if (trust) gui_trust(G);   /* Transfer GUI TRUST (ruling PF18): as the Shell form, the next board's key is trusted */
     strcpy(G->status, "Starting...");
     strcpy(G->okstatus, "Listening on port 6800");

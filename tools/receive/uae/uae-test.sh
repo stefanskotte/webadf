@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Boots FS-UAE with Transfer and runs the shared scenarios against it through bsdsocket emulation (the Amiga's
-# listen on 6800 is the Mac's port 6800). Usage: uae-test.sh 204|31|32 [shell|gui|space|ram|send|browse]
+# listen on 6800 is the Mac's port 6800). Usage: uae-test.sh 204|31|32 [shell|gui|space|ram|send|browse|write]
 # Never pattern-kills: stops only the FS-UAE PID it started.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"; repo="$(cd "$here/../../.." && pwd)"
@@ -17,7 +17,7 @@ case "$ks" in
        # its Modules disk (copied into Work:Libs below), and a 3.1 Workbench has none.
        wb="${WEBADF_WB32:-$HOME/Downloads/workbench-3.2-adf/Workbench3.2.adf}"
        modules="${WEBADF_MOD32:-$HOME/Downloads/workbench-3.2-adf/ModulesA500_3.2.adf}";;
-  *) echo "usage: uae-test.sh 204|31|32 [shell|gui|space|ram|send|browse]"; exit 2;;
+  *) echo "usage: uae-test.sh 204|31|32 [shell|gui|space|ram|send|browse|write]"; exit 2;;
 esac
 [ -f "$rom" ] || { echo "FAIL: no Kickstart ROM at $rom"; exit 1; }
 [ -f "$wb" ] || { echo "FAIL: no Workbench disk at $wb"; exit 1; }
@@ -73,12 +73,33 @@ if [ "$mode" = browse ]; then
   xdftool "$work/empty2.adf" create + format Empty ofs + write "$work/which2" Which.txt >/dev/null
   df0="$work/empty0.adf"; df2="$work/empty2.adf"; fdc=3
 fi
+if [ "$mode" = write ]; then
+  # Protocol 4 (spec 2026-10-31 §2.6), the fixture scenarios.ts's makeWriteFixture describes:
+  # - Work: Tools/, a.txt, Keep.txt, Old/ with 300 files;
+  # - DF0: Prot, write-protected; DF2: Full, 146 KB free, with Locked and Stuck/locked (d-bit off), Stuck/a, Stuck/b,
+  #   and Hold.txt held open by a running Wait (on the ADF: FS-UAE's folder hard drive lets an open file be deleted).
+  mkdir -p "$work/hd/Tools" "$work/hd/Old"
+  printf 'a\n' > "$work/hd/a.txt"; printf 'old\n' > "$work/hd/Keep.txt"
+  for i in $(seq -w 0 299); do : > "$work/hd/Old/f$i"; done
+  printf 'x' > "$work/x1"; head -c 700000 /dev/zero > "$work/big"
+  xdftool "$work/prot.adf" create + format Prot ofs >/dev/null
+  sleep 2   # two volume dates apart
+  xdftool "$work/full.adf" create + format Full ofs + write "$work/big" Big.bin + write "$work/x1" Locked + makedir Stuck \
+    + write "$work/x1" Stuck/a + write "$work/x1" Stuck/b + write "$work/x1" Stuck/locked \
+    + protect Locked rwe + protect Stuck/locked rwe >/dev/null
+  df0="$work/prot.adf"; df2="$work/full.adf"; fdc=3
+fi
 case "$mode" in
   shell|space|ram) run_line="Work:Transfer RECEIVE TO $target SAVE >Work:receive.log";;
   gui) run_line="DF1:C/Assign >NIL: SYS: DF1:
 DF1:C/LoadWB
-Run >NIL: Work:Transfer TO $target GUI BROWSE SEND Work:Up/Lemmings.adf Work:Up/Notes.txt";;
+Run >NIL: Work:Transfer TO $target GUI BROWSE WRITE SEND Work:Up/Lemmings.adf Work:Up/Notes.txt";;
   browse) run_line="Work:Transfer BROWSE TO Work:Out >Work:receive.log";;
+  # FS-UAE writes a floppy to an overlay whatever its write-protect options say: AmigaDOS's own Lock makes Prot
+  # write-protected (DOS error 214), as the tab does.
+  write) run_line="Run >NIL: Wait >Full:Hold.txt 600
+Lock >NIL: DF0: ON
+Work:Transfer WRITE TO Work:Out >Work:receive.log";;
   send) e9=$(printf '\351')   # é in Latin-1: the Amiga reads the script byte by byte
         run_line=""
         # <log>:<file>; s03b is the drawer again with the slash Shell TAB completion adds.
@@ -119,6 +140,7 @@ amiga_model = $model
 kickstart_file = $rom
 chip_memory = 1024
 floppy_drive_count = $fdc
+save_states_dir = $work/states
 floppy_drive_0 = $df0
 floppy_drive_1 = $wb
 floppy_drive_1_write_protected = 1
@@ -153,5 +175,9 @@ case "$mode" in
             || echo "PASS BROWSE without SAVE stored nothing"
           sleep 2; echo "--- receive.log"; cat "$work/hd/receive.log" 2>/dev/null || true;;
   send) pnpm exec tsx "$repo/tools/receive/uae/send-scenarios.ts" --hd "$work/hd" || rc=1;;
+  write) pnpm exec tsx "$repo/tools/receive/run-scenarios.ts" --port 6800 --write "$work/hd" --uae || rc=1
+         [ -e "$work/hd/EnvArc/webadf/Write" ] && { echo "FAIL WRITE without SAVE stored the switch"; rc=1; } \
+           || echo "PASS WRITE without SAVE stored nothing"
+         sleep 2; echo "--- receive.log"; cat "$work/hd/receive.log" 2>/dev/null || true;;
 esac
 exit $rc

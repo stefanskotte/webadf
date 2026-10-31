@@ -3,7 +3,7 @@ import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { runScenarios, runUploadScenarios, runBrowseScenarios, makeBrowseFixture } from './scenarios';
+import { runScenarios, runUploadScenarios, runBrowseScenarios, makeBrowseFixture, runWriteScenarios, makeWriteFixture } from './scenarios';
 import { connect, rawConnect } from './fake-board';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
@@ -79,6 +79,21 @@ describe('Receive (POSIX build) against the fake board', () => {
       expect(res).toHaveLength(11);
       expect(lines).toContain('REQ dir Work:Big 1000 cut ok');
       expect(lines).toContain('REQ get Work:Programs/a.txt 0 ok');
+    } finally { proc.kill(); }
+  }, 300000);
+
+  it('writes with browsing and writing on: FILE to a volume in each mode, MKDIR, RENAME, PROTECT, NOTE, DELETE; switching writing off reconnects', async () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'wr-'));
+    const root = fs.mkdtempSync(path.join(tmp, 'wvols-'));
+    const vols = makeWriteFixture(root);
+    const { proc, port, lines } = await start(dir, { RX_VOLS: vols, RX_BROWSE: '1', RX_WRITE: '1', RX_WPROT: 'Prot', RX_FULL: 'Full' }, path.join(tmp, 'WriteKey'));
+    try {
+      const res = await runWriteScenarios(port, { work: path.join(root, 'Work'), write: (on) => proc.stdin!.write(`WRITE ${on ? 1 : 0}\n`) });
+      expect(res.filter((r) => !r.ok)).toEqual([]);
+      expect(res).toHaveLength(19);
+      expect(lines).toContain('REQ delete Work:Old 301 ok');
+      expect(lines).toContain(`REQ rename Work:a.txt Work:Tools/a.txt 1 ok`);
+      expect(lines.some((l) => l.startsWith('SKIP s1 Work:Keep.txt'))).toBe(true);
     } finally { proc.kill(); }
   }, 300000);
 

@@ -278,6 +278,41 @@ static void a_volume_root_joins_without_a_slash_and_a_walk_stops_at_64(void) {
     CHECK_EQ_INT(rx_up_add_tree(&Q, &FS, "RAM:", "Ram Disk", NULL, NULL), RX_UP_MAX);
     CHECK(strncmp(Q.q[0]->local, "RAM:f", 5) == 0 && strncmp(Q.q[0]->name, "Ram Disk/f", 10) == 0, "RAM:fNN, Ram Disk/fNN");
 }
+/* Transfer 2.5 (spec 2026-10-31 §2.5): the deferred minors from 2.4. */
+static void a_failed_add_says_why(void) {
+    char nm[20];
+    rx_upq_init(&Q, "");
+    CHECK_EQ_INT(rx_up_add(&Q, "DH0:x", "../x"), 0); CHECK_EQ_INT(Q.why, RX_ADD_NAME);
+    rx_test_fail_alloc = 1;
+    CHECK_EQ_INT(rx_up_add(&Q, "DH0:x", "x"), 0); CHECK_EQ_INT(Q.why, RX_ADD_NOMEM);
+    CHECK_EQ_INT(rx_test_fail_alloc, 0);
+    for (int i = 0; i < RX_UP_MAX; i++) { snprintf(nm, sizeof nm, "F%d", i); CHECK(rx_up_add(&Q, "DH0:f", nm) != 0, nm); }
+    CHECK_EQ_INT(Q.why, RX_ADD_OK);
+    CHECK_EQ_INT(rx_up_add(&Q, "DH0:f", "one-more"), 0); CHECK_EQ_INT(Q.why, RX_ADD_FULL);
+    rx_upq_clear(&Q);
+}
+static void a_walk_counts_the_files_memory_refused(void) {
+    setup2("");
+    ff_add(&F, "DH0:D", 1);
+    ff_put(&F, "DH0:D/a", "a", 1, 0, ""); ff_put(&F, "DH0:D/b", "b", 1, 0, ""); ff_put(&F, "DH0:D/c", "c", 1, 0, "");
+    rx_test_fail_alloc = 2;
+    CHECK_EQ_INT(rx_up_add_tree(&Q, &FS, "DH0:D", "D", NULL, NULL), 2);
+    CHECK_EQ_INT(Q.lost, 1);
+    CHECK_EQ_INT(rx_up_add_tree(&Q, &FS, "DH0:D", "D", NULL, NULL), 3);
+    CHECK_EQ_INT(Q.lost, 0);
+    rx_test_fail_alloc = 1;
+    CHECK_EQ_INT(rx_up_add_tree(&Q, &FS, "DH0:D/a", "a", NULL, NULL), 0);
+    CHECK_EQ_INT(Q.lost, 1);
+}
+static void init_frees_what_a_queue_still_holds(void) {
+    long live0;
+    rx_upq_init(&Q, ""); live0 = rx_test_live;
+    rx_up_add(&Q, "DH0:a", "a"); rx_up_add(&Q, "DH0:b", "b"); rx_up_add(&Q, "DH0:c", "c");
+    CHECK_EQ_INT(rx_test_live, live0 + 3);
+    rx_upq_init(&Q, KEY);
+    CHECK_EQ_INT(rx_test_live, live0); CHECK_EQ_INT(Q.n, 0); CHECK(strcmp(Q.trusted, KEY) == 0, "the key");
+}
+
 /* --- protocol 2: a file going up --- */
 static unsigned char DATA[65536];
 static unsigned char obig[200000]; static unsigned long ob_n; static int ob_closed;
@@ -535,5 +570,6 @@ int main(void) {
     RUN(the_upload_silence_outlasts_the_boards_5_minute_wait);
     RUN(a_resumes_pre_read_counts_as_receives_own_work); RUN(no_gone_mid_file_shows_the_boards_text);
     RUN(an_empty_queue_holds_no_item_storage);
+    RUN(a_failed_add_says_why); RUN(a_walk_counts_the_files_memory_refused); RUN(init_frees_what_a_queue_still_holds);
     return REPORT();
 }

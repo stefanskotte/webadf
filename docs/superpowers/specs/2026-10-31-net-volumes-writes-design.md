@@ -48,7 +48,9 @@ FILE <id> <size> <crc32 hex> <protection hex> <len>:<Vol:drawer/name> <len>:<com
   sends none).
 - Missing drawers on the way are created (as today). Writing goes through `.webadf-rx` in the target drawer, then
   rename, protection, comment -- as today.
-- **Writing off:** an absolute `FILE` while `<w>` is `0` is answered `ERR <id> readonly <len>:<text>`.
+- **Writing off:** an absolute `FILE` while `<w>` is `0` is answered `ERR <id> readonly <text>`. Ruling (Transfer 2.5,
+  2026-10-31, the wire contract the server and firmware were built against): every `FILE` refusal keeps today's format,
+  `ERR <id> <code> <text>` with the text unprefixed to the end of the line; only request answers carry `<len>:<text>`.
 - **New error codes for `FILE`:** `readonly`, `wprot` (the disk is write-protected), `denied`, `full` (as `space`
   today; `space` stays for relative paths).
 

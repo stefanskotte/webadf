@@ -126,7 +126,11 @@ void ipc_take(rx_upq *q, rx_added_fn added, int (*trust)(void *u), void *u) {
         }
         {
             unsigned tag = nheld < RX_UP_MAX ? rx_up_add(q, m->local, m->name) : 0;
-            if (!tag) { answer(m, 0, 0, "Transfer's list is full, or the name is not allowed"); continue; }
+            if (!tag) {   /* the actual cause (spec 2026-10-31 §2.5) */
+                answer(m, 0, 0, nheld >= RX_UP_MAX || q->why == RX_ADD_FULL ? "Transfer's list is full"
+                              : q->why == RX_ADD_NOMEM ? "not enough memory in Transfer" : "the name is not allowed");
+                continue;
+            }
             held[nheld].tag = tag; held[nheld].m = m; nheld++;
             if (added) added(u, q->q[q->n - 1]);
         }

@@ -57,3 +57,14 @@ int cfg_browse_save(int on) {
     write_one("ENV:", "Browse", on ? "1" : "0");
     return write_one("ENVARC:", "Browse", on ? "1" : "0");
 }
+/* The writing switch (spec 2026-10-31 §2.4): webadf/Write, "1" or "0"; anything else, or no file, is off. */
+int cfg_write_load(void) {
+    char b[8];
+    if (read_file("ENV:webadf/Write", b, sizeof b)) return b[0] == '1';
+    if (read_file("ENVARC:webadf/Write", b, sizeof b)) return b[0] == '1';
+    return 0;
+}
+int cfg_write_save(int on) {
+    write_one("ENV:", "Write", on ? "1" : "0");
+    return write_one("ENVARC:", "Write", on ? "1" : "0");
+}

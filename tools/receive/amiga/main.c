@@ -3,7 +3,8 @@
    RECEIVE (the default, so a plain `Transfer` still receives) and SEND name the direction; both together is an error.
    Started from Workbench it opens the window, with any shift-clicked project icons queued to send; GUI with SEND does
    the same from a Shell. BROWSE lets the web app browse the Amiga's disks, read-only, for this run; with SAVE it is
-   stored too (spec 2026-10-30 §2.3). */
+   stored too (spec 2026-10-30 §2.3). WRITE also lets it change them (spec 2026-10-31 §2.4); it implies BROWSE (plan
+   ruling W11), and with SAVE both are stored. */
 #include <string.h>
 #include <exec/memory.h>
 #include <exec/tasks.h>
@@ -13,7 +14,7 @@
 #include "config.h"
 #include "ui.h"
 
-static const char version[] = "$VER: Transfer 2.4 (31.10.2026) webadf";
+static const char version[] = "$VER: Transfer 2.5 (31.10.2026) webadf";
 
 /* Shell and Workbench starts often give 4 KB of stack; the window, asl and dos calls nest deeper than that. Below the
    mode's size, run on a stack of our own (exec StackSwap, V37). Everything used across the swap is file-static. The
@@ -22,7 +23,7 @@ static const char version[] = "$VER: Transfer 2.4 (31.10.2026) webadf";
 #define RX_STACK_GUI 32768UL
 #define RX_STACK_SHELL 8192UL
 static char dir[256];
-static int want_gui, want_trust, rc_swapped, browse;
+static int want_gui, want_trust, rc_swapped, browse, write_on;
 static STRPTR *send_files;
 static struct WBArg *wb_args;
 static long wb_n;
@@ -35,7 +36,10 @@ static int is_word(const char *s, const char *w) {
     return *s == 0 && *w == 0;
 }
 
-static int run(void) { return want_gui ? gui_main(dir, wb_args, wb_n, send_files, want_trust, browse) : shell_main(dir, send_files, want_trust, browse); }
+static int run(void) {
+    return want_gui ? gui_main(dir, wb_args, wb_n, send_files, want_trust, browse, write_on)
+                    : shell_main(dir, send_files, want_trust, browse, write_on);
+}
 
 static int run_with_stack(void) {
     struct Task *me = FindTask(NULL);
@@ -54,17 +58,17 @@ static int run_with_stack(void) {
 }
 
 int main(int argc, char **argv) {
-    LONG args[7] = { 0, 0, 0, 0, 0, 0, 0 };
+    LONG args[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
     struct RDArgs *rd;
-    int rc, want_receive, want_browse;
+    int rc, want_receive, want_browse, want_write;
     (void)version;
     if (argc == 0) {   /* Workbench start: libnix passes the WBStartup message as argv */
         struct WBStartup *wb = (struct WBStartup *)argv;
-        cfg_load(dir, sizeof dir); want_gui = 1; browse = cfg_browse_load();
+        cfg_load(dir, sizeof dir); want_gui = 1; browse = cfg_browse_load(); write_on = browse && cfg_write_load();
         if (wb && wb->sm_NumArgs > 1) { wb_args = wb->sm_ArgList + 1; wb_n = wb->sm_NumArgs - 1; }   /* [0] is Transfer */
         return run_with_stack();
     }
-    rd = ReadArgs((STRPTR)"TO/K,SAVE/S,GUI/S,SEND/M,TRUST/S,RECEIVE/S,BROWSE/S", args, NULL);
+    rd = ReadArgs((STRPTR)"TO/K,SAVE/S,GUI/S,SEND/M,TRUST/S,RECEIVE/S,BROWSE/S,WRITE/S", args, NULL);
     if (!rd) { PrintFault(IoErr(), (STRPTR)"Transfer"); return RETURN_FAIL; }
     if (args[0]) { strncpy(dir, (const char *)args[0], sizeof dir - 1); } else cfg_load(dir, sizeof dir);
     want_gui = args[2] != 0;
@@ -72,6 +76,7 @@ int main(int argc, char **argv) {
     want_trust = args[4] != 0;
     want_receive = args[5] != 0;
     want_browse = args[6] != 0;
+    want_write = args[7] != 0;
     /* ReadArgs takes the word right after a keyword as its value, so in `Transfer SEND TRUST a.lha` TRUST arrives as a
        file to send (seen in FS-UAE): it is the switch, and so are RECEIVE and BROWSE. A file really named TRUST goes as DH0:TRUST. */
     if (send_files) {
@@ -80,6 +85,7 @@ int main(int argc, char **argv) {
             if (is_word((const char *)*in, "TRUST")) want_trust = 1;
             else if (is_word((const char *)*in, "RECEIVE")) want_receive = 1;
             else if (is_word((const char *)*in, "BROWSE")) want_browse = 1;
+            else if (is_word((const char *)*in, "WRITE")) want_write = 1;
             else *out++ = *in;
         *out = NULL;
     }
@@ -88,8 +94,11 @@ int main(int argc, char **argv) {
         FreeArgs(rd);
         return RETURN_ERROR;
     }
+    if (want_write) want_browse = 1;   /* plan ruling W11: writing is usable only while browsing is on */
     browse = want_browse || cfg_browse_load();
+    write_on = browse && (want_write || cfg_write_load());
     if (args[1] && want_browse && cfg_browse_save(1) != 0) PutStr((STRPTR)"Could not save browsing to ENVARC:\n");
+    if (args[1] && want_write && cfg_write_save(1) != 0) PutStr((STRPTR)"Could not save writing to ENVARC:\n");
     if (args[1] && cfg_save(dir) != 0) PutStr((STRPTR)"Could not save the folder to ENVARC:\n");
     rc = run_with_stack();
     FreeArgs(rd);   /* after the run: SEND's names live in rd */

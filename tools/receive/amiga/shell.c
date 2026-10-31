@@ -1,7 +1,8 @@
 /* Transfer in a Shell (spec 2026-10-16 §5, 2026-10-18 §2): one line per file; Ctrl-C stops. With SEND the files go to
    the web app: handed to a Transfer already running (port webadf.Transfer), or sent by this run, which listens on 6800
    itself, waits up to 60 s for the board, and returns 0 (all sent), 5 (some) or 10 (none).
-   With browsing on (BROWSE), one line per web request: "Web: listed Work:Programs". */
+   With browsing on (BROWSE), one line per web request: "Web: listed Work:Programs"; with writing on (WRITE), one per
+   change too: "Web: copied to Work:Tools/x", "Web: deleted Work:old (37)". */
 #include <stdlib.h>
 #include <string.h>
 #include <proto/exec.h>
@@ -24,7 +25,11 @@ static void sh_event(void *u, const rx_event *e, rx_session *s) {
     LONG a[3]; char k4[5];
     (void)u; (void)s;
     switch (e->kind) {
-    case RX_EV_DONE: a[0] = (LONG)e->path; a[1] = (LONG)e->size; VPrintf((STRPTR)"%s  %lu bytes  OK\n", a); break;
+    case RX_EV_DONE:
+        a[0] = (LONG)e->path; a[1] = (LONG)e->size;
+        VPrintf((STRPTR)(strchr(e->path, ':') ? "Web: copied to %s  %lu bytes\n" : "%s  %lu bytes  OK\n"), a);
+        break;
+    case RX_EV_SKIP: a[0] = (LONG)e->path; VPrintf((STRPTR)"Web: skipped %s (it exists)\n", a); break;
     case RX_EV_FAILED: a[0] = (LONG)e->path; a[1] = (LONG)e->text; VPrintf((STRPTR)"%s  ERR %s\n", a); break;
     case RX_EV_HELLO: PutStr((STRPTR)"Board connected\n"); break;
     case RX_EV_TRUST:
@@ -73,18 +78,18 @@ static int sh_pass(void *u, rx_session *s, int connected) {
 }
 static int send_rc(void) { return sh.ok == sh.asked ? RETURN_OK : sh.ok ? RETURN_WARN : RETURN_ERROR; }
 
-int shell_main(const char *dir, STRPTR *send, int trust, int browse) {
+int shell_main(const char *dir, STRPTR *send, int trust, int browse, int write) {
     static afs_ctx ctx; static rx_fs fs;
     net_ui ui = { NULL, sh_event, sh_status, 0, sh_signal, sh_pass, NULL };
     char key[RX_KEY_HEX + 8];
-    LONG args[1];
+    LONG args[2];
     int i, rc;
     q = calloc(1, sizeof *q); sess = calloc(1, sizeof *sess);
     if (!q || !sess) { PrintFault(ERROR_NO_FREE_STORE, (STRPTR)"Transfer"); return RETURN_FAIL; }
     afs_init(&ctx, &fs, dir);
     cfg_key_load(key, sizeof key);
     rx_upq_init(q, key);
-    q->browse = browse;
+    q->browse = browse; q->write = write;
     if (trust) q->trust_next = 1;
     if (send && send[0]) {
         sh.send_mode = 1;
@@ -93,8 +98,16 @@ int shell_main(const char *dir, STRPTR *send, int trust, int browse) {
             int k;
             afs_base_name((const char *)send[i], name);
             k = rx_up_add_tree(q, &fs, (const char *)send[i], name, NULL, NULL);
-            if (k <= 0) { args[0] = (LONG)send[i]; VPrintf((STRPTR)"%s  ERR cannot read it\n", args); sh.asked++; sh.done++; }
-            else sh.asked += k;
+            args[0] = (LONG)send[i];
+            if (k <= 0) {
+                VPrintf((STRPTR)(q->lost ? "%s  ERR not enough memory\n" : q->n >= RX_UP_MAX ? "%s  ERR too many files\n" :
+                                 "%s  ERR cannot read it\n"), args);
+                sh.asked++; sh.done++;
+            } else {
+                sh.asked += k;
+                /* spec 2026-10-31 §2.5: a failed malloc mid-walk says so */
+                if (q->lost) { args[1] = (LONG)q->lost; VPrintf((STRPTR)"%s  not enough memory: %lu files not queued\n", args); }
+            }
         }
         if (q->n == 0) return RETURN_ERROR;
         if (ipc_running()) {
@@ -114,7 +127,8 @@ int shell_main(const char *dir, STRPTR *send, int trust, int browse) {
     if (ipc_open() == 0) ui.extra_sigs = ipc_sigmask();
     args[0] = (LONG)dir;
     VPrintf((STRPTR)"Transfer: saving into %s. Ctrl-C to stop.\n", args);
-    if (browse) PutStr((STRPTR)"Browsing on: the web app can read your disks (read-only)\n");
+    if (write) PutStr((STRPTR)"Browsing and writing on: the web app can read and change your disks\n");
+    else if (browse) PutStr((STRPTR)"Browsing on: the web app can read your disks (read-only)\n");
     rc = net_run(&ui, &ctx, &fs, sess, q);
     ipc_close();
     if (rc != 0) { PutStr((STRPTR)"Could not listen on port 6800\n"); net_close(); return RETURN_FAIL; }

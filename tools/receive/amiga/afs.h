@@ -5,6 +5,7 @@
 typedef struct afs_ctx {
     char root[256]; BPTR fh; BPTR rh;
     BPTR dl; struct FileInfoBlock *dfib;   /* the drawer being listed for the web app (protocol 3) */
+    LONG err;                              /* protocol 4: IoErr() of the last failed file hook */
 } afs_ctx;
 void afs_init(afs_ctx *c, rx_fs *fs, const char *root);
 void afs_set_root(afs_ctx *c, const char *root);
