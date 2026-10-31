@@ -11,8 +11,8 @@ import {
   type Added, type CopyMove, type FsCtx, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome, type VolumeDriver,
 } from './driver';
 import { NET_MOVE_IN } from './net-rules';
-import { isNetVolumePath } from './net-driver';
-import { startFetch } from './net-fetch';
+import { isNetVolumeDir, isNetVolumePath } from './net-write';
+import { startFetch, volumeToVolume } from './net-fetch';
 import { addDiskImages } from './add-to-library';
 import { createAdf, type CreateAdfRequest } from './create-adf';
 import { deleteOnShelf, fileOnShelf, makeCollection, renameOnShelf, shelfDest, shelfItem } from './shelf';
@@ -33,7 +33,8 @@ export type OpRequest =
   | ({ op: 'create-adf' } & CreateAdfRequest);                    // a blank disk into STASH: or LIBRARY: (Files 2 §4)
 export type OpResult =
   /** `versions`: each history version the op saved, in the order it saved them (Undo needs exactly one, Task 9b). */
-  | ({ kind: 'done'; items: OpItem[]; added?: Added[]; queued?: number; fetching?: { id: string; files: number } } & { versions: OpVersion[] })
+  | ({ kind: 'done'; items: OpItem[]; added?: Added[]; queued?: number; fetching?: { id: string; files: number };
+      job?: { id: string; files: number; writes: number } } & { versions: OpVersion[] })
   | Extract<Outcome, { kind: 'clashes' }>
   | { kind: 'refused'; refusal: Refusal; status: number };
 
@@ -44,7 +45,7 @@ export async function runOp(ctx: FsCtx, req: OpRequest): Promise<OpResult> {
     // `written` is the engine's own business (crossDevice); the caller hears items, what was added, and the versions.
     if (r.kind !== 'done') return r;
     return { kind: 'done', items: r.items, ...(r.added ? { added: r.added } : {}), ...(r.queued !== undefined ? { queued: r.queued } : {}),
-      ...(r.fetching ? { fetching: r.fetching } : {}), versions: run.versions };
+      ...(r.fetching ? { fetching: r.fetching } : {}), ...(r.job ? { job: r.job } : {}), versions: run.versions };
   } catch (e) {
     if (e instanceof Refused) return { kind: 'refused', refusal: e.refusal, status: e.status };
     throw e;
@@ -73,7 +74,11 @@ async function dispatch(ctx: OpCtx, req: OpRequest): Promise<Outcome> {
     case 'copy': case 'move': {
       // Out of a NET: volume (spec 2026-10-30 §4.5): a fetch from the Amiga, decided before the shelf -- a disk image
       // copied onto LIBRARY: from a volume is fetched first, then added (P5), not filed.
-      if (req.sources.some((s) => { const p = parsePath(s); return !!p && isNetVolumePath(p); })) return startFetch(ctx, req as CopyMove);
+      // Onto another volume (phase 2, spec 2026-10-31 §4.1): a RENAME within one volume, else up and down (plan W8).
+      if (req.sources.some((s) => { const p = parsePath(s); return !!p && isNetVolumePath(p); })) {
+        const to = parsePath(req.dest);
+        return to && isNetVolumeDir(to) ? volumeToVolume(ctx, req as CopyMove) : startFetch(ctx, req as CopyMove);
+      }
       const dest = pathOf(req.dest);
       // LIBRARY: above the disks (the root, a collection, a title's disk list): filing, not a write (Files 2 §3.2).
       const shelf = await shelfDest(ctx, dest);
@@ -81,7 +86,8 @@ async function dispatch(ctx: OpCtx, req: OpRequest): Promise<Outcome> {
       const dd = driverOf(dest);
       const srcs = req.sources.map(pathOf); srcs.forEach(driverOf);
       // C16: a send never takes the original away; Move into NET: is offered nowhere, and the engine says why.
-      if (req.op === 'move' && dest.device === 'NET') refuse('unsupported', 400, NET_MOVE_IN);
+      // A move onto a volume is a copy whose sources go once delivered (phase 2); into Queue it stays refused.
+      if (req.op === 'move' && dest.device === 'NET' && !isNetVolumeDir(dest)) refuse('unsupported', 400, NET_MOVE_IN);
       if (srcs.every((s) => s.device === dest.device)) return (need(dd, 'within') as NonNullable<VolumeDriver['within']>).call(dd, ctx, req as CopyMove);
       return crossDevice(ctx, req, srcs, dest);
     }
@@ -158,7 +164,7 @@ async function crossDevice(ctx: OpCtx, req: CopyMove, srcs: FsPath[], dest: FsPa
       await (need(d, 'mustRemove') as NonNullable<VolumeDriver['mustRemove']>).call(d, ctx, list);
     }
   }
-  const out = await write.call(dd, ctx, dest, tops, req.onClash);
+  const out = await write.call(dd, ctx, dest, tops, req.onClash, { move: req.op === 'move' });
   if (out.kind !== 'done' || req.op !== 'move') return out;
   const written = new Set(out.written ?? []);
   const moved = req.sources.filter((s) => written.has(s));

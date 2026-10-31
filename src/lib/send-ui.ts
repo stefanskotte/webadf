@@ -16,6 +16,8 @@ export type SendTarget = {
   id: string; name: string; macAddress: string | null; defaultName: boolean;
   online: boolean; lastSeenAt: number | null; network: boolean; rx: Rx | null; rxAt: number | null;
   firmwareVersion: string | null; rxProto: number | null; browseOn: boolean;
+  /** Transfer 2.5's writing switch (NET: volumes phase 2, writeBlock). */
+  writeOn: boolean;
 };
 export type SendContext = { targets: SendTarget[]; now: number };
 export type TransferView = {

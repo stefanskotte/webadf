@@ -19,11 +19,14 @@ export type RemoteRow = typeof remoteRequests.$inferSelect;
  * with the absolute path and clash mode, and its STASH: row goes.
  */
 export type GetTarget = { dest: string; rel: string[]; replace: boolean; library: { collectionId: string | null } | null;
-  moveSource?: string; relay?: { deviceId: string; dest: string; onClash: 'keep' | 'replace' | 'skip' } };
+  moveSource?: string; relay?: { deviceId: string; dest: string; onClash: 'keep' | 'replace' | 'skip'; moveSource?: string };
+  /** Who made the copy (a move's removal and a relay's queue row are theirs). */
+  userId?: string };
 /** A write request (spec 2026-10-31 §2.3): `label` the object in the pane's words, `icon` a `.info` taken along (W9). */
-export type WriteReq = { kind: WriteKind; amigaPath: string; args?: WriteArgs; icon?: boolean; label: string };
+export type WriteReq = { kind: WriteKind; amigaPath: string; args?: WriteArgs; icon?: boolean; ensure?: boolean; label: string };
 /** What a write request's `target` holds: its arguments, its label, whether it is an icon taken along. */
-export type WriteTarget = WriteArgs & { label: string; icon?: boolean; moved?: string };
+/** `ensure`: a MKDIR a copy needs, where a drawer already there (`exists`) is as good as made. */
+export type WriteTarget = WriteArgs & { label: string; icon?: boolean; ensure?: boolean; moved?: string };
 export type ListingState =
   | { state: 'ready'; row: RemoteRow; ageMs: number }
   | { state: 'pending'; row: RemoteRow }
@@ -189,7 +192,7 @@ export async function addWrites(
     await tx.delete(remoteRequests).where(lt(remoteRequests.createdAt, ms(now, REQUEST_KEEP_MS)));
     const rows = await tx.insert(remoteRequests).values(a.writes.map((w, k) => ({
       id: newRequestId(), orgId: a.orgId, deviceId: a.deviceId, kind: w.kind, amigaPath: w.amigaPath, fetchId: a.jobId,
-      target: { ...(w.args ?? {}), label: w.label, ...(w.icon ? { icon: true } : {}) } satisfies WriteTarget,
+      target: { ...(w.args ?? {}), label: w.label, ...(w.icon ? { icon: true } : {}), ...(w.ensure ? { ensure: true } : {}) } satisfies WriteTarget,
       createdAt: new Date(now.getTime() + k),
     }))).returning({ id: remoteRequests.id, createdAt: remoteRequests.createdAt });
     await tx.update(devices).set({ reqVersion: sql`${devices.reqVersion} + 1` }).where(eq(devices.id, a.deviceId));
@@ -312,7 +315,8 @@ function writeLines(r: RemoteRow, rid: string, lines: string[], set: Partial<Rem
     if (a?.t === 'del' && r.kind === 'delete') { removed = Math.max(removed, a.count); continue; }
     if (a?.t === 'done' && !a.cut) { if (r.kind === 'delete') removed = a.count; end = 'done'; break; }
     if (a?.t === 'err') {
-      if (a.code === 'notfound' && (r.target as WriteTarget | null)?.icon) { end = 'done'; break; }
+      const t = r.target as WriteTarget | null;
+      if ((a.code === 'notfound' && t?.icon) || (a.code === 'exists' && t?.ensure)) { end = 'done'; break; }
       Object.assign(set, { errorCode: a.code, errorText: a.text }); end = 'failed'; break;
     }
     Object.assign(set, BAD); end = 'failed'; break;

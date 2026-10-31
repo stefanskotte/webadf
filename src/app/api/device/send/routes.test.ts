@@ -16,6 +16,8 @@ vi.mock('@/lib/transfers', () => ({
   recordChunk: (...a: unknown[]) => recordChunk(...a),
   finishTransfer: (...a: unknown[]) => finishTransfer(...a),
 }));
+const afterTransferDone = vi.fn(async () => undefined);
+vi.mock('@/lib/files/net-fetch', () => ({ afterTransferDone: (...a: unknown[]) => afterTransferDone(...(a as [])) }));
 const readRange = vi.fn();
 vi.mock('@/lib/storage', () => ({ diskStore: { readRange: (...a: unknown[]) => readRange(...a) } }));
 
@@ -88,6 +90,17 @@ describe('POST /api/device/send/<id>/done', () => {
   it('records a failure', async () => {
     finishTransfer.mockResolvedValue(true);
     expect((await post({ ok: false, code: 'space', text: 'not enough space' })).status).toBe(204);
+  });
+  // NET: volumes phase 2: Transfer's SKIP arrives as code skipped; a finished row settles a move onto a volume.
+  it('takes a Skip, and settles a move only after a row really finished', async () => {
+    finishTransfer.mockResolvedValue(true);
+    expect((await post({ ok: false, code: 'skipped', text: '' })).status).toBe(204);
+    expect(finishTransfer).toHaveBeenCalledWith(expect.anything(), 'd1', 't1', { ok: false, code: 'skipped', text: '' });
+    expect(afterTransferDone).toHaveBeenCalledWith(expect.anything(), 't1');
+    afterTransferDone.mockClear();
+    finishTransfer.mockResolvedValue(false);
+    expect((await post({ ok: true, savedAs: 'x' })).status).toBe(409);
+    expect(afterTransferDone).not.toHaveBeenCalled();
   });
   it('refuses a bad body, and says 409 when already finished', async () => {
     expect((await post({})).status).toBe(400);

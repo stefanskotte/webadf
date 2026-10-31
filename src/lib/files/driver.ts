@@ -19,10 +19,13 @@ export type Added = { source: string; gameId: string; diskId: string };
  * `written`: the sources a write actually placed (not skipped, not refused). A move between devices removes only these
  * (ruling 1); runOp does not pass it on. `queued`: how many files a copy into NET:/<board> queued (increment 3, C3), a
  * folder being several, so the pane can say "Queued 3 files". `fetching`: a copy out of a NET: volume (spec 2026-10-30
- * §4.5): the fetch id its progress is read by, and how many files it asked the Amiga for.
+ * §4.5): the fetch id its progress is read by, and how many files it asked the Amiga for. `job`: an operation that changes
+ * the Amiga's own disks (NET: volumes phase 2, spec 2026-10-31 §4.1): its id (the progress of its requests and queue
+ * rows, plus its gets when it fetches too), how many files it copies onto a volume and how many one-line writes it made.
  */
 export type Outcome =
-  | { kind: 'done'; items: OpItem[]; added?: Added[]; written?: string[]; queued?: number; fetching?: { id: string; files: number } }
+  | { kind: 'done'; items: OpItem[]; added?: Added[]; written?: string[]; queued?: number; fetching?: { id: string; files: number };
+    job?: { id: string; files: number; writes: number } }
   | { kind: 'clashes'; clashes: Clash[] };
 export type FileBytes = { name: string; bytes: Uint8Array; date: Date | null; protection: string; comment: string | null };
 /**
@@ -95,7 +98,8 @@ export interface VolumeDriver {
   read(ctx: FsCtx, p: FsPath): Promise<FileBytes | null>;              // a file's bytes + meta; null for a folder or not found
   collect(ctx: FsCtx, p: FsPath): Promise<IncomingItem[] | null>;      // one entry walked, for a copy to another device
   within?(ctx: OpCtx, req: CopyMove): Promise<Outcome>;                // copy/move with every source and the dest on this device
-  write?(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], onClash: OnClash): Promise<Outcome>;   // absent = read-only device
+  /** `move`: the write is a move's first half (NET: a copy onto a volume removes the sources itself once delivered). */
+  write?(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], onClash: OnClash, opts?: { move?: boolean }): Promise<Outcome>;   // absent = read-only device
   /** With `unchanged`, a source is removed only while it is still exactly what was collected (a move's second half). */
   remove?(ctx: OpCtx, sources: string[], unchanged?: ReadonlyMap<string, IncomingItem[]>): Promise<Outcome>;
   /** Refuses (throws) unless every source could be removed now: what a move between devices asks before it writes. */

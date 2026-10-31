@@ -10,11 +10,12 @@ describe('driverFor', () => {
       expect(typeof lib[m], m).toBe('function');
     }
   });
-  it('has NET: (increment 3): boards and their queues, written by copying in, never copied out of', () => {
+  it('has NET: boards and their queues (increment 3), and since NET: volumes phase 2 every change a volume takes', () => {
     const net = driverFor('NET')!;
     expect(net.device).toBe('NET');
-    for (const m of ['list', 'read', 'collect', 'within', 'write', 'remove', 'mustRemove'] as const) expect(typeof net[m], m).toBe('function');
-    for (const m of ['makedir', 'rename', 'setMeta'] as const) expect(net[m], m).toBeUndefined();
+    for (const m of ['list', 'read', 'collect', 'within', 'write', 'remove', 'mustRemove', 'makedir', 'rename', 'setMeta'] as const) {
+      expect(typeof net[m], m).toBe('function');
+    }
   });
   it('has STASH: listing, reading and collecting (its writes arrive in Task 5)', () => {
     const stash = driverFor('STASH')!;
