@@ -332,6 +332,9 @@ static void up_no(amiga_send_t *s, const char *code, const char *text) {
     int n = snprintf(u->line, sizeof u->line, "NO %s %s %u:%s\n", u->tag, code, (unsigned)strlen(text), text);
     push(s, (const uint8_t *)u->line, n);
     wf_logf(WF_INFO, "up: %s NO %s", u->tag, code);
+    // A GET's file refused (spec section 3, After GOT; plan ruling F5): toolarge for a file over 4 MB, io otherwise.
+    ar_got_t *g = s->req ? ar_got_by_tag(s->req, u->tag) : NULL;
+    if (g) ar_got_fail(g, strcmp(code, "size") == 0 ? "toolarge" : "io", text);
 }
 // Before TAKE, or after the last raw byte: the stream is lines, so the connection stays.
 static void up_refuse(amiga_send_t *s, const char *code, const char *text) {
@@ -387,7 +390,8 @@ static bool up_open(amiga_send_t *s, uint32_t t, bool http) {
     if (!http || in_backoff(s)) return false;
     if (!as_put_parse(u->put, &p)) { drop(s, 'u', "bad PUT"); return true; }
     if (p.size > AS_UP_FILE_MAX) { up_refuse(s, "size", no_text("size")); return true; }
-    if (as_put_json(&p, NULL, u->json, sizeof u->json) < 0) { up_refuse(s, "name", no_text("name")); return true; }
+    const ar_got_t *g = s->req ? ar_got_by_tag(s->req, u->tag) : NULL;   // a GET's file: tied to its request
+    if (as_put_json(&p, g ? g->rid : NULL, u->json, sizeof u->json) < 0) { up_refuse(s, "name", no_text("name")); return true; }
     int st = s->ops->upload_open(s->ops->ctx, u->json, u->resp, sizeof u->resp);
     if (st == 200 || st == 201) {
         if (!json_str(u->resp, "id", id, sizeof id) || !id_ok(id) ||
@@ -411,8 +415,8 @@ static bool up_open(amiga_send_t *s, uint32_t t, bool http) {
         push(s, (const uint8_t *)u->line, n);
         s->phase = AS_UP_DATA;
         u->t_progress = t;
-        wf_logf(WF_INFO, "up: %s open %.*s %lu at %lu", u->tag, p.path_n < 40 ? p.path_n : 40, p.path,
-                (unsigned long)p.size, (unsigned long)off);
+        wf_logf(WF_INFO, "up: %s open %.*s %lu at %lu%s", u->tag, p.path_n < 40 ? p.path_n : 40, p.path,
+                (unsigned long)p.size, (unsigned long)off, g ? " for a request" : "");
         if (!flush(s)) drop(s, 'u', "send");
         return true;
     }
@@ -496,6 +500,8 @@ static bool up_close(amiga_send_t *s, uint32_t t, bool http) {
         int n = snprintf(u->line, sizeof u->line, "DONE %s %d:%s\n", u->tag, nlen, u->resp);
         push(s, (const uint8_t *)u->line, n);
         wf_logf(WF_INFO, "up: %s stored %lu -> %s", u->tag, (unsigned long)u->size, u->resp);
+        ar_got_t *g = s->req ? ar_got_by_tag(s->req, u->tag) : NULL;
+        if (g) ar_got_remove(g);   // the server settles the GET when the upload closes
         up_reset(s);
         s->phase = AS_READY; s->up_last = true; s->backoff_ms = 0; s->t_ping = t;
         if (!flush(s)) drop(s, 'u', "send");
@@ -632,12 +638,26 @@ static bool req_line(amiga_send_t *s, uint32_t t) {
     char verb[5], rid[AR_RID_MAX + 1];
     if (!ar_line_verb(s->line, verb, rid)) return false;
     if (r->active && r->sent && !r->ended && strcmp(rid, r->rid) == 0) {
-        const bool end = !strcmp(verb, "DONE") || !strcmp(verb, "ERR") || !strcmp(verb, "GOT");
+        const bool got = !strcmp(verb, "GOT");
+        const bool end = got || !strcmp(verb, "DONE") || !strcmp(verb, "ERR");
         r->t_last = t;
         if (r->discard) { if (end) ar_finish(r); return true; }
+        if (got && r->kind == AR_GET) {
+            // "GOT <rid> <tag>": the file comes up later as the upload with this tag (spec section 3, GET).
+            const char *tag = s->line + 4 + strlen(rid) + 1;
+            const size_t tn = strlen(tag);
+            bool ok = tn >= 1 && tn <= AR_TAG_MAX;
+            for (size_t i = 0; ok && i < tn; i++) ok = tag[i] >= '0' && tag[i] <= '9';
+            if (ok) ar_got_add(r, rid, tag);
+        }
         (void)ar_body_add(r, s->line);       // req_room made room for any line before it was read
         if (end) ar_body_close(r, true);
         return true;
+    }
+    if (!strcmp(verb, "ERR")) {
+        // After GOT (spec section 3): Transfer's late ERR for a GET already answered, routed by its rid.
+        ar_got_t *g = ar_got_by_rid(r, rid);
+        if (g) { ar_got_late(g, s->line); wf_logf(WF_INFO, "req: %.8s failed after GOT", rid); return true; }
     }
     return false;   // a download's ERR, or a line for an answer already ended: the usual handling
 }
@@ -655,10 +675,12 @@ static bool req_silent(amiga_send_t *s, uint32_t t) {
     return true;
 }
 
-// The connection went: the answer in progress ends "lost" (plan ruling F5). Task 4 adds the GOT table here.
+// The connection went: the answer in progress ends "lost", and every GET answered GOT whose file has not finished
+// fails the same way -- Transfer drops a GET's file with the connection (its ruling T4; plan ruling F5).
 static void req_on_drop(amiga_send_t *s) {
     as_req_t *r = s->req;
     if (r->active && r->sent) ar_end_err(r, "norx", AS_TXT_LOST);
+    for (int i = 0; i < AR_MAX; i++) if (r->got[i].used) ar_got_fail(&r->got[i], "norx", AS_TXT_LOST);
     r->browse = false;
 }
 

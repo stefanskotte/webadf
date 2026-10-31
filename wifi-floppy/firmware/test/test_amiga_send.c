@@ -1357,6 +1357,114 @@ static void a_server_busy_at_open_is_not_called_cancelled(void) {
     CHECK(strstr(F.out, "NO 1 busy ") != NULL && strstr(F.out, "cancelled") == NULL, F.out);
     CHECK(strstr(F.out, "NO 1 busy 19:the web app is busy\n") != NULL, F.out);
 }
+static const char *PUT7 = "PUT 7 5 1.2.3 0 9:Hello.txt 0:";
+// Transfer answered GET g1 with GOT g1 7: piece 0 posted.
+static void got(void) {
+    ready3(1);
+    wake(1, "GET g1 14:Work:Hello.txt\n"); run(3);
+    CHECK(strcmp(F.out, "GET g1 14:Work:Hello.txt\n") == 0, F.out);
+    reply("GOT g1 7"); run(3);
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"GOT g1 7\"],\"last\":true}") == 0, F.req_body[0]);
+    CHECK(!RQ.active, "GOT ends the answer");
+    clear_out();
+}
+
+static void got_ties_the_upload_to_the_request(void) {
+    got();
+    reply(PUT7); run(1);
+    CHECK_EQ_INT(F.opens, 1);
+    const char *tail = "\"comment\":\"\",\"request\":\"g1\"}";
+    CHECK(strlen(F.open_json) > strlen(tail) && strcmp(F.open_json + strlen(F.open_json) - strlen(tail), tail) == 0, F.open_json);
+    amiga_sends("hello", 5); end_line("7", (const uint8_t *)"hello", 5); run(4);
+    CHECK_EQ_INT(F.closes, 1);
+    CHECK_EQ_INT(F.req_posts, 1);                        // the server settles the GET when the upload closes
+    CHECK(ar_got_by_rid(&RQ, "g1") == NULL, "the entry went with the upload");
+    CHECK(!as_has_work(&S), "idle after");
+}
+
+static void an_upload_not_from_a_get_carries_no_request(void) {
+    ready3(1);
+    reply(PUT5); run(1);
+    CHECK_EQ_INT(F.opens, 1);
+    CHECK(strstr(F.open_json, "request") == NULL, F.open_json);
+}
+
+static void a_late_err_after_got_is_posted_as_piece_1(void) {
+    got();
+    reply("ERR g1 io 14:Read error 205"); run(3);
+    CHECK_EQ_INT(F.req_posts, 2);
+    CHECK(strcmp(F.req_rid[1], "g1") == 0, F.req_rid[1]);
+    CHECK(strcmp(F.req_body[1], "{\"piece\":1,\"lines\":[\"ERR g1 io 14:Read error 205\"],\"last\":true}") == 0, F.req_body[1]);
+    CHECK(ar_got_by_rid(&RQ, "g1") == NULL, "removed once posted");
+}
+
+static void a_late_err_survives_a_failing_post(void) {
+    got();
+    F.req_post_status = -1;
+    reply("ERR g1 io 14:Read error 205"); run(3);
+    CHECK_EQ_INT(F.req_posts, 2);
+    CHECK(ar_got_by_rid(&RQ, "g1") != NULL, "kept for the retry");
+    F.req_post_status = 0; F.now += 1100; run(3);
+    CHECK_EQ_INT(F.req_posts, 3);
+    CHECK(ar_got_by_rid(&RQ, "g1") == NULL, "posted, removed");
+}
+
+static void a_get_upload_refused_too_large_fails_the_get(void) {
+    got();
+    reply("PUT 7 5000000 1.2.3 0 9:Hello.txt 0:"); run(3);
+    CHECK(strstr(F.out, "NO 7 size") != NULL, F.out);
+    CHECK_EQ_INT(F.req_posts, 2);
+    CHECK(strcmp(F.req_body[1], "{\"piece\":1,\"lines\":[\"ERR g1 toolarge 29:file too large (4 MB at most)\"],\"last\":true}") == 0, F.req_body[1]);
+}
+
+static void a_get_upload_refused_by_the_server_fails_the_get_io(void) {
+    got();
+    F.open_status = 409; snprintf(F.open_resp, sizeof F.open_resp, "{\"code\":\"full\"}");
+    reply(PUT7); run(3);
+    CHECK(strstr(F.out, "NO 7 full") != NULL, F.out);
+    CHECK(strstr(F.req_body[1], "\"ERR g1 io ") != NULL, F.req_body[1]);
+}
+
+// Review Focus 4 (plan ruling F5).
+static void a_dropped_connection_fails_every_got_get(void) {
+    ready3(1);
+    wake(1, "GET g1 6:Work:a\nGET g2 6:Work:b\n"); run(3);
+    reply("GOT g1 7"); run(3);
+    reply("GOT g2 8"); run(3);
+    CHECK_EQ_INT(F.req_posts, 2);
+    F.recv_closed = true; run(6);
+    CHECK_EQ_INT(F.req_posts, 4);
+    CHECK(strcmp(F.req_body[2], "{\"piece\":1,\"lines\":[\"ERR g1 norx 35:The connection to Transfer was lost\"],\"last\":true}") == 0
+          || strcmp(F.req_body[2], "{\"piece\":1,\"lines\":[\"ERR g2 norx 35:The connection to Transfer was lost\"],\"last\":true}") == 0, F.req_body[2]);
+    CHECK(strcmp(F.req_rid[2], F.req_rid[3]) != 0, "one post each");
+}
+
+static void a_get_answered_err_has_no_entry(void) {
+    ready3(1);
+    wake(1, "GET g1 6:Work:a\n"); run(3);
+    reply("ERR g1 notfound 16:Object not found"); run(3);
+    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"ERR g1 notfound 16:Object not found\"],\"last\":true}") == 0, F.req_body[0]);
+    CHECK(ar_got_by_rid(&RQ, "g1") == NULL, "no GOT, no entry");
+}
+
+// Review Focus 5 (plan ruling F6).
+static void a_refused_piece_discards_the_rest_and_the_next_request_goes(void) {
+    char line[64];
+    ready3(1);
+    wake(1, "DIR d 5:Work:\nVOLS v\n"); run(3);
+    F.req_post_status = 404;
+    for (int i = 0; i < 420; ) {
+        for (int k = 0; k < 10 && i < 420; k++, i++) { snprintf(line, sizeof line, "ENT d f 1 0 1.0.0 3:%03d 0:", i); reply(line); }
+        run(2);
+    }
+    reply("DONE d 420"); run(4);
+    CHECK_EQ_INT(F.req_posts, 1);                       // piece 0 refused; the rest read and dropped
+    CHECK(F.in_head == F.in_tail, "every line read");
+    F.req_post_status = 0;
+    CHECK(strstr(F.out, "VOLS v\n") != NULL, "the next request went");
+}
+
 int main(void) {
     RUN(off_or_no_address_does_nothing);
     RUN(connects_to_6800_and_says_hello);
@@ -1454,5 +1562,14 @@ int main(void) {
     RUN(a_put_that_crosses_a_request_after_an_upload_goes_first);
     RUN(no_ping_while_lines_wait_for_a_piece);
     RUN(a_403_piece_is_refused_not_retried);
+    RUN(got_ties_the_upload_to_the_request);
+    RUN(an_upload_not_from_a_get_carries_no_request);
+    RUN(a_late_err_after_got_is_posted_as_piece_1);
+    RUN(a_late_err_survives_a_failing_post);
+    RUN(a_get_upload_refused_too_large_fails_the_get);
+    RUN(a_get_upload_refused_by_the_server_fails_the_get_io);
+    RUN(a_dropped_connection_fails_every_got_get);
+    RUN(a_get_answered_err_has_no_entry);
+    RUN(a_refused_piece_discards_the_rest_and_the_next_request_goes);
     return REPORT();
 }
