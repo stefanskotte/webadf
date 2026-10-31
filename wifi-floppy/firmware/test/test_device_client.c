@@ -1449,7 +1449,7 @@ static void post_sends_a_16k_body_from_the_callers_memory(void) {
     CHECK(strstr(fake_last_request(), "Content-Length: 16384\r\n") != NULL, "length");
     int n = fake_last_request_len();
     CHECK(memcmp(fake_last_request() + n - 16384, body, 16384) == 0, "the body byte for byte, after the head");
-    CHECK_EQ_INT(dc_upload_chunk(&c, "x", 0, body, 16385, resp, sizeof resp), -1);   // over DC_POST_BODY_MAX
+    CHECK_EQ_INT(dc_upload_chunk(&c, "x", 0, body, DC_POST_BODY_MAX + 1, resp, sizeof resp), -1);   // over DC_POST_BODY_MAX
     CHECK_EQ_INT(dc_upload_chunk(&c, "x", 0, body, 0, resp, sizeof resp), -1);       // a chunk is never empty
 }
 // A chunk retried over a stale kept socket (plan 2026-10-19 Task 7 parked item, Task 11): dc_post's head and body
@@ -3839,6 +3839,93 @@ static void send_done_post(void) {
     CHECK(strstr(fake_last_request(), "{\"ok\":true,\"savedAs\":\"x\"}") != NULL, "body");
 }
 
+// --- NET: volumes (fw 1.22.0): the web app's requests to Transfer ---------------------------------------------------
+
+// reqAck rides every poll once set; rxv and browse only while Transfer is connected.
+static void req_poll_params_only_once_set(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "reqAck") == NULL, "an untouched board polls as 1.21 did");
+    boot(); dc_set_send(&c, 4, 'u'); dc_set_req(&c, 5, 0, false);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&xferAck=4&rx=u&reqAck=5 HTTP/1.1\r\n") != NULL, "reqAck after rx, no rxv while unconnected");
+    boot(); dc_set_send(&c, 4, 'c'); dc_set_req(&c, 5, 3, true);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&rx=c&reqAck=5&rxv=3&browse=1 HTTP/1.1\r\n") != NULL, "rxv and browse while connected");
+    boot(); dc_set_send(&c, 4, 'c'); dc_set_req(&c, 5, 2, false);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&reqAck=5&rxv=2&browse=0 HTTP/1.1\r\n") != NULL, "a Transfer 2.2 is reported as 2");
+}
+
+// The worst-case poll path with every parameter at its longest: it must be sent whole (path buffer 208, request 480).
+static void the_worst_case_poll_with_req_is_sent_whole(void) {
+    boot(); dc_set_df1(&c, DF1_MODE_OFF, false);
+    c.since = 4294967295u; c.nfc_ack = 4294967295u; c.display_ack = 4294967295u;
+    c.drive_ack = 4294967295u; c.df1_ack = 4294967295u;
+    dc_set_send(&c, 4294967295u, 'u');
+    dc_set_req(&c, 4294967295u, 3, true);
+    dc_set_boot(&c, 0xffffffffu, true);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&xferAck=4294967295&rx=u&reqAck=4294967295&rxv=3&browse=1&boot=ffffffff&ota=1 HTTP/1.1\r\n") != NULL,
+          "every parameter, in order");
+}
+
+static void req_version_is_read_from_the_poll(void) {
+    boot(); dc_set_req(&c, 0, 0, false);
+    push_ok_json("{\"version\":3,\"desired\":null,\"req\":{\"v\":9}}");
+    dc_step(&c);
+    CHECK_EQ_INT(c.req_version, 9);
+    CHECK(c.req_seen, "seen");
+    push_ok_json("{\"version\":4,\"desired\":null}");
+    dc_step(&c);
+    CHECK_EQ_INT(c.req_version, 9);
+}
+
+// Final review M4: a field the server may add to req one day must not stop the wake-ups (obj 24 -> 48, as xfer).
+static void req_with_a_future_field_still_wakes(void) {
+    boot(); dc_set_req(&c, 0, 0, false);
+    push_ok_json("{\"version\":3,\"desired\":null,\"req\":{\"v\":9,\"x\":\"0123456789abcdef\"}}");
+    dc_step(&c);
+    CHECK_EQ_INT(c.req_version, 9);
+    CHECK(c.req_seen, "seen");
+}
+
+static void fetch_req_gets_the_lines(void) {
+    boot();
+    char buf[64];
+    fake_push_response("HTTP/1.1 200 OK\r\nContent-Length: 14\r\n\r\nVOLS a\nVOLS b\n");
+    CHECK_EQ_INT(dc_fetch_req(&c, buf, sizeof buf), 14);
+    CHECK(strstr(fake_last_request(), "GET /api/device/req HTTP/1.1\r\n") != NULL, fake_last_request());
+    CHECK(memcmp(buf, "VOLS a\nVOLS b\n", 14) == 0, "the lines");
+    fake_push_response("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+    CHECK_EQ_INT(dc_fetch_req(&c, buf, sizeof buf), -1);
+}
+
+static void post_req_sends_the_piece(void) {
+    boot();
+    const char *json = "{\"piece\":0,\"lines\":[\"DONE r 0\"],\"last\":true}";
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK_EQ_INT(dc_post_req(&c, "r_1-x", json, (int)strlen(json)), 204);
+    CHECK(strstr(fake_last_request(), "POST /api/device/req/r_1-x HTTP/1.1\r\n") != NULL, fake_last_request());
+    CHECK(strstr(fake_last_request(), "application/json") != NULL, "json");
+    CHECK(strstr(fake_last_request(), json) != NULL, "the body");
+}
+
+static void post_req_takes_a_32k_body(void) {
+    boot();
+    static char json[DC_POST_BODY_MAX + 1];
+    memset(json, 'x', DC_POST_BODY_MAX); json[DC_POST_BODY_MAX] = 0;
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK_EQ_INT(dc_post_req(&c, "r", json, DC_POST_BODY_MAX), 204);
+    CHECK(strstr(fake_last_request(), "Content-Length: 32768\r\n") != NULL, "32 KB");
+    CHECK_EQ_INT(dc_post_req(&c, "r", json, DC_POST_BODY_MAX + 1), -1);
+}
+
 // --- Disk at startup (2026-10-19): every poll and tap of one boot names that boot -----------------------------------
 // The server decides "No disk" at the FIRST request of a boot it has not seen (src/lib/boot-disk-store.ts). So the id
 // is the same on every request of the boot -- a Wi-Fi drop and reconnect re-sends it, and is a no-op there -- and a
@@ -3913,6 +4000,8 @@ int main(void) {
     RUN(an_update_boot_says_so);
     RUN(send_poll_params_only_once_set); RUN(send_version_is_read_from_the_poll); RUN(send_ip_hint_is_read_from_xfer); RUN(parse_ipv4_is_strict); RUN(send_queue_fetch);
     RUN(send_chunk_fetch); RUN(send_done_post);
+    RUN(req_poll_params_only_once_set); RUN(the_worst_case_poll_with_req_is_sent_whole); RUN(req_version_is_read_from_the_poll); RUN(req_with_a_future_field_still_wakes);
+    RUN(fetch_req_gets_the_lines); RUN(post_req_sends_the_piece); RUN(post_req_takes_a_32k_body);
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected
     // needs real PSRAM backing (everything else in this file either never
     // reaches image_parse_feed, or only pokes psram_publish_slot()'s

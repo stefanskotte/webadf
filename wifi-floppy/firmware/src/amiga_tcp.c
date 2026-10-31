@@ -177,6 +177,8 @@ static int h_chunk(void *ctx, const char *id, uint32_t off, uint32_t len, uint8_
     (void)ctx; return dc_fetch_send_chunk(g_dc, id, off, len, buf);
 }
 static int h_done(void *ctx, const char *id, const char *json) { (void)ctx; return dc_post_send_done(g_dc, id, json); }
+static int h_req_fetch(void *ctx, char *buf, int cap) { (void)ctx; return dc_fetch_req(g_dc, buf, cap); }
+static int h_req_post(void *ctx, const char *rid, const char *json, int n) { (void)ctx; return dc_post_req(g_dc, rid, json, n); }
 static uint32_t h_now(void *ctx) { (void)ctx; return to_ms_since_boot(get_absolute_time()); }
 
 void amiga_tcp_ops(as_ops_t *ops, device_client_t *c) {
@@ -193,4 +195,5 @@ void amiga_tcp_ops(as_ops_t *ops, device_client_t *c) {
     ops->post_done = h_done;
     ops->now_ms = h_now;
     ops->upload_open = h_up_open; ops->upload_chunk = h_up_chunk; ops->upload_close = h_up_close; ops->raw_arm = t_raw_arm;
+    ops->fetch_req = h_req_fetch; ops->post_req = h_req_post;   // NET: volumes (fw 1.22.0)
 }

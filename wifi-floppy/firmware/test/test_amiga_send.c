@@ -24,6 +24,9 @@ static struct {
     char chunk_id[64]; char close_id[64];              // the upload id each request was made for
     int lose_answer;                                   // the next chunk is stored but answered -1 (a lost answer)
     int closes, close_status; char close_json[128]; char close_resp[512];
+    // NET: volumes (fw 1.22.0)
+    char reqs[AR_FETCH_BYTES + 1]; int req_status; int req_fetches;   // what GET /api/device/req returns next
+    char req_rid[12][48]; char req_body[12][AR_BODY_BYTES + 1]; int req_posts; int req_post_status;
     uint32_t now;
 } F;
 
@@ -81,7 +84,22 @@ static int f_up_close(void *c, const char *id, const char *json, char *resp, int
     return F.close_status ? F.close_status : 200;
 }
 static void f_raw_arm(void *c, as_raw_t *w) { (void)c; F.raw = (w && w->got < w->total) ? w : NULL; F.armed = w; F.arms++; }
-static const as_ops_t OPS = { NULL, f_connect, f_state, f_send, f_recv, f_close, f_queue, f_chunk, f_post, f_now, f_up_open, f_up_chunk, f_up_close, f_raw_arm };
+static int f_req_fetch(void *c, char *buf, int cap) {
+    (void)c; F.req_fetches++;
+    if (F.req_status) return -1;
+    int n = (int)strlen(F.reqs); if (n > cap) return -1;
+    memcpy(buf, F.reqs, (size_t)n); F.reqs[0] = 0;          // the server marks them sent
+    return n;
+}
+static int f_req_post(void *c, const char *rid, const char *json, int n) {
+    (void)c;
+    int i = F.req_posts < 12 ? F.req_posts : 11;
+    snprintf(F.req_rid[i], sizeof F.req_rid[i], "%s", rid);
+    memcpy(F.req_body[i], json, (size_t)n); F.req_body[i][n] = 0;
+    F.req_posts++;
+    return F.req_post_status ? F.req_post_status : 204;   // -1: a transport failure
+}
+static const as_ops_t OPS = { NULL, f_connect, f_state, f_send, f_recv, f_close, f_queue, f_chunk, f_post, f_now, f_up_open, f_up_chunk, f_up_close, f_raw_arm, f_req_fetch, f_req_post };
 
 static amiga_send_t S;
 static void reply(const char *l) { snprintf(F.in[F.in_tail], AS_LINE_MAX + 1, "%s", l); F.in_tail = (F.in_tail + 1) % 16; }
@@ -478,6 +496,355 @@ static void end_line(const char *tag, const uint8_t *p, size_t n) {
     char e[40]; int k = snprintf(e, sizeof e, "END %s %lx\n", tag, crc32_of(p, n)); amiga_sends(e, k);
 }
 static const char *PUT5 = "PUT 1 5 1.2.3 0 9:Hello.txt 0:";
+// --- NET: volumes (spec 2026-10-30 section 3, fw 1.22.0) ---
+static as_req_t RQ;
+// Connected to Transfer 2.3 (READY 3 <browse>), the queue empty, nothing fetched yet.
+static void ready3(int browse) {
+    fresh();
+    as_set_key(&S, KEY);
+    as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1);
+    run(2); F.sock = AS_SOCK_OPEN; run(1);
+    reply(browse ? "READY 3 1" : "READY 3 0"); run(2);
+    clear_out();
+}
+// The poll said req.v = v, and GET /api/device/req will return these lines.
+static void wake(uint32_t v, const char *lines) { snprintf(F.reqs, sizeof F.reqs, "%s", lines); as_set_req_version(&S, v); }
+
+static void the_hello_is_protocol_3_with_requests(void) {
+    fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
+    char want[64]; snprintf(want, sizeof want, "WEBADF 3 %s\n", KEY);
+    CHECK(strcmp(F.out, want) == 0, F.out);
+    CHECK_EQ_INT(as_rx_proto(&S), 0);
+    reply("READY 3 1"); run(2);
+    CHECK_EQ_INT(as_rx_proto(&S), 3); CHECK(as_browse(&S), "browsing on");
+    CHECK(as_req_capable(&S), "capable");
+    ready3(0);
+    CHECK_EQ_INT(as_rx_proto(&S), 3); CHECK(!as_browse(&S), "browsing off");
+}
+
+static void without_requests_the_hello_stays_2(void) {
+    ready2();
+    CHECK(!as_req_capable(&S), "not capable");
+    CHECK_EQ_INT(as_rx_proto(&S), 2); CHECK(!as_browse(&S), "no browse");
+    fresh(); as_set_req(&S, &RQ);                       // no key, so no uploads: requests stay off too
+    as_set_key(&S, "not-hex");
+    CHECK(as_req_capable(&S), "state given");
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
+    CHECK(strcmp(F.out, "WEBADF 1\n") == 0, F.out);
+}
+
+static void a_ready_3_to_a_protocol_2_hello_counts_as_1(void) {
+    fresh(); as_set_key(&S, KEY);                       // uploads, no requests: WEBADF 2
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
+    reply("READY 3 1"); run(2);
+    CHECK_EQ_INT(as_rx_proto(&S), 1);                   // not READY 2 either: read as Receive 1, as 1.21 does
+}
+
+static void transfer_2_2_answers_ready_2_and_requests_get_old(void) {
+    fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
+    reply("READY 2"); run(2);
+    CHECK_EQ_INT(as_rx_proto(&S), 2);
+    clear_out();
+    wake(1, "VOLS a\n"); run(4);
+    CHECK(strstr(F.out, "VOLS") == NULL, "never sent to a 2.2");
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"ERR a old 31:Transfer 2.3 or newer is needed\"],\"last\":true}") == 0, F.req_body[0]);
+    CHECK(!RQ.active, "done");
+}
+
+static void vols_is_relayed_and_answered_in_one_piece(void) {
+    ready3(1);
+    wake(1, "VOLS r1\n"); run(3);
+    CHECK_EQ_INT(F.req_fetches, 1);
+    CHECK_EQ_INT(as_req_acked(&S), 1);
+    CHECK(strcmp(F.out, "VOLS r1\n") == 0, F.out);
+    CHECK(as_has_work(&S), "work while an answer is awaited (no long poll)");
+    reply("VOL r1 9:Workbench 4:DH0: 1000 500 17000.0.0");
+    reply("DONE r1 1");
+    run(3);
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strcmp(F.req_rid[0], "r1") == 0, F.req_rid[0]);
+    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"VOL r1 9:Workbench 4:DH0: 1000 500 17000.0.0\",\"DONE r1 1\"],\"last\":true}") == 0, F.req_body[0]);
+    CHECK(!RQ.active && !as_has_work(&S), "idle after");
+}
+
+static void the_ack_is_the_v_seen_before_the_fetch(void) {
+    ready3(1);
+    wake(5, "VOLS a\nVOLS b\n"); run(2);
+    CHECK_EQ_INT(as_req_acked(&S), 5);
+    as_set_req_version(&S, 6);                          // the server bumped again (requests remain): not fetched yet
+    run(2);
+    CHECK_EQ_INT(F.req_fetches, 1);                     // the board still holds b: no fetch while it does
+    CHECK_EQ_INT(as_req_acked(&S), 5);
+    reply("DONE a 0"); run(3);
+    CHECK(strstr(F.out, "VOLS b\n") != NULL, "b next");
+    reply("DONE b 0"); run(4);
+    CHECK_EQ_INT(F.req_fetches, 2);                     // now empty: fetched for 6
+    CHECK_EQ_INT(as_req_acked(&S), 6);
+}
+
+static void requests_go_one_at_a_time_in_order(void) {
+    ready3(1);
+    wake(1, "VOLS a\nDIR b 5:Work:\n"); run(3);
+    CHECK(strcmp(F.out, "VOLS a\n") == 0, F.out);
+    run(3);
+    CHECK(strstr(F.out, "DIR") == NULL, "b waits for a's answer");
+    reply("DONE a 0"); run(3);
+    CHECK(strstr(F.out, "DIR b 5:Work:\n") != NULL, F.out);
+}
+
+// Review Focus 1.
+static void a_drawer_of_latin1_names_arrives_in_pieces_under_32k(void) {
+    char name[31], com[80], line[300];
+    memset(name, 0xe9, 30); name[30] = 0; memset(com, 0xe9, 79); com[79] = 0;
+    ready3(1);
+    wake(1, "DIR d 5:Work:\n"); run(3);
+    const int N = 100;
+    for (int i = 0; i < N; ) {
+        for (int k = 0; k < 10 && i < N; k++, i++) {
+            snprintf(line, sizeof line, "ENT d f %d 0 1.0.0 30:%s 79:%s", i, name, com);
+            reply(line);
+        }
+        run(2);
+    }
+    reply("DONE d 100"); run(6);
+    CHECK(F.req_posts >= 3, "several pieces");
+    int ents = 0;
+    for (int p = 0; p < F.req_posts && p < 12; p++) {
+        char head[32]; snprintf(head, sizeof head, "{\"piece\":%d,\"lines\":[", p);
+        CHECK(strncmp(F.req_body[p], head, strlen(head)) == 0, F.req_body[p]);
+        CHECK(strlen(F.req_body[p]) <= AR_BODY_BYTES, "inside 32 KB");
+        const bool last = p == F.req_posts - 1;
+        CHECK(strcmp(F.req_body[p] + strlen(F.req_body[p]) - (last ? 14 : 15), last ? "],\"last\":true}" : "],\"last\":false}") == 0, "closed");
+        for (const char *q = F.req_body[p]; (q = strstr(q, "\"ENT d f ")) != NULL; q++) ents++;
+    }
+    CHECK_EQ_INT(ents, N);
+    CHECK(strstr(F.req_body[F.req_posts - 1], "\"DONE d 100\"") != NULL, "DONE in the last piece");
+    for (int p = 0, want = 0; p < F.req_posts; p++) {      // in order: each piece's first ENT continues the count
+        char first[40]; snprintf(first, sizeof first, "\"ENT d f %d 0 ", want);
+        if (strstr(F.req_body[p], "\"ENT d f ")) CHECK(strstr(F.req_body[p], first) == strstr(F.req_body[p], "\"ENT d f "), first);
+        for (const char *q = F.req_body[p]; (q = strstr(q, "\"ENT d f ")) != NULL; q++) want++;
+    }
+}
+
+static void a_piece_closes_at_400_lines(void) {
+    char line[64];
+    ready3(1);
+    wake(1, "DIR d 5:Work:\n"); run(3);
+    for (int i = 0; i < 450; ) {
+        for (int k = 0; k < 10 && i < 450; k++, i++) { snprintf(line, sizeof line, "ENT d f 1 0 1.0.0 3:%03d 0:", i); reply(line); }
+        run(2);
+    }
+    reply("DONE d 450"); run(4);
+    CHECK_EQ_INT(F.req_posts, 2);
+    CHECK(strstr(F.req_body[0], "3:399") != NULL && strstr(F.req_body[0], "3:400") == NULL, "400 lines in piece 0");
+    CHECK(strstr(F.req_body[1], "{\"piece\":1,") == F.req_body[1] && strstr(F.req_body[1], "3:400") != NULL, "the rest in piece 1");
+}
+
+static void lines_wait_in_the_socket_while_a_piece_cannot_post(void) {
+    char line[64];
+    ready3(1);
+    wake(1, "DIR d 5:Work:\n"); run(3);
+    F.req_post_status = -1;                             // the server is unreachable
+    for (int i = 0; i < 400; ) {
+        for (int k = 0; k < 10 && i < 400; k++, i++) { snprintf(line, sizeof line, "ENT d f 1 0 1.0.0 3:%03d 0:", i); reply(line); }
+        run(2);
+    }
+    reply("ENT d f 1 0 1.0.0 3:400 0:"); run(3);
+    CHECK(F.in_head != F.in_tail, "line 401 still in the socket");
+    F.req_post_status = 0; F.now += 2000; run(3);
+    CHECK(F.in_head == F.in_tail, "read once the piece posted");
+    reply("DONE d 401"); run(3);
+    CHECK(strstr(F.req_body[F.req_posts - 1], "3:400") != NULL, "line 401 kept");
+}
+
+static void norx_when_transfer_is_not_connected(void) {
+    fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2);
+    F.sock = AS_SOCK_REFUSED; run(1);                   // Transfer not running: 30 s to the next try
+    wake(1, "VOLS a\n"); run(3);
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"ERR a norx 36:Transfer is not running on the Amiga\"],\"last\":true}") == 0, F.req_body[0]);
+}
+
+// Review Focus 3 (plan ruling F8).
+static void a_close_at_protocol_3_reconnects_in_5s_and_reports_browse(void) {
+    ready3(1);
+    CHECK(as_browse(&S), "on");
+    F.recv_closed = true; run(1);                       // Transfer's switch changed: it closed the idle connection
+    CHECK_EQ_INT(as_rx_proto(&S), 0); CHECK(!as_browse(&S), "unknown while closed");
+    wake(1, "VOLS a\n"); run(3);
+    CHECK_EQ_INT(F.req_posts, 0);                       // a reconnect is due in 5 s: the request waits for it
+    F.recv_closed = false; F.now += AS_RETRY_WAITING_MS + 100; run(2);
+    CHECK_EQ_INT(F.connects, 2);
+    F.sock = AS_SOCK_OPEN; run(1); reply("READY 3 0"); run(3);
+    CHECK(!as_browse(&S), "the new flag");
+    CHECK(strstr(F.out, "VOLS a\n") != NULL, "relayed after the reconnect");
+}
+
+static void silent_transfer_mid_answer_is_timeout_and_drops(void) {
+    ready3(1);
+    wake(1, "DIR d 5:Work:\n"); run(3);
+    reply("ENT d f 1 0 1.0.0 1:a 0:"); run(2);
+    F.now += AS_REQ_SILENT_MS - 1; run(2);
+    CHECK_EQ_INT(F.req_posts, 0); CHECK(F.sock == AS_SOCK_OPEN, "not yet");
+    F.now += 2; run(3);
+    CHECK(F.sock == AS_SOCK_CLOSED, "dropped (plan ruling F4)");
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"ENT d f 1 0 1.0.0 1:a 0:\",\"ERR d timeout 26:Transfer stopped answering\"],\"last\":true}") == 0, F.req_body[0]);
+}
+
+// Review Focus 4.
+static void a_dropped_connection_mid_answer_ends_norx_lost(void) {
+    ready3(1);
+    wake(1, "DIR d 5:Work:\n"); run(3);
+    reply("ENT d f 1 0 1.0.0 1:a 0:"); run(2);
+    F.recv_closed = true; run(3);
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"ENT d f 1 0 1.0.0 1:a 0:\",\"ERR d norx 35:The connection to Transfer was lost\"],\"last\":true}") == 0, F.req_body[0]);
+}
+
+static void a_request_waits_behind_a_moving_download(void) {
+    char q[600];
+    snprintf(q, sizeof q, "NEXT %s 5 3610a686 0 5:Hello 0:\nLIST 1\n%s 5 5:Hello\n", ID, ID);
+    ready3(1);
+    snprintf(F.queue, sizeof F.queue, "%s", q); as_set_inputs(&S, true, 0xAC100AEDu, 2); run(3);
+    memcpy(F.file, "hello", 5); F.file_len = 5;
+    char want[120]; snprintf(want, sizeof want, "FILE %s", ID);
+    CHECK(strstr(F.out, want) != NULL, "the download started");
+    wake(1, "VOLS a\n"); run(3);
+    CHECK_EQ_INT(F.req_fetches, 0);                     // not even fetched while a file moves
+    char go[80]; snprintf(go, sizeof go, "GO %s", ID); reply(go); run(3);
+    char ok[120]; snprintf(ok, sizeof ok, "OK %s 5:Hello", ID); reply(ok);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    run(6);
+    CHECK(strstr(F.out, "VOLS a\n") != NULL, "after the file");
+}
+
+static void a_request_goes_before_a_queued_download(void) {
+    char q[600];
+    ready3(1);
+    snprintf(q, sizeof q, "NEXT %s 5 3610a686 0 5:Hello 0:\nLIST 1\n%s 5 5:Hello\n", ID, ID);
+    snprintf(F.queue, sizeof F.queue, "%s", q);
+    as_set_inputs(&S, true, 0xAC100AEDu, 2);
+    wake(1, "VOLS a\n");
+    run(4);
+    CHECK(strstr(F.out, "VOLS a\n") != NULL, "the request went");
+    char want[120]; snprintf(want, sizeof want, "FILE %s", ID);
+    CHECK(strstr(F.out, want) == NULL, "the download waits for the answer");
+    reply("DONE a 0"); run(4);
+    CHECK(strstr(F.out, want) != NULL, "then the download");
+}
+
+// Review Focus 2 (plan ruling F3).
+static void a_put_that_crosses_a_request_goes_first(void) {
+    ready3(1);
+    wake(1, "VOLS a\n"); run(3);
+    CHECK(strcmp(F.out, "VOLS a\n") == 0, F.out);
+    reply(PUT5); run(2);                                 // Transfer sent its PUT before it read VOLS
+    CHECK_EQ_INT(F.opens, 1);
+    CHECK(strstr(F.out, "TAKE 1 0 5\n") != NULL, "the upload goes while the request waits");
+    F.now += AS_REQ_SILENT_MS + 5000; run(2);           // no timeout while the upload moves
+    CHECK(F.sock == AS_SOCK_OPEN && F.req_posts == 0, "still open");
+    amiga_sends("hello", 5); end_line("1", (const uint8_t *)"hello", 5); run(4);
+    CHECK_EQ_INT(F.closes, 1);
+    reply("DONE a 0"); run(3);                          // then Transfer answers the request
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strstr(F.req_body[0], "\"DONE a 0\"") != NULL, F.req_body[0]);
+}
+
+static void browse_off_still_relays_and_transfer_says_off(void) {   /* plan ruling F11 */
+    ready3(0);
+    wake(1, "VOLS a\n"); run(3);
+    CHECK(strcmp(F.out, "VOLS a\n") == 0, F.out);
+    reply("ERR a off 34:Browsing is off in Transfer (A500)"); run(3);
+    CHECK(strstr(F.req_body[0], "\"ERR a off 34:") != NULL, F.req_body[0]);
+}
+
+static void a_failing_fetch_backs_off(void) {
+    ready3(1);
+    F.req_status = 1; wake(1, "VOLS a\n"); run(2);
+    CHECK_EQ_INT(F.req_fetches, 1);
+    CHECK_EQ_INT(as_req_acked(&S), 0);                  // not acked: fetched again
+    run(3);
+    CHECK_EQ_INT(F.req_fetches, 1);                     // backing off
+    F.req_status = 0; F.now += 1100; run(3);
+    CHECK_EQ_INT(F.req_fetches, 2); CHECK_EQ_INT(as_req_acked(&S), 1);
+}
+// Fix round 1, finding 1: after an upload a queued download used to starve a crossing PUT (300 s, then NO offline).
+static void a_put_that_crosses_a_request_after_an_upload_goes_first(void) {
+    char q[600];
+    ready3(1);
+    reply(PUT5); run(1); amiga_sends("hello", 5); end_line("1", (const uint8_t *)"hello", 5); run(4);
+    CHECK_EQ_INT(F.closes, 1);                          // one complete upload: up_last is set
+    clear_out();
+    snprintf(q, sizeof q, "NEXT %s 5 3610a686 0 5:Hello 0:\nLIST 1\n%s 5 5:Hello\n", ID, ID);
+    snprintf(F.queue, sizeof F.queue, "%s", q);
+    as_set_inputs(&S, true, 0xAC100AEDu, 2);
+    wake(1, "VOLS a\n"); run(4);
+    CHECK(strstr(F.out, "VOLS a\n") != NULL, "the request went");
+    const int opens = F.opens;
+    reply("PUT 2 5 1.2.3 0 9:Hello.txt 0:"); run(4);    // Transfer sent it before it read VOLS
+    CHECK(F.opens == opens + 1, "the crossing PUT opened");
+    CHECK(strstr(F.out, "TAKE 2 ") != NULL, "and was told to go on");
+}
+
+// Final review M2 (re-graded Important): Transfer drops a connection silent for 75 s (RX_IDLE_SECS), so PINGs go on
+// while lines are held for an owed piece; only the PONG deadline is suspended. The PONGs queue behind the held lines.
+static void pings_continue_while_lines_wait_for_a_piece(void) {
+    char line[64];
+    ready3(1);
+    wake(1, "DIR d 5:Work:\n"); run(3);
+    F.req_post_status = -1;
+    for (int i = 0; i < 400; ) {
+        for (int k = 0; k < 10 && i < 400; k++, i++) { snprintf(line, sizeof line, "ENT d f 1 0 1.0.0 3:%03d 0:", i); reply(line); }
+        run(2);
+    }
+    reply("ENT d f 1 0 1.0.0 3:400 0:"); run(3);
+    CHECK(F.in_head != F.in_tail, "line 401 held in the socket");
+    clear_out();
+    int pings = 0;
+    for (int i = 0; i < 18; i++) {                       // 120 s of outage
+        F.now += (AS_PING_MS + AS_PONG_MS) / 6; run(2);
+        for (const char *q = F.out; (q = strstr(q, "PING\n")) != NULL; q += 5) { reply("PONG"); pings++; }
+        clear_out();
+    }
+    CHECK(pings >= 3, "PINGs keep going while lines are held");
+    CHECK(F.sock == AS_SOCK_OPEN, "no drop: the PONG deadline is suspended");
+    CHECK(F.in_head != F.in_tail, "still held");
+    F.req_post_status = 0; F.now += 40000; run(3);
+    CHECK(F.in_head == F.in_tail, "the held line and the queued PONGs are read once the piece posted");
+    CHECK(!S.ping_out, "a PONG was read");
+    F.now += AS_PONG_MS + 1000; run(3);
+    CHECK(F.sock == AS_SOCK_OPEN, "the socket stays open");
+}
+
+// Fix round 1, finding 3: a 4xx the retry cannot cure is a refusal, like done_owed's.
+static void a_403_piece_is_refused_not_retried(void) {
+    ready3(1);
+    F.req_post_status = 403;
+    wake(1, "VOLS a\nVOLS b\n"); run(3);
+    reply("DONE a 0"); run(4);
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strcmp(F.req_rid[0], "a") == 0, F.req_rid[0]);
+    F.req_post_status = 0;
+    run(3);
+    CHECK_EQ_INT(F.req_posts, 1);                       // never retried
+    CHECK(strstr(F.out, "VOLS b\n") != NULL, "the next request goes");
+    reply("DONE b 0"); run(3);
+    CHECK_EQ_INT(F.req_posts, 2);
+    CHECK(strcmp(F.req_rid[1], "b") == 0, F.req_rid[1]);
+}
+
 static const char *UID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";   // the fake server's upload id
 // Window values come from the constant (plan ruling PF3: Task 11 may change it). BIGN is always past the window.
 #define CH AS_CHUNK_BYTES
@@ -533,7 +900,7 @@ static void put_parses_and_json_escapes_latin1(void) {   /* Review Focus 3 */
     CHECK(as_put_parse("PUT 7 5 1.2.3 40 8:Caf\xe9.txt 4:note", &p), "parsed");
     CHECK(strcmp(p.tag, "7") == 0 && p.size == 5 && p.prot == 0x40 && strcmp(p.date, "1.2.3") == 0, "fields");
     CHECK(p.path_n == 8 && memcmp(p.path, "Caf\xe9.txt", 8) == 0 && p.comment_n == 4, "path and comment");
-    CHECK(as_put_json(&p, json, sizeof json) > 0, "json");
+    CHECK(as_put_json(&p, NULL, json, sizeof json) > 0, "json");
     CHECK(strcmp(json, "{\"size\":5,\"date\":\"1.2.3\",\"protection\":64,\"path\":\"Caf\\u00e9.txt\",\"comment\":\"note\"}") == 0, json);
     CHECK(!as_put_parse("PUT x 5 1.2.3 0 1:a 0:", &p), "a tag is digits");
     CHECK(!as_put_parse("PUT 1 5 1.2 0 1:a 0:", &p), "a date has three parts");
@@ -548,7 +915,7 @@ static void the_worst_put_json_fits(void) {
     snprintf(line, sizeof line, "PUT 999999999 4294967295 99999999.99999999.99999 ffffffff 255:%s 79:%s", name, com);
     CHECK(as_put_parse(line, &p), "the longest PUT the parser takes");
     CHECK_EQ_INT((int)strlen(p.date), 23);
-    int n = as_put_json(&p, json, sizeof json);
+    int n = as_put_json(&p, NULL, json, sizeof json);
     CHECK(n > 0 && n < AS_UP_JSON_MAX && (int)strlen(json) == n, "its JSON fits AS_UP_JSON_MAX, never cut");
     CHECK(n > 255 * 6 + 79 * 6, "the whole path and comment, escaped");
 }
@@ -997,6 +1364,202 @@ static void a_server_busy_at_open_is_not_called_cancelled(void) {
     CHECK(strstr(F.out, "NO 1 busy ") != NULL && strstr(F.out, "cancelled") == NULL, F.out);
     CHECK(strstr(F.out, "NO 1 busy 19:the web app is busy\n") != NULL, F.out);
 }
+static const char *PUT7 = "PUT 7 5 1.2.3 0 9:Hello.txt 0:";
+// Transfer answered GET g1 with GOT g1 7: piece 0 posted.
+static void got(void) {
+    ready3(1);
+    wake(1, "GET g1 14:Work:Hello.txt\n"); run(3);
+    CHECK(strcmp(F.out, "GET g1 14:Work:Hello.txt\n") == 0, F.out);
+    reply("GOT g1 7"); run(3);
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"GOT g1 7\"],\"last\":true}") == 0, F.req_body[0]);
+    CHECK(!RQ.active, "GOT ends the answer");
+    clear_out();
+}
+
+static void got_ties_the_upload_to_the_request(void) {
+    got();
+    reply(PUT7); run(1);
+    CHECK_EQ_INT(F.opens, 1);
+    const char *tail = "\"comment\":\"\",\"request\":\"g1\"}";
+    CHECK(strlen(F.open_json) > strlen(tail) && strcmp(F.open_json + strlen(F.open_json) - strlen(tail), tail) == 0, F.open_json);
+    amiga_sends("hello", 5); end_line("7", (const uint8_t *)"hello", 5); run(4);
+    CHECK_EQ_INT(F.closes, 1);
+    CHECK_EQ_INT(F.req_posts, 1);                        // the server settles the GET when the upload closes
+    CHECK(ar_got_by_rid(&RQ, "g1") == NULL, "the entry went with the upload");
+    CHECK(!as_has_work(&S), "idle after");
+}
+
+static void an_upload_not_from_a_get_carries_no_request(void) {
+    ready3(1);
+    reply(PUT5); run(1);
+    CHECK_EQ_INT(F.opens, 1);
+    CHECK(strstr(F.open_json, "request") == NULL, F.open_json);
+}
+
+static void a_late_err_after_got_is_posted_as_piece_1(void) {
+    got();
+    reply("ERR g1 io 14:Read error 205"); run(3);
+    CHECK_EQ_INT(F.req_posts, 2);
+    CHECK(strcmp(F.req_rid[1], "g1") == 0, F.req_rid[1]);
+    CHECK(strcmp(F.req_body[1], "{\"piece\":1,\"lines\":[\"ERR g1 io 14:Read error 205\"],\"last\":true}") == 0, F.req_body[1]);
+    CHECK(ar_got_by_rid(&RQ, "g1") == NULL, "removed once posted");
+}
+
+static void a_late_err_survives_a_failing_post(void) {
+    got();
+    F.req_post_status = -1;
+    reply("ERR g1 io 14:Read error 205"); run(3);
+    CHECK_EQ_INT(F.req_posts, 2);
+    CHECK(ar_got_by_rid(&RQ, "g1") != NULL, "kept for the retry");
+    F.req_post_status = 0; F.now += 1100; run(3);
+    CHECK_EQ_INT(F.req_posts, 3);
+    CHECK(ar_got_by_rid(&RQ, "g1") == NULL, "posted, removed");
+}
+
+static void a_get_upload_refused_too_large_fails_the_get(void) {
+    got();
+    reply("PUT 7 5000000 1.2.3 0 9:Hello.txt 0:"); run(3);
+    CHECK(strstr(F.out, "NO 7 size") != NULL, F.out);
+    CHECK_EQ_INT(F.req_posts, 2);
+    CHECK(strcmp(F.req_body[1], "{\"piece\":1,\"lines\":[\"ERR g1 toolarge 29:file too large (4 MB at most)\"],\"last\":true}") == 0, F.req_body[1]);
+}
+
+static void a_get_upload_refused_by_the_server_fails_the_get_io(void) {
+    got();
+    F.open_status = 409; snprintf(F.open_resp, sizeof F.open_resp, "{\"code\":\"full\"}");
+    reply(PUT7); run(3);
+    CHECK(strstr(F.out, "NO 7 full") != NULL, F.out);
+    CHECK(strstr(F.req_body[1], "\"ERR g1 io ") != NULL, F.req_body[1]);
+}
+
+// Review Focus 4 (plan ruling F5).
+static void a_dropped_connection_fails_every_got_get(void) {
+    ready3(1);
+    wake(1, "GET g1 6:Work:a\nGET g2 6:Work:b\n"); run(3);
+    reply("GOT g1 7"); run(3);
+    reply("GOT g2 8"); run(3);
+    CHECK_EQ_INT(F.req_posts, 2);
+    F.recv_closed = true; run(6);
+    CHECK_EQ_INT(F.req_posts, 4);
+    CHECK(strcmp(F.req_body[2], "{\"piece\":1,\"lines\":[\"ERR g1 norx 35:The connection to Transfer was lost\"],\"last\":true}") == 0
+          || strcmp(F.req_body[2], "{\"piece\":1,\"lines\":[\"ERR g2 norx 35:The connection to Transfer was lost\"],\"last\":true}") == 0, F.req_body[2]);
+    CHECK(strcmp(F.req_rid[2], F.req_rid[3]) != 0, "one post each");
+}
+
+static void a_get_answered_err_has_no_entry(void) {
+    ready3(1);
+    wake(1, "GET g1 6:Work:a\n"); run(3);
+    reply("ERR g1 notfound 16:Object not found"); run(3);
+    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"ERR g1 notfound 16:Object not found\"],\"last\":true}") == 0, F.req_body[0]);
+    CHECK(ar_got_by_rid(&RQ, "g1") == NULL, "no GOT, no entry");
+}
+
+// Review Focus 5 (plan ruling F6).
+static void a_refused_piece_discards_the_rest_and_the_next_request_goes(void) {
+    char line[64];
+    ready3(1);
+    wake(1, "DIR d 5:Work:\nVOLS v\n"); run(3);
+    F.req_post_status = 404;
+    for (int i = 0; i < 420; ) {
+        for (int k = 0; k < 10 && i < 420; k++, i++) { snprintf(line, sizeof line, "ENT d f 1 0 1.0.0 3:%03d 0:", i); reply(line); }
+        run(2);
+    }
+    reply("DONE d 420"); run(4);
+    CHECK_EQ_INT(F.req_posts, 1);                       // piece 0 refused; the rest read and dropped
+    CHECK(F.in_head == F.in_tail, "every line read");
+    F.req_post_status = 0;
+    CHECK(strstr(F.out, "VOLS v\n") != NULL, "the next request went");
+}
+
+// Task 4 fix round 1: a GOT with no tag must not read the stale bytes after the line's NUL.
+static void a_got_without_a_tag_adds_no_entry(void) {
+    ready3(1);
+    wake(1, "DIR d 5:Work:\nGET g1 6:Work:a\n"); run(3);
+    reply("DONE d 420"); run(3);                         // leaves "420" in the line buffer where a tag would be
+    CHECK(strstr(F.out, "GET g1 6:Work:a\n") != NULL, F.out);
+    reply("GOT g1"); run(3);
+    CHECK_EQ_INT(F.req_posts, 2);
+    CHECK(strcmp(F.req_rid[1], "g1") == 0, F.req_rid[1]);
+    CHECK(strcmp(F.req_body[1], "{\"piece\":0,\"lines\":[\"GOT g1\"],\"last\":true}") == 0, F.req_body[1]);
+    CHECK(ar_got_by_rid(&RQ, "g1") == NULL, "no tag, no entry");
+    CHECK(ar_got_by_tag(&RQ, "420") == NULL, "no stale tag");
+}
+
+// Final review C1: out of Network mode, or with no Amiga address, nothing can be fetched. Both acks then report the
+// poll's own version -- else the server's reqMoved/xfer check answers every poll at once (a tight poll loop).
+static void network_off_acks_both_versions(void) {
+    fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, false, 0xAC100AEDu, 5); wake(5, "VOLS a\n"); run(3);
+    CHECK_EQ_INT(as_acked_version(&S), 5);
+    CHECK_EQ_INT(as_req_acked(&S), 5);
+    CHECK_EQ_INT(F.queue_fetches, 0); CHECK_EQ_INT(F.req_fetches, 0);
+    CHECK(!as_has_work(&S), "no work while off");
+}
+static void network_back_on_fetches_the_queue_and_the_requests(void) {
+    fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, false, 0xAC100AEDu, 5); wake(5, "VOLS a\n"); run(3);
+    CHECK_EQ_INT(as_req_acked(&S), 5);
+    as_set_inputs(&S, true, 0xAC100AEDu, 5); run(3);  // the internal cursors stayed behind: both are fetched
+    CHECK_EQ_INT(F.queue_fetches, 1); CHECK_EQ_INT(F.req_fetches, 1);
+    CHECK_EQ_INT(as_acked_version(&S), 5); CHECK_EQ_INT(as_req_acked(&S), 5);
+    CHECK(ar_pending(&RQ) || RQ.active, "the request is held for Transfer");
+}
+static void no_amiga_address_acks_both_versions_then_fetches(void) {
+    fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0, 5); wake(5, "VOLS a\n"); run(3);
+    CHECK_EQ_INT(as_acked_version(&S), 5);
+    CHECK_EQ_INT(as_req_acked(&S), 5);
+    CHECK_EQ_INT(F.queue_fetches, 0); CHECK_EQ_INT(F.req_fetches, 0);
+    as_set_inputs(&S, true, 0xAC100AEDu, 5); run(3);
+    CHECK_EQ_INT(F.queue_fetches, 1); CHECK_EQ_INT(F.req_fetches, 1);
+}
+
+// Final review I1: core1 ticks the engine only between long polls, so the 5 s reconnect after a protocol 3 drop
+// must count as work, or it waits behind a 25 s long poll.
+static void a_protocol_3_drop_reconnects_in_5s_without_a_long_poll(void) {
+    ready3(1);
+    F.recv_closed = true; run(1);                       // Transfer closed the idle connection
+    F.recv_closed = false;
+    CHECK_EQ_INT(F.connects, 1);
+    const uint32_t t0 = F.now;
+    for (int i = 0; i < 2000 && F.connects < 2; i++) {
+        F.budget = F.accept_max;
+        if (as_has_work(&S)) { as_tick(&S); as_step(&S); F.now += 20; }
+        else F.now += 25000;                            // core1's long poll
+    }
+    CHECK_EQ_INT(F.connects, 2);
+    CHECK(F.now - t0 <= AS_RETRY_WAITING_MS + 100, "reconnected within about 5 s");
+}
+
+// Final review I2 (amends plan ruling F9): during a copy the board fetches again before each GET, so a listing from
+// another pane goes before the next GET instead of after every file.
+static void a_listing_fetched_during_a_copy_goes_before_the_next_get(void) {
+    ready3(1);
+    wake(1, "GET g1 6:Work:a\nGET g2 6:Work:b\n"); run(3);
+    CHECK(strcmp(F.out, "GET g1 6:Work:a\n") == 0, F.out);
+    reply("GOT g1 7"); reply(PUT7); run(3);
+    CHECK_EQ_INT(F.opens, 1);
+    CHECK(strstr(F.out, "GET g2") == NULL, "g2 waits for g1's upload");
+    const int fetches = F.req_fetches;
+    snprintf(F.reqs, sizeof F.reqs, "DIR d 5:Work:\n");   // another pane asks while the file moves
+    run(3);
+    CHECK_EQ_INT(F.req_fetches, fetches);                 // never fetched while a file moves
+    clear_out();
+    amiga_sends("hello", 5); end_line("7", (const uint8_t *)"hello", 5); run(4);
+    CHECK_EQ_INT(F.closes, 1);
+    CHECK_EQ_INT(F.req_fetches, fetches + 1);             // fetched once before g2 would go
+    CHECK(strstr(F.out, "DIR d 5:Work:\n") != NULL, F.out);
+    CHECK(strstr(F.out, "GET g2") == NULL, "the listing goes first");
+    reply("DONE d 0"); run(4);
+    CHECK(strstr(F.out, "GET g2 6:Work:b\n") != NULL, F.out);
+    CHECK(strstr(F.out, "DIR d 5:Work:\n") < strstr(F.out, "GET g2 6:Work:b\n"), "in that order");
+    CHECK(F.req_fetches <= fetches + 2, "one fetch per GET start, not a loop");
+}
+
 int main(void) {
     RUN(off_or_no_address_does_nothing);
     RUN(connects_to_6800_and_says_hello);
@@ -1072,5 +1635,42 @@ int main(void) {
     RUN(a_server_busy_at_open_is_not_called_cancelled);
     RUN(a_drop_mid_upload_reconnects_after_5s);
     RUN(a_drop_while_idle_keeps_the_30s_cadence);
+    RUN(the_hello_is_protocol_3_with_requests);
+    RUN(without_requests_the_hello_stays_2);
+    RUN(a_ready_3_to_a_protocol_2_hello_counts_as_1);
+    RUN(transfer_2_2_answers_ready_2_and_requests_get_old);
+    RUN(vols_is_relayed_and_answered_in_one_piece);
+    RUN(the_ack_is_the_v_seen_before_the_fetch);
+    RUN(requests_go_one_at_a_time_in_order);
+    RUN(a_drawer_of_latin1_names_arrives_in_pieces_under_32k);
+    RUN(a_piece_closes_at_400_lines);
+    RUN(lines_wait_in_the_socket_while_a_piece_cannot_post);
+    RUN(norx_when_transfer_is_not_connected);
+    RUN(a_close_at_protocol_3_reconnects_in_5s_and_reports_browse);
+    RUN(silent_transfer_mid_answer_is_timeout_and_drops);
+    RUN(a_dropped_connection_mid_answer_ends_norx_lost);
+    RUN(a_request_waits_behind_a_moving_download);
+    RUN(a_request_goes_before_a_queued_download);
+    RUN(a_put_that_crosses_a_request_goes_first);
+    RUN(browse_off_still_relays_and_transfer_says_off);
+    RUN(a_failing_fetch_backs_off);
+    RUN(a_put_that_crosses_a_request_after_an_upload_goes_first);
+    RUN(pings_continue_while_lines_wait_for_a_piece);
+    RUN(a_403_piece_is_refused_not_retried);
+    RUN(got_ties_the_upload_to_the_request);
+    RUN(an_upload_not_from_a_get_carries_no_request);
+    RUN(a_late_err_after_got_is_posted_as_piece_1);
+    RUN(a_late_err_survives_a_failing_post);
+    RUN(a_get_upload_refused_too_large_fails_the_get);
+    RUN(a_get_upload_refused_by_the_server_fails_the_get_io);
+    RUN(a_dropped_connection_fails_every_got_get);
+    RUN(a_get_answered_err_has_no_entry);
+    RUN(a_refused_piece_discards_the_rest_and_the_next_request_goes);
+    RUN(a_got_without_a_tag_adds_no_entry);
+    RUN(network_off_acks_both_versions);
+    RUN(network_back_on_fetches_the_queue_and_the_requests);
+    RUN(no_amiga_address_acks_both_versions_then_fetches);
+    RUN(a_protocol_3_drop_reconnects_in_5s_without_a_long_poll);
+    RUN(a_listing_fetched_during_a_copy_goes_before_the_next_get);
     return REPORT();
 }

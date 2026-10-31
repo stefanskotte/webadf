@@ -104,6 +104,20 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
 - **The board answers itself, at once:** `ERR <rid> norx` (Transfer not connected), `ERR <rid> old` (Transfer answered
   `READY 2`), `ERR <rid> timeout` (Transfer silent 30 s in the middle of an answer).
 - **Status:** `/api/device/status` gains Transfer's protocol (`2`/`3`) and the browse flag from `READY 3`.
+- **Amendments (firmware plan 2026-10-31):**
+  - Transfer's protocol and browse flag ride the poll (`&rxv=2|3&browse=0|1`, beside `rx`), as the server reads them; the
+    Status bullet above is superseded (ruling F1).
+  - A piece closes at 32 KB of JSON or 400 lines; `DC_POST_BODY_MAX` is 32,768 (F2).
+  - A PUT from Transfer that crosses a request goes first: Transfer answers no request while its PUT waits for TAKE.
+    The 30 s silence clock stands still while an upload is pending or moving (F3); a timeout drops the connection (F4).
+  - A dropped connection ends the answer in progress `ERR <rid> norx 35:The connection to Transfer was lost`, and every
+    GET answered GOT whose file has not finished fails the same way (piece 1); a GET's upload refused with `NO` fails
+    the GET `toolarge` (`NO size`) or `io` (F5).
+  - A drop at protocol 3 reconnects after 5 s, so Transfer's switch shows within seconds; requests fetched meanwhile
+    wait for it (F8). The wait counts as the engine's work, so no 25 s long poll delays the reconnect (final review I1).
+  - While the held request lines are only GETs (a copy), the board fetches once more before it relays each GET and
+    merges the new lines; VOLS and DIR go before any GET, so a pane is not kept waiting behind a copy (final review I2,
+    amends F9).
 - **Testing:** host tests in `test/test_amiga_send.c` (relay, pieces, a request waiting behind a moving file, each
   board-made error, GOT tied to the upload open).
 - **Release:** a TEST build on the bench first; released after the A500 bench (§7).

@@ -5,6 +5,15 @@
 #include <stdio.h>
 #include <string.h>
 
+_Static_assert(AR_LINE_MAX == AS_LINE_MAX, "an answer line is a line from Transfer");
+#define AS_TXT_NORX "Transfer is not running on the Amiga"
+#define AS_TXT_LOST "The connection to Transfer was lost"
+#define AS_TXT_OLD "Transfer 2.3 or newer is needed"
+#define AS_TXT_SILENT "Transfer stopped answering"
+static void req_on_drop(amiga_send_t *s);
+static bool req_work(const amiga_send_t *s);
+static bool reconnect_soon(const amiga_send_t *s, uint32_t t);
+
 static uint32_t now(const amiga_send_t *s) { return s->ops->now_ms(s->ops->ctx); }
 static void http_failed(amiga_send_t *s, const char *what, int st);
 static void up_reset(amiga_send_t *s);
@@ -37,6 +46,7 @@ static bool flush(amiga_send_t *s) {
 // Closes the connection and starts over: any file in flight stays queued on the server (no outcome is posted), and
 // Receive deletes its temporary file when the connection goes.
 static void drop(amiga_send_t *s, char rx, const char *why) {
+    if (s->req) req_on_drop(s);
     if (s->phase >= AS_FILE_SENT && s->phase <= AS_AWAIT_OK) wf_logf(WF_WARN, "send: %.8s aborted (%s)", s->id, why);
     // An upload cut off (an Amiga reset, bench B5 2026-10-21) comes back as a fresh Receive that waits 60 s for the
     // board: reconnect at the waiting cadence, not the idle one, or the board misses it.
@@ -48,9 +58,11 @@ static void drop(amiga_send_t *s, char rx, const char *why) {
     s->rx = rx;
     s->out_n = 0;
     s->ping_out = false;
+    const bool quick = up_cut || (s->req && s->peer_v >= 3);   // plan ruling F8: Transfer's switch shows quickly
+    if (s->req && s->peer_v >= 3) s->req->quick = true;         // ... and counts as work until then (final review I1)
     s->peer_v = 0;
     s->list_owed = false;
-    s->t_retry = now(s) + (up_cut ? AS_RETRY_WAITING_MS : retry_ms(s));
+    s->t_retry = now(s) + (quick ? AS_RETRY_WAITING_MS : retry_ms(s));
     s->force_fetch = true;
 }
 
@@ -163,17 +175,20 @@ bool as_put_parse(const char *line, as_put_t *o) {
     if (!lenfield(&p, &o->comment, &o->comment_n) || o->comment_n > 79) return false;
     return *p == 0;
 }
-int as_put_json(const as_put_t *p, char *json, int cap) {
+int as_put_json(const as_put_t *p, const char *request, char *json, int cap) {
     int o = snprintf(json, (size_t)cap, "{\"size\":%lu,\"date\":\"%s\",\"protection\":%lu,\"path\":\"",
                      (unsigned long)p->size, p->date, (unsigned long)p->prot);
     if (o < 0 || o >= cap) return -1;
-    if (p->path_n * 6 + p->comment_n * 6 + o + 20 > cap) return -1;   // never cut a name
+    const int rn = request ? (int)strnlen(request, AR_RID_MAX + 1) : 0;
+    if (rn > AR_RID_MAX) return -1;
+    if (p->path_n * 6 + p->comment_n * 6 + rn + o + 34 > cap) return -1;   // never cut a name; ",\"request\":\"\"" is 14
     o += as_json_escape(json + o, cap - o, p->path, p->path_n);
     int k = snprintf(json + o, (size_t)(cap - o), "\",\"comment\":\"");
     if (k < 0 || o + k >= cap) return -1;
     o += k;
     o += as_json_escape(json + o, cap - o, p->comment, p->comment_n);
-    k = snprintf(json + o, (size_t)(cap - o), "\"}");
+    k = request ? snprintf(json + o, (size_t)(cap - o), "\",\"request\":\"%.*s\"}", rn, request)
+                : snprintf(json + o, (size_t)(cap - o), "\"}");
     if (k < 0 || o + k >= cap) return -1;
     return o + k;
 }
@@ -272,11 +287,18 @@ bool as_has_work(const amiga_send_t *s) {
     // between two files, and each file of a folder waits it out (bench 2026-10-18: ~28 s apiece).
     return s->done_owed || file_moving(s) || s->phase == AS_CONNECTING || s->phase == AS_HELLO
         || (fetch_owed(s) && !file_moving(s))
-        || (s->phase == AS_READY && (s->list_owed || s->out_n > 0 || next_present(s) || (s->up && s->up->pending)));
+        || (s->phase == AS_READY && (s->list_owed || s->out_n > 0 || next_present(s) || (s->up && s->up->pending)))
+        || (s->req && req_work(s))
+        // Final review I1: the reconnect after a protocol 3 drop is due within 5 s. As work, core1 ticks the engine in
+        // 20 ms steps meanwhile; otherwise it would wait behind a 25 s long poll.
+        || (s->req && s->req->quick && s->phase == AS_IDLE && reconnect_soon(s, now(s)));
 }
 
 char as_rx(const amiga_send_t *s) { return s->rx; }
-uint32_t as_acked_version(const amiga_send_t *s) { return s->have_version; }
+// Network off, or no Amiga address: nothing can be fetched, so the poll's own version is acked -- otherwise the
+// server answers every poll at once (final review C1). have_version stays: Network back on fetches as owed.
+static bool offline(const amiga_send_t *s) { return !s->net_on || s->ip == 0; }
+uint32_t as_acked_version(const amiga_send_t *s) { return offline(s) ? s->want_version : s->have_version; }
 
 // --- Uploads (protocol 2, spec 2026-10-18 §3, §5) -------------------------------------------------------------------
 static bool up_moving(const amiga_send_t *s) { return s->phase >= AS_UP_OPEN && s->phase <= AS_UP_CLOSE; }
@@ -318,6 +340,9 @@ static void up_no(amiga_send_t *s, const char *code, const char *text) {
     int n = snprintf(u->line, sizeof u->line, "NO %s %s %u:%s\n", u->tag, code, (unsigned)strlen(text), text);
     push(s, (const uint8_t *)u->line, n);
     wf_logf(WF_INFO, "up: %s NO %s", u->tag, code);
+    // A GET's file refused (spec section 3, After GOT; plan ruling F5): toolarge for a file over 4 MB, io otherwise.
+    ar_got_t *g = s->req ? ar_got_by_tag(s->req, u->tag) : NULL;
+    if (g) ar_got_fail(g, strcmp(code, "size") == 0 ? "toolarge" : "io", text);
 }
 // Before TAKE, or after the last raw byte: the stream is lines, so the connection stays.
 static void up_refuse(amiga_send_t *s, const char *code, const char *text) {
@@ -373,7 +398,8 @@ static bool up_open(amiga_send_t *s, uint32_t t, bool http) {
     if (!http || in_backoff(s)) return false;
     if (!as_put_parse(u->put, &p)) { drop(s, 'u', "bad PUT"); return true; }
     if (p.size > AS_UP_FILE_MAX) { up_refuse(s, "size", no_text("size")); return true; }
-    if (as_put_json(&p, u->json, sizeof u->json) < 0) { up_refuse(s, "name", no_text("name")); return true; }
+    const ar_got_t *g = s->req ? ar_got_by_tag(s->req, u->tag) : NULL;   // a GET's file: tied to its request
+    if (as_put_json(&p, g ? g->rid : NULL, u->json, sizeof u->json) < 0) { up_refuse(s, "name", no_text("name")); return true; }
     int st = s->ops->upload_open(s->ops->ctx, u->json, u->resp, sizeof u->resp);
     if (st == 200 || st == 201) {
         if (!json_str(u->resp, "id", id, sizeof id) || !id_ok(id) ||
@@ -397,8 +423,8 @@ static bool up_open(amiga_send_t *s, uint32_t t, bool http) {
         push(s, (const uint8_t *)u->line, n);
         s->phase = AS_UP_DATA;
         u->t_progress = t;
-        wf_logf(WF_INFO, "up: %s open %.*s %lu at %lu", u->tag, p.path_n < 40 ? p.path_n : 40, p.path,
-                (unsigned long)p.size, (unsigned long)off);
+        wf_logf(WF_INFO, "up: %s open %.*s %lu at %lu%s", u->tag, p.path_n < 40 ? p.path_n : 40, p.path,
+                (unsigned long)p.size, (unsigned long)off, g ? " for a request" : "");
         if (!flush(s)) drop(s, 'u', "send");
         return true;
     }
@@ -482,6 +508,8 @@ static bool up_close(amiga_send_t *s, uint32_t t, bool http) {
         int n = snprintf(u->line, sizeof u->line, "DONE %s %d:%s\n", u->tag, nlen, u->resp);
         push(s, (const uint8_t *)u->line, n);
         wf_logf(WF_INFO, "up: %s stored %lu -> %s", u->tag, (unsigned long)u->size, u->resp);
+        ar_got_t *g = s->req ? ar_got_by_tag(s->req, u->tag) : NULL;
+        if (g) ar_got_remove(g);   // the server settles the GET when the upload closes
         up_reset(s);
         s->phase = AS_READY; s->up_last = true; s->backoff_ms = 0; s->t_ping = t;
         if (!flush(s)) drop(s, 'u', "send");
@@ -498,6 +526,196 @@ static bool up_close(amiga_send_t *s, uint32_t t, bool http) {
     http_failed(s, "upload close", st);
     return true;
 }
+
+// --- NET: volumes (spec 2026-10-30 section 3, fw 1.22.0) --------------------------------------------------------------
+static bool up_busy(const amiga_send_t *s) { return s->up && (s->up->pending || up_moving(s)); }
+// Final review I2 (amends plan ruling F9): while the held lines are only GETs -- a copy -- the board fetches once
+// more before it relays each GET, so a listing from another pane goes next (ar_take prefers it) instead of after
+// every file. Once per GET start: `refetched` is set by any fetch and cleared when a request is taken.
+static bool req_refetch_owed(const amiga_send_t *s) {
+    const as_req_t *r = s->req;
+    return !r->refetched && !r->active && s->phase == AS_READY && !up_busy(s) && ar_only_gets(r) &&
+           AR_FETCH_BYTES - r->fetched_len >= AR_REFETCH_ROOM;
+}
+static bool req_fetch_owed(const amiga_send_t *s) {
+    const as_req_t *r = s->req;
+    if (file_moving(s)) return false;
+    return ar_pending(r) ? req_refetch_owed(s) : r->want_v != r->have_v;
+}
+// A reconnect is due within 5 s: a request waits for it rather than being answered norx (plan ruling F8).
+static bool reconnect_soon(const amiga_send_t *s, uint32_t t) {
+    return (int32_t)(s->t_retry - t) <= (int32_t)AS_RETRY_WAITING_MS;
+}
+static bool req_work(const amiga_send_t *s) {
+    const as_req_t *r = s->req;
+    return r->post_owed || ar_got_owed(r) != NULL || r->active || req_fetch_owed(s) ||
+           (ar_pending(r) && (s->phase == AS_IDLE || s->phase == AS_READY));
+}
+static void req_log_take(int bad) { if (bad) wf_logf(WF_WARN, "req: %d malformed request lines skipped", bad); }
+
+// At most one HTTPS request: an answer piece, then a late ERR, then the fetch.
+static bool req_http(amiga_send_t *s, uint32_t t) {
+    as_req_t *r = s->req;
+    if (in_backoff(s)) return false;
+    if (r->post_owed) {
+        int st = s->ops->post_req(s->ops->ctx, r->rid, r->body, r->body_len);
+        if (st >= 200 && st < 300) {
+            s->backoff_ms = 0;
+            if (r->post_last) wf_logf(WF_INFO, "req: %.8s answered, %lu lines in %lu pieces", r->rid,
+                                      (unsigned long)r->lines_total, (unsigned long)r->piece + 1);
+            ar_body_posted(r);
+            r->t_last = t;
+        } else if (st >= 400 && st < 500 && st != 401 && st != 408 && st != 429) {
+            // Refused for good (a 4xx but 401/408/429: the request is gone, replaced by a Refresh, or failed): nothing more is posted for it,
+            // and the rest of its answer is read and dropped (plan ruling F6).
+            wf_logf(WF_WARN, "req: %.8s piece %lu refused (%d)", r->rid, (unsigned long)r->piece, st);
+            ar_got_t *g = ar_got_by_rid(r, r->rid);
+            if (g) ar_got_remove(g);
+            if (r->post_last) ar_finish(r);
+            else { r->post_owed = false; r->discard = true; r->t_last = t; }
+            s->backoff_ms = 0;
+        } else {
+            http_failed(s, "answer", st);
+        }
+        return true;
+    }
+    ar_got_t *g = ar_got_owed(r);
+    if (g) {
+        int n = ar_late_body(r, g);
+        int st = s->ops->post_req(s->ops->ctx, g->rid, r->late, n);
+        if ((st >= 200 && st < 300) || (st >= 400 && st < 500 && st != 401 && st != 408 && st != 429)) {
+            s->backoff_ms = 0;
+            wf_logf(WF_INFO, "req: %.8s failed after GOT (%d)", g->rid, st);
+            ar_got_remove(g);
+        } else {
+            http_failed(s, "late answer", st);
+        }
+        return true;
+    }
+    if (req_fetch_owed(s)) {
+        const uint32_t v = r->want_v;   // the v the poll said, BEFORE the fetch (spec section 3): that is the ack
+        const int room = ar_fetch_room(r);   // the new lines go after the held ones
+        int n = s->ops->fetch_req(s->ops->ctx, r->fetched + r->fetched_len, room);
+        if (n < 0) { http_failed(s, "requests", n); return true; }
+        s->backoff_ms = 0;
+        ar_fetched(r, n);
+        r->have_v = v;
+        r->refetched = true;
+        return true;
+    }
+    return false;
+}
+
+// Requests the board answers itself (spec section 3): Transfer not connected, and no reconnect due within 5 s.
+static bool req_board(amiga_send_t *s, uint32_t t) {
+    as_req_t *r = s->req;
+    int bad = 0;
+    if (r->active || !ar_pending(r) || s->phase != AS_IDLE || reconnect_soon(s, t)) return false;
+    const bool took = ar_take(r, &bad);
+    req_log_take(bad);
+    if (!took) return bad > 0;
+    r->refetched = false;
+    wf_logf(WF_INFO, "req: %.8s norx", r->rid);
+    ar_end_err(r, "norx", AS_TXT_NORX);
+    return true;
+}
+
+// In READY, when the arbitration gives requests the turn: the next request goes to Transfer (or, to a Transfer older
+// than 2.3, is answered "old" by the board).
+static bool req_start(amiga_send_t *s, uint32_t t) {
+    as_req_t *r = s->req;
+    int bad = 0;
+    if (r->active || s->out_n > 0 || up_busy(s)) return false;   // a waiting PUT goes first (plan ruling F3)
+    if (req_refetch_owed(s) && !in_backoff(s)) return false;      // the next GET waits for one fetch (final review I2)
+    const bool took = ar_take(r, &bad);
+    req_log_take(bad);
+    if (!took) return false;
+    r->refetched = false;
+    if (s->peer_v < 3) {
+        wf_logf(WF_INFO, "req: %.8s old (Transfer protocol %u)", r->rid, (unsigned)s->peer_v);
+        ar_end_err(r, "old", AS_TXT_OLD);
+        return true;
+    }
+    push(s, (const uint8_t *)r->out, r->out_n);
+    r->sent = true;
+    r->t_last = t;
+    wf_logf(WF_INFO, "req: %.*s", r->out_n - 1 > 80 ? 80 : r->out_n - 1, r->out);
+    if (!flush(s)) drop(s, 'u', "send");
+    return true;
+}
+
+// Before reading the next line: false while the piece being gathered cannot take one more. It is closed and waits for
+// its POST, and Transfer's lines wait in the socket meanwhile: its own buffer paces the drawer scan (spec section 2.2).
+static bool req_room(amiga_send_t *s) {
+    as_req_t *r = s->req;
+    if (!r || !r->active || !r->sent || r->ended || r->discard) return true;
+    if (r->post_owed) return false;
+    if (ar_body_full(r)) { ar_body_close(r, false); return false; }
+    return true;
+}
+
+// A line of Transfer's: true when it belonged to a request (consumed).
+static bool req_line(amiga_send_t *s, uint32_t t) {
+    as_req_t *r = s->req;
+    char verb[5], rid[AR_RID_MAX + 1];
+    if (!ar_line_verb(s->line, verb, rid)) return false;
+    if (r->active && r->sent && !r->ended && strcmp(rid, r->rid) == 0) {
+        const bool got = !strcmp(verb, "GOT");
+        const bool end = got || !strcmp(verb, "DONE") || !strcmp(verb, "ERR");
+        r->t_last = t;
+        if (r->discard) { if (end) ar_finish(r); return true; }
+        if (got && r->kind == AR_GET) {
+            // "GOT <rid> <tag>": the file comes up later as the upload with this tag (spec section 3, GET).
+            const char *sp = s->line + 4 + strlen(rid);
+            if (*sp == ' ') {                // a rid that ends the line has no tag: never read past the NUL
+                const char *tag = sp + 1;
+                const size_t tn = strlen(tag);
+                bool ok = tn >= 1 && tn <= AR_TAG_MAX;
+                for (size_t i = 0; ok && i < tn; i++) ok = tag[i] >= '0' && tag[i] <= '9';
+                if (ok) ar_got_add(r, rid, tag);
+            }
+        }
+        (void)ar_body_add(r, s->line);       // req_room made room for any line before it was read
+        if (end) ar_body_close(r, true);
+        return true;
+    }
+    if (!strcmp(verb, "ERR")) {
+        // After GOT (spec section 3): Transfer's late ERR for a GET already answered, routed by its rid.
+        ar_got_t *g = ar_got_by_rid(r, rid);
+        if (g) { ar_got_late(g, s->line); wf_logf(WF_INFO, "req: %.8s failed after GOT", rid); return true; }
+    }
+    return false;   // a download's ERR, or a line for an answer already ended: the usual handling
+}
+
+// Transfer silent mid-answer (spec section 3): ERR timeout, and the connection goes (plan ruling F4). The clock
+// stands still while an upload is pending or moving (Transfer answers after it, ruling F3) and while a piece waits.
+static bool req_silent(amiga_send_t *s, uint32_t t) {
+    as_req_t *r = s->req;
+    if (!r || !r->active || !r->sent || r->ended) return false;
+    if (up_busy(s) || r->post_owed) { r->t_last = t; return false; }
+    if ((int32_t)(t - r->t_last) <= (int32_t)AS_REQ_SILENT_MS) return false;
+    wf_logf(WF_WARN, "req: %.8s timeout", r->rid);
+    ar_end_err(r, "timeout", AS_TXT_SILENT);
+    drop(s, 'u', "request timeout");
+    return true;
+}
+
+// The connection went: the answer in progress ends "lost", and every GET answered GOT whose file has not finished
+// fails the same way -- Transfer drops a GET's file with the connection (its ruling T4; plan ruling F5).
+static void req_on_drop(amiga_send_t *s) {
+    as_req_t *r = s->req;
+    if (r->active && r->sent) ar_end_err(r, "norx", AS_TXT_LOST);
+    for (int i = 0; i < AR_MAX; i++) if (r->got[i].used) ar_got_fail(&r->got[i], "norx", AS_TXT_LOST);
+    r->browse = false;
+    r->ping_held = false;
+}
+
+void as_set_req(amiga_send_t *s, as_req_t *r) { s->req = s->up ? r : NULL; if (s->req) ar_init(s->req); }
+void as_set_req_version(amiga_send_t *s, uint32_t v) { if (s->req) s->req->want_v = v; }
+bool as_req_capable(const amiga_send_t *s) { return s->req != NULL; }
+uint32_t as_req_acked(const amiga_send_t *s) { return s->req ? (offline(s) ? s->req->want_v : s->req->have_v) : 0; }
+int as_rx_proto(const amiga_send_t *s) { return s->phase >= AS_READY ? s->peer_v : 0; }
+bool as_browse(const amiga_send_t *s) { return s->req && as_rx_proto(s) == 3 && s->req->browse; }
 
 // The shared engine: as_tick runs it without HTTPS, as_step with at most one request.
 static bool run(amiga_send_t *s, bool http) {
@@ -544,6 +762,8 @@ static bool run(amiga_send_t *s, bool http) {
         }
         return true;
     }
+    // NET: volumes: an answer piece, a late ERR or the fetch -- before the send queue (someone waits in a browser).
+    if (http && s->req && req_http(s, t)) return true;
     if (http && fetch_owed(s) && !file_moving(s) && !in_backoff(s)) {
         int n = s->ops->fetch_queue(s->ops->ctx, s->queue, AS_QUEUE_BYTES);
         if (n < 0) { http_failed(s, "queue", n); return true; }
@@ -557,21 +777,24 @@ static bool run(amiga_send_t *s, bool http) {
         return true;
     }
 
+    if (s->req && req_board(s, t)) return true;
+
     int sock = s->ops->sock_state(s->ops->ctx);
     switch (s->phase) {
     case AS_IDLE:
         if (!s->fetched_once) return false;   // know the queue first: it sets the retry cadence
         if ((int32_t)(t - s->t_retry) < 0) return false;
+        if (s->req) s->req->quick = false;   // the quick reconnect is made (final review I1)
         if (s->ops->connect(s->ops->ctx, s->ip, AS_PORT) < 0) { s->rx = 'u'; s->t_retry = t + retry_ms(s); return false; }
         s->phase = AS_CONNECTING;
         s->t_phase = t;
         return true;
     case AS_CONNECTING:
         if (sock == AS_SOCK_OPEN) {
-            if (s->up && s->up->key[0]) {   // protocol 2 (fw 1.19.0): uploads, to a Receive that trusts this key
-                int n = snprintf(s->up->line, sizeof s->up->line, "WEBADF 2 %s\n", s->up->key);
+            if (s->up && s->up->key[0]) {   // protocol 2 (fw 1.19.0): uploads; protocol 3 (fw 1.22.0): requests too
+                s->hello_v = s->req ? 3 : 2;
+                int n = snprintf(s->up->line, sizeof s->up->line, "WEBADF %u %s\n", (unsigned)s->hello_v, s->up->key);
                 push(s, (const uint8_t *)s->up->line, n);
-                s->hello_v = 2;
             } else {
                 push(s, (const uint8_t *)"WEBADF 1\n", 9);
                 s->hello_v = 1;
@@ -591,11 +814,13 @@ static bool run(amiga_send_t *s, bool http) {
     // Connected phases: push what is pending, then read Receive's lines.
     if (!flush(s)) { drop(s, 'u', "send"); return true; }
     for (;;) {
+        if (s->req && !req_room(s)) break;   // a full piece waits for its POST: the lines wait in the socket
         int r = s->ops->recv_line(s->ops->ctx, s->line, sizeof s->line);
         if (r < 0) { drop(s, 'u', "closed"); return true; }
         if (r == 0) break;
         moved = true;
         if (strcmp(s->line, "PONG") == 0) { s->ping_out = false; continue; }
+        if (s->req && req_line(s, t)) continue;
         // Protocol 2 lines from Receive 2, in any phase (spec 2026-10-18 §3).
         if (strncmp(s->line, "PUT ", 4) == 0) { on_put(s); if (s->phase == AS_IDLE) return true; continue; }
         if (strncmp(s->line, "ABORT ", 6) == 0) { on_abort(s); continue; }
@@ -603,14 +828,22 @@ static bool run(amiga_send_t *s, bool http) {
         switch (s->phase) {
         case AS_HELLO:
             if (strncmp(s->line, "READY ", 6) == 0) {
-                // Receive 1 says READY 1 to anything; READY 2 counts only as the answer to our protocol 2 hello.
-                s->peer_v = (s->hello_v == 2 && s->line[6] == '2' && s->line[7] == 0) ? 2 : 1;
+                // Receive 1 says READY 1 to anything; READY 2 counts only as the answer to a protocol 2 or 3 hello
+                // (Transfer 2.2 answers a protocol 3 hello READY 2), READY 3 <0|1> only as the answer to protocol 3.
+                const char *v = s->line + 6;
+                if (s->hello_v == 3 && v[0] == '3' && v[1] == ' ' && (v[2] == '0' || v[2] == '1') && v[3] == 0) {
+                    s->peer_v = 3;
+                    s->req->browse = v[2] == '1';
+                } else {
+                    s->peer_v = (s->hello_v >= 2 && v[0] == '2' && v[1] == 0) ? 2 : 1;
+                }
                 s->phase = AS_READY;
                 s->rx = 'c';
                 s->list_owed = true;
                 s->t_ping = t;
-                wf_logf(WF_INFO, "send: receiver connected %lu.%lu.%lu.%lu", (unsigned long)(s->ip >> 24),
-                        (unsigned long)((s->ip >> 16) & 255), (unsigned long)((s->ip >> 8) & 255), (unsigned long)(s->ip & 255));
+                wf_logf(WF_INFO, "send: receiver connected %lu.%lu.%lu.%lu protocol %u%s", (unsigned long)(s->ip >> 24),
+                        (unsigned long)((s->ip >> 16) & 255), (unsigned long)((s->ip >> 8) & 255), (unsigned long)(s->ip & 255),
+                        (unsigned)s->peer_v, s->peer_v == 3 ? (s->req->browse ? ", browsing on" : ", browsing off") : "");
             }
             break;
         case AS_FILE_SENT:
@@ -643,6 +876,7 @@ static bool run(amiga_send_t *s, bool http) {
         }
     }
 
+    if (req_silent(s, t)) return true;
     switch (s->phase) {
     case AS_HELLO:
         if (t - s->t_phase > AS_HELLO_MS) { drop(s, 'u', "no READY"); return true; }
@@ -661,7 +895,9 @@ static bool run(amiga_send_t *s, bool http) {
         {
             // Spec §3 arbitration: a waiting PUT goes before the next download -- except right after an upload, when
             // a waiting download (or one the queue may hold: an outcome or a fetch is owed) goes first. Turns.
-            const bool down = !s->done_owed && !fetch_owed(s) && next_present(s);
+            // An active request is no download's rival for the PUT's turn: it cannot start one, and Transfer answers nothing while
+            // its PUT waits for TAKE (ruling F3) -- so the PUT must not be held back by a download behind it.
+            const bool down = !s->done_owed && !fetch_owed(s) && next_present(s) && !(s->req && s->req->active);
             // During a backoff nothing is sure to come: the PUT goes rather than wait the backoff out.
             const bool unsure = (s->done_owed || fetch_owed(s)) && !in_backoff(s);
             if (s->up && s->up->pending && !(s->up_last && (down || unsure))) {
@@ -677,8 +913,26 @@ static bool run(amiga_send_t *s, bool http) {
                 s->t_ping = t;   // no PING in an upload (spec §3); the next is due AS_PING_MS after it ends
                 return true;
             }
-            if (down) { s->up_last = false; start_file(s); if (!flush(s)) drop(s, 'u', "send"); return true; }
+            // NET: volumes: a request goes before a download -- someone waits in a browser (spec section 3) -- but
+            // never before a waiting PUT (req_start checks it, ruling F3); and a download waits for an answer.
+            if (s->req && req_start(s, t)) return true;
+            if (down && !(s->req && s->req->active)) { s->up_last = false; start_file(s); if (!flush(s)) drop(s, 'u', "send"); return true; }
         }
+        // Lines held for an owed piece hold the PONG too (req_room). Transfer drops a connection silent for 75 s
+        // (RX_IDLE_SECS), so the PINGs go on every AS_PING_MS, one outstanding or not, and only the PONG deadline is
+        // suspended; it restarts when the hold ends (final review M2). The PONGs queue in Transfer's socket.
+        if (s->req && s->req->active && s->req->sent && !s->req->ended && !s->req->discard && s->req->post_owed) {
+            s->req->ping_held = true;
+            if (t - s->t_ping > AS_PING_MS) {
+                push(s, (const uint8_t *)"PING\n", 5);
+                if (!flush(s)) { drop(s, 'u', "send"); return true; }
+                s->ping_out = true;
+                s->t_ping = t;
+                return true;
+            }
+            break;
+        }
+        if (s->req && s->req->ping_held) { s->req->ping_held = false; s->t_ping = t; }   // the deadline restarts
         if (s->ping_out && t - s->t_ping > AS_PONG_MS) { drop(s, 'u', "no PONG"); return true; }
         if (!s->ping_out && t - s->t_ping > AS_PING_MS) {
             push(s, (const uint8_t *)"PING\n", 5);

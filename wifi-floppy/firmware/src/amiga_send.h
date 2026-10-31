@@ -15,6 +15,7 @@
 // and the uploader. core1 calls as_tick() every pass and, while as_has_work(), as_step() instead of the long poll.
 #include <stdbool.h>
 #include <stdint.h>
+#include "amiga_req.h"
 
 #define AS_PORT 6800
 #define AS_QUEUE_BYTES 6144          // = the server's SEND_QUEUE_BYTES
@@ -30,6 +31,9 @@
 #define AS_PONG_MS 10000u
 #define AS_BACKOFF_MIN_MS 1000u      // a failed HTTPS call waits this long, doubling
 #define AS_BACKOFF_MAX_MS 30000u     //   to this; the board long-polls meanwhile
+
+// NET: volumes (spec 2026-10-30 section 3, fw 1.22.0).
+#define AS_REQ_SILENT_MS 30000u      // Transfer silent this long mid-answer: ERR timeout, and the connection goes (F4)
 
 // Uploads (protocol 2, spec 2026-10-18 §3, §5).
 #define AS_KEY_HEX 32                // the board key in the hello
@@ -111,6 +115,9 @@ typedef struct as_ops {
     int  (*upload_close)(void *ctx, const char *id, const char *json, char *resp, int cap);
     // The raw section starts with the next byte from the Amiga (NULL: none). Armed before the TAKE goes out.
     void (*raw_arm)(void *ctx, as_raw_t *w);
+    // NET: volumes (fw 1.22.0). Each is one HTTPS request.
+    int  (*fetch_req)(void *ctx, char *buf, int cap);                       // body length, <0 = failed
+    int  (*post_req)(void *ctx, const char *rid, const char *json, int n);  // http status, <0 = failed
 } as_ops_t;
 
 typedef enum { AS_IDLE, AS_CONNECTING, AS_HELLO, AS_READY, AS_FILE_SENT, AS_DATA, AS_AWAIT_OK,
@@ -143,9 +150,10 @@ typedef struct amiga_send {
     uint32_t backoff_ms, t_backoff;  // after a failed HTTPS call: no work until t_backoff
     char line[AS_LINE_MAX + 1];
     as_up_t *up;                     // the caller's (PSRAM); NULL: no uploads
-    uint8_t hello_v;                 // the hello this connection sent: 1 or 2
-    uint8_t peer_v;                  // Receive's READY: 2 only in answer to our protocol 2 hello, else 1 (0 before)
+    uint8_t hello_v;                 // the hello this connection sent: 1, 2 or 3
+    uint8_t peer_v;                  // Receive's READY: 2 only in answer to our protocol 2 or 3 hello, 3 only in answer to our protocol 3 hello, else 1 (0 before)
     bool up_last;                    // the last file to finish went up: a waiting download goes next (spec §3)
+    as_req_t *req;                   // the caller's (PSRAM); NULL: no browsing (the hello stays protocol 2)
 } amiga_send_t;
 
 // queue_buf: AS_QUEUE_BYTES + 1 bytes; chunk_buf: AS_UP_RING_BYTES. Either NULL disables sending (no PSRAM).
@@ -173,7 +181,17 @@ int as_raw_feed(as_raw_t *w, const uint8_t *b, int n);
 // The server's UTF-8 (every character <= U+00FF) as Latin-1; anything else '?'. Returns the length.
 int as_utf8_to_latin1(const char *in, char *out, int cap);
 bool as_put_parse(const char *line, as_put_t *out);
-// The open's JSON: {"size":..,"date":"..","protection":..,"path":"..","comment":".."}; length, or -1 if it cannot fit.
-int as_put_json(const as_put_t *p, char *json, int cap);
+// The open's JSON: {"size":..,"date":"..","protection":..,"path":"..","comment":".."[,"request":".."]}; request: the
+// GET this file answers (NULL: none; [A-Za-z0-9_-] only). Length, or -1 if it cannot fit.
+int as_put_json(const as_put_t *p, const char *request, char *json, int cap);
+
+// NET: volumes (spec 2026-10-30 section 3). The request state (PSRAM on the board), only with uploads (as_init's up):
+// the hello becomes protocol 3 and the poll says reqAck. NULL: no browsing.
+void as_set_req(amiga_send_t *s, as_req_t *r);
+void as_set_req_version(amiga_send_t *s, uint32_t req_version);   // the poll's req.v, every pass
+bool as_req_capable(const amiga_send_t *s);
+uint32_t as_req_acked(const amiga_send_t *s);                      // the poll's reqAck
+int as_rx_proto(const amiga_send_t *s);                            // Transfer's protocol on the open connection, 0 = none
+bool as_browse(const amiga_send_t *s);                             // READY 3's browse flag
 
 #endif
