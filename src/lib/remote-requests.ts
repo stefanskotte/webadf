@@ -8,8 +8,9 @@ import { transfers } from '@/db/schema/transfers';
 import { amigaUploads } from '@/db/schema/amiga-uploads';
 import {
   ALIVE_PIECE_MS, FAILED_SHOWN_MS, GET_TIMEOUT_MS, LIST_TIMEOUT_MS, PANE_GIVE_UP_MS, REMEMBER_MS, REQUEST_KEEP_MS, REQ_FETCH_MAX,
-  WRITE_KINDS, type WriteKind,
+  MOVE_PROTO, WRITE_KINDS, type WriteKind,
 } from './remote-limits';
+import { MOVE_OLD_TRANSFER } from './remote-browse';
 import { newRequestId, parseAnswerLine, type EntryInfo, type VolumeInfo, type WriteArgs } from './remote-wire';
 
 export type RemoteRow = typeof remoteRequests.$inferSelect;
@@ -23,10 +24,18 @@ export type GetTarget = { dest: string; rel: string[]; replace: boolean; library
   /** Who made the copy (a move's removal and a relay's queue row are theirs). */
   userId?: string };
 /** A write request (spec 2026-10-31 §2.3): `label` the object in the pane's words, `icon` a `.info` taken along (W9). */
-export type WriteReq = { kind: WriteKind; amigaPath: string; args?: WriteArgs; icon?: boolean; ensure?: boolean; label: string };
+export type WriteReq = { kind: WriteKind; amigaPath: string; args?: WriteArgs; icon?: boolean; ensure?: boolean; label: string;
+  /** DELETE exactly this object (protocol 5, spec 2026-10-31 §9): what a move removes. */
+  one?: boolean;
+  /** A part of a move (§9): the Files path it moves, and the entry of it this request copies (`Pack/E`). */
+  move?: { source: string; item?: string } };
 /** What a write request's `target` holds: its arguments, its label, whether it is an icon taken along. */
 /** `ensure`: a MKDIR a copy needs, where a drawer already there (`exists`) is as good as made. */
-export type WriteTarget = WriteArgs & { label: string; icon?: boolean; ensure?: boolean; moved?: string };
+export type WriteTarget = WriteArgs & { label: string; icon?: boolean; ensure?: boolean; moved?: string;
+  /** A move's part (§9): the source it moves and the entry it copies; cleared once the move settled. */
+  moveSource?: string; moveItem?: string;
+  /** A move's removal said, not sent: what it kept (net-moves.ts). */
+  kept?: boolean };
 export type ListingState =
   | { state: 'ready'; row: RemoteRow; ageMs: number }
   | { state: 'pending'; row: RemoteRow }
@@ -212,7 +221,9 @@ export async function addWrites(
     await tx.delete(remoteRequests).where(lt(remoteRequests.createdAt, ms(now, REQUEST_KEEP_MS)));
     const rows = await tx.insert(remoteRequests).values(a.writes.map((w, k) => ({
       id: newRequestId(), orgId: a.orgId, deviceId: a.deviceId, kind: w.kind, amigaPath: w.amigaPath, fetchId: a.jobId,
-      target: { ...(w.args ?? {}), label: w.label, ...(w.icon ? { icon: true } : {}), ...(w.ensure ? { ensure: true } : {}) } satisfies WriteTarget,
+      target: { ...(w.args ?? {}), label: w.label, ...(w.icon ? { icon: true } : {}), ...(w.ensure ? { ensure: true } : {}),
+        ...(w.one ? { one: true } : {}),
+        ...(w.move ? { moveSource: w.move.source, ...(w.move.item !== undefined ? { moveItem: w.move.item } : {}) } : {}) } satisfies WriteTarget,
       createdAt: new Date(now.getTime() + k),
     }))).returning({ id: remoteRequests.id, createdAt: remoteRequests.createdAt });
     await tx.update(devices).set({ reqVersion: sql`${devices.reqVersion} + 1` }).where(eq(devices.id, a.deviceId));
@@ -266,6 +277,12 @@ export async function takeWaiting(db: Db, deviceId: string, now = new Date()): P
     if (!d || !((d.rxProto ?? 0) >= 4 && d.browseOn && d.writeOn)) {
       await tx.update(remoteRequests).set({ status: 'failed', errorCode: 'readonly', errorText: 'Writing is off in Transfer', answeredAt: now })
         .where(and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.status, 'waiting'), inArray(remoteRequests.kind, WRITES)));
+    }
+    // DELETE … one (a move's removal, spec 2026-10-31 §9) only to Transfer 2.6: one older would delete a whole drawer.
+    if (!d || (d.rxProto ?? 0) < MOVE_PROTO) {
+      await tx.update(remoteRequests).set({ status: 'failed', errorCode: 'proto', errorText: `Copied, but the original could not be removed — ${MOVE_OLD_TRANSFER}`, answeredAt: now })
+        .where(and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.status, 'waiting'), eq(remoteRequests.kind, 'delete'),
+          sql`(${remoteRequests.target}->>'one')::boolean is true`));
     }
     const waiting = and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.status, 'waiting'));
     const picked = await tx.select({ id: remoteRequests.id }).from(remoteRequests).where(waiting)
@@ -330,6 +347,7 @@ export async function answerPiece(
 function writeLines(r: RemoteRow, rid: string, lines: string[], set: Partial<RemoteRow>): 'done' | 'failed' | null {
   let removed = (r.answer as { removed?: number } | null)?.removed ?? 0;
   let end: 'done' | 'failed' | null = null;
+  let kept = false;
   for (const line of lines) {
     const a = parseAnswerLine(rid, line);
     if (a?.t === 'del' && r.kind === 'delete') { removed = Math.max(removed, a.count); continue; }
@@ -337,11 +355,13 @@ function writeLines(r: RemoteRow, rid: string, lines: string[], set: Partial<Rem
     if (a?.t === 'err') {
       const t = r.target as WriteTarget | null;
       if ((a.code === 'notfound' && t?.icon) || (a.code === 'exists' && t?.ensure)) { end = 'done'; break; }
+      // A move's DELETE … one (§9): a drawer something new is in stays (said, not a failure); one gone already is gone.
+      if (r.kind === 'delete' && t?.one && (a.code === 'notempty' || a.code === 'notfound')) { kept = a.code === 'notempty'; end = 'done'; break; }
       Object.assign(set, { errorCode: a.code, errorText: a.text }); end = 'failed'; break;
     }
     Object.assign(set, BAD); end = 'failed'; break;
   }
-  if (r.kind === 'delete') set.answer = { removed };
+  if (r.kind === 'delete') set.answer = { removed, ...(kept ? { kept: true } : {}) };
   return end;
 }
 

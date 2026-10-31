@@ -158,3 +158,7 @@ Run files-net-writes, files-net-volumes, files-net (desktop), plus `pnpm test`, 
 ### Task 7: Final whole-branch review (one fresh opus reviewer), fixes RED→GREEN, ledger.
 
 ## Ledger (filled while executing)
+- Pre-flight: Tasks 2-4 consume Task 1's MOVE_PROTO / words / move_item; Task 3-4 consume Task 2's WriteReq.one/move and the kept answer; no conflicts.
+- Ruling: the ledger lives in this plan (as the previous plan's did), not an sdd workspace — cost if wrong: none.
+- Task 1: complete (05e42267, tests: vitest poll route + remote-wire + remote-browse + words → 120/120; migration 0056_move_item = one ADD COLUMN)
+- Task 2: complete (tests: pnpm test:db src/lib/remote-requests.db.test.ts → 37/37)

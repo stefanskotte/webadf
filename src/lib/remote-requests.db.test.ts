@@ -395,6 +395,46 @@ describe('write requests', () => {
     ]);
   });
 
+  // Spec 2026-10-31 §9 (protocol 5): what a move removes, exactly one object at a time.
+  it('DELETE … one goes only to a board on protocol 5; on 4 it fails at the take and the board never sees it', async () => {
+    const one = { kind: 'delete' as const, amigaPath: 'Work:Pair/a', one: true, label: 'Work:Pair/a' };
+    const [w4] = await addWrites(getDb(), { orgId, deviceId, jobId: 'j1a', writes: [one, { kind: 'mkdir', amigaPath: 'Work:N', label: 'Work:N' }] }, t0);
+    const taken4 = await takeWaiting(getDb(), deviceId, at(1));
+    expect(taken4.map((r) => r.kind)).toEqual(['mkdir']);
+    expect(await rowOf(w4)).toMatchObject({ status: 'failed', errorCode: 'proto',
+      errorText: 'Copied, but the original could not be removed — Move needs Transfer 2.6 — use Copy' });
+    await getDb().update(devices).set({ rxProto: 5 }).where(eq(devices.id, deviceId));
+    const [w5] = await addWrites(getDb(), { orgId, deviceId, jobId: 'j1b', writes: [one] }, at(2));
+    const taken5 = await takeWaiting(getDb(), deviceId, at(3));
+    expect(taken5.map((r) => requestLine({ ...r, kind: r.kind as never }))).toEqual([`DELETE ${w5} 11:Work:Pair/a one\n`]);
+    expect(await rowOf(w5)).toMatchObject({ target: { one: true, label: 'Work:Pair/a' } });
+  });
+
+  it('DELETE … one answered notempty keeps the drawer (done, kept); notfound is gone already (done)', async () => {
+    await getDb().update(devices).set({ rxProto: 5 }).where(eq(devices.id, deviceId));
+    const [d, f] = await addWrites(getDb(), { orgId, deviceId, jobId: 'j1c', writes: [
+      { kind: 'delete', amigaPath: 'Work:Pair', one: true, label: 'Work:Pair' },
+      { kind: 'delete', amigaPath: 'Work:gone', one: true, label: 'Work:gone' },
+    ] }, t0);
+    await takeWaiting(getDb(), deviceId, at(1));
+    await answer(d, [`ERR ${d} notempty 19:Directory not empty`], 0, true, at(2));
+    expect(await rowOf(d)).toMatchObject({ status: 'done', answer: { removed: 0, kept: true } });
+    await answer(f, [`ERR ${f} notfound 16:object not found`], 0, true, at(3));
+    expect(await rowOf(f)).toMatchObject({ status: 'done', answer: { removed: 0 } });
+    // Without `one`, notfound stays a failure.
+    const [plain] = await addWrites(getDb(), { orgId, deviceId, jobId: 'j1d', writes: [{ kind: 'delete', amigaPath: 'Work:x', label: 'Work:x' }] }, at(4));
+    await takeWaiting(getDb(), deviceId, at(5));
+    await answer(plain, [`ERR ${plain} notfound 16:object not found`], 0, true, at(6));
+    expect((await rowOf(plain)).status).toBe('failed');
+  });
+
+  it('a move\'s Makedir carries its source and entry in the target', async () => {
+    const [m] = await addWrites(getDb(), { orgId, deviceId, jobId: 'j1e', writes: [
+      { kind: 'mkdir', amigaPath: 'Work:T/Pack/E', ensure: true, move: { source: 'STASH:/Pack', item: 'Pack/E' }, label: 'Work:T/Pack/E' },
+    ] }, t0);
+    expect(await rowOf(m)).toMatchObject({ target: { label: 'Work:T/Pack/E', ensure: true, moveSource: 'STASH:/Pack', moveItem: 'Pack/E' } });
+  });
+
   it('a board that cannot write is never handed a write: it fails readonly at the take, listings go on', async () => {
     await canWrite(false);
     const [w] = await addWrites(getDb(), { orgId, deviceId, jobId: 'j2', writes: [{ kind: 'mkdir', amigaPath: 'Work:New', label: 'Work:New' }] }, t0);
