@@ -345,4 +345,85 @@ describe('transfers', () => {
     expect(left.map((x) => x.id).sort()).toEqual([waitingId, sendingId].sort());
     expect(await version(d)).toBe(v);
   });
+
+  // NET: volumes phase 2 (spec 2026-10-31 §3, §4.1-4.3; plan W1-W3): copies onto a volume, and the write switch.
+  const writable = (d: string, on = true) => getDb().update(devices).set({ rxProto: 4, browseOn: true, writeOn: on }).where(eq(devices.id, d));
+  const flags = async (d: string) => (await getDb().select({ p: devices.rxProto, b: devices.browseOn, w: devices.writeOn }).from(devices).where(eq(devices.id, d)))[0];
+
+  it('records the write switch from a protocol 4 report, and clears browse and write when Transfer goes', async () => {
+    const d = await device(); const t0 = new Date('2026-10-31T12:00:00Z');
+    await T.recordSendRx(getDb(), d, 'c', t0, { proto: 4, browse: true, write: true });
+    expect(await flags(d)).toEqual({ p: 4, b: true, w: true });
+    await T.recordSendRx(getDb(), d, 'c', new Date(t0.getTime() + 1000), { proto: 4, browse: true, write: false });
+    expect(await flags(d)).toEqual({ p: 4, b: true, w: false });
+    // write=1 without browsing, or on an older protocol, is no write.
+    await T.recordSendRx(getDb(), d, 'c', new Date(t0.getTime() + 2000), { proto: 4, browse: false, write: true });
+    expect(await flags(d)).toEqual({ p: 4, b: false, w: false });
+    await T.recordSendRx(getDb(), d, 'c', new Date(t0.getTime() + 3000), { proto: 3, browse: true, write: true });
+    expect(await flags(d)).toEqual({ p: 3, b: true, w: false });
+    await T.recordSendRx(getDb(), d, 'c', new Date(t0.getTime() + 4000), { proto: 4, browse: true, write: true });
+    await T.recordSendRx(getDb(), d, 'u', new Date(t0.getTime() + 5000));
+    expect(await flags(d)).toMatchObject({ b: false, w: false });
+  });
+
+  it('queues a copy onto a volume with its absolute path, clash mode, job and move source; the name stays its path', async () => {
+    const d = await device();
+    const r = await T.queueTransfers(getDb(), { orgId: 'org-a', deviceId: d, userId: 'u1', jobId: 'job1', files: [
+      { ...(await file('ignored', 'vol-one')), dest: 'Work:Würfel/One.txt', onClash: 'replace', moveSource: 'STASH:/One.txt' },
+      { ...(await file('ignored', 'vol-two')), dest: 'DF1:Two.txt', onClash: 'skip' },
+    ] });
+    const ids = (r as { ids: string[] }).ids;
+    const rows = await Promise.all(ids.map(row));
+    expect(rows.map((x) => [x.path, x.amigaDest, x.onClash, x.jobId, x.moveSource])).toEqual([
+      ['One.txt', 'Work:Würfel/One.txt', 'replace', 'job1', 'STASH:/One.txt'],
+      ['Two.txt', 'DF1:Two.txt', 'skip', 'job1', null],
+    ]);
+    for (const dest of ['Work', 'Work:', 'Work:a/../b', 'Work:a:b', 'Wo/rk:x', `Work:${'x'.repeat(31)}`]) {
+      expect(await T.queueTransfers(getDb(), { orgId: 'org-a', deviceId: d, userId: 'u1', files: [{ ...(await file('x', `bad-${dest}`)), dest, onClash: 'keep' }] }))
+        .toMatchObject({ ok: false, reason: 'bad_name' });
+    }
+  });
+
+  it('offers a copy onto a volume only to a board that can write; it waits meanwhile, the queue goes on', async () => {
+    const d = await device();
+    const vol = ((await T.queueTransfers(getDb(), { orgId: 'org-a', deviceId: d, userId: 'u1', files: [
+      { ...(await file('x', 'offered-vol')), dest: 'Work:x.txt', onClash: 'keep' }] })) as { ids: string[] }).ids[0];
+    const plain = ((await q(d, await blob(new TextEncoder().encode('offered-plain')), { path: 'p.txt' })) as { id: string }).id;
+    const text = await T.sendQueueText(getDb(), d);
+    expect(text).toMatch(new RegExp(`^NEXT ${plain} `));
+    expect(text).not.toContain(vol);
+    await writable(d);
+    const now = await T.sendQueueText(getDb(), d);
+    expect(now.split('\n')[0]).toBe(`NEXT ${vol} 11 ${(crc32(new TextEncoder().encode('offered-vol')) >>> 0).toString(16)} 0 10:Work:x.txt 0: keep`);
+    expect(now).toContain(`${vol} 11 10:Work:x.txt\n`);
+  });
+
+  it('writing switched off fails what waits to be written (readonly); an ordinary send and Transfer merely gone wait', async () => {
+    const { remoteRequests } = await import('@/db/schema/remote-requests');
+    const d = await device();
+    await writable(d);
+    const vol = ((await T.queueTransfers(getDb(), { orgId: 'org-a', deviceId: d, userId: 'u1', files: [
+      { ...(await file('x', 'off-vol')), dest: 'Work:x.txt', onClash: 'keep' }] })) as { ids: string[] }).ids[0];
+    const plain = ((await q(d, await blob(new TextEncoder().encode('off-plain')), { path: 'p.txt' })) as { id: string }).id;
+    await getDb().insert(remoteRequests).values([
+      { id: `w-${d}`, orgId: 'org-a', deviceId: d, kind: 'mkdir', amigaPath: 'Work:New' },
+      { id: `l-${d}`, orgId: 'org-a', deviceId: d, kind: 'dir', amigaPath: 'Work:' },
+    ]);
+    const v = await version(d);
+    expect(await T.failWritesWhenOff(getDb(), d)).toEqual({ rows: 1, requests: 1 });
+    expect(await row(vol)).toMatchObject({ status: 'failed', errorCode: 'readonly', errorText: 'Writing is off in Transfer' });
+    expect((await row(plain)).status).toBe('queued');
+    const reqs = await getDb().select().from(remoteRequests).where(eq(remoteRequests.deviceId, d));
+    expect(Object.fromEntries(reqs.map((x) => [x.kind, [x.status, x.errorCode]]))).toEqual({ mkdir: ['failed', 'readonly'], dir: ['waiting', null] });
+    expect(await version(d)).toBe(v + 1);
+    expect(await T.failWritesWhenOff(getDb(), d)).toEqual({ rows: 0, requests: 0 });
+    expect(await version(d)).toBe(v + 1);
+  });
+
+  it('a Skip answered by Transfer finishes the row skipped, not failed', async () => {
+    const d = await device();
+    const id = ((await q(d, await blob(new TextEncoder().encode('skip-me')), { path: 's.txt' })) as { id: string }).id;
+    expect(await T.finishTransfer(getDb(), d, id, { ok: false, code: 'skipped', text: '' })).toBe(true);
+    expect(await row(id)).toMatchObject({ status: 'skipped', errorCode: null });
+  });
 });

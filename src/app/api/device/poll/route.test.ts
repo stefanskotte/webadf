@@ -54,7 +54,11 @@ const readDf1ForPoll = vi.fn<(deviceId: string) => Promise<{ v: number; sha256: 
 vi.mock('@/lib/df1-store', () => ({ readDf1ForPoll: (deviceId: string) => readDf1ForPoll(deviceId) }));
 
 const recordSendRx = vi.fn(async () => undefined);
-vi.mock('@/lib/transfers', () => ({ recordSendRx: (...a: unknown[]) => recordSendRx(...(a as [])) }));
+const failWritesWhenOff = vi.fn(async () => ({ rows: 0, requests: 0 }));
+vi.mock('@/lib/transfers', () => ({
+  recordSendRx: (...a: unknown[]) => recordSendRx(...(a as [])),
+  failWritesWhenOff: (...a: unknown[]) => failWritesWhenOff(...(a as [])),
+}));
 vi.mock('@/db', () => ({ getDb: () => ({}) }));
 
 const get = (qs = '') => new Request(`http://test/api/device/poll${qs}`);
@@ -773,13 +777,31 @@ describe('GET /api/device/poll -- req (NET: volumes, spec 2026-10-30 §3)', () =
     readPollTick.mockResolvedValue(baseTick({ sendVersion: 1 }));
     const { GET } = await import('./route');
     await GET(get('?since=1&xferAck=0&rx=c&rxv=3&browse=1'));
-    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 3, browse: true });
+    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 3, browse: true, write: false });
     await GET(get('?since=1&xferAck=0&rx=c&rxv=2&browse=0'));
-    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 2, browse: false });
+    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 2, browse: false, write: false });
     recordSendRx.mockClear();
     readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0 }));   // wakes at once, so no hold
     await GET(get('?since=1&rx=c&rxv=3&browse=1'));
     expect(recordSendRx).not.toHaveBeenCalled();
+  });
+  // NET: volumes phase 2 (spec 2026-10-31 §3, plan W2/W3): firmware 1.23 adds rxv=4 and write=.
+  it('records protocol 4 and the write flag; a connected Transfer that cannot write fails what waits to be written', async () => {
+    readPollTick.mockResolvedValue(baseTick({ sendVersion: 1 }));
+    const { GET } = await import('./route');
+    await GET(get('?since=1&xferAck=0&rx=c&rxv=4&browse=1&write=1'));
+    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 4, browse: true, write: true });
+    expect(failWritesWhenOff).not.toHaveBeenCalled();
+    await GET(get('?since=1&xferAck=0&rx=c&rxv=4&browse=1&write=0'));
+    expect(failWritesWhenOff).toHaveBeenCalledTimes(1);
+    expect(failWritesWhenOff).toHaveBeenLastCalledWith(expect.anything(), 'dev-1');
+    await GET(get('?since=1&xferAck=0&rx=c&rxv=3&browse=1'));
+    expect(failWritesWhenOff).toHaveBeenCalledTimes(2);
+    // Transfer merely gone: what waits keeps waiting (W3).
+    await GET(get('?since=1&xferAck=0&rx=u'));
+    expect(failWritesWhenOff).toHaveBeenCalledTimes(2);
+    await GET(get('?since=1&xferAck=0&rx=c&rxv=5&browse=1&write=1'));
+    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), undefined);
   });
 });
 

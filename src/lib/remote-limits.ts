@@ -13,3 +13,10 @@ export const FETCH_MAX_FILES = 64;
 export const FETCH_MAX_BYTES = 16 * 1024 * 1024;
 export const DIR_CUT = 1000;
 export const QUEUE_FOLDER = 'Queue';
+// NET: volumes phase 2 (spec 2026-10-31): writing to the Amiga's own disks.
+export const WRITE_FW = '1.23.0';
+export const WRITE_PROTO = 4;
+export const ALIVE_PIECE_MS = 30_000;        // a listing arriving in pieces is alive while one came this recently (§4.4)
+export const WRITE_KINDS = ['mkdir', 'rename', 'delete', 'protect', 'note'] as const;
+export type WriteKind = (typeof WRITE_KINDS)[number];
+export const DEL_EVERY = 50;                 // Transfer sends DEL <rid> <n> after every 50 entries removed (§2.3)

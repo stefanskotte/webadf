@@ -1,20 +1,33 @@
 // NET: volumes (spec 2026-10-30 §2.2): the request lines the board passes to Transfer, the answer lines it brings
 // back, and NET: path <-> Amiga path. Text is Latin-1; a <len>:<text> field counts characters. CLIENT-SAFE, pure.
 import { amigaNameProblem } from '@/lib/files/path';
-import { QUEUE_FOLDER } from './remote-limits';
+import { QUEUE_FOLDER, type WriteKind } from './remote-limits';
 
-export type RemoteKind = 'vols' | 'dir' | 'get';
+export type RemoteKind = 'vols' | 'dir' | 'get' | WriteKind;
+/** A write request's arguments (spec 2026-10-31 §2.3), kept in remote_requests.target: RENAME's target, PROTECT's bits, NOTE's comment. */
+export type WriteArgs = { to?: string; protection?: number; comment?: string };
 export type VolumeInfo = { name: string; device: string; size: number; free: number; date: string };
 export type EntryInfo = { name: string; dir: boolean; size: number; protection: number; date: string; comment: string };
 export type AnswerLine =
   | { t: 'vol'; v: VolumeInfo } | { t: 'ent'; e: EntryInfo } | { t: 'done'; count: number; cut: boolean }
-  | { t: 'err'; code: string; text: string } | { t: 'got'; tag: string };
+  | { t: 'err'; code: string; text: string } | { t: 'got'; tag: string }
+  /** DELETE's progress (phase 2): entries removed so far, a sign of life. */
+  | { t: 'del'; count: number };
 
 const lp = (s: string) => `${s.length}:${s}`;
 
-export function requestLine(r: { id: string; kind: RemoteKind; amigaPath: string }): string {
-  if (r.kind === 'vols') return `VOLS ${r.id}\n`;
-  return `${r.kind === 'dir' ? 'DIR' : 'GET'} ${r.id} ${lp(r.amigaPath)}\n`;
+export function requestLine(r: { id: string; kind: RemoteKind; amigaPath: string; target?: unknown }): string {
+  const a = (r.target ?? {}) as WriteArgs;
+  switch (r.kind) {
+    case 'vols': return `VOLS ${r.id}\n`;
+    case 'dir': return `DIR ${r.id} ${lp(r.amigaPath)}\n`;
+    case 'get': return `GET ${r.id} ${lp(r.amigaPath)}\n`;
+    case 'mkdir': return `MKDIR ${r.id} ${lp(r.amigaPath)}\n`;
+    case 'delete': return `DELETE ${r.id} ${lp(r.amigaPath)}\n`;
+    case 'rename': return `RENAME ${r.id} ${lp(r.amigaPath)} ${lp(a.to ?? '')}\n`;
+    case 'protect': return `PROTECT ${r.id} ${lp(r.amigaPath)} ${((a.protection ?? 0) >>> 0).toString(16)}\n`;
+    case 'note': return `NOTE ${r.id} ${lp(r.amigaPath)} ${lp(a.comment ?? '')}\n`;
+  }
 }
 
 /** Amiga epoch is 1978-01-01; a tick is 1/50 s. */
@@ -53,7 +66,9 @@ function date(w: string | null): string | null {
 // A board-sent name is held to the same rules as a name typed in the web app (amigaNameProblem: 30 characters, Latin-1, no ':' or '/', not '.' or '..').
 const NAME_OK = (n: string) => amigaNameProblem(n) === null;
 const DEVICE = /^[A-Za-z0-9_.-]{1,30}:$/;
-const CODES = new Set(['off', 'notfound', 'notdir', 'isdir', 'busy', 'toolarge', 'denied', 'bad', 'io', 'norx', 'old', 'timeout']);
+const CODES = new Set(['off', 'notfound', 'notdir', 'isdir', 'busy', 'toolarge', 'denied', 'bad', 'io', 'norx', 'old', 'timeout',
+  // phase 2 (spec 2026-10-31 §2.3): writing off, a MKDIR/RENAME target there, a write-protected or full disk, RENAME across volumes
+  'readonly', 'exists', 'wprot', 'full', 'xvol']);
 
 export function parseAnswerLine(rid: string, line: string): AnswerLine | null {
   const c = new Cursor(line);
@@ -82,6 +97,11 @@ export function parseAnswerLine(rid: string, line: string): AnswerLine | null {
       const code = c.word(); const text = c.lenStr();
       if (!code || !CODES.has(code) || text === null || !c.atEnd()) return null;
       return { t: 'err', code, text };
+    }
+    case 'DEL': {
+      const count = num(c.word(), 1_000_000);
+      if (count === null || !c.atEnd()) return null;
+      return { t: 'del', count };
     }
     case 'GOT': {
       const tag = c.word();

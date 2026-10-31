@@ -52,9 +52,11 @@ export type Listing = {
   /**
    * NET:/<board> and its volumes (spec 2026-10-30 §5): the board, the volume and Amiga path shown (null at the board),
    * when the remembered answer was read (null when nothing was read), whether Transfer cut it at 1000 entries, and
-   * `browse`: null when the board can be browsed, else the words why not.
+   * `browse`: null when the board can be browsed, else the words why not. `write` (phase 2, spec 2026-10-31 §4.2): null
+   * when its volumes can be written to, else the words why not ("Writing is off in Transfer").
    */
-  net?: { board: string; boardName: string; volume: string | null; amigaPath: string | null; readAt: number | null; cut: boolean; browse: string | null };
+  net?: { board: string; boardName: string; volume: string | null; amigaPath: string | null; readAt: number | null; cut: boolean;
+    browse: string | null; write?: string | null };
 };
 export type RefusalCode =
   | 'not_found' | 'read_only' | 'mounted' | 'disk_full' | 'name_exists' | 'bad_name' | 'comment_too_long'

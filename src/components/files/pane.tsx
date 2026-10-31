@@ -43,6 +43,8 @@ export type PaneProps = {
   onAddToLibrary(index: number): void;
   strip?: ReactNode;   // the disk strip of the disk the pane is in (also one whose image could not be read)
   errorAction?: ReactNode;   // under the error (or the pending line), e.g. a way back to LIBRARY: when the place is gone
+  /** The crumbs to show while there is no listing (a NET: place pending or refused). */
+  fallbackCrumbs?: { label: string; path: string }[];
 };
 
 /** The device chips below lg (increment 2, R1; Files 2 §2.1): STASH:, LIBRARY:, NET:. */
@@ -117,7 +119,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
   const counts = listing ? viewCounts(listing.entries, view) : { total: 0, shown: 0, infoHidden: 0 };
   const tid = (s: string) => `pane-${side}-${s}`;
   const device = listing ? listing.path.slice(0, listing.path.indexOf(':') + 1) : 'LIBRARY:';
-  const crumbs = listing?.crumbs ?? [];
+  const crumbs = listing?.crumbs ?? p.fallbackCrumbs ?? [];
   const parent = crumbs.length > 1 ? crumbs[crumbs.length - 2] : null;
 
   const picked = [...selection.picked].filter((i) => i < rows.length).sort((a, b) => a - b);
@@ -280,10 +282,11 @@ export function Pane({ filterRef, ...p }: PaneProps) {
             </thead>
             <tbody>
               {/* A board whose volumes cannot be read (§5): one row saying why, above Queue, which still works. */}
-              {listing.net?.browse && (
+              {/* At a board's root also why its volumes cannot be written to (phase 2, §4.2); a volume says it above. */}
+              {(listing.net?.browse || (!listing.net?.volume && listing.net?.write)) && (
                 <tr data-testid="net-browse-reason">
                   <td colSpan={span} className={`${cell} text-[13px] whitespace-normal`} style={{ ...cellStyle, color: 'var(--warning-fg)' }}>
-                    {listing.net.browse}
+                    {listing.net!.browse ?? listing.net!.write}
                   </td>
                 </tr>
               )}

@@ -1484,7 +1484,9 @@ sharing shipped 2026-10-28; **Files SHIPPED 2026-10-29** (merge ef711fb, §4-fil
 (server + web against a fake board) DONE on branch feat/net-volumes (§4-net-volumes below; inert until a board sends
 `reqAck`). Next, each merging on its own (spec §6): (a) Transfer 2.3 (protocol 3, FS-UAE), a plan first; (b) firmware
 1.22.0 TEST build (the request queue beside xfer), a plan first; (c) the A500 bench (spec §7); (d) release, driver disk
-with Transfer 2.3, README screenshots. Phase 2 (writes) after.
+with Transfer 2.3, README screenshots. **Phase 2 (writes)** -- spec docs/superpowers/specs/2026-10-31-net-volumes-writes-design.md:
+step 1 (server + web) DONE on branch feat/net-writes-web (§4-net-writes below; migration 0054 to apply first; inert until
+a board reports rxv=4&write=1); Transfer 2.5 and firmware 1.23 built in parallel; then the A500 bench (spec §5).
 (1b) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there. Backlog (operator 2026-10-30): clicking a pane's left edge goes up one level in that pane, as in Directory Opus; at a
 root it does nothing. Backlog (operator 2026-10-30): the disk strip's History button should read as a toggle (it opens and
 closes the History panel), e.g. with a caret.
@@ -1542,6 +1544,18 @@ Library's multi-select Move removes it from its source instead); no Undo for fil
 menu's History link and HFE "Open it" keep the unfiled LIBRARY:/<title>/<disk> form (works). README screenshots of
 Files, Adding disks and Settings need regenerating (`PORT=3100 pnpm screenshots`, live DB). Remaining master flakes:
 library-table "a row carries the card controls", help "Enter opens the ?".
+**§4-net-writes. NET: VOLUMES PHASE 2 (WRITES), SERVER/WEB STEP -- 2026-10-31 (branch feat/net-writes-web, unmerged).**
+Spec docs/superpowers/specs/2026-10-31-net-volumes-writes-design.md, plan docs/superpowers/plans/2026-10-31-net-writes-web.md
+(rulings W1-W13 and the ledger there). **Migration 0054 (drizzle/0054_net_writes.sql) -- NOT yet applied to production:
+apply it BEFORE pushing master** (transfers.amiga_dest/on_clash/job_id/move_source, devices.write_on). A volume of a board
+that reports rxv=4, browse=1, write=1 (fw >= 1.23.0) is writable: Copy/Move onto it are queue rows with amiga_dest +
+on_clash, carried to the board as the extended NEXT line (`NEXT <id> <size> <crc> <prot> <len>:<Vol:path> <len>:<comment>
+<keep|replace|skip>`; plain rows unchanged, ':' still cleaned to '_' there); Makedir/Rename/Delete/Protect/comment are
+remote requests MKDIR/RENAME/DELETE/PROTECT/NOTE (answers DEL/DONE/ERR). Moves finish on the server (the source goes once
+its files arrived); copies between volumes go up and down through the STASH: root. The pane follows each job on the status
+row; Delete on the Amiga always asks. Writing off / Transfer 2.4 / firmware 1.22 grey the write buttons with the words, and
+a board connected but not writable fails what waits `readonly`. e2e: e2e/files-net-writes.spec.ts against the fake board.
+
 **§4-net-volumes. NET: VOLUMES, SERVER/WEB STEP -- 2026-10-30 (branch feat/net-volumes; merge commit: see git log).**
 Spec docs/superpowers/specs/2026-10-30-net-volumes-design.md, plan docs/superpowers/plans/2026-10-30-net-volumes-web.md.
 NET:/<board> lists the Amiga's volumes (Transfer's order, "DH1: · 41.0 MB free") then **Queue** -- the send queue moved

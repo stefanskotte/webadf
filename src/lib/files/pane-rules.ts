@@ -33,7 +33,8 @@ export function netBoardOf(l: Listing | null): string | null {
  * so holdsFiles stays false there.
  */
 export function acceptsCopies(l: Listing | null): boolean {
-  return holdsFiles(l) || netBoardOf(l) !== null;
+  // A volume a board can write to takes copies too (phase 2, spec 2026-10-31 §4.1).
+  return holdsFiles(l) || netBoardOf(l) !== null || (isNetVolume(l) && l!.writable);
 }
 
 /**
@@ -45,14 +46,17 @@ export function copyOutReason(l: Listing | null): string | null {
   return netBoardRoot(l.path) !== null ? NET_OPEN_VOLUME : NET_COPY_OUT;
 }
 
-/** What every command that would write to a volume says (§5: Move, Delete, Rename, Makedir, Protect, …); else null. */
+/**
+ * What every command that would write to a volume says when the board cannot write (spec 2026-10-31 §4.2: "Writing is
+ * off in Transfer", the Transfer or firmware it needs); null for a volume it can write to, and anywhere else.
+ */
 export function netVolumeReason(l: Listing | null): string | null {
-  return isNetVolume(l) ? NET_READ_ONLY : null;
+  return isNetVolume(l) && !l!.writable ? l!.readOnlyReason ?? NET_READ_ONLY : null;
 }
 
-/** NET: rows are queue rows: nothing renames them, makes folders, sets protection or edits a comment there. */
+/** NET: rows outside a volume are queue rows: nothing renames them, makes folders, sets protection or edits a comment there. */
 export function netReadOnly(l: Listing | null): boolean {
-  return !!l && inNet(l.path);
+  return !!l && inNet(l.path) && !isNetVolume(l);
 }
 
 /** A STASH: row the board or a commit has not finished, or one that failed: not a stored file yet (stash-driver marksOf). */
@@ -144,7 +148,16 @@ function netDeleteText(entries: FsEntry[]): string {
  * versions (ruling 8), so it says so and counts the items picked (a STASH: folder does not say what it holds); NET:
  * cancels or clears; LIBRARY: above the disks deletes collections, never their titles.
  */
-export type DeleteWhere = { title: string; label: string } | 'STASH:' | 'NET:' | 'LIBRARY:' | null;
+export type DeleteWhere = { title: string; label: string } | 'STASH:' | 'NET:' | 'LIBRARY:' | 'AMIGA' | null;
+
+/** A delete on a volume (spec 2026-10-31 W3): always confirmed, names what goes, and says it cannot be undone. */
+function amigaDeleteText(entries: FsEntry[]): string {
+  const drawers = entries.filter((e) => e.kind === 'dir').length;
+  const tail = 'from the Amiga? This cannot be undone.';
+  if (entries.length === 1) return drawers ? `Delete the drawer “${entries[0].name}” and everything in it ${tail}` : `Delete “${entries[0].name}” ${tail}`;
+  const inside = drawers === 0 ? '' : ` (${plural(drawers, 'drawer')}, with everything in ${drawers === 1 ? 'it' : 'them'})`;
+  return `Delete ${entries.length} items${inside} ${tail}`;
+}
 
 export function deleteText(entries: FsEntry[], where: DeleteWhere): string {
   // Above the disks only collections are deleted (Files 2 §3.2): their titles stay.
@@ -153,6 +166,7 @@ export function deleteText(entries: FsEntry[], where: DeleteWhere): string {
       : `Delete ${entries.length} collections? Their titles stay in the library.`;
   }
   if (where === 'NET:') return netDeleteText(entries);
+  if (where === 'AMIGA') return amigaDeleteText(entries);
   if (where === 'STASH:') {
     const what = entries.length === 1 ? `“${entries[0].name}”` : `${entries.length} items`;
     return `Delete ${what} from STASH:? This cannot be undone.`;
@@ -163,6 +177,7 @@ export function deleteText(entries: FsEntry[], where: DeleteWhere): string {
 /** What a delete in the place `l` shows (deleteText's `where` from the listing). */
 export function deleteWhere(l: Listing | null): DeleteWhere {
   if (!l) return null;
+  if (isNetVolume(l)) return 'AMIGA';
   if (inNet(l.path)) return 'NET:';
   if (l.library && !l.disk) return 'LIBRARY:';
   return inStash(l.path) ? 'STASH:' : l.disk;

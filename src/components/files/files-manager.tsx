@@ -22,7 +22,10 @@ import {
   offersUndo, placeOf,
 } from '@/lib/files/pane-rules';
 import { askUntilAnswered } from '@/lib/files/ask-listing';
-import { boardNameFor, isNetVolume, listingRefusal, netBoardRoot, netPollMs, NET_MOVE_IN, NET_OPEN_VOLUME, NET_PICK_BOARD, NET_READ_ONLY } from '@/lib/files/net-rules';
+import {
+  boardNameFor, isNetVolume, isVolumePlace, listingRefusal, netBoardRoot, netCrumbs, netPollMs, NET_DROP_TO_STASH, NET_MOVE_IN, NET_OPEN_VOLUME,
+  NET_PICK_BOARD, NET_READ_ONLY,
+} from '@/lib/files/net-rules';
 import { errorWords } from '@/lib/remote-browse';
 import { COLLECTIONS_STAY, createAdfReason, filingNoun, filingReason, shelfOf, shelfOfRow, shelfReasons } from '@/lib/files/shelf-rules';
 import { stashPollMs, trackArriving, withStalls, type ArrivingSeen } from '@/lib/files/arriving';
@@ -31,7 +34,7 @@ import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
 import { diskRelative, identityToConfirm, undoTarget, withAddedIn, type OpVersion } from '@/lib/files/edit-rules';
-import { asksBeforeCopy, createClosesDialog, dropBlocked, fetchDownload, fetchStatus, navTargets, pickGone, oneAtATime, opTitle, reloadsBoth, skippedItems, skippedWords, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
+import { asksBeforeCopy, createClosesDialog, dropBlocked, fetchDownload, jobStatus, navTargets, pickGone, oneAtATime, opTitle, reloadsBoth, skippedItems, skippedWords, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
 import { addedIn } from '@/lib/disk-history/added-in';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
 import { isFileDrag } from '@/components/disks/native-drop';
@@ -119,6 +122,8 @@ type Dialog =
     choices: Record<string, ClashChoice>;
     /** A copy out of a NET: volume: what is asked again before the answers are sent (Task 8 fix round 1). */
     volume?: VolumeCopy;
+    /** A copy onto a NET: volume: the drawer asked again before the answers are sent (phase 2, W4). */
+    into?: string;
     /** Requests still to send once these clashes are answered, and the outcomes (and versions) of those already sent. */
     rest: TransferGroup[]; done: OpItem[]; versions: OpVersion[];
   }
@@ -705,7 +710,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const inNet = netReadOnly(src);
   const board = netBoardOf(src);
   // A volume of a board's Amiga (NET: volumes, spec 2026-10-30 §5) is read, never written, in phase 1: every command
-  // that writes says "Read-only for now", whatever is picked; Copy, Download and Info act on its rows.
+  // that writes says why (phase 2: writing off, Transfer or firmware too old), whatever is picked; on a board that can
+  // write every command acts on its rows.
   const volumeRO = netVolumeReason(src);
   const volume = isNetVolume(src);
   // NET:/<board> lists its volumes and Queue: places to open, as LIBRARY: lists titles.
@@ -729,7 +735,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     // A STASH: file that failed to arrive holds no bytes: a copy would skip it and still say done.
     const r = sourceReason(op === 'move') ?? failedReason(picked);
     if (r) return r;
-    if (!acceptsCopies(dst)) return isNetVolume(dst) ? NET_READ_ONLY : dst && netReadOnly(dst) ? readOnly(dst) : 'Open a disk or STASH: on the other side';
+    if (!acceptsCopies(dst)) return isNetVolume(dst) ? dst!.readOnlyReason ?? NET_READ_ONLY : dst && netReadOnly(dst) ? readOnly(dst) : 'Open a disk or STASH: on the other side';
     if (!dst!.writable) return readOnly(dst!);
     if (op === 'move' && netBoardOf(dst)) return NET_MOVE_IN;   // C16: a send never takes the original away
     return null;
@@ -746,7 +752,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     move: transferReason('move'),
     delete: shelf ? shelf.delete : sourceReason(true),
     rename: shelf ? shelf.rename : volumeRO ?? (inNet ? NOT_IN_NET : one(sourceReason(true), 'rename it')),
-    makedir: shelf ? shelf.makedir : volumeRO ?? (inNet ? NOT_IN_NET : !holdsFiles(src) ? 'Open a disk or STASH: to make a folder in it' : !src!.writable ? readOnly(src!) : null),
+    // A volume a board can write to makes drawers on the Amiga (phase 2, spec 2026-10-31 §4.1).
+    makedir: shelf ? shelf.makedir : volumeRO ?? (volume ? null : inNet ? NOT_IN_NET : !holdsFiles(src) ? 'Open a disk or STASH: to make a folder in it' : !src!.writable ? readOnly(src!) : null),
     protect: volumeRO ?? (inNet ? NOT_IN_NET : sourceReason(true)),
     info: inNet && !board && !volume ? NOT_IN_NET : one(sourceReason(false), 'see its details'),
     // One file by path; several, or a folder, as a .zip (spec §3.3).
@@ -789,7 +796,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    * a NET: volume, whose files the board fetches from now on (spec 2026-10-30 §4.5): GET /api/files/net/fetch/<id>.
    */
   type Fetching = { id: string; files: number };
-  type Outcome = { kind: 'done'; items: OpItem[]; versions: OpVersion[]; added: Added[]; queued?: number; fetching?: Fetching } | { kind: 'clashes'; clashes: Clash[] }
+  type Outcome = { kind: 'done'; items: OpItem[]; versions: OpVersion[]; added: Added[]; queued?: number; fetching?: Fetching; job?: Fetching } | { kind: 'clashes'; clashes: Clash[] }
     | { kind: 'refused'; words?: string };
 
   /** `inline`: a refusal code the caller says itself (a collection name clash, under the field): no toast for it. */
@@ -802,7 +809,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       // Signed out, the fetch lands on the sign-in page (a 200 that is not JSON): said so, and nothing changes.
       if (isSignedOutAnswer(res)) { toast.error(SIGNED_OUT_TEXT); return { kind: 'refused' }; }
       const body = (await res.json().catch(() => null)) as {
-        items?: OpItem[]; versions?: OpVersion[]; added?: Added[]; queued?: number; fetching?: Fetching; error?: unknown; detail?: unknown; clashes?: Clash[];
+        items?: OpItem[]; versions?: OpVersion[]; added?: Added[]; queued?: number; fetching?: Fetching; job?: Fetching; error?: unknown; detail?: unknown; clashes?: Clash[];
       } | null;
       if (res.status === 409 && body?.error === 'clashes' && body.clashes) return { kind: 'clashes', clashes: body.clashes };
       if (!res.ok || !body?.items) {
@@ -812,7 +819,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
         return { kind: 'refused' };
       }
       return { kind: 'done', items: body.items, versions: body.versions ?? [], added: body.added ?? [], ...(body.queued !== undefined ? { queued: body.queued } : {}),
-        ...(body.fetching ? { fetching: body.fetching } : {}) };
+        ...(body.fetching ? { fetching: body.fetching } : {}), ...(body.job ? { job: body.job } : {}) };
     } catch {
       toast.error(refusalWords('failed'));
       return { kind: 'refused' };
@@ -885,7 +892,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     count?: (n: number) => string;
     /** Copies out of a NET: volume this run started (§4.5): their progress is the status row's, not a toast's. */
     fetches?: number;
-    volume?: VolumeCopy };
+    volume?: VolumeCopy;
+    /** A copy onto a NET: volume (phase 2): the drawer asked fresh before it is posted (plan W4). */
+    into?: string };
 
   function transfer(op: 'copy' | 'move', sources: string[], dest: string, where: string, target: string | null, count?: (n: number) => string) {
     if (busy) return;
@@ -896,7 +905,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const { panes: cur } = latest.current;
     const from = [cur.left.listing, cur.right.listing].find((l) => isNetVolume(l) && sources.every((x) => l!.entries.some((e) => e.path === x)));
     if (from) run.volume = { from: from.path, drawers: from.entries.filter((e) => e.kind === 'dir' && sources.includes(e.path)).map((e) => e.path) };
-    void readyToCopy(run.volume, sources, false).then((ok) => { if (ok) void runGroups(run, groups, [], []); });
+    // Onto a volume the server checks the names against the drawer's remembered listing: it is read fresh first (W4).
+    if (isVolumePlace(dest)) run.into = dest;
+    void readyToCopy(run.volume, sources, false).then(async (ok) => { if (ok && await readyInto(run.into, false)) void runGroups(run, groups, [], []); });
   }
 
   /**
@@ -913,6 +924,24 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     setBusy(null);
     if (failed) showFetchLine(`walk-${Date.now()}`, failed, true);
     return failed === null;
+  }
+
+  /**
+   * Before a copy onto a volume is posted (phase 2, plan W4): the destination drawer, fresh (from memory on a resend
+   * after the Clash dialog), the pending label in the status row. A drawer that cannot be read stops it with its words.
+   */
+  async function readyInto(into: string | undefined, resend: boolean): Promise<boolean> {
+    if (!into) return true;
+    setBusy(`Reading ${baseName(into)}…`);
+    const r = await askUntilAnswered<Exclude<Fetched, { pending: string }>>(into, {
+      ask: fetchListing, fresh: !resend, wanted: () => alive.current, onPending: (label) => setBusy(label),
+      giveUp: () => ({ error: noAnswer(into, null, send.targets) }),
+    });
+    setBusy(null);
+    if (r === null) return false;
+    if ('listing' in r) return true;
+    showFetchLine(`into-${Date.now()}`, 'gone' in r ? GONE : r.error, true);
+    return false;
   }
 
   /** readyToCopy's asks: null when all were read; else the words of the first that was not ('' once the manager went away). */
@@ -958,14 +987,16 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       try { res = await fetch(`/api/files/net/fetch/${encodeURIComponent(f.id)}`, { cache: 'no-store' }); } catch { again(); return; }
       if (!alive.current) return;
       if (isSignedOutAnswer(res)) { showFetchLine(f.id, SIGNED_OUT_TEXT, true); return; }
-      const p = (await res.json().catch(() => null)) as
-        { total: number; done: number; failed: { name: string; reason: string }[]; waiting: number; board: string; arrived: string[] } | null;
+      const p = (await res.json().catch(() => null)) as (Parameters<typeof jobStatus>[0] & { board: string; arrived: string[] }) | null;
       if (!res.ok || !p) { if (res.status >= 500) { again(); return; } showFetchLine(f.id, refusalWords('failed'), true); return; }
-      const s = fetchStatus(p, p.board);
+      const s = jobStatus({ ...p, skipped: p.skipped ?? 0, writes: p.writes ?? [], direction: p.direction ?? 'from' }, p.board);
       showFetchLine(f.id, s.line, s.finished);
       if (!s.finished) { again(); return; }
       const { panes: cur } = latest.current;
-      for (const side of ['left', 'right'] as const) if (cur[side].path === dest) void refresh(side);
+      // A job that changed the Amiga's disks (phase 2) changed drawers on both sides maybe: both read again (the
+      // server let their memory go). A copy out of a volume changed only its destination.
+      if ((p.writes ?? []).length || p.direction === 'to') reloadBoth();
+      else for (const side of ['left', 'right'] as const) if (cur[side].path === dest) void refresh(side);
       then?.(p);
     };
     void tick();
@@ -984,6 +1015,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
         done.push(...r.items); versions.push(...r.versions);
         if (r.queued !== undefined) run.queued = (run.queued ?? 0) + r.queued;
         if (r.fetching) { run.fetches = (run.fetches ?? 0) + 1; watchFetch(r.fetching, run.dest); }
+        // A copy or move onto (or within) the Amiga's disks (phase 2): its progress is the status row's too.
+        if (r.job) { run.fetches = (run.fetches ?? 0) + 1; watchFetch(r.job, run.dest); }
         continue;
       }
       if (r.kind === 'clashes') {
@@ -1030,9 +1063,11 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const go = () => void runGroups(d, [...clashGroups(d.sources, d.clashes.map((c) => c.source), choices), ...d.rest],
       [...d.done, ...skippedItems(d.sources, choices)], [...d.versions]);
     // Out of a volume the answer may come after the 2-minute memory ran out: asked again first (Task 8 fix round 1).
-    if (!d.volume) { go(); return; }
+    if (!d.volume && !d.into) { go(); return; }
     // Only the sources that will be sent must still be there: one answered Skip is not asked about.
-    void readyToCopy(d.volume, d.sources.filter((x) => choices[x] !== 'skip'), true).then((ok) => { if (ok) go(); else if (d.done.length) finishRun(d, d.done, d.versions); });
+    void readyToCopy(d.volume, d.sources.filter((x) => choices[x] !== 'skip'), true).then(async (ok) => {
+      if (ok && await readyInto(d.into, true)) go(); else if (d.done.length) finishRun(d, d.done, d.versions);
+    });
   }
 
   /** Cancel stops the run here; anything an earlier request already did is still reported. */
@@ -1226,7 +1261,13 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   async function runFromDialog(req: OpRequest, label: string, success: (n: number) => string, target: string | null,
     inline?: { code: RefusalCode; refused(words: string): void }) {
     const r = await post(req, label, inline?.code);
-    if (r.kind === 'done') { ranOp.current = true; setDialog(null); void report(r.items, success, target, r.versions); }
+    if (r.kind === 'done') {
+      ranOp.current = true;
+      setDialog(null);
+      // On the Amiga's own disks (phase 2) the requests are only on their way: the status row follows them.
+      if (r.job) { watchFetch(r.job, ''); return; }
+      void report(r.items, success, target, r.versions);
+    }
     else if (r.kind === 'refused' && r.words !== undefined) inline?.refused(r.words);
   }
 
@@ -1311,7 +1352,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     if ((!holdsFiles(l) && !shelf && !volumeRows) || paths.length === 0) { e.preventDefault(); return; }
     activate(side);
     e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ from: side, paths }));
-    e.dataTransfer.effectAllowed = volumeRows ? 'copy' : 'copyMove';
+    e.dataTransfer.effectAllowed = volumeRows && !l!.writable ? 'copy' : 'copyMove';
   }
 
   /** The folder (or collection) row a drop landed on, else the folder the pane shows. */
@@ -1329,7 +1370,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   function dropFromComputer(side: Side, e: React.DragEvent) {
     const l = panes[side].listing;
     if (l && !l.disk && holdsFiles(l)) { dropIntoStash(side, l, e); return; }
-    if (isNetVolume(l)) { toast.error(NET_READ_ONLY); return; }
+    // Files from the computer go up to STASH: first; a copy from there puts them on the Amiga (phase 2).
+    if (isNetVolume(l)) { toast.error(refusalWords('read_only', NET_DROP_TO_STASH)); return; }
     if (l && netReadOnly(l)) { dropOnBoard(side, l, e); return; }
     if (!l?.disk) { toast.error('Open a disk to drop files into it'); return; }
     if (!l.writable) { toast.error(readOnly(l)); return; }
@@ -1535,7 +1577,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const from = panes[data.from]?.listing ?? null;
     const dest = l ? dropFolder(l, e) : '';
     // Out of a volume a drag always copies (spec 2026-10-30 §5): Shift asks for nothing a volume can give.
-    const op = e.shiftKey && !isNetVolume(from) ? 'move' : 'copy';
+    // A volume the board can write to gives a move too (phase 2).
+    const op = e.shiftKey && (!isNetVolume(from) || from!.writable) ? 'move' : 'copy';
     const pickedHere = from?.entries.filter((x) => data.paths.includes(x.path)) ?? [];
     // Onto LIBRARY:, a collection, or a collection row (Files 2 §3.2): titles, or disk images from STASH:, are filed.
     const row = l?.entries.find((x) => x.path === dest) ?? null;
@@ -1549,7 +1592,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       return;
     }
     if (!l || !acceptsCopies(l)) {
-      toast.error(isNetVolume(l) ? NET_READ_ONLY : l && netReadOnly(l) ? readOnly(l) : 'Open a disk or STASH: to drop files into it');
+      toast.error(isNetVolume(l) ? refusalWords('read_only', l!.readOnlyReason ?? NET_READ_ONLY) : l && netReadOnly(l) ? readOnly(l) : 'Open a disk or STASH: to drop files into it');
       return;
     }
     if (!l.writable) { toast.error(readOnly(l)); return; }
@@ -1575,6 +1618,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const deleteWhere = deleteWhereOf(dialogListing);
   const deletedFrom = (n: number) => (deleteWhere === 'LIBRARY:' ? `Deleted ${n === 1 ? '1 collection' : `${n} collections`}.`
     : deleteWhere === 'NET:' ? `Cancelled or cleared ${items(n)} on ${placeOf(dialogListing)}.`
+    : deleteWhere === 'AMIGA' ? `Deleted ${items(n)} on ${placeOf(dialogListing)}.`
     : `Deleted ${items(n)} from ${deleteWhere === 'STASH:' ? deleteWhere : placeName(deleteWhere)}.`);
   // Makedir and Rename on LIBRARY: name collections (Files 2 §3.2, R3): the Library's rules, clashes among collections.
   const naming = shelfOf(dialogListing) !== null;
@@ -1597,6 +1641,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       // Below lg only the active side is drawn, as tall as its rows: the page scrolls, not a box inside it.
       <div className={`grid min-h-0 min-w-0 lg:grid-rows-[minmax(0,1fr)] ${active === side ? '' : 'max-lg:hidden'}`}>
         <Pane side={side} active={active === side} listing={side === 'left' ? shownLeft : shownRight} loading={p.loading} error={p.error} pending={p.pending}
+              // A NET: pane with no listing yet (pending, or refused) still shows where it is (phase 2, §4.4 minor 3).
+              fallbackCrumbs={p.listing ? undefined : netCrumbs(p.path, boardNameFor(p.path, null, send.targets))}
               // The Comment column: STASH: only by default (ruling 9), or always, or never (R3).
               sort={sortOf(p.listing, p.path)} selection={p.selection} showComment={showsComment(prefs.files.comments, p.listing?.path ?? p.path)}
               view={viewOf(p)} onFilter={(text) => setFilter(side, text)} onShowInfo={showInfo} filterRef={filterRefs[side]}

@@ -3,16 +3,23 @@
 // file, all under one fetch id. Drawers expand only from listings the Amiga answered within the last 2 minutes (P3);
 // clashes are decided now, against the destination's names (P4). The board relays Transfer's upload with the get's id,
 // so openUpload stores it at the copy's target (source 'copy', P6) and, once closed, placeFetched settles the get --
-// adding a disk image to the library first when the copy was onto LIBRARY: (P5). SERVER ONLY.
-import { and, asc, eq, inArray } from 'drizzle-orm';
+// adding a disk image to the library first when the copy was onto LIBRARY: (P5). Phase 2 (spec 2026-10-31 §4.1): a
+// move out of a volume deletes each source once its files are stored (net-moves.ts); a copy or move onto another volume
+// fetches each file and hands it to that board's queue as it arrives (plan W8); the progress covers every part of a job
+// (jobProgress). SERVER ONLY.
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb, type Db } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { amigaUploads } from '@/db/schema/amiga-uploads';
 import { remoteRequests } from '@/db/schema/remote-requests';
+import { transfers } from '@/db/schema/transfers';
 import { findSendTarget } from '@/lib/send-targets';
-import { addGets, expireStale, latestFor, liveGet, settleGet, type GetTarget, type RemoteRow } from '@/lib/remote-requests';
+import { addGets, addWrites, dropMemory, expireStale, latestFor, liveGet, settleGet, type GetTarget, type RemoteRow, type WriteReq, type WriteTarget } from '@/lib/remote-requests';
 import { amigaPathOf, newRequestId, type EntryInfo } from '@/lib/remote-wire';
-import { errorWords } from '@/lib/remote-browse';
+import { errorWords, writeErrorWords } from '@/lib/remote-browse';
+import { WRITE_KINDS } from '@/lib/remote-limits';
+import { failureText } from '@/lib/send-ui';
+import { queueTransfers, type ClashMode } from '@/lib/transfers';
 import { FETCH_MAX_BYTES, FETCH_MAX_FILES } from '@/lib/remote-limits';
 import { UPLOAD_FILE_MAX } from '@/lib/amiga-upload-limits';
 import { libraryEligible } from '@/lib/from-amiga-ui';
@@ -22,11 +29,12 @@ import { addGameToCollection } from '@/lib/collections';
 import { formatPath, parsePath, type FsPath } from './path';
 import { refuse, skippedItem, type Clash, type CopyMove, type OpCtx, type OpItem, type Outcome } from './driver';
 import { browseOf, isNetVolumePath } from './net-driver';
+import { clashMode, joinAmiga, moveWithinVolume, mustRemoveOnVolume, placeOf, sameVolume, writableBoard } from './net-write';
+import { settleMoveOfGet, settleMoveOfTransfer, settleMovesOfJob } from './net-moves';
 import { shelfDest } from './shelf';
 import { ADDED_UNFILED } from './shelf-rules';
 import { keepBothName, sameStashName, stashFind, stashTree } from './stash-paths';
 
-const NET_READ_ONLY = 'Read-only for now';
 const RELIST = 'List the drawer again and retry';
 const MB = 1024 * 1024;
 
@@ -81,7 +89,8 @@ export async function startFetch(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
   const srcs = req.sources.map((s) => parsePath(s));
   const board = srcs[0]?.segments[0];
   if (!srcs.every((p): p is FsPath => !!p && isNetVolumePath(p) && p.segments[0] === board)) refuse('unsupported', 400, 'Copy from one board at a time');
-  if (req.op === 'move') refuse('read_only', 409, NET_READ_ONLY);
+  // A move asks first whether the Amiga can delete the sources (the write switch); each goes once its files are stored.
+  if (req.op === 'move') await mustRemoveOnVolume(ctx, req.sources);
   const t = await findSendTarget(getDb(), ctx.orgId, board!, now.getTime());
   if (!t) refuse('not_found', 404);
   const block = browseOf(t, now.getTime());
@@ -123,11 +132,89 @@ export async function startFetch(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
     }
   }
   const fetchId = newRequestId();
+  const move = req.op === 'move' ? (top: Top) => ({ moveSource: top.source, ...(ctx.userId ? { userId: ctx.userId } : {}) }) : () => ({});
   const files = tops.flatMap((top) => top.files.map((f) => ({ amigaPath: f.amigaPath,
-    target: { dest: formatPath(dest), rel: f.rel, replace: replace.has(top), library } satisfies GetTarget })));
+    target: { dest: formatPath(dest), rel: f.rel, replace: replace.has(top), library, ...move(top) } satisfies GetTarget })));
   await addGets(getDb(), { orgId: ctx.orgId, deviceId: t.id, fetchId, files }, now);
   for (const top of tops) if (!results.has(top.source)) results.set(top.source, { source: top.source, ok: true });
   return { kind: 'done', items: req.sources.map((s) => results.get(s)!), ...(files.length ? { fetching: { id: fetchId, files: files.length } } : {}) };
+}
+
+/**
+ * A copy or move from a volume onto a volume (spec 2026-10-31 §4.1). A move within one volume is a RENAME
+ * (moveWithinVolume). Anything else goes up and down (plan W8): each file is fetched as a copy out is, and on arrival
+ * handed to the destination board's queue with its absolute path and clash mode; a move's source goes once every file
+ * of it is delivered there. Clashes are decided now against the destination's remembered listing (W4); drawers that
+ * hold no file are made there (`ensure`).
+ */
+export async function volumeToVolume(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
+  const to = placeOf(parsePath(req.dest));
+  if (!to) refuse('not_found', 404);
+  const froms = req.sources.map((s) => placeOf(parsePath(s)));
+  if (!froms.every((f) => !!f && f.segs.length >= 2)) refuse('unsupported', 400, 'Copy from one board at a time');
+  if (req.op === 'move' && froms.every((f) => sameVolume(f!, to))) return moveWithinVolume(ctx, req.sources, req.dest, req.onClash);
+  const now = new Date();
+  const board = froms[0]!.board;
+  if (!froms.every((f) => f!.board === board)) refuse('unsupported', 400, 'Copy from one board at a time');
+  const t = await findSendTarget(getDb(), ctx.orgId, board, now.getTime());
+  if (!t) refuse('not_found', 404);
+  const block = browseOf(t, now.getTime());
+  if (block !== null) refuse('read_only', 409, block);
+  const dt = await writableBoard(ctx, to.board, now.getTime());
+  if (req.op === 'move') await mustRemoveOnVolume(ctx, req.sources);
+  const there = (await latestFor(getDb(), dt.id, 'dir', to.amiga, now));
+  if (there.state !== 'ready') refuse('conflict', 409, RELIST);
+  const entries = ((there.row.answer ?? { entries: [] }) as { entries: EntryInfo[] }).entries;
+
+  const results = new Map<string, OpItem>();
+  const tops: (Top & { name: string; mode: ClashMode; dirs: string[][] })[] = [];
+  const clashes: Clash[] = [];
+  const taken = (n: string) => entries.some((e) => sameStashName(e.name, n)) || tops.some((x) => sameStashName(x.name, n));
+  for (const [i, f] of froms.entries()) {
+    const top = await expand(t.id, req.sources[i], f!.segs, now);
+    const name = f!.segs[f!.segs.length - 1];
+    const dirs = top.dir ? await drawersOf(t.id, f!.segs, now) : [];
+    if (!entries.some((e) => sameStashName(e.name, name))) { tops.push({ ...top, name, mode: clashMode(req.onClash), dirs }); continue; }
+    if (req.onClash === 'ask') { clashes.push({ source: top.source, name, dest: req.dest }); continue; }
+    if (req.onClash === 'skip') { results.set(top.source, skippedItem(top.source)); continue; }
+    if (req.onClash === 'replace') { tops.push({ ...top, name, mode: 'replace', dirs }); continue; }
+    tops.push({ ...top, name: keepBothName(name, taken), mode: 'keep', dirs });
+  }
+  if (clashes.length) return { kind: 'clashes', clashes };
+  const all = tops.flatMap((x) => x.files);
+  const big = all.find((f) => f.size > UPLOAD_FILE_MAX);
+  if (big) refuse('too_large', 413, `${big.rel.join('/')} is over 4 MB`);
+  if (all.length > FETCH_MAX_FILES) refuse('too_large', 413, `at most ${FETCH_MAX_FILES} files at a time`);
+  if (all.reduce((n, f) => n + f.size, 0) > FETCH_MAX_BYTES) refuse('too_large', 413, `at most ${FETCH_MAX_BYTES / MB} MB at a time`);
+
+  const job = newRequestId();
+  const gets = tops.flatMap((top) => top.files.map((f) => {
+    const rel = [top.name, ...f.rel.slice(1)];
+    return { amigaPath: f.amigaPath, target: { dest: 'STASH:', rel: [rel[rel.length - 1]], replace: false, library: null,
+      relay: { deviceId: dt.id, dest: joinAmiga(to.amiga, ...rel), onClash: top.mode, ...(req.op === 'move' ? { moveSource: top.source } : {}) },
+      ...(ctx.userId ? { userId: ctx.userId } : {}) } satisfies GetTarget };
+  }));
+  // Drawers holding no file arrive by a Makedir each on the destination (parents first; one there already is as good).
+  const holds = (rel: string[]) => tops.some((x) => x.files.some((f) => { const r = [x.name, ...f.rel.slice(1)]; return r.length > rel.length && rel.every((s, k) => sameStashName(s, r[k])); }));
+  const mk: WriteReq[] = tops.flatMap((top) => top.dirs.map((d) => [top.name, ...d]).filter((rel) => !holds(rel))
+    .flatMap((rel) => rel.map((_, k) => rel.slice(0, k + 1))))
+    .filter((rel, k, list) => list.findIndex((x) => x.join('/').toLowerCase() === rel.join('/').toLowerCase()) === k)
+    .map((rel) => ({ kind: 'mkdir', amigaPath: joinAmiga(to.amiga, ...rel), ensure: true, label: joinAmiga(to.shown, ...rel) }));
+  if (mk.length) await addWrites(getDb(), { orgId: ctx.orgId, deviceId: dt.id, jobId: job, writes: mk }, now);
+  await addGets(getDb(), { orgId: ctx.orgId, deviceId: t.id, fetchId: job, files: gets }, now);
+  for (const top of tops) results.set(top.source, { source: top.source, ok: true });
+  return { kind: 'done', items: req.sources.map((s) => results.get(s)!),
+    ...(gets.length + mk.length ? { job: { id: job, files: gets.length, writes: mk.length } } : {}) };
+}
+
+/** Every drawer below a remembered drawer, as paths relative to it (for the Makedirs of empty ones). */
+async function drawersOf(deviceId: string, segs: string[], now: Date): Promise<string[][]> {
+  const out: string[][] = [[]];
+  const walk = async (at: string[], rel: string[]) => {
+    for (const c of await remembered(deviceId, at, now)) if (c.dir) { out.push([...rel, c.name]); await walk([...at, c.name], [...rel, c.name]); }
+  };
+  await walk(segs, []);
+  return out;
 }
 
 const LIBRARY_WORDS: Record<string, string> = {
@@ -150,6 +237,7 @@ export async function placeFetched(db: Db, uploadId: string, now = new Date()): 
 
 async function place(db: Db, g: RemoteRow, uploadId: string, now: Date): Promise<void> {
   const target = g.target as GetTarget;
+  if (target.relay) return relay(db, g, target, uploadId, now);
   if (target.library) {
     const r = await addUploadToLibrary(g.orgId, uploadId);
     if (!r.ok) return settleGet(db, g.id, { ok: false, code: r.error, text: r.reason ?? LIBRARY_WORDS[r.error] }, now);
@@ -158,10 +246,73 @@ async function place(db: Db, g: RemoteRow, uploadId: string, now: Date): Promise
     }
   }
   await settleGet(db, g.id, { ok: true }, now);
+  // A move out of a volume: its source goes once every file of it is stored (plan W7).
+  if (target.moveSource) await settleMoveOfGet(db, g.id);
 }
 
+/**
+ * A file on its way from one volume to another (plan W8): handed to the destination board's queue with its absolute
+ * path and clash mode, then its STASH: row goes (it was only passing through). A queue that refuses it fails the get
+ * with the words, and the file stays in STASH:, so nothing is lost.
+ */
+async function relay(db: Db, g: RemoteRow, target: GetTarget, uploadId: string, now: Date): Promise<void> {
+  const r = target.relay!;
+  const [u] = await db.select().from(amigaUploads).where(eq(amigaUploads.id, uploadId));
+  if (!u?.blobSha256 || !target.userId) return settleGet(db, g.id, { ok: false, code: 'io', text: 'it could not be placed' }, now);
+  const q = await queueTransfers(db, { orgId: g.orgId, deviceId: r.deviceId, userId: target.userId, jobId: g.fetchId ?? undefined, now, files: [{
+    path: target.rel[target.rel.length - 1], sha256: u.blobSha256, sizeBytes: u.sizeBytes, protection: Number(u.protection), comment: u.comment,
+    dest: r.dest, onClash: r.onClash, ...(r.moveSource ? { moveSource: r.moveSource } : {}) }] });
+  if (!q.ok) {
+    const words = q.reason === 'queue_full' ? "the board's queue is full" : q.reason === 'empty' ? 'it is empty' : 'it could not be queued';
+    return settleGet(db, g.id, { ok: false, code: q.reason, text: words }, now);
+  }
+  await db.update(amigaUploads).set({ status: 'deleted' }).where(eq(amigaUploads.id, uploadId));
+  await settleGet(db, g.id, { ok: true }, now);
+}
+
+/** After the board reported a queue row (the done route): a move onto a volume removes its source once all arrived. */
+export async function afterTransferDone(db: Db, transferId: string): Promise<void> {
+  await settleMoveOfTransfer(db, transferId);
+  // The drawers a copy onto a volume changed are read afresh once the batch is through (plan W12): not file by file,
+  // so a pane does not re-read the drawer (and wait behind the next file) between each.
+  const [row] = await db.select({ deviceId: transfers.deviceId, dest: transfers.amigaDest, jobId: transfers.jobId }).from(transfers)
+    .where(eq(transfers.id, transferId));
+  if (!row?.dest) return;
+  const volume = row.dest.slice(0, row.dest.indexOf(':') + 1).toLowerCase();
+  const [busy] = await db.select({ id: transfers.id }).from(transfers).where(and(eq(transfers.deviceId, row.deviceId),
+    inArray(transfers.status, ['queued', 'sending']), sql`lower(${transfers.amigaDest}) like ${`${volume.replace(/[\\%_]/g, (c) => `\\${c}`)}%`}`)).limit(1);
+  if (busy) return;
+  const dests = row.jobId
+    ? (await db.select({ dest: transfers.amigaDest }).from(transfers).where(eq(transfers.jobId, row.jobId))).map((x) => x.dest).filter((x): x is string => !!x)
+    : [row.dest];
+  const drawers = new Set<string>();
+  for (const dest of dests) for (let at = amigaParentOf(dest); ; at = amigaParentOf(at)) { drawers.add(at); if (at.endsWith(':')) break; }
+  await dropMemory(db, row.deviceId, [...drawers]);
+}
+
+const amigaParentOf = (path: string) => {
+  const c = path.indexOf(':');
+  const slash = path.lastIndexOf('/');
+  return slash > c ? path.slice(0, slash) : path.slice(0, c + 1);
+};
+
+/**
+ * One write of a job as the pane says it: `to` a RENAME's new path (in the pane's words where it can be), `entry` the
+ * entry a DELETE stopped at (Transfer's text names it: "Libs/foo.library: object in use").
+ */
+export type JobWrite = { kind: string; label: string; to: string | null; status: 'waiting' | 'running' | 'done' | 'failed'; removed: number;
+  reason: string | null; entry: string | null;
+  /** An icon taken along or a drawer a copy needed: said only when it failed. */
+  quiet: boolean };
+/**
+ * A job's progress. `total`/`done`/`failed`/`waiting`: its files -- gets (a copy out) and queue rows (a copy onto a
+ * volume; a relayed file once handed over); `skipped`: queue rows Transfer skipped; `writes`: its one-line writes.
+ */
 export type FetchProgress = {
   total: number; done: number; failed: { name: string; reason: string }[]; waiting: number; board: string; arrived: string[];
+  skipped: number; writes: JobWrite[];
+  /** `to`: the files go onto the Amiga (queue rows, or relayed); `from`: a copy out of a volume. */
+  direction: 'to' | 'from';
 };
 
 /**
@@ -170,12 +321,43 @@ export type FetchProgress = {
  */
 export async function fetchProgress(db: Db, orgId: string, fetchId: string, now: Date): Promise<FetchProgress | null> {
   await expireStale(db, now);
-  const rows = await db.select().from(remoteRequests)
-    .where(and(eq(remoteRequests.fetchId, fetchId), eq(remoteRequests.orgId, orgId), eq(remoteRequests.kind, 'get')))
+  // A move whose parts all ended -- however they ended -- is settled here, so the job finishes (final review C2).
+  await settleMovesOfJob(db, orgId, fetchId);
+  const reqs = await db.select().from(remoteRequests)
+    .where(and(eq(remoteRequests.fetchId, fetchId), eq(remoteRequests.orgId, orgId)))
     .orderBy(asc(remoteRequests.createdAt), asc(remoteRequests.id));
-  if (rows.length === 0) return null;
-  const [d] = await db.select({ name: devices.name }).from(devices).where(eq(devices.id, rows[0].deviceId));
+  const sent = await db.select().from(transfers).where(and(eq(transfers.jobId, fetchId), eq(transfers.orgId, orgId)))
+    .orderBy(asc(transfers.createdAt), asc(transfers.id));
+  if (reqs.length === 0 && sent.length === 0) return null;
+  // The board the job is about: a copy onto a volume names the destination, a copy out the source.
+  const boardId = sent[0]?.deviceId ?? reqs.find((r) => r.kind !== 'get')?.deviceId ?? reqs[0].deviceId;
+  const [d] = await db.select({ name: devices.name }).from(devices).where(eq(devices.id, boardId));
   const board = d?.name ?? 'The board';
+  // A move's get is not finished until its source is deleted (net-moves.ts drops the marker after).
+  const moving = (r: RemoteRow) => r.status === 'done' && !!(r.target as GetTarget | null)?.moveSource;
+  // A relayed file is its queue row once handed over: the get then counts no more.
+  const rows = reqs.filter((r) => r.kind === 'get' && !((r.target as GetTarget).relay && r.status === 'done'));
+  const writes: JobWrite[] = reqs.filter((r) => (WRITE_KINDS as readonly string[]).includes(r.kind)).map((r) => {
+    const t = (r.target ?? {}) as WriteTarget;
+    const status = r.status === 'waiting' ? 'waiting' : r.status === 'sent' ? 'running' : r.status === 'done' ? 'done' : 'failed';
+    const text = r.errorText ?? '';
+    const entry = r.kind === 'delete' && status === 'failed' && text.includes(': ') ? text.slice(0, text.indexOf(': ')) : null;
+    return { kind: r.kind, label: t.label ?? r.amigaPath, to: t.to ?? null, status, removed: (r.answer as { removed?: number } | null)?.removed ?? 0,
+      reason: status === 'failed' ? writeErrorWords(r.errorCode ?? '', text, board) : null, entry, quiet: !!(t.icon || t.ensure) };
+  });
+  const sentFailed = sent.filter((x) => x.status === 'failed' || x.status === 'expired' || x.status === 'cancelled').map((x) => ({
+    name: x.path, reason: x.status === 'expired' ? `${board} did not take it within 24 h` : x.status === 'cancelled' ? 'cancelled'
+      // A copy onto a volume's FILE refusals (Transfer 2.5): busy there is the old file in use, not Transfer busy.
+      : x.amigaDest && ['readonly', 'wprot', 'full', 'denied', 'busy'].includes(x.errorCode ?? '') ? writeErrorWords(x.errorCode!, x.errorText ?? '', board)
+      : failureText(x.errorCode, x.errorText),
+  }));
+  // A move's file is not finished until its source is removed (net-moves.ts clears the marker after).
+  const settling = (x: { status: string; moveSource: string | null }) => x.status === 'delivered' && x.moveSource !== null;
+  const sentCounts = {
+    total: sent.length, done: sent.filter((x) => x.status === 'delivered' && !settling(x)).length,
+    skipped: sent.filter((x) => x.status === 'skipped').length,
+    waiting: sent.filter((x) => x.status === 'queued' || x.status === 'sending' || settling(x)).length,
+  };
   const doneIds = rows.filter((r) => r.status === 'done' && r.uploadId).map((r) => r.uploadId!);
   const paths = doneIds.length
     ? new Map((await db.select({ id: amigaUploads.id, path: amigaUploads.path }).from(amigaUploads)
@@ -187,8 +369,11 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
     return { name: rel[rel.length - 1], reason };
   });
   return {
-    total: rows.length, done: rows.filter((r) => r.status === 'done').length, failed,
-    waiting: rows.filter((r) => r.status !== 'done' && r.status !== 'failed').length, board,
+    total: rows.length + sentCounts.total, done: rows.filter((r) => r.status === 'done' && !moving(r)).length + sentCounts.done,
+    failed: [...failed, ...sentFailed],
+    waiting: rows.filter((r) => (r.status !== 'done' && r.status !== 'failed') || moving(r)).length + sentCounts.waiting, board,
     arrived: doneIds.flatMap((id) => (paths.has(id) ? [formatPath({ device: 'STASH', segments: paths.get(id)!.split('/') })] : [])),
+    skipped: sentCounts.skipped, writes,
+    direction: sent.length || reqs.some((r) => r.kind === 'get' && (r.target as GetTarget).relay) ? 'to' : 'from',
   };
 }

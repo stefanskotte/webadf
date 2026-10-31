@@ -84,7 +84,7 @@ test('at 390: Copy to… takes a file out of a volume into STASH:', async ({ pag
   expect((await board.stop()).map((r) => r.kind)).toContain('GET');
 });
 
-test('at 390: on a volume Move to…, Delete, Rename and Makedir are dimmed and a tap says Read-only for now', async ({ page, request }) => {
+test('at 390: on a volume of firmware 1.22 Move to…, Delete, Rename and Makedir are dimmed and a tap says why', async ({ page, request }) => {
   const { deviceId, token } = await browsable(page, request);
   await openFiles(page, `NET:/${deviceId}/Work`);
   const board = serving(request, token);
@@ -93,7 +93,7 @@ test('at 390: on a volume Move to…, Delete, Rename and Makedir are dimmed and 
   for (const id of ['move', 'delete']) await expect(page.getByTestId(`files-phone-${id}`)).toHaveAttribute('aria-disabled', 'true');
   await expect(page.getByTestId('files-phone-copy')).not.toHaveAttribute('aria-disabled', 'true');
   await page.getByTestId('files-phone-delete').tap({ force: true });   // dimmed, not disabled: a tap says why
-  await expect(toast(page, 'Read-only for now')).toBeVisible();
+  await expect(toast(page, 'Board firmware 1.23.0 or newer writes to the Amiga')).toBeVisible();
   await page.getByTestId('files-more').tap();
   for (const id of ['rename', 'makedir']) await expect(page.getByTestId(`files-more-${id}`)).toHaveAttribute('aria-disabled', 'true');
   await expect(page.getByTestId('files-more-refresh')).not.toHaveAttribute('aria-disabled', 'true');

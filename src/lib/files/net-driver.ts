@@ -6,8 +6,10 @@
 // Nothing is copied or moved out of NET: (R5). A board that is not this org's, or cannot receive, is not found.
 // NET: volumes (spec 2026-10-30 §4.3-4.6): NET:/<board> lists the Amiga's volumes then the Queue folder, the queue now
 // being NET:/<board>/Queue; NET:/<board>/<Volume>/<drawer>/… is read, read-only, through a remote request the board
-// answers (remote-requests.ts), remembered 2 minutes. SERVER ONLY.
-import { and, eq } from 'drizzle-orm';
+// answers (remote-requests.ts), remembered 2 minutes. Phase 2 (spec 2026-10-31 §4.1): a volume a board can write to is
+// writable -- Copy onto it, Makedir, Rename, Delete, Protect and comments go through net-write.ts -- and shows the files
+// of a copy still on their way as arriving rows. SERVER ONLY.
+import { and, eq, inArray, isNotNull } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { transfers } from '@/db/schema/transfers';
 import { cancelTransfer, clearTransfer, listTransfers, queueLoad, queueTransfers, sendSummaries, type QueueFile } from '@/lib/transfers';
@@ -18,13 +20,17 @@ import { SEND_FILE_MAX, SEND_QUEUE_MAX_BYTES, SEND_QUEUE_MAX_FILES } from '@/lib
 import { uploadBoards } from '@/lib/amiga-uploads';
 import { mapLimit } from '@/lib/pool';
 import { protectionString } from '@/lib/adffs/dir';
-import { copyMoving, latestFor, requestListing, type RemoteRow } from '@/lib/remote-requests';
+import { copyMoving, latestFor, pendingAlive, requestListing, type RemoteRow } from '@/lib/remote-requests';
 import { browseBlock, browseMark, errorWords } from '@/lib/remote-browse';
 import { amigaPathOf, volumeLabel, type EntryInfo, type VolumeInfo } from '@/lib/remote-wire';
 import { QUEUE_FOLDER } from '@/lib/remote-limits';
 import { formatPath, parsePath, type FsPath } from './path';
-import { Pending, refuse, type FsCtx, type IncomingTop, type OpCtx, type OpItem, type Outcome, type VolumeDriver } from './driver';
-import { NET_COPY_OUT, NET_OPEN_VOLUME, NET_PICK_BOARD, NET_READ_ONLY, netEmpty } from './net-rules';
+import { Pending, refuse, type FsCtx, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome, type VolumeDriver } from './driver';
+import { NET_COPY_OUT, NET_OPEN_VOLUME, NET_PICK_BOARD, netEmpty } from './net-rules';
+import {
+  copyOntoVolume, isNetVolumeDir, isNetVolumePath, makedirOnVolume, mustRemoveOnVolume, removeOnVolume, renameOnVolume,
+  setMetaOnVolume, writeOf,
+} from './net-write';
 import type { Crumb, FsEntry, Listing } from './types';
 
 const ROOT: Crumb = { label: 'NET:', path: 'NET:' };
@@ -32,10 +38,7 @@ const netPath = (...segs: string[]) => formatPath({ device: 'NET', segments: seg
 const MB = 1024 * 1024;
 const iso = (ms: number) => new Date(ms).toISOString();
 
-/** NET:/<board>/<Volume>/<entry>…: a file or drawer on a volume (not the volume itself, nor Queue): what a copy fetches (§4.5). */
-export function isNetVolumePath(p: FsPath): boolean {
-  return p.device === 'NET' && p.segments.length >= 3 && p.segments[1] !== QUEUE_FOLDER;
-}
+export { isNetVolumePath } from './net-write';
 
 // ---- list -----------------------------------------------------------------------------------------------------
 
@@ -106,7 +109,8 @@ export const browseOf = (t: SendTarget, now: number) => browseBlock({ online: t.
 async function pendingOf(t: SendTarget, row: RemoteRow | null, what: string, now: number): Promise<Pending> {
   if (row?.status === 'sent' && row.pieces > 0) {   // arriving in pieces (a 1000-entry drawer takes ~36 s)
     const a = answerOf(row);
-    return new Pending(`Reading ${what} from ${t.name}… ${a.entries.length + a.volumes.length} entries so far`, true);
+    // Alive only while a piece came lately (§4.4 minor 1, phase 2): a board that went quiet mid-answer is given up on.
+    return new Pending(`Reading ${what} from ${t.name}… ${a.entries.length + a.volumes.length} entries so far`, pendingAlive(row, new Date(now)));
   }
   const held = row?.status === 'waiting' || (row?.status === 'sent' && row.pieces === 0);   // nothing answered yet
   const copying = held ? await copyMoving(getDb(), t.id, new Date(now)) : null;
@@ -138,8 +142,39 @@ async function listBoardRoot(ctx: FsCtx, t: SendTarget, now: number, opts: { fre
   entries.push({ name: QUEUE_FOLDER, kind: 'dir', path: netPath(t.id, QUEUE_FOLDER), size: null, date: null, protection: null,
     comment: null, marks: [`${load.files} waiting`] });
   return { path: netPath(t.id), crumbs: boardCrumbs(t), entries, writable: false, readOnlyReason: NET_OPEN_VOLUME, disk: null,
-    net: { board: t.id, boardName: t.name, volume: null, amigaPath: null, readAt, cut: false, browse: block },
+    // Why its volumes cannot be written to, when they can be read (phase 2, spec 2026-10-31 §4.2).
+    net: { board: t.id, boardName: t.name, volume: null, amigaPath: null, readAt, cut: false, browse: block, write: block === null ? writeOf(t, now) : null },
     meta: block ?? `${volumes.length} ${volumes.length === 1 ? 'volume' : 'volumes'}` };
+}
+
+/**
+ * The files of a copy onto this drawer still on their way (spec 2026-10-31 §4.1, "as STASH: shows uploads"): each
+ * waiting or moving queue row whose destination is in this drawer is a row marked with its state ("Waiting", "Sending 40
+ * %"), in place of a listed one of that name; a row bound for a drawer below that is not listed yet shows that drawer.
+ */
+async function withArriving(t: SendTarget, segs: string[], amiga: string, listed: FsEntry[], now: number): Promise<FsEntry[]> {
+  const rows = await getDb().select().from(transfers).where(and(eq(transfers.deviceId, t.id), inArray(transfers.status, ['queued', 'sending']),
+    isNotNull(transfers.amigaDest)));
+  if (rows.length === 0) return listed;
+  const out = [...listed];
+  const here = amiga.toLowerCase();
+  const inside = (dest: string) => (here.endsWith(':') ? dest.toLowerCase().startsWith(here) : dest.toLowerCase().startsWith(`${here}/`));
+  for (const row of rows) {
+    const dest = row.amigaDest!;
+    if (!inside(dest)) continue;
+    const below = dest.slice(here.length + (here.endsWith(':') ? 0 : 1)).split('/');
+    const name = below[0];
+    const at = out.findIndex((e) => e.name.toLowerCase() === name.toLowerCase());
+    if (below.length > 1) {
+      if (at < 0) out.push({ name, kind: 'dir', path: netPath(t.id, ...segs, name), size: null, date: null, protection: null, comment: null, marks: ['arriving'] });
+      continue;
+    }
+    const view = toView(row, now);
+    const entry: FsEntry = { name, kind: 'file', path: netPath(t.id, ...segs, name), size: row.sizeBytes, date: iso(view.createdAt),
+      protection: protectionString(row.protection), comment: row.comment || null, marks: [transferState(view).text] };
+    if (at >= 0) out[at] = entry; else out.push(entry);
+  }
+  return out;
 }
 
 /** The free space of the volume a pane is in, from a remembered volumes answer (never asked for on its own). */
@@ -169,13 +204,15 @@ async function listVolume(ctx: FsCtx, t: SendTarget, segs: string[], now: number
     refuse('read_only', 409, words);
   }
   if (s.state !== 'ready') throw await pendingOf(t, s.state === 'pending' ? s.row : null, at.shown, now);
-  const entries = answerOf(s.row).entries.map((e): FsEntry => ({ name: e.name, kind: e.dir ? 'dir' : 'file',
+  const listed = answerOf(s.row).entries.map((e): FsEntry => ({ name: e.name, kind: e.dir ? 'dir' : 'file',
     path: netPath(t.id, ...segs, e.name), size: e.dir ? null : e.size, date: e.date, protection: protectionString(e.protection),
     comment: e.comment || null, marks: [] }));
+  const entries = await withArriving(t, segs, at.amigaPath, listed, now);
+  const write = writeOf(t, now);
   const crumbs: Crumb[] = [...boardCrumbs(t), { label: `${at.volume}:`, path: netPath(t.id, at.volume) },
     ...segs.slice(1).map((name, i) => ({ label: name, path: netPath(t.id, ...segs.slice(0, i + 2)) }))];
-  return { path: netPath(t.id, ...segs), crumbs, entries, writable: false, readOnlyReason: NET_READ_ONLY, disk: null,
-    net: { board: t.id, boardName: t.name, volume: at.volume, amigaPath: at.shown, readAt: now - s.ageMs, cut: !!s.row.cut, browse: null },
+  return { path: netPath(t.id, ...segs), crumbs, entries, writable: write === null, readOnlyReason: write, disk: null,
+    net: { board: t.id, boardName: t.name, volume: at.volume, amigaPath: at.shown, readAt: now - s.ageMs, cut: !!s.row.cut, browse: null, write },
     meta: await volumeFree(t, at.volume, now) };
 }
 
@@ -208,12 +245,12 @@ async function boardOf(ctx: FsCtx, id: string): Promise<SendTarget> {
  * transaction. NET: never clashes: Transfer saves Foo_2 rather than
  * overwrite, so `onClash` does not apply.
  */
-async function write(ctx: OpCtx, dir: FsPath, tops: IncomingTop[]): Promise<Outcome> {
+async function write(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], onClash: OnClash, opts: { move?: boolean } = {}): Promise<Outcome> {
   if (dir.segments.length === 0) refuse('unsupported', 400, 'send to a board, not into a folder');
+  // A volume or a drawer on one takes a copy onto the Amiga's own disk (phase 2, spec 2026-10-31 §4.1).
+  if (isNetVolumeDir(dir)) return copyOntoVolume(ctx, dir, tops, onClash, opts);
   const t = await boardOf(ctx, dir.segments[0]);
-  const [, second, ...rest] = dir.segments;
-  // A volume takes nothing in phase 1 (spec 2026-10-30 §5); a folder inside the queue is no place.
-  if (second !== undefined && second !== QUEUE_FOLDER) refuse('read_only', 409, NET_READ_ONLY);
+  const [, , ...rest] = dir.segments;
   if (rest.length) refuse('unsupported', 400, 'send to a board, not into a folder');
   if (!ctx.userId) refuse('unsupported', 400, 'signed-in person required');
   const files = tops.flatMap((top) => top.items.filter((i) => i.kind === 'file').map((i) => ({ i, path: i.rel.join('/') })));
@@ -256,6 +293,20 @@ async function write(ctx: OpCtx, dir: FsPath, tops: IncomingTop[]): Promise<Outc
  * that is not on the board the path names is not found, that item only.
  */
 async function remove(ctx: OpCtx, sources: string[]): Promise<Outcome> {
+  // A file or drawer on a volume is deleted on the Amiga (phase 2); the queue's rows are cancelled or cleared as before.
+  const onVolume = sources.filter((s) => { const p = parsePath(s); return !!p && isNetVolumePath(p); });
+  if (onVolume.length) {
+    const v = await removeOnVolume(ctx, onVolume);
+    const rest = sources.filter((s) => !onVolume.includes(s));
+    if (rest.length === 0) return v;
+    const q = await removeQueued(ctx, rest);
+    const all = new Map([...(v.kind === 'done' ? v.items : []), ...(q.kind === 'done' ? q.items : [])].map((x) => [x.source, x] as const));
+    return { kind: 'done', items: sources.map((x) => all.get(x)!), ...(v.kind === 'done' && v.job ? { job: v.job } : {}) };
+  }
+  return removeQueued(ctx, sources);
+}
+
+async function removeQueued(ctx: OpCtx, sources: string[]): Promise<Outcome> {
   const db = getDb();
   const boards = new Map<string, SendTarget>();
   const parsed = sources.map((raw) => ({ raw, p: parsePath(raw) }));
@@ -284,6 +335,9 @@ async function remove(ctx: OpCtx, sources: string[]): Promise<Outcome> {
 // ---- the driver -----------------------------------------------------------------------------------------------
 
 const copyOut = (): never => refuse('unsupported', 400, NET_COPY_OUT);
+/** What NET: says of a change it cannot make outside a volume (the engine's words for a driver without the method). */
+const notHere = (): never => refuse('read_only', 409, 'NET: cannot be changed that way');
+const onVolume = (raw: string) => { const p = parsePath(raw); return !!p && isNetVolumePath(p); };
 
 export const netDriver: VolumeDriver = {
   device: 'NET',
@@ -291,7 +345,11 @@ export const netDriver: VolumeDriver = {
   read: async () => null,
   collect: async () => copyOut(),
   within: async () => copyOut(),
-  write: (ctx, dir, tops) => write(ctx, dir, tops),
+  write: (ctx, dir, tops, onClash, opts) => write(ctx, dir, tops, onClash, opts),
   remove: (ctx, sources) => remove(ctx, sources),
-  mustRemove: async () => copyOut(),
+  // A move out of a volume asks first whether the Amiga can delete (the write switch, spec 2026-10-31 §4.1).
+  mustRemove: async (ctx, sources) => (sources.every(onVolume) ? mustRemoveOnVolume(ctx, sources) : copyOut()),
+  makedir: async (ctx, dir, name) => (isNetVolumeDir(dir) ? makedirOnVolume(ctx, dir, name) : notHere()),
+  rename: async (ctx, source, name) => { const p = parsePath(source); return p && isNetVolumeDir(p) ? renameOnVolume(ctx, source, name) : notHere(); },
+  setMeta: async (ctx, sources, meta) => (sources.every(onVolume) ? setMetaOnVolume(ctx, sources, meta) : notHere()),
 };

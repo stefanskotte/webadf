@@ -211,8 +211,9 @@ describe('copy into NET:', () => {
   it('refuses a folder inside the queue, a volume, a signed-out copy, and copying or moving out of NET:', async () => {
     expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/C'], dest: 'NET:/b1/Queue/x', onClash: 'ask' }))
       .toMatchObject({ kind: 'refused', status: 400, refusal: { code: 'unsupported' } });
+    // A volume of a board that cannot write (phase 2: firmware 1.22 here) says what is missing.
     expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/C'], dest: 'NET:/b1/Work', onClash: 'ask' }))
-      .toMatchObject({ kind: 'refused', status: 409, refusal: { code: 'read_only', detail: 'Read-only for now' } });
+      .toMatchObject({ kind: 'refused', status: 409, refusal: { code: 'read_only', detail: 'Board firmware 1.23.0 or newer writes to the Amiga' } });
     expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/C'], dest: 'NET:', onClash: 'ask' }))
       .toMatchObject({ kind: 'refused', status: 400, refusal: { code: 'unsupported' } });
     expect(await runOp({ orgId: 'o1', userId: null }, { op: 'copy', sources: ['LIBRARY:/g1/d1/C'], dest: 'NET:/b1', onClash: 'ask' }))
@@ -276,13 +277,14 @@ describe('delete in NET:', () => {
     ] });
     expect((await queued('b2')).find((x) => x.id === b2row.id)!.status).toBe('queued');
   });
-  it('a board itself, its Queue folder and a volume are not deleted', async () => {
-    expect(await runOp(ctx, { op: 'delete', sources: ['NET:/b1', 'NET:/b1/Queue', 'NET:/b1/Work/x'] }))
+  it('a board itself and its Queue folder are not deleted; a volume\'s file only on a board that can write', async () => {
+    expect(await runOp(ctx, { op: 'delete', sources: ['NET:/b1', 'NET:/b1/Queue'] }))
       .toMatchObject({ kind: 'done', items: [
         { source: 'NET:/b1', ok: false, refusal: { code: 'not_found' } },
         { source: 'NET:/b1/Queue', ok: false, refusal: { code: 'not_found' } },
-        { source: 'NET:/b1/Work/x', ok: false, refusal: { code: 'not_found' } },
       ] });
+    expect(await runOp(ctx, { op: 'delete', sources: ['NET:/b1/Work/x'] }))
+      .toMatchObject({ kind: 'refused', status: 409, refusal: { code: 'read_only', detail: 'Board firmware 1.23.0 or newer writes to the Amiga' } });
   });
   it("another org's row is not found", async () => {
     await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d1/C/Assign'], dest: 'NET:/b1', onClash: 'ask' });
@@ -386,8 +388,8 @@ describe('NET: volumes', () => {
     expect(l.entries.find((e) => e.name === 'Sub')).toMatchObject({ kind: 'dir', path: 'NET:/b1/Work/Programs/Sub', size: null, comment: null });
     expect(l.entries.find((e) => e.name === 'ReadMe')).toMatchObject({ kind: 'file', path: 'NET:/b1/Work/Programs/ReadMe', size: 1234,
       protection: protectionString(5), comment: 'hello', date: new Date(Date.UTC(1978, 0, 1) + 9100 * 86_400_000 + 3_600_000).toISOString() });
-    expect(l).toMatchObject({ path: 'NET:/b1/Work/Programs', writable: false, readOnlyReason: 'Read-only for now', disk: null, meta: '40.0 MB free',
-      net: { board: 'b1', boardName: NAME, volume: 'Work', amigaPath: 'Work:Programs', cut: false, browse: null } });
+    expect(l).toMatchObject({ path: 'NET:/b1/Work/Programs', writable: false, readOnlyReason: 'Board firmware 1.23.0 or newer writes to the Amiga', disk: null, meta: '40.0 MB free',
+      net: { board: 'b1', boardName: NAME, volume: 'Work', amigaPath: 'Work:Programs', cut: false, browse: null, write: 'Board firmware 1.23.0 or newer writes to the Amiga' } });
     expect(typeof l.net!.readAt).toBe('number');
     expect(l.crumbs).toEqual([{ label: 'NET:', path: 'NET:' }, { label: NAME, path: 'NET:/b1' }, { label: 'Work:', path: 'NET:/b1/Work' },
       { label: 'Programs', path: 'NET:/b1/Work/Programs' }]);

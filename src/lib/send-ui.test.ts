@@ -8,7 +8,7 @@ import {
 const NOW = 1_800_000_000_000;
 const t = (over: Partial<SendTarget> = {}): SendTarget => ({
   id: 'a', name: 'Bench', macAddress: '28:CD:C1:19:6A:38', defaultName: false, online: true,
-  lastSeenAt: NOW - 5_000, network: true, rx: 'c', rxAt: NOW - 10_000, firmwareVersion: '1.21.1+gabc', rxProto: null, browseOn: false, ...over,
+  lastSeenAt: NOW - 5_000, network: true, rx: 'c', rxAt: NOW - 10_000, firmwareVersion: '1.21.1+gabc', rxProto: null, browseOn: false, writeOn: false, ...over,
 });
 const row = (over: Partial<TransferView> = {}): TransferView => ({
   id: 'x', path: 'Café.lha', sizeBytes: 1000, status: 'queued', bytesSent: 0, savedAs: null, errorCode: null,
@@ -44,6 +44,14 @@ describe('transfer states, each in words', () => {
       .toBe('Failed · not enough space on the Amiga');
     expect(transferState(row({ status: 'cancelled' })).text).toBe('Cancelled');
     expect(transferState(row({ status: 'expired' })).text).toBe('Expired · the Amiga did not take it within 24 h');
+    // NET: volumes phase 2: a copy onto a volume answered Skip; the write codes in words.
+    expect(transferState(row({ status: 'skipped' })).text).toBe('Skipped · it is already on the Amiga');
+    expect(stateChip(row({ status: 'skipped' }))).toEqual({ kind: 'neutral', label: 'Skipped', note: 'it is already on the Amiga', path: null });
+    expect(transferState(row({ status: 'failed', errorCode: 'readonly', errorText: 'Writing is off in Transfer' })).text)
+      .toBe('Failed · Writing is off in Transfer');
+    expect(transferState(row({ status: 'failed', errorCode: 'wprot', errorText: 'x' })).text).toBe('Failed · the disk is write-protected');
+    expect(transferState(row({ status: 'failed', errorCode: 'full', errorText: 'x' })).text).toBe('Failed · the disk is full');
+    expect(transferState(row({ status: 'failed', errorCode: 'denied', errorText: 'x' })).text).toBe('Failed · protected against deletion');
   });
   it('tells a waiting or moving row\'s words from a finished one\'s, whatever the percentage (Files increment 3, C6)', () => {
     const all = ['queued', 'sending', 'delivered', 'failed', 'cancelled', 'expired'] as const;

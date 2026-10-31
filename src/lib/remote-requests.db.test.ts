@@ -23,7 +23,8 @@ const { organization } = await import('@/db/schema/auth');
 const { devices } = await import('@/db/schema/devices');
 const { remoteRequests } = await import('@/db/schema/remote-requests');
 const rr = await import('./remote-requests');
-const { requestListing, latestFor, takeWaiting, answerPiece, addGets, getForUpload, settleGet, expireStale, touchGet, copyMoving } = rr;
+const { requestListing, latestFor, takeWaiting, answerPiece, addGets, getForUpload, settleGet, expireStale, touchGet, copyMoving, addWrites, pendingAlive } = rr;
+const { requestLine } = await import('./remote-wire');
 
 const deviceId = 'rb1';
 const orgId = 'ro1';
@@ -64,6 +65,12 @@ describe('remote_requests schema', () => {
     const c = await db.execute(sql`select column_name from information_schema.columns where table_name = 'devices'
       and column_name in ('req_version','rx_proto','browse_on') order by column_name`);
     expect(c.rows.map((r) => r.column_name)).toEqual(['browse_on', 'req_version', 'rx_proto']);
+  });
+  it('has the writes columns (phase 2): transfers.amiga_dest, on_clash, job_id, move_source; devices.write_on', async () => {
+    const c = await getDb().execute(sql`select table_name || '.' || column_name as c from information_schema.columns
+      where (table_name = 'transfers' and column_name in ('amiga_dest','on_clash','job_id','move_source'))
+         or (table_name = 'devices' and column_name = 'write_on') order by 1`);
+    expect(c.rows.map((r) => r.c)).toEqual(['devices.write_on', 'transfers.amiga_dest', 'transfers.job_id', 'transfers.move_source', 'transfers.on_clash']);
   });
   it('indexes upload_id: every chunk of every upload looks its get up by it', async () => {
     const i = await getDb().execute(sql`select indexdef from pg_indexes where tablename = 'remote_requests' and indexname = 'remote_requests_upload_idx'`);
@@ -353,5 +360,137 @@ describe('the request store', () => {
     const f = await rowOf(ids[1]);
     expect(f.status).toBe('failed'); expect(f.errorCode).toBe('io'); expect(f.errorText).toBe('broke');
     expect(await getForUpload(getDb(), deviceId, ids[1])).toBeNull();
+  });
+});
+
+// NET: volumes phase 2 (spec 2026-10-31 §2.3, §4.1; plan W9-W13): the one-line writes.
+describe('write requests', () => {
+  const canWrite = (on: boolean) => getDb().update(devices).set({ rxProto: on ? 4 : 3, browseOn: true, writeOn: on }).where(eq(devices.id, deviceId));
+  const answer = (rid: string, lines: string[], piece: number, last: boolean, when: Date) => answerPiece(getDb(), deviceId, rid, { piece, lines, last }, when);
+  const remember = async (path: string, when: Date) => {
+    const s = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: path, fresh: true }, when);
+    await takeWaiting(getDb(), deviceId, when);
+    await answer(ridOf(s as { state: string; row?: { id: string } }), [`DONE ${ridOf(s as { state: string; row?: { id: string } })} 0`], 0, true, when);
+  };
+  beforeEach(() => canWrite(true));
+
+  it('a job\'s writes go in the order made, 1 ms apart, after listings and before gets, with their arguments on the line', async () => {
+    const tg = { dest: 'STASH:', rel: ['x'], replace: false, library: null };
+    await addGets(getDb(), { orgId, deviceId, fetchId: 'fg', files: [{ amigaPath: 'Work:g', target: tg }] }, t0);
+    const ids = await addWrites(getDb(), { orgId, deviceId, jobId: 'j1', writes: [
+      { kind: 'rename', amigaPath: 'Work:a', args: { to: 'Work:b' }, label: 'Work:a' },
+      { kind: 'rename', amigaPath: 'Work:a.info', args: { to: 'Work:b.info' }, icon: true, label: 'Work:a.info' },
+    ] }, at(1));
+    await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:', fresh: false }, at(2));
+    expect(await reqVersionOf(deviceId)).toBe(3);
+    const rows = await Promise.all(ids.map(rowOf));
+    expect(rows.map((r) => [r.kind, r.fetchId, r.createdAt.getTime() - at(1).getTime(), r.target])).toEqual([
+      ['rename', 'j1', 0, { to: 'Work:b', label: 'Work:a' }],
+      ['rename', 'j1', 1, { to: 'Work:b.info', label: 'Work:a.info', icon: true }],
+    ]);
+    const taken = await takeWaiting(getDb(), deviceId, at(3));
+    expect(taken.map((r) => requestLine({ ...r, kind: r.kind as never }))).toEqual([
+      'RENAME ' + ids[0] + ' 6:Work:a 6:Work:b\n', 'RENAME ' + ids[1] + ' 11:Work:a.info 11:Work:b.info\n',
+      expect.stringMatching(/^DIR /), expect.stringMatching(/^GET /),
+    ]);
+  });
+
+  it('a board that cannot write is never handed a write: it fails readonly at the take, listings go on', async () => {
+    await canWrite(false);
+    const [w] = await addWrites(getDb(), { orgId, deviceId, jobId: 'j2', writes: [{ kind: 'mkdir', amigaPath: 'Work:New', label: 'Work:New' }] }, t0);
+    await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:', fresh: false }, t0);
+    const taken = await takeWaiting(getDb(), deviceId, at(1));
+    expect(taken.map((r) => r.kind)).toEqual(['dir']);
+    expect(await rowOf(w)).toMatchObject({ status: 'failed', errorCode: 'readonly', errorText: 'Writing is off in Transfer' });
+  });
+
+  it('a drawer delete: DEL pieces count up and keep it alive; DONE ends it and drops the memory of what it changed', async () => {
+    await remember('Work:', t0);
+    await remember('Work:old', t0);
+    await remember('Work:old/sub', t0);
+    const [d] = await addWrites(getDb(), { orgId, deviceId, jobId: 'j3', writes: [{ kind: 'delete', amigaPath: 'Work:old', label: 'Work:old' }] }, at(1));
+    await takeWaiting(getDb(), deviceId, at(1));
+    expect(await answer(d, [`DEL ${d} 50`], 0, false, at(40))).toEqual({ ok: true });
+    expect(await answer(d, [`DEL ${d} 100`], 1, false, at(90))).toEqual({ ok: true });
+    await expireStale(getDb(), at(140));   // 50 s after the last DEL: still alive
+    expect(await rowOf(d)).toMatchObject({ status: 'sent', answer: { removed: 100 } });
+    await remember('Work:other', at(140));
+    for (const p of ['Work:', 'Work:old', 'Work:old/sub']) await remember(p, at(140));
+    expect(await answer(d, [`DONE ${d} 137`], 2, true, at(141))).toEqual({ ok: true });
+    expect(await rowOf(d)).toMatchObject({ status: 'done', answer: { removed: 137 } });
+    for (const p of ['Work:', 'Work:old', 'Work:old/sub']) expect((await latestFor(getDb(), deviceId, 'dir', p, at(142))).state).toBe('none');
+    expect((await latestFor(getDb(), deviceId, 'dir', 'Work:other', at(142))).state).toBe('ready');
+  });
+
+  it('a delete that stops half way keeps the count; a missing icon is no failure; a silent write times out', async () => {
+    const [d, icon, quiet] = await addWrites(getDb(), { orgId, deviceId, jobId: 'j4', writes: [
+      { kind: 'delete', amigaPath: 'Work:Libs', label: 'Work:Libs' },
+      { kind: 'delete', amigaPath: 'Work:Libs.info', icon: true, label: 'Work:Libs.info' },
+      { kind: 'mkdir', amigaPath: 'Work:New', label: 'Work:New' },
+    ] }, t0);
+    await takeWaiting(getDb(), deviceId, t0);
+    await answer(d, [`DEL ${d} 37`, `ERR ${d} busy 31:Libs/foo.library: object in use`], 0, true, at(5));
+    expect(await rowOf(d)).toMatchObject({ status: 'failed', errorCode: 'busy', errorText: 'Libs/foo.library: object in use', answer: { removed: 37 } });
+    await answer(icon, [`ERR ${icon} notfound 16:object not found`], 0, true, at(6));
+    expect((await rowOf(icon)).status).toBe('done');
+    await expireStale(getDb(), at(61));
+    expect(await rowOf(quiet)).toMatchObject({ status: 'failed', errorCode: 'timeout' });
+  });
+
+  it('a rename drops both drawers\' memory; MKDIR, PROTECT and NOTE their parent\'s', async () => {
+    for (const p of ['Work:', 'Work:a', 'Work:b']) await remember(p, t0);
+    const [r] = await addWrites(getDb(), { orgId, deviceId, jobId: 'j5', writes: [{ kind: 'rename', amigaPath: 'Work:a/x', args: { to: 'Work:b/x' }, label: 'Work:a/x' }] }, at(1));
+    await takeWaiting(getDb(), deviceId, at(1));
+    await answer(r, [`DONE ${r} 1`], 0, true, at(2));
+    expect((await latestFor(getDb(), deviceId, 'dir', 'Work:a', at(3))).state).toBe('none');
+    expect((await latestFor(getDb(), deviceId, 'dir', 'Work:b', at(3))).state).toBe('none');
+    expect((await latestFor(getDb(), deviceId, 'dir', 'Work:', at(3))).state).toBe('ready');
+    const [m] = await addWrites(getDb(), { orgId, deviceId, jobId: 'j6', writes: [{ kind: 'mkdir', amigaPath: 'Work:New', label: 'Work:New' }] }, at(4));
+    await takeWaiting(getDb(), deviceId, at(4));
+    await answer(m, [`DONE ${m} 1`], 0, true, at(5));
+    expect((await latestFor(getDb(), deviceId, 'dir', 'Work:', at(6))).state).toBe('none');
+  });
+
+  // Final review C3: Transfer answers one request at a time; what waits behind a drawer delete sending DEL pieces waits.
+  it('final review C3: a write held behind a delete whose DEL pieces keep coming does not time out', async () => {
+    const [d, icon] = await addWrites(getDb(), { orgId, deviceId, jobId: 'jc3', writes: [
+      { kind: 'delete', amigaPath: 'Work:old', label: 'Work:old' },
+      { kind: 'delete', amigaPath: 'Work:old.info', label: 'Work:old.info' },
+    ] }, t0);
+    await takeWaiting(getDb(), deviceId, t0);
+    await answer(d, [`DEL ${d} 50`], 0, false, at(40));
+    await expireStale(getDb(), at(70));
+    expect((await rowOf(icon)).status).toBe('sent');
+    await expireStale(getDb(), at(101));
+    expect((await rowOf(icon)).status).toBe('failed');
+  });
+
+  it('a listing arriving in pieces is alive only while a piece came within 30 s (§4.4)', async () => {
+    const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:Big', fresh: false }, t0);
+    await takeWaiting(getDb(), deviceId, t0);
+    const rid = ridOf(p as { state: string; row?: { id: string } });
+    await answer(rid, [`ENT ${rid} f 1 0 1.0.0 1:a 0:`], 0, false, at(1));
+    const row = await rowOf(rid);
+    expect(pendingAlive(row, at(20))).toBe(true);
+    expect(pendingAlive(row, at(32))).toBe(false);
+    expect(pendingAlive({ ...row, pieces: 0 }, at(2))).toBe(false);
+  });
+
+  it('a listing waits behind a queue file the board is sending, or an Amiga upload it is receiving (§4.4)', async () => {
+    const { transfers } = await import('@/db/schema/transfers');
+    const { amigaUploads } = await import('@/db/schema/amiga-uploads');
+    await getDb().delete(transfers);
+    await getDb().update(devices).set({ sendRxAt: at(0) }).where(eq(devices.id, deviceId));
+    await getDb().insert(transfers).values({ id: 'ts1', orgId, deviceId, createdByUserId: 'u', path: 'x', amigaDest: 'Work:Tools/big.lha',
+      sizeBytes: 10, crc32: 0, blobSha256: 's', status: 'sending', expiresAt: at(9999) });
+    expect(await copyMoving(getDb(), deviceId, at(30))).toBe('Work:Tools/big.lha');
+    const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:', fresh: false }, at(1));
+    await expireStale(getDb(), at(59));
+    expect((await rowOf(ridOf(p as { state: string; row?: { id: string } }))).status).toBe('waiting');
+    expect(await copyMoving(getDb(), deviceId, at(61))).toBeNull();
+    await getDb().delete(transfers);
+    await getDb().insert(amigaUploads).values({ id: 'up1', orgId, deviceId, path: 'Up.txt', sizeBytes: 5, amigaDate: '1.0.0', expiresAt: at(9999) });
+    expect(await copyMoving(getDb(), deviceId, at(30))).toBe('Up.txt');
+    await getDb().delete(amigaUploads);
   });
 });

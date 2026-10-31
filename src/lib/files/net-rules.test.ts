@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { netPollMs, planNetSend, NET_REFRESH_ACTIVE_MS, NET_REFRESH_IDLE_MS, readAgo, nextAsk, netTitle, isNetVolume, netBoardRoot, boardNameFor, NET_READ_ONLY, listingRefusal } from './net-rules';
+import { netPollMs, planNetSend, NET_REFRESH_ACTIVE_MS, NET_REFRESH_IDLE_MS, readAgo, nextAsk, netTitle, isNetVolume, netBoardRoot, boardNameFor, NET_READ_ONLY, listingRefusal, netCrumbs } from './net-rules';
 import type { Listing } from './types';
 
 const L = (path: string, marks: string[][] = []): Listing => ({ path, crumbs: [], writable: true, readOnlyReason: null, disk: null, meta: '',
@@ -16,7 +16,10 @@ describe('netPollMs', () => {
     expect(netPollMs(L('NET:/b1/Queue'))).toBe(10_000);
     // NET: volumes (spec 2026-10-30): a board's root and its volumes are read on request, never polled.
     expect(netPollMs(L('NET:/b1', [['Waiting']]))).toBeNull();
-    expect(netPollMs(L('NET:/b1/Work/Programs', [['Waiting']]))).toBeNull();
+    // Phase 2 (spec 2026-10-31 §4.1): a volume's drawer is re-read while a copy onto it is arriving, else never.
+    expect(netPollMs(L('NET:/b1/Work/Programs', [['Waiting']]))).toBe(3_000);
+    expect(netPollMs(L('NET:/b1/Work/Programs', [['Sending 40 %']]))).toBe(3_000);
+    expect(netPollMs(L('NET:/b1/Work/Programs', [[]]))).toBeNull();
     expect(netPollMs(L('NET:'))).toBeNull();
     expect(netPollMs(L('STASH:'))).toBeNull();
     expect(netPollMs(L('LIBRARY:/g1/d1'))).toBeNull();
@@ -107,5 +110,17 @@ describe('listingRefusal', () => {
     expect(listingRefusal('NET:/b1/Work', 409, 'Switch on browsing in Transfer on A500')).toEqual({ words: 'Switch on browsing in Transfer on A500' });
     expect(listingRefusal('STASH:/x', 409, 'whatever')).toEqual({ words: null });
     expect(listingRefusal('NET:/b1/Work', 504, undefined)).toEqual({ words: null });
+  });
+});
+
+// Phase 2 (spec 2026-10-30 §4.4 minor 3): a pane opened straight onto a pending or failed listing shows its crumbs.
+describe('netCrumbs', () => {
+  it('builds the crumbs of a NET: path the pane has no listing for', () => {
+    expect(netCrumbs('NET:/b1/Work/Programs/Sub', 'A500')).toEqual([
+      { label: 'NET:', path: 'NET:' }, { label: 'A500', path: 'NET:/b1' }, { label: 'Work:', path: 'NET:/b1/Work' },
+      { label: 'Programs', path: 'NET:/b1/Work/Programs' }, { label: 'Sub', path: 'NET:/b1/Work/Programs/Sub' },
+    ]);
+    expect(netCrumbs('NET:/b1', 'A500')).toEqual([{ label: 'NET:', path: 'NET:' }, { label: 'A500', path: 'NET:/b1' }]);
+    expect(netCrumbs('STASH:/x', 'A500')).toEqual([]);
   });
 });

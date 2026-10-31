@@ -145,9 +145,9 @@ describe('startFetch: one get per file', () => {
     expect(await gets()).toEqual([]);
   });
 
-  it('Move out of a volume is refused read_only', async () => {
+  it('Move out of a volume is refused while the board cannot write (phase 2: it would delete the source)', async () => {
     expect(await copy([W('a.lha')], 'STASH:', 'keep-both', 'move'))
-      .toMatchObject({ kind: 'refused', refusal: { code: 'read_only', detail: 'Read-only for now' } });
+      .toMatchObject({ kind: 'refused', refusal: { code: 'read_only', detail: 'Board firmware 1.23.0 or newer writes to the Amiga' } });
     expect(await gets()).toEqual([]);
   });
 
@@ -322,7 +322,7 @@ describe('fetchProgress', () => {
     const b = rows.find((x) => x.amigaPath !== 'Work:a.lha')!;
     await arrive(a.id, 'Work:a.lha', new TextEncoder().encode('lha!lha'));
     expect(await fetchProgress(getDb(), 'o1', r.fetching!.id, new Date()))
-      .toEqual({ total: 2, done: 1, failed: [], waiting: 1, board: 'A500', arrived: ['STASH:/In/a.lha'] });
+      .toEqual({ total: 2, done: 1, failed: [], waiting: 1, board: 'A500', arrived: ['STASH:/In/a.lha'], skipped: 0, writes: [], direction: 'from' });
     await answerPiece(getDb(), 'b1', b.id, { piece: 0, lines: [`ERR ${b.id} notfound 0:`], last: true });
     expect(await fetchProgress(getDb(), 'o1', r.fetching!.id, new Date()))
       .toMatchObject({ total: 2, done: 1, failed: [{ name: 'b.txt', reason: 'Object not found' }], waiting: 0 });

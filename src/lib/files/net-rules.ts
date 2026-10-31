@@ -1,7 +1,7 @@
 // src/lib/files/net-rules.ts
 // NET: rules a pane and the engine share (Files spec 2026-10-29 §4.3, increment 3): how often a board's queue is
 // re-read, whether a drop fits the board's queue, and the words NET: refuses with. CLIENT-SAFE: no server imports.
-import { parsePath } from './path';
+import { formatPath, parsePath } from './path';
 import type { Listing } from './types';
 import { isActiveTransferText } from '@/lib/send-ui';
 import { SEND_FILE_MAX, SEND_QUEUE_MAX_BYTES, SEND_QUEUE_MAX_FILES } from '@/lib/send-limits';
@@ -22,10 +22,34 @@ export const NET_PICK_BOARD = 'Open a board to send files to it';
 export const NET_READ_ONLY = 'Read-only for now';
 /** NET:/<board> lists places (its volumes and Queue), not files: its `readOnlyReason`, and what a copy out of it says. */
 export const NET_OPEN_VOLUME = 'Open a volume or Queue';
+/** Phase 2: what a drop of files from the computer onto a volume says (they go up to STASH: first). */
+export const NET_DROP_TO_STASH = 'Drop files into STASH: first, then copy them onto the Amiga';
+
+/**
+ * The details of a NET: refusal that read as a sentence of their own (words.ts says them with a full stop): why a board
+ * cannot be browsed or written to, and phase 2's own refusals (spec 2026-10-31 §4.1-4.2).
+ */
+export function isNetWords(detail: string): boolean {
+  return /^(Switch on browsing in Transfer on |Transfer is not running on |Transfer 2\.3 or newer is needed on |Firmware 1\.22 or newer is needed$|Writing is off in Transfer$|Transfer 2\.5 or newer writes to the Amiga$|Board firmware 1\.23\.0 or newer writes to the Amiga$|List the drawer again and retry$|Move within one volume$|Rename a volume on the Amiga$|offline |never seen$)/.test(detail);
+}
+
+/** The crumbs of a NET: path a pane has no listing for (a pending or failed one, §4.4 minor 3): NET: › board › Volume: › drawers. */
+export function netCrumbs(path: string, boardName: string): { label: string; path: string }[] {
+  const p = parsePath(path);
+  if (p?.device !== 'NET') return [];
+  const at = (n: number) => formatPath({ device: 'NET', segments: p.segments.slice(0, n) });
+  return [{ label: 'NET:', path: 'NET:' }, ...p.segments.map((s, i) => ({ label: i === 0 ? boardName : i === 1 ? `${s}:` : s, path: at(i + 1) }))];
+}
 
 /** A listing of a volume, or a drawer in one (`net.volume` set): read, read-only, through the board (spec 2026-10-30). */
 export function isNetVolume(l: Listing | null): boolean {
   return !!l?.net?.volume;
+}
+
+/** NET:/<board>/<Volume>[/…]: a volume or a drawer on one (phase 2: where copies onto the Amiga land). */
+export function isVolumePlace(path: string): boolean {
+  const p = parsePath(path);
+  return p?.device === 'NET' && p.segments.length >= 2 && p.segments[1] !== QUEUE_FOLDER;
 }
 
 /** The board NET:/<board> is the root of (its volumes and Queue); null for any other path. */
@@ -76,13 +100,18 @@ export function nextAsk(startedAt: number, now: number): 'ask' | 'give-up' {
 }
 
 /**
- * How often a pane showing `l` re-reads it: a board's queue (NET:/<board>/Queue) only; faster while anything waits or
- * sends. A board's volumes are read on request (spec 2026-10-30), never polled.
+ * How often a pane showing `l` re-reads it: a board's queue (NET:/<board>/Queue), faster while anything waits or
+ * sends; a volume's drawer only while files of a copy are arriving in it (phase 2). Otherwise a board's volumes are read
+ * on request (spec 2026-10-30), never polled.
  */
 export function netPollMs(l: Listing | null): number | null {
   const p = l && parsePath(l.path);
-  if (!p || p.device !== 'NET' || p.segments.length !== 2 || p.segments[1] !== QUEUE_FOLDER) return null;
-  return l.entries.some((e) => e.marks[0] !== undefined && isActiveTransferText(e.marks[0])) ? NET_REFRESH_ACTIVE_MS : NET_REFRESH_IDLE_MS;
+  if (!p || p.device !== 'NET') return null;
+  const active = l.entries.some((e) => e.marks[0] !== undefined && isActiveTransferText(e.marks[0]));
+  // A drawer a copy onto the Amiga is arriving in (phase 2, spec 2026-10-31 §4.1) follows its rows while they move.
+  if (p.segments.length >= 2 && p.segments[1] !== QUEUE_FOLDER) return active ? NET_REFRESH_ACTIVE_MS : null;
+  if (p.segments.length !== 2 || p.segments[1] !== QUEUE_FOLDER) return null;
+  return active ? NET_REFRESH_ACTIVE_MS : NET_REFRESH_IDLE_MS;
 }
 
 /**

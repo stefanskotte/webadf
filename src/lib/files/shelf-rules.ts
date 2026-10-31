@@ -82,7 +82,7 @@ export function filingReason(op: 'copy' | 'move', src: Listing | null, picked: F
   // Out of a NET: volume (spec 2026-10-30 §4.5, §5): disk images are copied in through the board; a drawer is refused
   // here as the server refuses it (not_a_disk_image, a folder), before anything is walked; a volume is never moved from.
   if (isNetVolume(src)) {
-    if (op === 'move') return NET_READ_ONLY;
+    if (op === 'move' && !src!.writable) return src!.readOnlyReason ?? NET_READ_ONLY;
     if (picked.some((e) => e.kind === 'dir')) return NOT_A_FOLDER;
     return picked.every((e) => e.kind === 'file' && libraryEligible(e.name, e.size ?? 0)) ? null : SELECT_IMAGES;
   }
@@ -111,7 +111,7 @@ export function filingNoun(src: Listing | null): (n: number) => string {
 export function createAdfReason(l: Listing | null): string | null {
   if (!l) return 'Open STASH: or LIBRARY: first';
   const device = parsePath(l.path)?.device;
-  if (device === 'NET') return isNetVolume(l) ? NET_READ_ONLY : NOT_ON_NET;
+  if (device === 'NET') return NOT_ON_NET;
   if (device === 'STASH') return l.readOnlyReason === 'archive' ? 'Archives are read-only — copy files out of them.' : null;
   return l.library?.level === 'root' || l.library?.level === 'collection' ? null : GO_UP;
 }

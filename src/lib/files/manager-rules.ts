@@ -147,6 +147,63 @@ export function fetchStatus(p: { total: number; done: number; failed: { name: st
   return { line: `Copied ${p.done}${failed}`, finished: true };
 }
 
+type JobWriteView = { kind: string; label: string; to: string | null; status: 'waiting' | 'running' | 'done' | 'failed'; removed: number;
+  reason: string | null; entry: string | null; quiet: boolean };
+const RUNNING: Record<string, string> = { delete: 'Deleting', mkdir: 'Making', rename: 'Renaming', protect: 'Protecting', note: 'Setting the comment on' };
+
+/** One finished write in words: "Deleted Work:old (137)", "Made Work:New", "Renamed Work:a to Work:b". */
+function doneWords(w: JobWriteView): string {
+  switch (w.kind) {
+    case 'delete': return `Deleted ${w.label}${w.removed > 1 ? ` (${w.removed})` : ''}`;
+    case 'mkdir': return `Made ${w.label}`;
+    case 'rename': return `Renamed ${w.label}${w.to ? ` to ${w.to}` : ''}`;
+    case 'protect': return `Protected ${w.label}`;
+    default: return `Comment on ${w.label}`;
+  }
+}
+const PAST: Record<string, string> = { delete: 'Deleted', mkdir: 'Made', rename: 'Renamed', protect: 'Protected', note: 'Commented on' };
+
+/**
+ * The status row of a job that changes the Amiga's disks (spec 2026-10-31 §2.3, §4.1), from GET /api/files/net/fetch/<id>.
+ * While it runs: the write on its way ("Deleting Work:old on A500… removed 37 so far") or the file ("Copying 3 of 12 to
+ * A500…"). Then what was done and why anything was not -- a delete stopped half way says how far it got. An icon taken
+ * along, or a drawer a copy needed, is said only when it failed.
+ */
+export function jobStatus(p: { total: number; done: number; failed: { name: string; reason: string }[]; waiting: number; skipped: number;
+  writes: JobWriteView[]; direction: 'to' | 'from' }, board: string): { line: string; finished: boolean } {
+  const loud = p.writes.filter((w) => !w.quiet);
+  const running = loud.find((w) => w.status === 'running') ?? (p.waiting === 0 ? loud.find((w) => w.status === 'waiting') : undefined);
+  if (running) {
+    const so = running.kind === 'delete' && running.removed > 0 ? ` removed ${running.removed} so far` : '';
+    return { line: `${RUNNING[running.kind] ?? 'Changing'} ${running.label} on ${board}…${so}`, finished: false };
+  }
+  if (p.waiting > 0) {
+    const n = Math.min(p.done + p.failed.length + p.skipped + 1, p.total);
+    return { line: `Copying ${n} of ${p.total} ${p.direction === 'to' ? 'to' : 'from'} ${board}…`, finished: false };
+  }
+  if (p.writes.some((w) => w.status === 'waiting' || w.status === 'running')) {
+    return { line: `Changing the disks of ${board}…`, finished: false };
+  }
+  const parts: string[] = [];
+  if (p.total > 0) {
+    const [first, ...more] = p.failed;
+    const failed = first ? `, ${p.failed.length} failed: ${first.name}: ${first.reason}${more.length ? '; …' : ''}` : '';
+    const skipped = p.skipped ? `, skipped ${p.skipped} (already there)` : '';
+    parts.push(p.direction === 'to' ? `Copied ${p.done} to ${board}${skipped}${failed}` : `Copied ${p.done}${failed}`);
+  }
+  const ok = loud.filter((w) => w.status === 'done');
+  const byKind = new Map<string, JobWriteView[]>();
+  for (const w of ok) byKind.set(w.kind, [...(byKind.get(w.kind) ?? []), w]);
+  for (const [kind, list] of byKind) parts.push(list.length > 2 ? `${PAST[kind]} ${list.length} items` : list.map(doneWords).join(', '));
+  for (const w of p.writes.filter((x) => x.status === 'failed')) {
+    // A drawer delete that stopped names the entry (Transfer's text, relative to the drawer); DEL 0: nothing removed.
+    parts.push(w.kind === 'delete' && w.entry
+      ? (w.removed > 0 ? `Removed ${w.removed}, then stopped at ${w.entry}: ${w.reason}` : `${w.label}: stopped at ${w.entry}: ${w.reason}`)
+      : `${w.label}: ${w.reason}`);
+  }
+  return { line: parts.join(' · ') || 'Done', finished: true };
+}
+
 /**
  * What a copy out of a volume asks before it is posted (Task 8 fix rounds 1-2): the server expands each source from the
  * listing of its drawer remembered within 2 minutes (plan P3). Each picked drawer (and, as they are read, its drawers --

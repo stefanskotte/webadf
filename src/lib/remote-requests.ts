@@ -4,11 +4,29 @@ import { and, asc, eq, gte, inArray, lt, or, sql } from 'drizzle-orm';
 import type { Db } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { remoteRequests } from '@/db/schema/remote-requests';
-import { FAILED_SHOWN_MS, GET_TIMEOUT_MS, LIST_TIMEOUT_MS, PANE_GIVE_UP_MS, REMEMBER_MS, REQUEST_KEEP_MS, REQ_FETCH_MAX } from './remote-limits';
-import { newRequestId, parseAnswerLine, type EntryInfo, type VolumeInfo } from './remote-wire';
+import { transfers } from '@/db/schema/transfers';
+import { amigaUploads } from '@/db/schema/amiga-uploads';
+import {
+  ALIVE_PIECE_MS, FAILED_SHOWN_MS, GET_TIMEOUT_MS, LIST_TIMEOUT_MS, PANE_GIVE_UP_MS, REMEMBER_MS, REQUEST_KEEP_MS, REQ_FETCH_MAX,
+  WRITE_KINDS, type WriteKind,
+} from './remote-limits';
+import { newRequestId, parseAnswerLine, type EntryInfo, type VolumeInfo, type WriteArgs } from './remote-wire';
 
 export type RemoteRow = typeof remoteRequests.$inferSelect;
-export type GetTarget = { dest: string; rel: string[]; replace: boolean; library: { collectionId: string | null } | null };
+/**
+ * Where a get's file goes. `moveSource` (phase 2, plan W7): the Files path a move removes once every get of its job
+ * naming it is done. `relay` (plan W8): a copy onto another volume -- on arrival the file is handed to that board's queue
+ * with the absolute path and clash mode, and its STASH: row goes.
+ */
+export type GetTarget = { dest: string; rel: string[]; replace: boolean; library: { collectionId: string | null } | null;
+  moveSource?: string; relay?: { deviceId: string; dest: string; onClash: 'keep' | 'replace' | 'skip'; moveSource?: string };
+  /** Who made the copy (a move's removal and a relay's queue row are theirs). */
+  userId?: string };
+/** A write request (spec 2026-10-31 §2.3): `label` the object in the pane's words, `icon` a `.info` taken along (W9). */
+export type WriteReq = { kind: WriteKind; amigaPath: string; args?: WriteArgs; icon?: boolean; ensure?: boolean; label: string };
+/** What a write request's `target` holds: its arguments, its label, whether it is an icon taken along. */
+/** `ensure`: a MKDIR a copy needs, where a drawer already there (`exists`) is as good as made. */
+export type WriteTarget = WriteArgs & { label: string; icon?: boolean; ensure?: boolean; moved?: string };
 export type ListingState =
   | { state: 'ready'; row: RemoteRow; ageMs: number }
   | { state: 'pending'; row: RemoteRow }
@@ -17,17 +35,36 @@ export type ListingState =
 
 const BAD = { errorCode: 'bad', errorText: 'Transfer sent an answer webadf could not read' };
 const ms = (now: Date, back: number) => new Date(now.getTime() - back);
+const WRITES: string[] = [...WRITE_KINDS];
+export const isWriteKind = (k: string): k is WriteKind => WRITES.includes(k);
+/** The one-line requests that time out as listings do: listings and writes (a write's DEL pieces are its signs of life). */
+const LINE_KINDS = ['vols', 'dir', ...WRITE_KINDS];
+
+/**
+ * The board is busy now, so Transfer answers nothing else meanwhile (A500 bench 2026-10-31; phase 2 §4.4): a get's file
+ * going up, a queue file going down (a send, or a copy onto a volume), an Amiga-side upload, or another request whose
+ * answer is arriving in pieces (a drawer DELETE sending DEL, a long listing: final review C3). The last two
+ * have no clock of their own: the board's receiver report (send_rx_at, stamped by every chunk) is it.
+ */
+function boardMoving(cut: Date) {
+  return sql`(exists (select 1 from remote_requests g
+      where g.device_id = remote_requests.device_id and g.kind = 'get' and (
+        (g.status = 'fetching' and g.active_at >= ${cut}) or (g.status = 'done' and g.answered_at >= ${cut})))
+    or exists (select 1 from remote_requests w where w.device_id = remote_requests.device_id and w.id <> remote_requests.id
+      and w.status = 'sent' and w.pieces > 0 and w.active_at >= ${cut})
+    or exists (select 1 from devices d where d.id = remote_requests.device_id and d.send_rx_at >= ${cut} and (
+      exists (select 1 from transfers t where t.device_id = d.id and t.status = 'sending')
+      or exists (select 1 from amiga_uploads u where u.device_id = d.id and u.status = 'receiving' and u.source = 'amiga'))))`;
+}
 
 /** Requests nobody answered fail `timeout`, so a pane never waits on a board that went away. */
 export async function expireStale(db: Db, now = new Date()): Promise<void> {
-  const list = inArray(remoteRequests.kind, ['vols', 'dir']);
+  const list = inArray(remoteRequests.kind, LINE_KINDS);
   const cutList = ms(now, LIST_TIMEOUT_MS);
-  // One behind a copy (A500 bench 2026-10-31): Transfer answers nothing while a get's file moves, so a listing still
-  // waiting, or taken by the board and held with nothing answered, has its 60 s run from when the copy last moved. A
-  // listing's pieces are signs of life too: its 60 s run from the last one.
-  const noCopy = sql`not exists (select 1 from remote_requests g
-      where g.device_id = remote_requests.device_id and g.kind = 'get' and (
-        (g.status = 'fetching' and g.active_at >= ${cutList}) or (g.status = 'done' and g.answered_at >= ${cutList})))`;
+  // One behind a copy (A500 bench 2026-10-31): Transfer answers nothing while a file moves, so a listing (or a write)
+  // still waiting, or taken by the board and held with nothing answered, has its 60 s run from when the file last moved.
+  // Its pieces (ENT, DEL) are signs of life too: its 60 s run from the last one.
+  const noCopy = sql`not ${boardMoving(cutList)}`;
   await db.update(remoteRequests).set({ status: 'failed', errorCode: 'timeout', errorText: '', answeredAt: now }).where(or(
     and(list, eq(remoteRequests.status, 'sent'), lt(sql`coalesce(${remoteRequests.activeAt}, ${remoteRequests.sentAt})`, cutList),
       or(sql`${remoteRequests.pieces} > 0`, noCopy)),
@@ -52,11 +89,26 @@ export async function expireStale(db: Db, now = new Date()): Promise<void> {
  * listing asked for meanwhile waits for it (A500 bench 2026-10-31), and the pane says so.
  */
 export async function copyMoving(db: Db, deviceId: string, now = new Date()): Promise<string | null> {
+  const cut = ms(now, LIST_TIMEOUT_MS);
   const [g] = await db.select({ path: remoteRequests.amigaPath }).from(remoteRequests).where(and(
     eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.kind, 'get'), eq(remoteRequests.status, 'fetching'),
-    gte(remoteRequests.activeAt, ms(now, LIST_TIMEOUT_MS)),
+    gte(remoteRequests.activeAt, cut),
   )).orderBy(sql`${remoteRequests.activeAt} desc`).limit(1);
-  return g?.path ?? null;
+  if (g) return g.path;
+  // A queue file going down, or an Amiga-side upload going up (§4.4 minor 2), while the board's receiver report is fresh.
+  const [d] = await db.select({ at: devices.sendRxAt }).from(devices).where(eq(devices.id, deviceId));
+  if (!d?.at || d.at < cut) return null;
+  const [t] = await db.select({ path: sql<string>`coalesce(${transfers.amigaDest}, ${transfers.path})` }).from(transfers)
+    .where(and(eq(transfers.deviceId, deviceId), eq(transfers.status, 'sending'))).limit(1);
+  if (t) return t.path;
+  const [u] = await db.select({ path: amigaUploads.path }).from(amigaUploads)
+    .where(and(eq(amigaUploads.deviceId, deviceId), eq(amigaUploads.status, 'receiving'), eq(amigaUploads.source, 'amiga'))).limit(1);
+  return u?.path ?? null;
+}
+
+/** A listing arriving in pieces shows life only while one came within ALIVE_PIECE_MS (§4.4 minor 1). */
+export function pendingAlive(row: Pick<RemoteRow, 'pieces' | 'activeAt'>, now = new Date()): boolean {
+  return row.pieces > 0 && !!row.activeAt && now.getTime() - row.activeAt.getTime() < ALIVE_PIECE_MS;
 }
 
 /** A get its file can still arrive for: sent or fetching, or failed only by the timeout (a late arrival revives it). */
@@ -131,6 +183,56 @@ export async function addGets(
   });
 }
 
+/**
+ * A Files operation's writes (spec 2026-10-31 §4.1): one row each, 1 ms apart in the order given (plan W10: the wire's
+ * "oldest first" is the job's order), all under `jobId`, one version bump, and the 24 h cleanup.
+ */
+export async function addWrites(
+  db: Db, a: { orgId: string; deviceId: string; jobId: string; writes: WriteReq[] }, now = new Date(),
+): Promise<string[]> {
+  if (a.writes.length === 0) return [];
+  return db.transaction(async (tx) => {
+    await tx.delete(remoteRequests).where(lt(remoteRequests.createdAt, ms(now, REQUEST_KEEP_MS)));
+    const rows = await tx.insert(remoteRequests).values(a.writes.map((w, k) => ({
+      id: newRequestId(), orgId: a.orgId, deviceId: a.deviceId, kind: w.kind, amigaPath: w.amigaPath, fetchId: a.jobId,
+      target: { ...(w.args ?? {}), label: w.label, ...(w.icon ? { icon: true } : {}), ...(w.ensure ? { ensure: true } : {}) } satisfies WriteTarget,
+      createdAt: new Date(now.getTime() + k),
+    }))).returning({ id: remoteRequests.id, createdAt: remoteRequests.createdAt });
+    await tx.update(devices).set({ reqVersion: sql`${devices.reqVersion} + 1` }).where(eq(devices.id, a.deviceId));
+    return rows.sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime()).map((r) => r.id);
+  });
+}
+
+const parentOf = (path: string) => {
+  const c = path.indexOf(':');
+  const slash = path.lastIndexOf('/');
+  return slash > c ? path.slice(0, slash) : path.slice(0, c + 1);
+};
+
+/** The drawers whose remembered listing a finished write changed (plan W12), and the drawers under a deleted one. */
+function writeTouches(r: RemoteRow): { paths: string[]; under: string[] } {
+  const to = (r.target as WriteTarget | null)?.to;
+  if (r.kind === 'rename') return { paths: [parentOf(r.amigaPath), ...(to ? [parentOf(to)] : []), r.amigaPath], under: [r.amigaPath] };
+  if (r.kind === 'delete') return { paths: [parentOf(r.amigaPath), r.amigaPath], under: [r.amigaPath] };
+  return { paths: [parentOf(r.amigaPath)], under: [] };
+}
+
+/**
+ * Forget remembered drawer listings (plan W12): a done answer for one of `paths` (case-insensitive), or for a drawer
+ * under one of `under`, is marked stale, so the next visit asks the Amiga again.
+ */
+export async function dropMemory(db: Pick<Db, 'update'>, deviceId: string, paths: string[], under: string[] = []): Promise<void> {
+  if (paths.length === 0 && under.length === 0) return;
+  const lowered = paths.map((x) => x.toLowerCase());
+  const conds = [
+    ...(lowered.length ? [sql`lower(${remoteRequests.amigaPath}) in (${sql.join(lowered.map((x) => sql`${x}`), sql`, `)})`] : []),
+    ...under.map((u) => sql`lower(${remoteRequests.amigaPath}) like ${`${u.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}/%`}`),
+  ];
+  await db.update(remoteRequests).set({ status: 'stale' }).where(and(
+    eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.kind, 'dir'), eq(remoteRequests.status, 'done'), or(...conds),
+  ));
+}
+
 // A listing a pane waits on goes before a copy's gets (final review): 64 gets must not starve it for minutes.
 const listingsFirst = sql`case when ${remoteRequests.kind} = 'get' then 1 else 0 end`;
 const handOrder = (r: RemoteRow) => (r.kind === 'get' ? 1 : 0);
@@ -141,6 +243,13 @@ const handOrder = (r: RemoteRow) => (r.kind === 'get' ? 1 : 0);
  */
 export async function takeWaiting(db: Db, deviceId: string, now = new Date()): Promise<RemoteRow[]> {
   return db.transaction(async (tx) => {
+    // A write goes only to a board that reports writing on (spec 2026-10-31 §3); one that does not fails it here, so
+    // a 1.22 board never sees one and nothing waits for a switch that is off (plan W11).
+    const [d] = await tx.select({ rxProto: devices.rxProto, browseOn: devices.browseOn, writeOn: devices.writeOn }).from(devices).where(eq(devices.id, deviceId));
+    if (!d || !((d.rxProto ?? 0) >= 4 && d.browseOn && d.writeOn)) {
+      await tx.update(remoteRequests).set({ status: 'failed', errorCode: 'readonly', errorText: 'Writing is off in Transfer', answeredAt: now })
+        .where(and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.status, 'waiting'), inArray(remoteRequests.kind, WRITES)));
+    }
     const waiting = and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.status, 'waiting'));
     const picked = await tx.select({ id: remoteRequests.id }).from(remoteRequests).where(waiting)
       .orderBy(listingsFirst, asc(remoteRequests.createdAt), asc(remoteRequests.id)).limit(REQ_FETCH_MAX).for('update', { skipLocked: true });
@@ -167,6 +276,17 @@ export async function answerPiece(
     // Every piece is a sign of life: a listing's timeout runs from its last one (A500 bench 2026-10-31), a get's too.
     const set: Partial<RemoteRow> = { pieces: r.pieces + 1, activeAt: now };
     let end: 'done' | 'failed' | null = null;
+    if (isWriteKind(r.kind)) {
+      end = writeLines(r, rid, p.lines, set);
+      if (p.last && end === null) { Object.assign(set, BAD); end = 'failed'; }
+      if (end) Object.assign(set, { status: end, answeredAt: now });
+      await tx.update(remoteRequests).set(set).where(eq(remoteRequests.id, rid));
+      if (end === 'done' || (end === 'failed' && (set.answer as { removed?: number } | undefined)?.removed)) {
+        const t = writeTouches(r);
+        await dropMemory(tx, deviceId, t.paths, t.under);
+      }
+      return { ok: true as const };
+    }
     for (const line of p.lines) {
       const a = parseAnswerLine(rid, line);
       if (!a) { Object.assign(set, BAD); end = 'failed'; break; }
@@ -184,6 +304,28 @@ export async function answerPiece(
     await tx.update(remoteRequests).set(set).where(eq(remoteRequests.id, rid));
     return { ok: true as const };
   });
+}
+
+/**
+ * A write's answer lines (spec 2026-10-31 §2.3): DEL counts up (DELETE only), DONE ends it, ERR stops it -- an icon
+ * taken along that is not there is no failure (plan W9). The count removed stays in `answer.removed`. Null: not ended.
+ */
+function writeLines(r: RemoteRow, rid: string, lines: string[], set: Partial<RemoteRow>): 'done' | 'failed' | null {
+  let removed = (r.answer as { removed?: number } | null)?.removed ?? 0;
+  let end: 'done' | 'failed' | null = null;
+  for (const line of lines) {
+    const a = parseAnswerLine(rid, line);
+    if (a?.t === 'del' && r.kind === 'delete') { removed = Math.max(removed, a.count); continue; }
+    if (a?.t === 'done' && !a.cut) { if (r.kind === 'delete') removed = a.count; end = 'done'; break; }
+    if (a?.t === 'err') {
+      const t = r.target as WriteTarget | null;
+      if ((a.code === 'notfound' && t?.icon) || (a.code === 'exists' && t?.ensure)) { end = 'done'; break; }
+      Object.assign(set, { errorCode: a.code, errorText: a.text }); end = 'failed'; break;
+    }
+    Object.assign(set, BAD); end = 'failed'; break;
+  }
+  if (r.kind === 'delete') set.answer = { removed };
+  return end;
 }
 
 export async function getForUpload(db: Db, deviceId: string, rid: string): Promise<RemoteRow | null> {

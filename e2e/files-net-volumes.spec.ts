@@ -80,7 +80,8 @@ test('NET:/<board> lists its Amiga\'s volumes, as folders with their device and 
   await expect(rowAt(page, 'right', 'Work')).toContainText('DH1: ·');
   await expect(rowAt(page, 'right', 'Workbench')).toContainText('DH0: ·');
   await expect(page.getByTestId('pane-pending')).toHaveCount(0);
-  await expect(page.getByTestId('net-browse-reason')).toHaveCount(0);
+  // Browsable; on firmware 1.22 the row says what writing needs (phase 2, spec 2026-10-31 §4.2).
+  await expect(page.getByTestId('net-browse-reason')).toHaveText('Board firmware 1.23.0 or newer writes to the Amiga');
   expect((await board.stop()).map((r) => r.kind)).toEqual(['VOLS']);
 });
 
@@ -216,7 +217,7 @@ test('a board that never answers: after 20 s the pane says so, and stops asking'
   expect(asks).toBe(0);
 });
 
-test('a volume is read-only: Delete, Move, Rename and Makedir say so', async ({ page, request }) => {
+test('a volume on firmware 1.22 is read-only: Delete, Move, Rename and Makedir say why', async ({ page, request }) => {
   const { deviceId, token } = await browsable(page, request);
   await openFiles(page, 'STASH:', `NET:/${deviceId}/Work`, 'right');
   const board = serving(request, token);
@@ -224,7 +225,7 @@ test('a volume is read-only: Delete, Move, Rename and Makedir say so', async ({ 
   await rowAt(page, 'right', 'a.lha').click();
   for (const cmd of ['delete', 'move', 'rename', 'makedir']) {
     await expect(page.getByTestId(`files-${cmd}`)).toHaveAttribute('aria-disabled', 'true');
-    await expect(page.getByTestId(`files-${cmd}`)).toHaveAttribute('title', 'Read-only for now');
+    await expect(page.getByTestId(`files-${cmd}`)).toHaveAttribute('title', 'Board firmware 1.23.0 or newer writes to the Amiga');
   }
   // Copy and Refresh are not.
   await expect(page.getByTestId('files-copy')).not.toHaveAttribute('aria-disabled', 'true');

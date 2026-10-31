@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  asksBeforeCopy, createClosesDialog, dropBlocked, fetchStatus, navTargets, pickGone, fetchDownload, oneAtATime, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems, TOO_BIG_WORDS, BUSY_DROP, DIALOG_DROP,
+  asksBeforeCopy, createClosesDialog, dropBlocked, fetchStatus, jobStatus, navTargets, pickGone, fetchDownload, oneAtATime, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems, TOO_BIG_WORDS, BUSY_DROP, DIALOG_DROP,
 } from './manager-rules';
 import type { OpItem } from './driver';
 import type { Listing } from './types';
@@ -192,5 +192,43 @@ describe('asksBeforeCopy and pickGone (Task 8 fix round 1: the source drawer is 
     expect(pickGone(entries, [`${from}/x.lha`, `${from}/A`])).toBeNull();
     expect(pickGone(entries, [`${from}/X.LHA`])).toBeNull();   // AmigaDOS names ignore case
     expect(pickGone(entries, [`${from}/x.lha`, `${from}/gone.txt`])).toBe('gone.txt: Object not found');
+  });
+});
+
+// NET: volumes phase 2 (spec 2026-10-31 §2.3, §4.1): the status row of a job that changes the Amiga's disks.
+describe('jobStatus', () => {
+  type W = Parameters<typeof jobStatus>[0]['writes'][number];
+  const w = (o: Partial<W>): W => ({ kind: 'delete', label: 'Work:old', to: null, status: 'done', removed: 0, reason: null, entry: null, quiet: false, ...o });
+  const p = (o: Partial<Parameters<typeof jobStatus>[0]> = {}): Parameters<typeof jobStatus>[0] =>
+    ({ total: 0, done: 0, failed: [], waiting: 0, skipped: 0, writes: [], direction: 'to', ...o });
+  it('says what runs, with a delete counting up', () => {
+    expect(jobStatus(p({ writes: [w({ status: 'waiting' })] }), 'A500')).toEqual({ line: 'Deleting Work:old on A500…', finished: false });
+    expect(jobStatus(p({ writes: [w({ status: 'running', removed: 37 })] }), 'A500')).toEqual({ line: 'Deleting Work:old on A500… removed 37 so far', finished: false });
+    expect(jobStatus(p({ writes: [w({ kind: 'mkdir', label: 'Work:New', status: 'running' })] }), 'A500').line).toBe('Making Work:New on A500…');
+    expect(jobStatus(p({ total: 12, done: 2, waiting: 10 }), 'A500')).toEqual({ line: 'Copying 3 of 12 to A500…', finished: false });
+    // A Makedir a copy needs is quiet while it runs: the copy is what is said.
+    expect(jobStatus(p({ total: 2, waiting: 2, writes: [w({ kind: 'mkdir', status: 'running', quiet: true })] }), 'A500').line).toBe('Copying 1 of 2 to A500…');
+  });
+  it('ends with what was done, and why anything was not', () => {
+    expect(jobStatus(p({ writes: [w({ removed: 137 })] }), 'A500')).toEqual({ line: 'Deleted Work:old (137)', finished: true });
+    expect(jobStatus(p({ writes: [w({ removed: 1 }), w({ label: 'Work:old.info', removed: 1, quiet: true })] }), 'A500').line).toBe('Deleted Work:old');
+    expect(jobStatus(p({ writes: [w({ kind: 'mkdir', label: 'Work:New' })] }), 'A500').line).toBe('Made Work:New');
+    expect(jobStatus(p({ writes: [w({ kind: 'rename', label: 'Work:a', to: 'Work:b' })] }), 'A500').line).toBe('Renamed Work:a to Work:b');
+    expect(jobStatus(p({ writes: [w({ kind: 'protect', label: 'Work:x' })] }), 'A500').line).toBe('Protected Work:x');
+    expect(jobStatus(p({ writes: [w({ kind: 'note', label: 'Work:x' })] }), 'A500').line).toBe('Comment on Work:x');
+    expect(jobStatus(p({ writes: [w({ status: 'failed', removed: 37, entry: 'Libs/foo.library', reason: 'In use on the Amiga' })] }), 'A500'))
+      .toEqual({ line: 'Removed 37, then stopped at Libs/foo.library: In use on the Amiga', finished: true });
+    // Transfer 2.5: DEL 0 when a drawer delete stops before removing anything.
+    expect(jobStatus(p({ writes: [w({ status: 'failed', removed: 0, entry: 'Libs/foo.library', reason: 'In use on the Amiga' })] }), 'A500').line)
+      .toBe('Work:old: stopped at Libs/foo.library: In use on the Amiga');
+    expect(jobStatus(p({ writes: [w({ kind: 'mkdir', label: 'Work:New', status: 'failed', reason: 'Already exists' })] }), 'A500').line)
+      .toBe('Work:New: Already exists');
+    expect(jobStatus(p({ total: 3, done: 2, skipped: 1 }), 'A500').line).toBe('Copied 2 to A500, skipped 1 (already there)');
+    expect(jobStatus(p({ total: 2, done: 1, failed: [{ name: 'x.lha', reason: 'The disk is full' }] }), 'A500').line)
+      .toBe('Copied 1 to A500, 1 failed: x.lha: The disk is full');
+    // A copy out of a volume reads as before; a move out of one adds its delete.
+    expect(jobStatus(p({ total: 2, done: 2, direction: 'from' }), 'A500').line).toBe('Copied 2');
+    expect(jobStatus(p({ total: 1, done: 1, direction: 'from', writes: [w({ label: 'Work:x', removed: 1 })] }), 'A500').line).toBe('Copied 1 · Deleted Work:x');
+    expect(jobStatus(p({ writes: [w({ label: 'Work:a' }), w({ label: 'Work:b' }), w({ label: 'Work:c' })] }), 'A500').line).toBe('Deleted 3 items');
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { browseBlock, browseMark, errorWords } from './remote-browse';
+import { browseBlock, browseMark, errorWords, writeBlock, writeErrorWords } from './remote-browse';
 
 const ok = { online: true, firmware: '1.22.0+gabc', rx: 'c', rxProto: 3, browseOn: true, name: 'A500', offlineWords: 'offline 3 h' };
 describe('browseBlock', () => {
@@ -32,5 +32,34 @@ describe('errorWords', () => {
     expect(errorWords('timeout', '', 'A500')).toBe("A500 didn't answer — Refresh to try again");
     expect(errorWords('busy', 'object in use', 'A500')).toBe('object in use');
     expect(errorWords('io', '', 'A500')).toBe('Failed');
+  });
+});
+
+// NET: volumes phase 2 (spec 2026-10-31 §4.1, §4.2).
+describe('writing', () => {
+  const w = { ...ok, firmware: '1.23.0+gabc', rxProto: 4, writeOn: true };
+  it('a protocol 4 board still browses', () => {
+    expect(browseBlock({ ...ok, rxProto: 4 })).toBeNull();
+    expect(browseMark({ online: true, firmware: '1.23.0+gabc', running: true, rxProto: 4, browseOn: true })).toBe('browsable');
+  });
+  it('writeBlock is null when the board can write, else the missing thing', () => {
+    expect(writeBlock(w)).toBeNull();
+    expect(writeBlock({ ...w, browseOn: false })).toBe('Switch on browsing in Transfer on A500');
+    expect(writeBlock({ ...w, online: false })).toBe('offline 3 h');
+    expect(writeBlock({ ...w, firmware: '1.22.0+gabc' })).toBe('Board firmware 1.23.0 or newer writes to the Amiga');
+    expect(writeBlock({ ...w, rxProto: 3 })).toBe('Transfer 2.5 or newer writes to the Amiga');
+    expect(writeBlock({ ...w, writeOn: false })).toBe('Writing is off in Transfer');
+  });
+  it('writeErrorWords has words for each refusal code', () => {
+    expect(writeErrorWords('wprot', 'Disk is write-protected', 'A500')).toBe('The disk is write-protected');
+    expect(writeErrorWords('full', '', 'A500')).toBe('The disk is full');
+    expect(writeErrorWords('denied', 'x', 'A500')).toBe('Protected against deletion');
+    expect(writeErrorWords('busy', 'object in use', 'A500')).toBe('In use on the Amiga');
+    expect(writeErrorWords('readonly', '', 'A500')).toBe('Writing is off in Transfer');
+    expect(writeErrorWords('exists', '', 'A500')).toBe('Already exists');
+    expect(writeErrorWords('xvol', '', 'A500')).toBe('Rename works within one volume');
+    expect(writeErrorWords('notfound', '', 'A500')).toBe('Object not found');
+    expect(writeErrorWords('timeout', '', 'A500')).toBe("A500 didn't answer — Refresh to try again");
+    expect(writeErrorWords('io', 'Disk error', 'A500')).toBe('Disk error');
   });
 });
