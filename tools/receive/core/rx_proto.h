@@ -48,6 +48,7 @@ typedef struct rx_vol {          /* a mounted volume */
 } rx_vol;
 typedef struct rx_dent {         /* one entry of a drawer */
     int is_dir; unsigned long size, prot, days, mins, ticks;
+    int is_link;   /* a soft or hard link (protocol 4): a drawer delete removes the link, never what it points to */
     char name[RX_NAME_RAW]; char comment[RX_COMMENT_MAX + 1];
 } rx_dent;
 typedef void (*rx_list_fn)(void *u, const char *name, int is_dir);

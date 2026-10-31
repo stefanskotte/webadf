@@ -268,6 +268,7 @@ static long p_dir_next(void *x, rx_dent *e) {
         memset(e, 0, sizeof *e);
         to_latin1(d->d_name, e->name, sizeof e->name);
         e->is_dir = S_ISDIR(st.st_mode); e->size = e->is_dir ? 0 : (unsigned long)st.st_size;
+        { struct stat ls; e->is_link = lstat(p, &ls) == 0 && S_ISLNK(ls.st_mode); }
         amiga_date(st.st_mtime, &e->days, &e->mins, &e->ticks);
         { pmeta *m = meta_at(p, 0); if (m) { e->prot = m->prot; snprintf(e->comment, sizeof e->comment, "%s", m->comment); } }
         return 1;

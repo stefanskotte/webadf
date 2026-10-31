@@ -242,6 +242,8 @@ static int a_vols(void *x, rx_vol *out, int max) {
 }
 static void fill_dent(const struct FileInfoBlock *f, rx_dent *e) {
     e->is_dir = f->fib_DirEntryType > 0;
+    /* ST_SOFTLINK 3, ST_LINKDIR 4, ST_LINKFILE -4: a drawer delete removes the link, never its target (final review C1) */
+    e->is_link = f->fib_DirEntryType == 3 || f->fib_DirEntryType == 4 || f->fib_DirEntryType == -4;
     e->size = e->is_dir ? 0 : (unsigned long)f->fib_Size;
     e->prot = (unsigned long)f->fib_Protection;
     e->days = (unsigned long)f->fib_Date.ds_Days; e->mins = (unsigned long)f->fib_Date.ds_Minute;

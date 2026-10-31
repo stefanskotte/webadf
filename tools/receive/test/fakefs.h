@@ -13,7 +13,8 @@
 #define FF_DISK_FULL 221
 #define FF_DELETE_PROTECTED 222
 typedef struct { char name[RX_PATH_MAX + sizeof RX_TMP_NAME]; int is_dir; unsigned char data[65536]; unsigned long len;
-                 unsigned long prot; char comment[RX_COMMENT_MAX + 1]; int busy; } ff_entry;
+                 unsigned long prot; char comment[RX_COMMENT_MAX + 1]; int busy;
+                 char link_to[64]; /* a soft or hard link: paths through it resolve there, as AmigaDOS does */ } ff_entry;
 typedef struct {
     int n;
     int folder_present; unsigned long free; int fail_write_after; /* -1 never */ long written;
@@ -31,6 +32,7 @@ typedef struct {
        the error a failing write gives; dir_open fails with dir_err from the dir_err_at-th open on (0 never); a count of
        the write hooks called */
     long last_err; char wprot[32]; unsigned long vol_free; long write_err; long dir_err; int dir_err_at; int writes;
+    char fail_rename_to[64]; int fail_renames;   /* a rename onto that name (or, fail_renames, every rename) fails 203 */
     ff_entry e[FF_MAX];   /* last: ff_init clears only what is above it */
 } fakefs;
 static int ff_wprot(fakefs *f, const char *p) { return f->wprot[0] && strncmp(p, f->wprot, strlen(f->wprot)) == 0; }
@@ -38,6 +40,14 @@ static int ff_fail(fakefs *f, long err) { f->last_err = err; return -1; }
 
 static int ff_find(fakefs *f, const char *rel) {
     for (int i = 0; i < f->n; i++) if (strcmp(f->e[i].name, rel) == 0) return i;
+    for (int i = 0; i < f->n; i++) {   /* a path through a link reaches its target */
+        size_t k = strlen(f->e[i].name);
+        if (f->e[i].link_to[0] && strncmp(rel, f->e[i].name, k) == 0 && rel[k] == '/') {
+            char t[RX_PATH_MAX + 80];
+            snprintf(t, sizeof t, "%s%s", f->e[i].link_to, rel + k);
+            return ff_find(f, t);
+        }
+    }
     return -1;
 }
 static int ff_add(fakefs *f, const char *rel, int is_dir) {
@@ -75,7 +85,7 @@ static int ff_rename(void *c, const char *from, const char *to) {
     f->writes++;
     if (ff_wprot(f, from)) return ff_fail(f, FF_WRITE_PROTECTED_DISK);
     if (i < 0) return ff_fail(f, RX_DOS_NOT_FOUND);
-    if (ff_find(f, to) >= 0) return ff_fail(f, FF_EXISTS);
+    if (ff_find(f, to) >= 0 || f->fail_renames || (f->fail_rename_to[0] && strcmp(to, f->fail_rename_to) == 0)) return ff_fail(f, FF_EXISTS);
     strcpy(f->e[i].name, to); return 0;
 }
 static int ff_has_children(fakefs *f, const char *dir) {
@@ -156,6 +166,7 @@ static long ff_dir_open(void *c, const char *path) {
     if (!(f->synth_n && strcmp(path, f->synth) == 0)) {
         int i = ff_find(f, path);
         if (i < 0) return RX_DOS_NOT_FOUND;
+        if (f->e[i].link_to[0]) { path = f->e[i].link_to; i = ff_find(f, path); if (i < 0) return RX_DOS_NOT_FOUND; }   /* Lock follows */
         if (!f->e[i].is_dir) return RX_DOS_WRONG_TYPE;
     }
     snprintf(f->dir_path, sizeof f->dir_path, "%s", path);
@@ -177,7 +188,7 @@ static long ff_dir_next(void *c, rx_dent *e) {
         const char *rest = ff_child_of(x->name, f->dir_path);
         if (!rest) continue;
         snprintf(e->name, sizeof e->name, "%s", rest);
-        e->is_dir = x->is_dir; e->size = x->is_dir ? 0 : x->len; e->prot = x->prot;
+        e->is_dir = x->is_dir; e->is_link = x->link_to[0] != 0; e->size = x->is_dir ? 0 : x->len; e->prot = x->prot;
         snprintf(e->comment, sizeof e->comment, "%s", x->comment);
         e->days = f->days; e->mins = f->mins; e->ticks = f->ticks;
         f->dir_given++;

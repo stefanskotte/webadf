@@ -413,13 +413,40 @@ static void del_step(rx_session *s) {
         if (!k || strchr(e.name, '/') || strchr(e.name, ':')) { del_stop_text(s, "io", "bad name"); return; }
         if (n + 1 + k > RX_LOCAL_MAX) { del_stop_text(s, "io", "path too long"); return; }
         p[n] = '/'; memcpy(p + n + 1, e.name, k + 1);
-        if (e.is_dir) continue;   /* down a level */
+        if (e.is_dir && !e.is_link) continue;   /* down a level; a link is removed, never entered (final review C1) */
         if ((r = s->fs->w_delete(s->fs->ctx, p)) != 0) { del_stop(s, r); return; }
         p[n] = 0;
         s->req_count++;
         break;
     }
     if (s->req_count % RX_DEL_EVERY == 0) put_del(s);
+}
+/* AmigaDOS's case rule for names: ASCII, and Latin-1's letters (the international file systems; a superset of OFS/FFS). */
+static unsigned char fold(unsigned char c) {
+    return (unsigned char)(((c >= 'a' && c <= 'z') || (c >= 0xe0 && c <= 0xfe && c != 0xf7)) ? c - 32 : c);
+}
+static int name_eq(const char *a, const char *b) {
+    while (*a && *b && fold((unsigned char)*a) == fold((unsigned char)*b)) { a++; b++; }
+    return !*a && !*b;
+}
+/* What path names, without following it (final review C1): a Lock or Examine of a link reaches its target, so the entry
+   is looked up in its drawer's listing. 0, or a DOS error (RX_DOS_NOT_FOUND when the drawer has no such name). */
+static long entry_kind(rx_session *s, const char *path, int *is_dir, int *is_link) {
+    static char parent[RX_LOCAL_MAX + 1]; static rx_dent e;   /* static: the Amiga's stack is small */
+    const char *slash = strrchr(path, '/'), *name;
+    long r;
+    size_t n = slash ? (size_t)(slash - path) : (size_t)(strchr(path, ':') - path + 1);
+    name = path + n + (slash ? 1 : 0);
+    memcpy(parent, path, n); parent[n] = 0;
+    if ((r = s->fs->dir_open(s->fs->ctx, parent)) != 0) return r == RX_DOS_WRONG_TYPE ? RX_DOS_NOT_FOUND : r;
+    for (;;) {
+        memset(&e, 0, sizeof e);
+        r = s->fs->dir_next(s->fs->ctx, &e);
+        if (r <= 0) break;
+        if (name_eq(e.name, name)) { *is_dir = e.is_dir; *is_link = e.is_link; break; }
+    }
+    s->fs->dir_close(s->fs->ctx);
+    return r < 0 ? -r : r == 0 ? RX_DOS_NOT_FOUND : 0;
 }
 /* A write request starts (checked once more: switched off, or a volume gone since it arrived). */
 static void write_start(rx_session *s) {
@@ -440,10 +467,9 @@ static void write_start(rx_session *s) {
         e = s->fs->w_rename(s->fs->ctx, s->req_path, s->req_arg); break;
     case RX_REQ_PROTECT: e = s->fs->w_protect(s->fs->ctx, s->req_path, s->req_num); break;
     case RX_REQ_NOTE: e = s->fs->w_note(s->fs->ctx, s->req_path, s->req_arg); break;
-    default: {   /* DELETE: a file at once; a drawer step by step in req_pump */
-        rx_finfo info; int is_dir = 0;
-        memset(&info, 0, sizeof info);
-        if ((e = s->fs->stat(s->fs->ctx, s->req_path, &info, &is_dir)) == 0 && !is_dir) e = s->fs->w_delete(s->fs->ctx, s->req_path);
+    default: {   /* DELETE: a file (or a link) at once; a drawer step by step in req_pump */
+        int is_dir = 0, is_link = 0;
+        if ((e = entry_kind(s, s->req_path, &is_dir, &is_link)) == 0 && (!is_dir || is_link)) e = s->fs->w_delete(s->fs->ctx, s->req_path);
         else if (e == 0) { s->req_count = 0; s->del_top = (unsigned)strlen(s->req_path); s->del_drawer = 1; return; }
         break;
     }
@@ -868,7 +894,24 @@ static void finish_file(rx_session *s) {
     if (s->cur_mode == RX_MODE_REPLACE) {   /* spec §2.2: the old file goes only now, after the CRC matched */
         strcpy(saved, s->cur_path);
         if (s->fs->exists(s->fs->ctx, saved) && s->fs->remove(s->fs->ctx, saved) != 0) { fail_file_err(s, rx_ferr(s), "cannot delete"); return; }
-        if (s->fs->rename(s->fs->ctx, s->cur_tmp, saved) != 0) { fail_file_err(s, rx_ferr(s), "cannot write"); return; }
+        if (s->fs->rename(s->fs->ctx, s->cur_tmp, saved) != 0) {
+            /* The old file is gone: the new one must not go too (final review I1). A free name, as keep does; failing
+               that, the temporary file stays and the answer says where. */
+            long e = rx_ferr(s);
+            for (n = 2; n <= 99; n++) {
+                if (rx_candidate(s->cur_path, n, saved) != 0) { n = 100; break; }
+                if (!s->fs->exists(s->fs->ctx, saved) && s->fs->rename(s->fs->ctx, s->cur_tmp, saved) == 0) break;
+            }
+            if (n > 99) {
+                static char t[80 + sizeof s->cur_tmp + 20];
+                fault_text(s, e, "cannot write", t, 80);
+                strcat(t, "; the new copy is "); strcat(t, s->cur_tmp);
+                reply_err(s, s->cur_id, rx_file_code(e), t);
+                s->in_data = 0;
+                emit(s, RX_EV_FAILED, s->cur_id, s->cur_path, s->cur_size, 0, t);
+                return;
+            }
+        }
         n = 1;
     } else for (n = 1; n <= 99; n++) {
         if (rx_candidate(s->cur_path, n, saved) != 0) { n = 100; break; }

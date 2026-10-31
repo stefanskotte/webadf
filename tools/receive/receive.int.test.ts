@@ -90,7 +90,7 @@ describe('Receive (POSIX build) against the fake board', () => {
     try {
       const res = await runWriteScenarios(port, { work: path.join(root, 'Work'), write: (on) => proc.stdin!.write(`WRITE ${on ? 1 : 0}\n`) });
       expect(res.filter((r) => !r.ok)).toEqual([]);
-      expect(res).toHaveLength(18);
+      expect(res).toHaveLength(19);
       expect(lines).toContain('REQ delete Work:Old 301 ok');
       expect(lines).toContain(`REQ rename Work:a.txt Work:Tools/a.txt 1 ok`);
       expect(lines.some((l) => l.startsWith('SKIP s1 Work:Keep.txt'))).toBe(true);

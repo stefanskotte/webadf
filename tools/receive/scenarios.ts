@@ -343,6 +343,9 @@ export function makeWriteFixture(root: string): string {
   fs.mkdirSync(path.join(w, 'Tools'), { recursive: true }); fs.mkdirSync(path.join(w, 'Old'));
   fs.writeFileSync(path.join(w, 'a.txt'), 'a\n'); fs.writeFileSync(path.join(w, 'Keep.txt'), 'old\n');
   for (let i = 0; i < 300; i++) fs.writeFileSync(path.join(w, 'Old', `f${String(i).padStart(3, '0')}`), '');
+  // Linked/ holds a file and Libs, a link to Tools (the POSIX build only: w-delete-link)
+  fs.mkdirSync(path.join(w, 'Linked')); fs.writeFileSync(path.join(w, 'Linked', 'f'), 'f');
+  fs.symlinkSync(path.join(w, 'Tools'), path.join(w, 'Linked', 'Libs'));
   fs.mkdirSync(path.join(root, 'Prot')); fs.mkdirSync(path.join(root, 'Full'));
   return `Work|DH0:|${w};Prot|DF0:|${path.join(root, 'Prot')};Full|DF2:|${path.join(root, 'Full')}`;
 }
@@ -433,6 +436,12 @@ export const WRITE_SCENARIOS: WriteScenario[] = [
       const a = await b.request(`DELETE d2 ${lenp('Work:Old')}`, 300000);
       const want = [50, 100, 150, 200, 250, 300].map((n) => `DEL d2 ${n}`).concat('DONE d2 301');
       return JSON.stringify(a) === JSON.stringify(want) && !fs.existsSync(onWork(ctl, 'Old')) ? null : `got ${JSON.stringify(a)}`;
+    } finally { await b.close(); } } },
+  // Final review C1: a link inside a drawer is removed as a link; its target is never entered.
+  { name: 'w-delete-link', posixOnly: true, run: async (p, h, ctl) => { const b = await b4(p, h); try {
+      const a = await b.request(`DELETE d5 ${lenp('Work:Linked')}`);
+      return a.join('|') === 'DONE d5 3' && !fs.existsSync(onWork(ctl, 'Linked')) && hostHolds(ctl, 'Tools/a.txt', 'a\n')
+        ? null : `got ${JSON.stringify(a)}; Tools holds ${fs.readdirSync(onWork(ctl, 'Tools')).join(',')}`;
     } finally { await b.close(); } } },
   { name: 'w-delete-denied', uaeOnly: true, run: async (p, h) => { const b = await b4(p, h); try {
       return oneLine(await b.request(`DELETE d3 ${lenp('Full:Locked')}`), /^ERR d3 denied \d+:.+$/);

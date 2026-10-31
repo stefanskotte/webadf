@@ -151,6 +151,18 @@ static void replace_keeps_the_old_file_when_it_cannot_be_deleted(void) {
     CHECK(holds("Work:Open", "old") && !has("Work:" RX_TMP_NAME), "old kept, temp removed");
     { int k = last_ev(RX_EV_FAILED); CHECK(k >= 0 && strcmp(ev_text[k], "dos error 202") == 0, "the owner sees why"); }
 }
+/* Final review I1: the old file is gone and the new one cannot take its name -- the new copy must survive. */
+static void replace_never_loses_both_copies(void) {
+    char l[400];
+    setup(1, 1); ff_put(&F, "Work:Keep.txt", "old", 3, 0, ""); strcpy(F.fail_rename_to, "Work:Keep.txt"); hello4();
+    file4(l, "r", "new", 3, "Work:Keep.txt", "replace"); feed(l); feed("new"); drain();
+    CHECK(strcmp(ob, "GO r\nOK r 15:Work:Keep_2.txt\n") == 0, ob);
+    CHECK(holds("Work:Keep_2.txt", "new"), "the new copy under a free name");
+    setup(1, 1); ff_put(&F, "Work:Keep.txt", "old", 3, 0, ""); F.fail_renames = 1; hello4();
+    file4(l, "s", "new", 3, "Work:Keep.txt", "replace"); feed(l); feed("new"); drain();
+    CHECK(strcmp(ob, "GO s\nERR s write dos error 203; the new copy is Work:.webadf-rx\n") == 0, ob);
+    CHECK(holds("Work:" RX_TMP_NAME, "new"), "the temporary file is kept");
+}
 static void skip_answers_skip_and_takes_no_bytes(void) {
     char l[400];
     setup(1, 1); ff_put(&F, "Work:Keep.txt", "old", 3, 0, ""); hello4();
@@ -354,11 +366,27 @@ static void a_delete_that_stops_at_once_sends_del_0(void) {
     setup(1, 1); i = ff_add(&F, "Work:E", 1); F.e[i].prot = 1; hello4();
     CHECK(strcmp(req("DELETE s 6:Work:E\n"), "DEL s 0\nERR s denied 13:dos error 222\n") == 0, "the drawer itself: Fault's words only");
 }
+/* Final review C1: a link inside a drawer, or the named path itself being a link, is removed as a link; what it points
+   to is never entered (AmigaDOS resolves a path through a link to its target). */
+static void a_delete_never_follows_a_link(void) {
+    int i;
+    setup(1, 1);
+    ff_add(&F, "Work:Sys", 1); ff_put(&F, "Work:Sys/x.library", "x", 1, 0, ""); ff_put(&F, "Work:Sys/y", "y", 1, 0, "");
+    ff_add(&F, "Work:Old", 1); ff_put(&F, "Work:Old/f", "f", 1, 0, "");
+    i = ff_add(&F, "Work:Old/Libs", 1); strcpy(F.e[i].link_to, "Work:Sys");
+    i = ff_add(&F, "Work:Alias", 1); strcpy(F.e[i].link_to, "Work:Sys");
+    hello4();
+    CHECK(strcmp(req("DELETE d 8:Work:Old\n"), "DONE d 3\n") == 0, ob);
+    CHECK(holds("Work:Sys/x.library", "x") && holds("Work:Sys/y", "y"), "the link's target untouched");
+    CHECK(!has("Work:Old") && !has("Work:Old/Libs"), "the drawer and the link gone");
+    CHECK(strcmp(req("DELETE a 10:Work:Alias\n"), "DONE a 1\n") == 0, ob);
+    CHECK(!has("Work:Alias") && holds("Work:Sys/x.library", "x"), "a named link: only the link");
+}
 static void out_of_memory_mid_delete_is_io(void) {
     char nm[40]; int i;
     setup(1, 1); ff_add(&F, "Work:D", 1);
     for (i = 0; i < 10; i++) { sprintf(nm, "Work:D/f%d", i); ff_put(&F, nm, "", 0, 0, ""); }
-    F.dir_err_at = 5; F.dir_err = 103; hello4();
+    F.dir_err_at = 6; F.dir_err = 103; hello4();   /* the first open looks the named drawer up in Work: */
     CHECK(strcmp(req("DELETE m 6:Work:D\n"), "DEL m 4\nERR m io 13:dos error 103\n") == 0, ob);
 }
 static void write_paths_are_checked_before_any_hook(void) {
@@ -454,13 +482,14 @@ int main(void) {
     RUN(an_absolute_file_lands_on_its_volume); RUN(missing_drawers_are_made); RUN(keep_picks_a_free_name);
     RUN(replace_swaps_only_after_the_crc_matched); RUN(replace_keeps_the_old_file_when_it_cannot_be_deleted);
     RUN(skip_answers_skip_and_takes_no_bytes); RUN(skip_on_a_new_name_writes_it); RUN(a_drawer_of_that_name);
-    RUN(a_file_in_use_still_exists);
+    RUN(a_file_in_use_still_exists); RUN(replace_never_loses_both_copies);
     RUN(writing_off_is_readonly); RUN(bad_absolute_files); RUN(a_write_protected_disk_is_wprot);
     RUN(a_full_volume_is_full); RUN(a_disk_full_mid_write_is_full); RUN(the_relative_file_is_unchanged);
     RUN(mkdir_makes_one_level); RUN(rename_within_a_volume_and_across_drawers); RUN(rename_across_volumes_is_xvol);
     RUN(rename_onto_an_existing_name_is_exists); RUN(protect_sets_the_bits); RUN(note_sets_the_comment);
     RUN(delete_a_file_is_done_1); RUN(delete_a_drawer_of_300_paces_del_every_50); RUN(delete_a_nested_tree);
     RUN(a_protected_entry_stops_the_delete); RUN(a_delete_that_stops_at_once_sends_del_0); RUN(out_of_memory_mid_delete_is_io);
+    RUN(a_delete_never_follows_a_link);
     RUN(write_paths_are_checked_before_any_hook); RUN(write_requests_while_writing_is_off_are_readonly);
     RUN(switching_writing_off_stops_a_delete_between_steps); RUN(a_lost_connection_ends_a_delete);
     RUN(a_write_request_waits_behind_a_file); RUN(malformed_write_requests_are_bad); RUN(the_owners_words_for_writes);
