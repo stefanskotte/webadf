@@ -199,6 +199,44 @@ test('Copy from STASH: onto a volume: each clash answer, and the queue line the 
   await board.stop();
 });
 
+// A500 bench 2026-10-31: a STASH: drawer of 7 files copied onto Workbench:WebTest said only "Copying 3 of 7…" while the
+// destination pane said "Nothing here." until a Refresh. The drawer arrives as a row with the copy's progress, without a
+// Refresh, and once the copy is through the pane reads the drawer from the Amiga.
+test('a STASH: drawer copied onto a drawer arrives there as a row with its progress, then as the Amiga lists it', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const { deviceId, token } = await writable(page, request);
+  const fs = amiga();
+  const board = serving(request, token, fs);
+  try {
+    await openFiles(page, 'STASH:', `NET:/${deviceId}/Work/Tools`, 'left');
+    await expect(rowAt(page, 'right', 'x.lha')).toBeVisible({ timeout: LIVE });
+    // A STASH: drawer of two files (the zone drops into STASH: itself; the ops route moves them into the drawer).
+    await page.getByTestId('files-stash-input').setInputFiles([
+      { name: 'one.txt', mimeType: 'text/plain', buffer: Buffer.from('one') },
+      { name: 'two.txt', mimeType: 'text/plain', buffer: Buffer.from('two') },
+    ]);
+    await expect(rowAt(page, 'left', 'two.txt')).toBeVisible({ timeout: LIVE });
+    expect((await page.request.post('/api/files/ops', { data: { op: 'makedir', dest: 'STASH:', name: 'Pack' } })).ok()).toBe(true);
+    expect((await page.request.post('/api/files/ops', { data: { op: 'move', sources: ['STASH:/one.txt', 'STASH:/two.txt'], dest: 'STASH:/Pack', onClash: 'ask' } })).ok()).toBe(true);
+    await page.getByTestId('files-refresh').click();
+    await expect(rowAt(page, 'right', 'x.lha')).toBeVisible({ timeout: LIVE });
+    await rowAt(page, 'left', 'Pack').click();
+    await expect(rowAt(page, 'left', 'two.txt')).toHaveCount(0);
+    fakeBoardTiming.queueHeld = true;
+    await rowAt(page, 'left', 'Pack').click();
+    await page.getByTestId('files-copy').click();
+    await expect(busy(page)).toContainText('Copying 1 of 2 to A500', { timeout: LIVE });
+    // No Refresh: the destination shows the drawer on its way.
+    await expect(rowAt(page, 'right', 'Pack')).toContainText('Waiting', { timeout: LIVE });
+    fakeBoardTiming.queueHeld = false;
+    await expect(busy(page)).toContainText('Copied 2 to A500', { timeout: 30_000 });
+    await expect.poll(() => (fs['Work:Tools/Pack'] ?? []).map((e) => e.name).sort(), { timeout: LIVE }).toEqual(['one.txt', 'two.txt']);
+    // Through: the Amiga's own row (no progress mark) replaces it.
+    await expect(rowAt(page, 'right', 'Pack')).toBeVisible({ timeout: LIVE });
+    await expect(rowAt(page, 'right', 'Pack')).not.toContainText(/Waiting|Sending/, { timeout: LIVE });
+  } finally { fakeBoardTiming.queueHeld = false; await board.stop(); }
+});
+
 test('Move a volume\'s file into STASH: (deleted on the Amiga once stored), and one from STASH: onto a volume', async ({ page, request }) => {
   test.setTimeout(150_000);
   const { deviceId, token } = await writable(page, request);

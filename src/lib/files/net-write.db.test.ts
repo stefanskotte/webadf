@@ -243,6 +243,30 @@ describe('copy onto a volume', () => {
     expect((await writes())[0].status).toBe('done');
   });
 
+  // A500 bench 2026-10-31: a STASH: drawer of 7 files copied onto a drawer showed "Nothing here." until a Refresh. The
+  // drawer arriving is a row with the copy's progress, as its files are (spec §4.1, "as STASH: shows uploads").
+  it('a drawer on its way is a row with its progress, in the drawer and in the one above', async () => {
+    const { recordChunk } = await import('@/lib/transfers');
+    await stash('Pack/one.txt', '1');
+    await stash('Pack/Deep/two.txt', '22');
+    await op({ op: 'copy', sources: ['STASH:/Pack'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
+    const pack = async (at = 'NET:/w1/Work/Tools') => (await netDriver.list(ctx, parsePath(at)!))!.entries.find((e) => e.name === 'Pack');
+    expect(await pack()).toMatchObject({ kind: 'dir', path: 'NET:/w1/Work/Tools/Pack', marks: ['Waiting'] });
+    const above = (await netDriver.list(ctx, parsePath('NET:/w1/Work')!))!.entries.find((e) => e.name === 'Tools');
+    expect(above).toMatchObject({ kind: 'dir', path: 'NET:/w1/Work/Tools', marks: ['Waiting'] });
+    const [one, two] = (await rows()).sort((a, b) => a.amigaDest!.localeCompare(b.amigaDest!));
+    expect((await recordChunk(getDb(), 'w1', two.id, 0)).ok).toBe(true);
+    expect(await pack()).toMatchObject({ marks: ['Sending 1 of 2'] });
+    await deliver(two.id, { ok: true, savedAs: 'Work:Tools/Pack/Deep/two.txt' });
+    expect(await pack()).toMatchObject({ marks: ['Sending 2 of 2'] });
+    // A drawer of the same name already listed (a copy with Replace) carries the progress too.
+    await remember('Work:Tools', [ent('a.lha', 3), ent('Pack', 0, true)]);
+    expect(await pack()).toMatchObject({ kind: 'dir', marks: ['Sending 2 of 2'] });
+    await deliver(one.id, { ok: true, savedAs: 'Work:Tools/Pack/one.txt' });
+    await remember('Work:Tools', [ent('a.lha', 3), ent('Pack', 0, true)]);
+    expect(await pack()).toMatchObject({ marks: [] });
+  });
+
   it('the limits: a file over 4 MB, and more than the board\'s queue holds', async () => {
     await stash('Big.bin', new Uint8Array(4 * 1024 * 1024 + 1));
     expect(await op({ op: 'copy', sources: ['STASH:/Big.bin'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' }))
