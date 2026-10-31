@@ -188,9 +188,12 @@ case "$mode" in
   send) pnpm exec tsx "$repo/tools/receive/uae/send-scenarios.ts" --hd "$work/hd" || rc=1;;
   write) echo "--- Delete Full:Hold.txt (held by Wait's own redirection): $(tr -d '\r' < "$work/hd/holddel.log" 2>/dev/null)"
          echo "--- Delete Full:Hold2.txt (Run's redirection): $(tr -d '\r' < "$work/hd/hold2del.log" 2>/dev/null)"
-         grep -qi 'in use' "$work/hd/holddel.log" 2>/dev/null && echo "PASS Hold.txt is held open: AmigaDOS's Delete refused it" \
+         # 3.2's Delete says "No file to delete" (its pattern match cannot Lock a file open for writing); older ones may
+         # say "in use". Either way it must not say Deleted, and w-replace-busy then lists Hold.txt still there.
+         [ -s "$work/hd/holddel.log" ] && ! grep -q 'Deleted' "$work/hd/holddel.log" \
+           && echo "PASS Hold.txt is held open: AmigaDOS's Delete could not remove it" \
            || { echo "FAIL Hold.txt is not held open: w-replace-busy would prove nothing"; rc=1; }
-         pnpm exec tsx "$repo/tools/receive/run-scenarios.ts" --port 6800 --write "$work/hd" --uae || rc=1
+         pnpm exec tsx "$repo/tools/receive/run-scenarios.ts" --port 6800 --write "$work/hd" --uae ${WEBADF_ONLY:+--only "$WEBADF_ONLY"} || rc=1
          [ -e "$work/hd/EnvArc/webadf/Write" ] && { echo "FAIL WRITE without SAVE stored the switch"; rc=1; } \
            || echo "PASS WRITE without SAVE stored nothing"
          sleep 2; echo "--- receive.log"; cat "$work/hd/receive.log" 2>/dev/null || true;;

@@ -132,7 +132,10 @@ export async function connect(port: number, host = '127.0.0.1', opts: { v?: 1 | 
   const hello = await rd.line();
   const m3 = v === 3 ? /^READY 3 ([01])$/.exec(hello ?? '') : null;
   const m4 = v >= 4 ? new RegExp(`^READY ${v} ([01]) ([01])$`).exec(hello ?? '') : null;   // READY 5 as READY 4 (spec §9)
-  if (v >= 4 ? !m4 : v === 3 ? !m3 : hello !== `READY ${v}`) throw new Error(`expected READY ${v}, got ${JSON.stringify(hello)}`);
+  if (v >= 4 ? !m4 : v === 3 ? !m3 : hello !== `READY ${v}`) {
+    sock.destroy();   // else the receiver, which serves one board at a time, answers the next connect busy
+    throw new Error(`expected READY ${v}, got ${JSON.stringify(hello)}`);
+  }
   const answer = async (id: string, ms = 60000) => {
     const out: string[] = [];
     for (;;) {
