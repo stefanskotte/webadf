@@ -13,8 +13,8 @@ buffers, the 13 KB session and an 8 KB stack (the deepest Shell path measured 3,
 requester); the window adds its 68 KB list and a 32 KB stack. A 512 KB Amiga is not enough, and not because of Transfer:
 with fast memory hidden (`NoFastMem`), `AddNetInterface` alone left 110 KB of chip memory, and once Transfer started the
 TCP/IP stack had too little left to send a 1000-entry listing. Transfer waits out ENOBUFS (out of network buffers)
-instead of dropping the connection. Transfer 2.5 adds 6.7 KB of code (49,396 B) and 548 B of fixed buffers (BSS
-24,340 B) to 2.4's, measured from the hunks; the Shell stack stays 8 KB (a drawer delete keeps its place in one path,
+instead of dropping the connection. Transfer 2.5 adds 7.4 KB of code (50,016 B) and 1,396 B of fixed buffers (BSS
+25,188 B) to 2.4's, measured from the hunks; the Shell stack stays 8 KB (a drawer delete keeps its place in one path,
 with no recursion).
 
 ## Using it
