@@ -1,6 +1,6 @@
 // NET: volumes (spec 2026-10-30 §4): the queue of requests from Files to a board's Amiga (list volumes, list a drawer,
 // fetch a file). Answers are remembered REMEMBER_MS, arrive in pieces, and a request nobody answers times out.
-import { and, asc, eq, inArray, lt, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, lt, or, sql } from 'drizzle-orm';
 import type { Db } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { remoteRequests } from '@/db/schema/remote-requests';
@@ -22,9 +22,13 @@ const ms = (now: Date, back: number) => new Date(now.getTime() - back);
 export async function expireStale(db: Db, now = new Date()): Promise<void> {
   const list = inArray(remoteRequests.kind, ['vols', 'dir']);
   const cutList = ms(now, LIST_TIMEOUT_MS);
+  // A waiting one behind a copy (A500 bench 2026-10-31): Transfer answers nothing while a get's file moves and the board
+  // fetches nothing meanwhile, so its 60 s run from when the board's copy last moved, not from the ask.
   await db.update(remoteRequests).set({ status: 'failed', errorCode: 'timeout', errorText: '', answeredAt: now }).where(or(
     and(list, eq(remoteRequests.status, 'sent'), lt(remoteRequests.sentAt, cutList)),
-    and(list, eq(remoteRequests.status, 'waiting'), lt(remoteRequests.createdAt, cutList)),
+    and(list, eq(remoteRequests.status, 'waiting'), lt(remoteRequests.createdAt, cutList), sql`not exists (select 1 from remote_requests g
+      where g.device_id = remote_requests.device_id and g.kind = 'get' and (
+        (g.status = 'fetching' and g.active_at >= ${cutList}) or (g.status = 'done' and g.answered_at >= ${cutList})))`),
   ));
   // A get times out after 10 minutes with no get activity (fix round 1 ruling): its own once fetching; while only sent,
   // the board's -- Transfer works through the batch one file at a time, so one queued behind busy siblings is not lost.
@@ -38,6 +42,18 @@ export async function expireStale(db: Db, now = new Date()): Promise<void> {
         where b.device_id = remote_requests.device_id and b.kind = 'get' and coalesce(b.active_at, b.sent_at) >= ${cutGet})`),
     ),
   ));
+}
+
+/**
+ * The Amiga path of the board's get whose file is moving now (it moved within the last LIST_TIMEOUT_MS), else null: a
+ * listing asked for meanwhile waits for it (A500 bench 2026-10-31), and the pane says so.
+ */
+export async function copyMoving(db: Db, deviceId: string, now = new Date()): Promise<string | null> {
+  const [g] = await db.select({ path: remoteRequests.amigaPath }).from(remoteRequests).where(and(
+    eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.kind, 'get'), eq(remoteRequests.status, 'fetching'),
+    gte(remoteRequests.activeAt, ms(now, LIST_TIMEOUT_MS)),
+  )).orderBy(sql`${remoteRequests.activeAt} desc`).limit(1);
+  return g?.path ?? null;
 }
 
 /** A get its file can still arrive for: sent or fetching, or failed only by the timeout (a late arrival revives it). */

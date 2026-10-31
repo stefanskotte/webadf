@@ -47,7 +47,8 @@ export class Refused extends Error {
  * route answers it 202 with the label ("Reading Work:Programs from A500…"); the pane asks again.
  */
 export class Pending extends Error {
-  constructor(readonly label: string) { super('pending'); }
+  /** `behind`: the request waits behind a copy the board is moving (A500 bench 2026-10-31): the pane does not give up. */
+  constructor(readonly label: string, readonly behind = false) { super('pending'); }
 }
 export function refuse(code: RefusalCode, status: number, detail?: string): never {
   throw new Refused(detail ? { code, detail } : { code }, status);

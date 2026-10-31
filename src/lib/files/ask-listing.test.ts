@@ -46,4 +46,21 @@ describe('askUntilAnswered (NET: volumes, spec 2026-10-30 §4.4)', () => {
     await vi.advanceTimersByTimeAsync(5 * PANE_ASK_MS);
     expect(ask.mock.calls.length).toBe(asks);
   });
+
+  // A500 bench 2026-10-31: a listing behind a moving copy waits for it; the pane does not give up while the copy moves.
+  it('does not give up while the answer waits behind a copy; the clock starts again when it no longer does', async () => {
+    let behind = true;
+    const ask = vi.fn(async (): Promise<R | { pending: string; behind?: boolean }> =>
+      ({ pending: behind ? 'Reading Work: from A500 after it copies a.adf…' : pending.pending, behind }));
+    const run = askUntilAnswered<R>('NET:/b', { ask, wanted: () => true, onPending: () => {}, giveUp: () => ({ error: 'gave up' }) });
+    let done = false;
+    void run.then(() => { done = true; });
+    await vi.advanceTimersByTimeAsync(3 * PANE_GIVE_UP_MS);
+    expect(done).toBe(false);
+    behind = false;
+    await vi.advanceTimersByTimeAsync(PANE_GIVE_UP_MS - 2 * PANE_ASK_MS);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(3 * PANE_ASK_MS);
+    await expect(run).resolves.toEqual({ error: 'gave up' });
+  });
 });

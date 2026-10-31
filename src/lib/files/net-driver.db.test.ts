@@ -32,7 +32,7 @@ const { runOp } = await import('./ops');
 const { netDriver } = await import('./net-driver');
 const { Pending, Refused } = await import('./driver');
 const { remoteRequests } = await import('@/db/schema/remote-requests');
-const { takeWaiting, answerPiece } = await import('@/lib/remote-requests');
+const { takeWaiting, answerPiece, addGets, settleGet } = await import('@/lib/remote-requests');
 
 const ctx = { orgId: 'o1', userId: 'u1' };
 const P = (s: string) => parsePath(s)!;
@@ -329,6 +329,26 @@ describe('NET: volumes', () => {
       net: { board: 'b1', boardName: NAME, volume: null, amigaPath: null, cut: false, browse: null } });
     expect(typeof l.net!.readAt).toBe('number');
     expect(l.crumbs).toEqual([{ label: 'NET:', path: 'NET:' }, { label: NAME, path: 'NET:/b1' }]);
+  });
+
+  // A500 bench 2026-10-31: Transfer answers nothing while a copy's file moves; a listing asked for meanwhile says it
+  // waits for the copy, and the pane does not give up on it (Pending.behind).
+  it('a drawer asked for while a copy moves says it waits for the copy', async () => {
+    const [g] = await addGets(getDb(), { orgId: 'o1', deviceId: 'b1', fetchId: 'fbench', files: [{ amigaPath: 'Work:Big/a.adf',
+      target: { dest: 'STASH:', rel: ['a.adf'], replace: false, library: null } }] });
+    await takeWaiting(getDb(), 'b1');
+    await answerPiece(getDb(), 'b1', g, { piece: 0, lines: [`GOT ${g} 7`], last: true });
+    try {
+      let thrown: unknown = null;
+      try { await netDriver.list(ctx, P('NET:/b1/Work/Later')); } catch (e) { thrown = e; }
+      expect(thrown).toBeInstanceOf(Pending);
+      expect((thrown as InstanceType<typeof Pending>).label).toBe(`Reading Work:Later from ${NAME} once it has copied a.adf…`);
+      expect((thrown as InstanceType<typeof Pending>).behind).toBe(true);
+    } finally { await settleGet(getDb(), g, { ok: true }); }
+    const p = await (async () => { try { await netDriver.list(ctx, P('NET:/b1/Work/Later')); } catch (e) { return e; } return null; })();
+    expect(p).toBeInstanceOf(Pending);
+    expect((p as InstanceType<typeof Pending>).behind).toBe(false);
+    await getDb().delete(remoteRequests).where(and(eq(remoteRequests.deviceId, 'b1'), inArray(remoteRequests.amigaPath, ['Work:Later', 'Work:Big/a.adf'])));
   });
 
   it('browsing off: no request, only Queue, and the words why', async () => {
