@@ -84,7 +84,9 @@ export function ConfirmDeleteDialog({ entries, where, busy, onConfirm, onCancel 
   entries: FsEntry[]; where: DeleteWhere; busy: boolean; onConfirm(): void; onCancel(): void;
 }) {
   const net = where === 'NET:';
+  // On the Amiga's own disk (phase 2, spec 2026-10-31 W3): always asked, and it cannot be undone.
   const title = net ? (entries.length === 1 ? 'Take this file off the queue?' : 'Take these files off the queue?')
+    : where === 'AMIGA' ? 'Delete from the Amiga?'
     : entries.length === 1 ? 'Delete this item?' : 'Delete these items?';
   return (
     <Modal open finalFocus={managerReturnsFocus} onOpenChange={(o) => { if (!o) onCancel(); }} width={440} testId="files-delete-dialog"

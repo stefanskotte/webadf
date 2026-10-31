@@ -46,6 +46,12 @@ export function isNetVolume(l: Listing | null): boolean {
   return !!l?.net?.volume;
 }
 
+/** NET:/<board>/<Volume>[/…]: a volume or a drawer on one (phase 2: where copies onto the Amiga land). */
+export function isVolumePlace(path: string): boolean {
+  const p = parsePath(path);
+  return p?.device === 'NET' && p.segments.length >= 2 && p.segments[1] !== QUEUE_FOLDER;
+}
+
 /** The board NET:/<board> is the root of (its volumes and Queue); null for any other path. */
 export function netBoardRoot(path: string): string | null {
   const p = parsePath(path);

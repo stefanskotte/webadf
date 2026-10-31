@@ -26,7 +26,11 @@ const ACTIVE: TransferStatus[] = ['queued', 'sending'];
 
 export const latin1Len = (s: string) => Buffer.byteLength(s, 'latin1');
 
-/** An Amiga-safe relative path (spec §2): Latin-1, parts of 1..30 bytes, no ':' '.' '..', at most 255 bytes. */
+/**
+ * An Amiga-safe relative path (spec §2): Latin-1, parts of 1..30 bytes, no ':' '.' '..', at most 255 bytes. A ':' is
+ * turned into '_' and must stay so: firmware 1.23 reads a NEXT path holding ':' as absolute (a copy onto a volume, NET:
+ * volumes phase 2), so an ordinary Queue row must never carry one (coordinator ruling 2026-10-31).
+ */
 export function cleanAmigaPath(input: string): string | null {
   const parts: string[] = [];
   for (const raw of input.split('/')) {

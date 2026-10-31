@@ -19,7 +19,7 @@ vi.mock('@/lib/tosec-sweep', () => ({ sweep: async () => {} }));
 
 const { getDb, closeDb } = await import('@/db');
 const { migrate } = await import('drizzle-orm/node-postgres/migrator');
-const { and, asc, eq } = await import('drizzle-orm');
+const { asc, eq } = await import('drizzle-orm');
 const { organization } = await import('@/db/schema/auth');
 const { devices } = await import('@/db/schema/devices');
 const { transfers } = await import('@/db/schema/transfers');

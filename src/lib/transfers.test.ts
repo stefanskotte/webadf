@@ -41,6 +41,12 @@ describe('formatQueue', () => {
     expect(formatQueue(r, [r, plain])).toBe(
       `NEXT ${r.id} 1001 cbf43926 40 17:Work:Würfel/x.txt 2:hi replace\nLIST 2\n${r.id} 1001 17:Work:Würfel/x.txt\n${plain.id} 1002 9:File2.bin\n`);
   });
+  it('an ordinary Queue row never carries a colon or a mode: firmware 1.23 reads a path with a colon as absolute', () => {
+    const path = cleanAmigaPath('Work:Tools/x.txt')!;
+    expect(path).toBe('Work_Tools/x.txt');
+    const r = row(3, path);
+    expect(formatQueue(r, [r]).split('\n')[0]).toBe(`NEXT ${r.id} 1003 cbf43926 40 16:Work_Tools/x.txt 0:`);
+  });
   it('says NEXT - with an empty list', () => {
     expect(formatQueue(null, [])).toBe('NEXT -\nLIST 0\n');
   });

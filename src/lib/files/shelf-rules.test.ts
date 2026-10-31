@@ -108,6 +108,8 @@ describe('NET: volumes (spec 2026-10-30 §5: Add to library = Copy to LIBRARY:)'
     expect(filingReason('copy', volume, [f('Game.adf'), f('Other.adf')], { collectionId: null })).toBeNull();
     expect(filingReason('copy', volume, [f('Game.adf')], { collectionId: 'c1' })).toBeNull();
     expect(filingReason('move', volume, [f('Game.adf')], { collectionId: null })).toBe('Read-only for now');
+    // Phase 2: a volume the board can write to moves its disk images onto a shelf too (deleted once stored).
+    expect(filingReason('move', { ...volume, writable: true, readOnlyReason: null }, [f('Game.adf')], { collectionId: null })).toBeNull();
     expect(filingReason('copy', volume, [f('ReadMe')], { collectionId: null })).toMatch(/Select disk images/);
     expect(filingReason('copy', volume, [f('Game.adf')], null)).toBeUndefined();
   });
@@ -117,8 +119,8 @@ describe('NET: volumes (spec 2026-10-30 §5: Add to library = Copy to LIBRARY:)'
     expect(words).toBe(refusalWords('not_a_disk_image', 'a folder'));
     expect(filingReason('copy', volume, [f('Games', 'dir')], { collectionId: 'c1' })).toBe(words);
   });
-  it('Create ADF… on a volume is read-only for now', () => {
-    expect(createAdfReason(volume)).toBe('Read-only for now');
+  it('Create ADF… on a volume: disks are made in STASH: or LIBRARY: (phase 2 makes no disks on the Amiga)', () => {
+    expect(createAdfReason(volume)).toBe('Disks are made in STASH: or LIBRARY:');
   });
 });
 
