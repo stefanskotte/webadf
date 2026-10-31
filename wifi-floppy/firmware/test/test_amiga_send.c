@@ -516,7 +516,7 @@ static void the_hello_is_protocol_3_with_requests(void) {
     fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
     snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
     as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
-    char want[64]; snprintf(want, sizeof want, "WEBADF 4 %s\n", KEY);
+    char want[64]; snprintf(want, sizeof want, "WEBADF 5 %s\n", KEY);
     CHECK(strcmp(F.out, want) == 0, F.out);
     CHECK_EQ_INT(as_rx_proto(&S), 0);
     reply("READY 3 1"); run(2);
@@ -1606,7 +1606,7 @@ static void the_hello_is_protocol_4_with_requests(void) {
     fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
     snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
     as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
-    char want[64]; snprintf(want, sizeof want, "WEBADF 4 %s\n", KEY);
+    char want[64]; snprintf(want, sizeof want, "WEBADF 5 %s\n", KEY);
     CHECK(strcmp(F.out, want) == 0, F.out);
     reply("READY 4 1 1"); run(2);
     CHECK_EQ_INT(as_rx_proto(&S), 4); CHECK(as_browse(&S), "browsing on"); CHECK(as_write(&S), "writing on");
@@ -1834,6 +1834,130 @@ static void a_relative_row_is_unchanged_at_protocol_4(void) {
     CHECK(sent_file("5 3610a686 40 9:Hello.txt 0:"), F.out);
 }
 
+// --- Protocol 5 (spec 2026-10-31 section 9, fw 1.23.1): DELETE ... one ---
+// Connected to Transfer 2.6 (READY 5 <browse> <write>), the queue empty, nothing fetched yet.
+static void ready5(int browse, int write) {
+    fresh();
+    as_set_key(&S, KEY);
+    as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1);
+    run(2); F.sock = AS_SOCK_OPEN; run(1);
+    char r[16]; snprintf(r, sizeof r, "READY 5 %d %d", browse, write); reply(r); run(2);
+    clear_out();
+}
+static const char *OLD5 = "ERR o old 31:Transfer 2.6 or newer is needed";
+
+static void the_hello_is_protocol_5_with_requests(void) {
+    fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
+    char want[64]; snprintf(want, sizeof want, "WEBADF 5 %s\n", KEY);
+    CHECK(strcmp(F.out, want) == 0, F.out);
+    reply("READY 5 1 1"); run(2);
+    CHECK_EQ_INT(as_rx_proto(&S), 5); CHECK(as_browse(&S), "browsing on"); CHECK(as_write(&S), "writing on");
+    ready5(1, 0);
+    CHECK_EQ_INT(as_rx_proto(&S), 5); CHECK(as_browse(&S) && !as_write(&S), "writing off");
+    ready5(0, 1);
+    CHECK(!as_browse(&S) && !as_write(&S), "browse off means write off");
+    ready5(0, 0);
+    CHECK_EQ_INT(as_rx_proto(&S), 5); CHECK(!as_browse(&S) && !as_write(&S), "both off");
+}
+
+// Review Focus 4.
+static void a_malformed_ready_5_counts_as_1(void) {
+    static const char *const bad[] = { "READY 5 1", "READY 5 1 1 x", "READY 5 2 1", "READY 6 1 1", "READY 51 1 1" };
+    for (unsigned i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
+        snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+        as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
+        reply(bad[i]); run(2);
+        CHECK(as_rx_proto(&S) == 1, bad[i]); CHECK(!as_write(&S), bad[i]);
+    }
+}
+
+static void a_ready_5_to_a_protocol_2_hello_counts_as_1(void) {
+    fresh(); as_set_key(&S, KEY);                       // uploads, no requests: WEBADF 2
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
+    reply("READY 5 1 1"); run(2);
+    CHECK_EQ_INT(as_rx_proto(&S), 1); CHECK(!as_write(&S), "no write");
+}
+
+// Review Focus 1: Transfer 2.5 answers WEBADF 5 with READY 4 (tools/receive/core/rx_proto.c on_hello).
+static void transfer_2_5_answers_ready_4_to_a_protocol_5_hello(void) {
+    ready4(1, 1);
+    CHECK_EQ_INT(as_rx_proto(&S), 4); CHECK(as_browse(&S) && as_write(&S), "writing on");
+    wake(1, "DELETE o 8:Work:old one\nDIR d 5:Work:\n"); run(4);
+    CHECK(strstr(F.out, "DELETE") == NULL, "never sent to a 2.5");
+    CHECK_EQ_INT(F.req_posts, 1);
+    char want[160]; snprintf(want, sizeof want, "{\"piece\":0,\"lines\":[\"%s\"],\"last\":true}", OLD5);
+    CHECK(strcmp(F.req_body[0], want) == 0, F.req_body[0]);
+    CHECK(strstr(F.out, "DIR d 5:Work:\n") != NULL, "the read still goes");
+    reply("DONE d 0"); run(3);
+    CHECK_EQ_INT(F.req_posts, 2);
+    clear_out();
+    wake(2, "DELETE x 8:Work:old\n"); run(3);          // the drawer delete still goes at protocol 4
+    CHECK(strcmp(F.out, "DELETE x 8:Work:old\n") == 0, F.out);
+}
+
+// Review Focus 5: old, not readonly, at protocol 3 too.
+static void delete_one_is_old_at_protocol_3(void) {
+    ready3(1);
+    wake(1, "DELETE o 8:Work:old one\n"); run(4);
+    CHECK(strstr(F.out, "DELETE") == NULL, "never sent to a 2.4");
+    char want[160]; snprintf(want, sizeof want, "{\"piece\":0,\"lines\":[\"%s\"],\"last\":true}", OLD5);
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strcmp(F.req_body[0], want) == 0, F.req_body[0]);
+}
+
+static void delete_one_is_relayed_at_protocol_5(void) {
+    ready5(1, 1);
+    wake(1, "DELETE o 8:Work:old one\n"); run(3);
+    CHECK(strcmp(F.out, "DELETE o 8:Work:old one\n") == 0, F.out);
+    reply("ERR o notempty 21:Work:old is not empty"); run(3);   // Transfer's code passes through
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"ERR o notempty 21:Work:old is not empty\"],\"last\":true}") == 0,
+          F.req_body[0]);
+    clear_out();
+    wake(2, "DELETE p 6:Work:f one\n"); run(3);
+    CHECK(strcmp(F.out, "DELETE p 6:Work:f one\n") == 0, F.out);
+    reply("DONE p 1"); run(3);
+    CHECK_EQ_INT(F.req_posts, 2);
+    CHECK(strcmp(F.req_body[1], "{\"piece\":0,\"lines\":[\"DONE p 1\"],\"last\":true}") == 0, F.req_body[1]);
+}
+
+static void delete_one_with_writing_off_still_goes_at_protocol_5(void) {
+    ready5(1, 0);
+    wake(1, "DELETE o 8:Work:old one\n"); run(3);
+    CHECK(strcmp(F.out, "DELETE o 8:Work:old one\n") == 0, F.out);   // Transfer answers readonly itself (N2)
+}
+
+static void each_write_is_relayed_at_protocol_5(void) {
+    static const char *const L[] = { "MKDIR a 8:Work:New", "RENAME b 6:Work:a 6:Work:b", "DELETE c 8:Work:old",
+                                     "PROTECT d 6:Work:x f0", "NOTE e 6:Work:x 5:hello" };
+    static const char *const rid[] = { "a", "b", "c", "d", "e" };
+    ready5(1, 1);
+    wake(1, "MKDIR a 8:Work:New\nRENAME b 6:Work:a 6:Work:b\nDELETE c 8:Work:old\nPROTECT d 6:Work:x f0\nNOTE e 6:Work:x 5:hello\n");
+    for (int i = 0; i < 5; i++) {
+        run(3);
+        char want[80]; snprintf(want, sizeof want, "%s\n", L[i]);
+        CHECK(strncmp(F.out, want, strlen(want)) == 0, F.out); clear_out();
+        char done[16]; snprintf(done, sizeof done, "DONE %s 1", rid[i]); reply(done); run(3);
+        CHECK_EQ_INT(F.req_posts, i + 1);
+    }
+}
+
+static void a_dest_row_goes_at_protocol_5(void) {
+    ready5(1, 1);
+    queue_next("5 3610a686 0 16:Work:Tools/x.txt 0: replace");
+    CHECK(sent_file("5 3610a686 0 16:Work:Tools/x.txt 0: replace"), F.out);
+    ready5(1, 0);
+    queue_next("5 3610a686 0 16:Work:Tools/x.txt 0: replace");
+    CHECK(strstr(F.out, "FILE") == NULL, "writing off: never sent");
+    CHECK(strcmp(F.posted, "{\"ok\":false,\"code\":\"readonly\",\"text\":\"Writing is off in Transfer\"}") == 0, F.posted);
+}
+
 int main(void) {
     RUN(off_or_no_address_does_nothing);
     RUN(connects_to_6800_and_says_hello);
@@ -1967,5 +2091,14 @@ int main(void) {
     RUN(wprot_full_denied_pass_through);
     RUN(an_unknown_mode_fails_the_row_name);
     RUN(a_relative_row_is_unchanged_at_protocol_4);
+    RUN(the_hello_is_protocol_5_with_requests);
+    RUN(a_malformed_ready_5_counts_as_1);
+    RUN(a_ready_5_to_a_protocol_2_hello_counts_as_1);
+    RUN(transfer_2_5_answers_ready_4_to_a_protocol_5_hello);
+    RUN(delete_one_is_old_at_protocol_3);
+    RUN(delete_one_is_relayed_at_protocol_5);
+    RUN(delete_one_with_writing_off_still_goes_at_protocol_5);
+    RUN(each_write_is_relayed_at_protocol_5);
+    RUN(a_dest_row_goes_at_protocol_5);
     return REPORT();
 }
