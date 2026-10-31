@@ -59,11 +59,11 @@ int ipc_hand_off(const rx_upq *items, int trust, int *ok) {
     if (trust) { init_msg(tm, reply, RXM_TRUST); if (put_msg(tm) == 0) tm_out = 1; }
     for (i = 0; i < items->n; i++) {
         init_msg(&m[i], reply, RXM_FILE);
-        strcpy(m[i].local, items->q[i].local); strcpy(m[i].name, items->q[i].name);
+        strcpy(m[i].local, items->q[i]->local); strcpy(m[i].name, items->q[i]->name);
         if (put_msg(&m[i]) != 0) break;
         sent++;
     }
-    for (i = sent; i < items->n; i++) { a[0] = (LONG)items->q[i].name; VPrintf((STRPTR)"%s  ERR Transfer stopped\n", a); }
+    for (i = sent; i < items->n; i++) { a[0] = (LONG)items->q[i]->name; VPrintf((STRPTR)"%s  ERR Transfer stopped\n", a); }
     while (got < sent || ctl_out || tm_out) {
         ULONG sig;
         struct Message *r;
@@ -128,7 +128,7 @@ void ipc_take(rx_upq *q, rx_added_fn added, int (*trust)(void *u), void *u) {
             unsigned tag = nheld < RX_UP_MAX ? rx_up_add(q, m->local, m->name) : 0;
             if (!tag) { answer(m, 0, 0, "Transfer's list is full, or the name is not allowed"); continue; }
             held[nheld].tag = tag; held[nheld].m = m; nheld++;
-            if (added) added(u, &q->q[q->n - 1]);
+            if (added) added(u, q->q[q->n - 1]);
         }
     }
 }

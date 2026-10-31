@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <string.h>
 #include "rx_crc.h"
 #include "rx_names.h"
@@ -264,7 +265,8 @@ static void get_start(rx_session *s) {
     tag = rx_up_add_front(s->upq, s->req_path, name, s->req_id);
     if (!tag) {
         if (s->upq->n >= RX_UP_MAX) req_fail_text(s, "busy", "too many files waiting");
-        else req_fail_text(s, "io", "cannot send that name");   /* plan ruling T7 */
+        else if (!rx_path_ok(name)) req_fail_text(s, "io", "cannot send that name");   /* plan ruling T7 */
+        else req_fail_text(s, "busy", "not enough memory on the Amiga");   /* the item's malloc failed */
         return;
     }
     puts_(s, "GOT "); puts_(s, s->req_id); puts_(s, " "); put_dec(s, tag); puts_(s, "\n");
@@ -403,12 +405,14 @@ void rx_upq_init(rx_upq *q, const char *trusted) {
     memset(q, 0, sizeof *q);
     if (trusted && !hex_key(trusted, (unsigned)strlen(trusted), q->trusted)) q->trusted[0] = 0;
 }
+void rx_upq_clear(rx_upq *q) { while (q->n) free(q->q[--q->n]); }
 static unsigned up_add_at(rx_upq *q, unsigned at, const char *local, const char *name, const char *rid) {
     rx_up_item *it;
     if (q->n >= RX_UP_MAX || !local[0] || strlen(local) > RX_LOCAL_MAX || !rx_path_ok(name)) return 0;
+    if (!(it = malloc(sizeof *it))) return 0;
     memmove(&q->q[at + 1], &q->q[at], (q->n - at) * sizeof q->q[0]);
     q->n++;
-    it = &q->q[at];
+    q->q[at] = it;
     if (++q->next_tag > 999999999U) q->next_tag = 1;   /* the board reads 1-9 digits */
     it->tag = q->next_tag;
     strcpy(it->local, local);
@@ -420,7 +424,8 @@ unsigned rx_up_add(rx_upq *q, const char *local, const char *name) { return up_a
 unsigned rx_up_add_front(rx_upq *q, const char *local, const char *name, const char *rid) { return up_add_at(q, 0, local, name, rid); }
 int rx_upq_remove(rx_upq *q, unsigned tag) {
     unsigned i;
-    for (i = 0; i < q->n; i++) if (q->q[i].tag == tag) {
+    for (i = 0; i < q->n; i++) if (q->q[i]->tag == tag) {
+        free(q->q[i]);
         memmove(&q->q[i], &q->q[i + 1], (q->n - i - 1) * sizeof q->q[0]);
         q->n--;
         return 1;
@@ -451,7 +456,7 @@ static void walk_each(void *u, const char *nm, int is_dir) {
         if (w->depth < RX_TREE_DEPTH) { w->depth++; w->fs->list(w->fs->ctx, w->local, walk_each, w); w->depth--; }
     } else if (rx_up_add(w->q, w->local, w->name)) {
         w->n++;
-        if (w->added) w->added(w->u, &w->q->q[w->q->n - 1]);
+        if (w->added) w->added(w->u, w->q->q[w->q->n - 1]);
     }
     w->local[ll] = 0;
     w->name[nl] = 0;
@@ -464,7 +469,7 @@ int rx_up_add_tree(rx_upq *q, const rx_fs *fs, const char *local, const char *na
     if (d < 0) return -1;
     if (d == 0) {
         if (!rx_up_add(q, local, name)) return 0;
-        if (added) added(u, &q->q[q->n - 1]);
+        if (added) added(u, q->q[q->n - 1]);
         return 1;
     }
     memset(&w, 0, sizeof w);
@@ -500,7 +505,7 @@ static void protocol_error(rx_session *s, const char *why) {
 }
 static void up_put(rx_session *s) {
     while (put_due(s)) {
-        rx_up_item it = s->upq->q[0];
+        rx_up_item it = *s->upq->q[0];
         rx_upq_remove(s->upq, it.tag);
         if (it.rid[0] && !rx_browse_on(s)) {   /* a GOT file, switched off before its turn: never opened (final review 2) */
             req_err(s, it.rid, "off", "browsing is off in Transfer");
@@ -626,8 +631,8 @@ int rx_want_output(const rx_session *s) {
 }
 int rx_up_cancel(rx_session *s, rx_upq *q, unsigned tag) {
     unsigned i;
-    for (i = 0; q && i < q->n; i++) if (q->q[i].tag == tag) {
-        rx_up_item it = q->q[i];
+    for (i = 0; q && i < q->n; i++) if (q->q[i]->tag == tag) {
+        rx_up_item it = *q->q[i];
         rx_upq_remove(q, tag);
         emit_up(s, RX_EV_UP_FAILED, &it, 0, 0, 0, "cancelled", "local");
         return 0;
@@ -812,8 +817,8 @@ void rx_disconnected(rx_session *s) {
     s->wait_kind = RX_REQ_NONE; s->hello_browse = 0;
     if (s->upq) {   /* a GET's file not yet gone up: after a reconnect the board no longer knows its tag (ruling T4) */
         unsigned i = s->upq->n;
-        while (i-- > 0) if (s->upq->q[i].rid[0]) {
-            rx_up_item it = s->upq->q[i];
+        while (i-- > 0) if (s->upq->q[i]->rid[0]) {
+            rx_up_item it = *s->upq->q[i];
             rx_upq_remove(s->upq, it.tag);
             emit_up(s, RX_EV_UP_FAILED, &it, 0, 0, 0, "connection lost", "local");
         }

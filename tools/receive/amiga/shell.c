@@ -2,6 +2,7 @@
    the web app: handed to a Transfer already running (port webadf.Transfer), or sent by this run, which listens on 6800
    itself, waits up to 60 s for the board, and returns 0 (all sent), 5 (some) or 10 (none).
    With browsing on (BROWSE), one line per web request: "Web: listed Work:Programs". */
+#include <stdlib.h>
 #include <string.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
@@ -13,8 +14,10 @@
 #include "ui.h"
 
 static struct { int send_mode, asked, ok, done, heard, quit, old_said; ULONG t0; } sh;
-static rx_upq q;
-static rx_session sess;
+/* malloc'd at the start (freed with the program by libnix): a Shell run holds no window's state, and the window none
+   of the Shell's (512 KB bench, spec 2026-10-30 §7 step 8). */
+static rx_upq *q;
+static rx_session *sess;
 
 static void sh_status(void *u, const char *t) { (void)u; PutStr((STRPTR)t); PutStr((STRPTR)"\n"); Flush(Output()); }
 static void sh_event(void *u, const rx_event *e, rx_session *s) {
@@ -35,7 +38,7 @@ static void sh_event(void *u, const rx_event *e, rx_session *s) {
         else {
             /* Every board before 1.19.0 connects this way to send files down: say it only when something is to go up,
                and once a run. */
-            if ((sh.send_mode || q.n > 0) && !sh.old_said) {
+            if ((sh.send_mode || q->n > 0) && !sh.old_said) {
                 PutStr((STRPTR)"This board's firmware cannot receive files (update to 1.19.0)\n");
                 sh.old_said = 1;
             }
@@ -59,8 +62,8 @@ static void sh_event(void *u, const rx_event *e, rx_session *s) {
     }
     Flush(Output());
 }
-static int sh_trust(void *u) { (void)u; if (rx_trust_now(&sess) == 0) return 0; q.trust_next = 1; return 0; }
-static int sh_signal(void *u, ULONG sigs) { (void)u; if (sigs & ipc_sigmask()) ipc_take(&q, NULL, sh_trust, NULL); return 0; }
+static int sh_trust(void *u) { (void)u; if (rx_trust_now(sess) == 0) return 0; q->trust_next = 1; return 0; }
+static int sh_signal(void *u, ULONG sigs) { (void)u; if (sigs & ipc_sigmask()) ipc_take(q, NULL, sh_trust, NULL); return 0; }
 static int sh_pass(void *u, rx_session *s, int connected) {
     (void)u; (void)s; (void)connected;
     if (!sh.send_mode) return 0;
@@ -76,30 +79,32 @@ int shell_main(const char *dir, STRPTR *send, int trust, int browse) {
     char key[RX_KEY_HEX + 8];
     LONG args[1];
     int i, rc;
+    q = calloc(1, sizeof *q); sess = calloc(1, sizeof *sess);
+    if (!q || !sess) { PrintFault(ERROR_NO_FREE_STORE, (STRPTR)"Transfer"); return RETURN_FAIL; }
     afs_init(&ctx, &fs, dir);
     cfg_key_load(key, sizeof key);
-    rx_upq_init(&q, key);
-    q.browse = browse;
-    if (trust) q.trust_next = 1;
+    rx_upq_init(q, key);
+    q->browse = browse;
+    if (trust) q->trust_next = 1;
     if (send && send[0]) {
         sh.send_mode = 1;
         for (i = 0; send[i]; i++) {
             char name[RX_PART_MAX + 1];
             int k;
             afs_base_name((const char *)send[i], name);
-            k = rx_up_add_tree(&q, &fs, (const char *)send[i], name, NULL, NULL);
+            k = rx_up_add_tree(q, &fs, (const char *)send[i], name, NULL, NULL);
             if (k <= 0) { args[0] = (LONG)send[i]; VPrintf((STRPTR)"%s  ERR cannot read it\n", args); sh.asked++; sh.done++; }
             else sh.asked += k;
         }
-        if (q.n == 0) return RETURN_ERROR;
+        if (q->n == 0) return RETURN_ERROR;
         if (ipc_running()) {
-            int ok = 0, n = (int)q.n;
-            if (ipc_hand_off(&q, trust, &ok) >= 0) { sh.ok += ok; sh.done += n; return send_rc(); }
+            int ok = 0, n = (int)q->n;
+            if (ipc_hand_off(q, trust, &ok) >= 0) { sh.ok += ok; sh.done += n; return send_rc(); }
         }
         if (net_open() != 0) { PutStr((STRPTR)"No TCP/IP stack running (bsdsocket.library)\n"); return RETURN_ERROR; }
         PutStr((STRPTR)"Waiting for the board\n"); Flush(Output());
         sh.t0 = rx_now_secs();
-        rc = net_run(&ui, &ctx, &fs, &sess, &q);
+        rc = net_run(&ui, &ctx, &fs, sess, q);
         net_close();
         if (rc != 0) { PutStr((STRPTR)"Could not listen on port 6800\n"); return RETURN_ERROR; }
         return send_rc();
@@ -110,7 +115,7 @@ int shell_main(const char *dir, STRPTR *send, int trust, int browse) {
     args[0] = (LONG)dir;
     VPrintf((STRPTR)"Transfer: saving into %s. Ctrl-C to stop.\n", args);
     if (browse) PutStr((STRPTR)"Browsing on: the web app can read your disks (read-only)\n");
-    rc = net_run(&ui, &ctx, &fs, &sess, &q);
+    rc = net_run(&ui, &ctx, &fs, sess, q);
     ipc_close();
     if (rc != 0) { PutStr((STRPTR)"Could not listen on port 6800\n"); net_close(); return RETURN_FAIL; }
     PutStr((STRPTR)"Stopped.\n");

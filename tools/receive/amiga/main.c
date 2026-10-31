@@ -13,11 +13,14 @@
 #include "config.h"
 #include "ui.h"
 
-static const char version[] = "$VER: Transfer 2.3 (30.10.2026) webadf";
+static const char version[] = "$VER: Transfer 2.4 (31.10.2026) webadf";
 
-/* Shell and Workbench starts often give 4 KB of stack; the window, asl and dos calls nest deeper than that. Below
-   RX_STACK, run on a stack of our own (exec StackSwap, V37). Everything used across the swap is file-static. */
-#define RX_STACK 32768UL
+/* Shell and Workbench starts often give 4 KB of stack; the window, asl and dos calls nest deeper than that. Below the
+   mode's size, run on a stack of our own (exec StackSwap, V37). Everything used across the swap is file-static. The
+   Shell form measured 2,582 bytes at most on the A500 (a 1000-entry DIR, VOLS, a GET and a received file; 2026-10-31),
+   so it gets 8 KB, not the window's 32 KB: on a 512 KB Amiga that is 24 KB of chip memory back. */
+#define RX_STACK_GUI 32768UL
+#define RX_STACK_SHELL 8192UL
 static char dir[256];
 static int want_gui, want_trust, rc_swapped, browse;
 static STRPTR *send_files;
@@ -36,11 +39,12 @@ static int run(void) { return want_gui ? gui_main(dir, wb_args, wb_n, send_files
 
 static int run_with_stack(void) {
     struct Task *me = FindTask(NULL);
-    if ((ULONG)me->tc_SPUpper - (ULONG)me->tc_SPLower >= RX_STACK) return run();
-    stack_mem = AllocVec(RX_STACK, MEMF_ANY);
+    ULONG size = want_gui ? RX_STACK_GUI : RX_STACK_SHELL;
+    if ((ULONG)me->tc_SPUpper - (ULONG)me->tc_SPLower >= size) return run();
+    stack_mem = AllocVec(size, MEMF_ANY);
     if (!stack_mem) return run();
     sss.stk_Lower = stack_mem;
-    sss.stk_Upper = (ULONG)stack_mem + RX_STACK;
+    sss.stk_Upper = (ULONG)stack_mem + size;
     sss.stk_Pointer = (APTR)sss.stk_Upper;
     StackSwap(&sss);
     rc_swapped = run();

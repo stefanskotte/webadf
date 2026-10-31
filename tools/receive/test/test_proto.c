@@ -192,6 +192,18 @@ static const char *trust_code(void) { int i = last_kind(RX_EV_TRUST); return i <
 static unsigned added_n; static char added_names[80][520];
 static void on_added(void *u, const rx_up_item *it) { (void)u; snprintf(added_names[added_n++ % 80], sizeof added_names[0], "%s=%s", it->name, it->local); }
 
+/* 512 KB bench (spec 2026-10-30 §7 step 8): an empty queue holds no file's storage -- each waiting file is allocated
+   when it joins and freed when it leaves, so Transfer idling in a Shell does not keep 35 KB for 64 paths. */
+static void an_empty_queue_holds_no_item_storage(void) {
+    CHECK(sizeof(rx_upq) < 1024, "rx_upq is pointers, not 64 items");
+    rx_upq_init(&Q, "");
+    CHECK(rx_up_add(&Q, "RAM:a", "a") != 0, "added");
+    CHECK(strcmp(Q.q[0]->local, "RAM:a") == 0 && strcmp(Q.q[0]->name, "a") == 0, "the item reads back");
+    CHECK_EQ_INT(rx_upq_remove(&Q, Q.q[0]->tag), 1);
+    CHECK_EQ_INT(Q.n, 0);
+    rx_upq_clear(&Q);
+}
+
 static void v2_hello_answers_ready_2_and_trusts_the_first_key(void) {
     setup2("");
     hello2(KEY);
@@ -264,7 +276,7 @@ static void a_volume_root_joins_without_a_slash_and_a_walk_stops_at_64(void) {
     setup2(""); ff_add(&F, "RAM:", 1);
     for (int i = 0; i < 70; i++) { snprintf(nm, sizeof nm, "RAM:f%02d", i); ff_put(&F, nm, "x", 1, 0, ""); }
     CHECK_EQ_INT(rx_up_add_tree(&Q, &FS, "RAM:", "Ram Disk", NULL, NULL), RX_UP_MAX);
-    CHECK(strncmp(Q.q[0].local, "RAM:f", 5) == 0 && strncmp(Q.q[0].name, "Ram Disk/f", 10) == 0, "RAM:fNN, Ram Disk/fNN");
+    CHECK(strncmp(Q.q[0]->local, "RAM:f", 5) == 0 && strncmp(Q.q[0]->name, "Ram Disk/f", 10) == 0, "RAM:fNN, Ram Disk/fNN");
 }
 /* --- protocol 2: a file going up --- */
 static unsigned char DATA[65536];
@@ -522,5 +534,6 @@ int main(void) {
     RUN(the_comment_in_the_put_has_no_control_bytes);
     RUN(the_upload_silence_outlasts_the_boards_5_minute_wait);
     RUN(a_resumes_pre_read_counts_as_receives_own_work); RUN(no_gone_mid_file_shows_the_boards_text);
+    RUN(an_empty_queue_holds_no_item_storage);
     return REPORT();
 }
