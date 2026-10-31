@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include "rx_proto.h"
 
 #define FF_MAX 400
@@ -35,14 +36,14 @@ typedef struct {
     char fail_rename_to[64]; int fail_renames;   /* a rename onto that name (or, fail_renames, every rename) fails 203 */
     /* Transfer 2.6: every w_rename fails with rename_err (0 never); after a w_rename that worked, plant is put (its drawers
        made: something saved by the old path meanwhile); the w_renames called, and the last one's paths */
-    long rename_err; char plant[64]; int renames; char last_from[RX_LOCAL_MAX + 1], last_to[RX_LOCAL_MAX + 1];
+    long rename_err; char plant[64]; int renames; int nocase; /* nocase: names match as AmigaDOS's do (ASCII only) */ char last_from[RX_LOCAL_MAX + 1], last_to[RX_LOCAL_MAX + 1];
     ff_entry e[FF_MAX];   /* last: ff_init clears only what is above it */
 } fakefs;
 static int ff_wprot(fakefs *f, const char *p) { return f->wprot[0] && strncmp(p, f->wprot, strlen(f->wprot)) == 0; }
 static int ff_fail(fakefs *f, long err) { f->last_err = err; return -1; }
 
 static int ff_find(fakefs *f, const char *rel) {
-    for (int i = 0; i < f->n; i++) if (strcmp(f->e[i].name, rel) == 0) return i;
+    for (int i = 0; i < f->n; i++) if ((f->nocase ? strcasecmp(f->e[i].name, rel) : strcmp(f->e[i].name, rel)) == 0) return i;
     for (int i = 0; i < f->n; i++) {   /* a path through a link reaches its target */
         size_t k = strlen(f->e[i].name);
         if (f->e[i].link_to[0] && strncmp(rel, f->e[i].name, k) == 0 && rel[k] == '/') {
@@ -91,7 +92,7 @@ static int ff_rename(void *c, const char *from, const char *to) {
     if (ff_find(f, to) >= 0 || f->fail_renames || (f->fail_rename_to[0] && strcmp(to, f->fail_rename_to) == 0)) return ff_fail(f, FF_EXISTS);
     {   /* a drawer takes what is inside it along */
         size_t n = strlen(from); int k;
-        for (k = 0; k < f->n; k++) if (strncmp(f->e[k].name, from, n) == 0 && f->e[k].name[n] == '/') {
+        for (k = 0; k < f->n; k++) if ((f->nocase ? strncasecmp(f->e[k].name, from, n) : strncmp(f->e[k].name, from, n)) == 0 && f->e[k].name[n] == '/') {
             char t[sizeof f->e[k].name];
             snprintf(t, sizeof t, "%s%s", to, f->e[k].name + n); strcpy(f->e[k].name, t);
         }

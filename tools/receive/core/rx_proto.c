@@ -373,6 +373,7 @@ void rx_req_words(const rx_event *e, char *out, unsigned cap) {
 static void put_del(rx_session *s) { puts_(s, "DEL "); puts_(s, s->req_id); puts_(s, " "); put_dec(s, s->req_count); puts_(s, "\n"); }
 /* A drawer delete stops at the entry at (req_path, deeper than the named path when it is inside): DEL with the count so
    far (drawers only: plan ruling W6), then ERR naming the entry under the named drawer (W7). */
+static rx_dent g_entry;   /* what entry_kind matched last: its name as the disk spells it (final review 2.6, minor 3) */
 /* Protocol 5 (spec §9; plan rulings X1, X2): before it is emptied, the drawer at req_path is renamed within its parent
    to .webadf-del-<8 hex digits from the rid>, so nothing saved by its old path meanwhile is deleted with it. A taken
    name (DOS 203) tries the next of eight; any other refusal, or a hidden path over 255 bytes, deletes in place. */
@@ -383,7 +384,8 @@ static void del_hide(rx_session *s) {
     unsigned long h = rx_crc32_update(0, (const unsigned char *)s->req_id, (unsigned long)strlen(s->req_id));
     unsigned i, k;
     if (cut + sizeof ".webadf-del-" - 1 + 8 > RX_LOCAL_MAX) return;
-    strcpy(s->req_arg, p);
+    strcpy(s->req_arg, p);   /* the name to go back to: as the disk spells it, not as the request did */
+    if (strlen(g_entry.name) == strlen(p) - cut) strcpy(s->req_arg + cut, g_entry.name);
     for (i = 0; i < 8; i++) {
         unsigned long v = (h + i) & 0xFFFFFFFFUL; long r;
         strcpy(p + cut, ".webadf-del-");
@@ -473,7 +475,7 @@ static int name_eq(const char *a, const char *b) {
 /* What path names, without following it (final review C1): a Lock or Examine of a link reaches its target, so the entry
    is looked up in its drawer's listing. 0, or a DOS error (RX_DOS_NOT_FOUND when the drawer has no such name). */
 static long entry_kind(rx_session *s, const char *path, int *is_dir, int *is_link) {
-    static char parent[RX_LOCAL_MAX + 1]; static rx_dent e;   /* static: the Amiga's stack is small */
+    static char parent[RX_LOCAL_MAX + 1]; rx_dent *const e = &g_entry;   /* static: the Amiga's stack is small */
     const char *slash = strrchr(path, '/'), *name;
     long r;
     size_t n = slash ? (size_t)(slash - path) : (size_t)(strchr(path, ':') - path + 1);
@@ -481,10 +483,10 @@ static long entry_kind(rx_session *s, const char *path, int *is_dir, int *is_lin
     memcpy(parent, path, n); parent[n] = 0;
     if ((r = s->fs->dir_open(s->fs->ctx, parent)) != 0) return r == RX_DOS_WRONG_TYPE ? RX_DOS_NOT_FOUND : r;
     for (;;) {
-        memset(&e, 0, sizeof e);
-        r = s->fs->dir_next(s->fs->ctx, &e);
+        memset(e, 0, sizeof *e);
+        r = s->fs->dir_next(s->fs->ctx, e);
         if (r <= 0) break;
-        if (name_eq(e.name, name)) { *is_dir = e.is_dir; *is_link = e.is_link; break; }
+        if (name_eq(e->name, name)) { *is_dir = e->is_dir; *is_link = e->is_link; break; }
     }
     s->fs->dir_close(s->fs->ctx);
     return r < 0 ? -r : r == 0 ? RX_DOS_NOT_FOUND : 0;
@@ -512,7 +514,7 @@ static void write_start(rx_session *s) {
         int is_dir = 0, is_link = 0;
         if (s->req_num) {   /* "one" (spec §9; plan ruling X3): AmigaDOS itself refuses a drawer that is not empty */
             if ((e = s->fs->w_delete(s->fs->ctx, s->req_path)) == RX_DOS_NOT_EMPTY) {
-                char f[80];
+                static char f[80];   /* static: the Amiga's stack is small */
                 f[0] = 0; s->fs->fault(s->fs->ctx, e, f, sizeof f);
                 s->req_count = 0; req_fail_text(s, "notempty", f[0] ? f : "drawer is not empty"); return;
             }

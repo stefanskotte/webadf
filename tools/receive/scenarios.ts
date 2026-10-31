@@ -497,7 +497,9 @@ export const WRITE_SCENARIOS: WriteScenario[] = [
       const a = await b.request(`DELETE o5 ${lenp('Full:Stuck')}`);
       if (!(a.length === 2 && /^DEL o5 [0-2]$/.test(a[0]) && /^ERR o5 denied \d+:locked: .+$/.test(a[1]))) return `got ${JSON.stringify(a)}`;
       const d = await b.request(`DIR o6 ${lenp('Full:')}`);
-      return d.some((l) => / d 0 [0-9a-f]+ \S+ 5:Stuck /.test(l)) && !d.some((l) => l.includes('.webadf-del-')) ? null : `Full: lists ${JSON.stringify(d)}`;
+      if (!(d.some((l) => / d 0 [0-9a-f]+ \S+ 5:Stuck /.test(l)) && !d.some((l) => l.includes('.webadf-del-')))) return `Full: lists ${JSON.stringify(d)}`;
+      const k = await b.request(`DIR o7 ${lenp('Full:Stuck')}`);
+      return k.some((l) => l.includes(' 6:locked ')) ? null : `Full:Stuck lists ${JSON.stringify(k)}`;
     } finally { await b.close(); } } },
   { name: 'w-protocol-3', run: async (p, h, ctl) => { const b = await connect(p, h, { v: 3 }); try {
       if (!b.browse) return 'READY 3 0';

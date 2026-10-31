@@ -69,7 +69,9 @@ with no recursion). Transfer 2.6 adds 944 B of code (50,960 B) and 240 B of fixe
   A drawer DELETE without `one` first renames the drawer within its drawer to `.webadf-del-` and 8 hex digits, so a
   file saved into it by its old name while it is being emptied is not deleted with it; on a refusal it gets its name
   back (or, if that name was taken meanwhile, the error says where the rest is). If the rename fails it is deleted in
-  place, as 2.5 did. On protocol 4 everything is as in 2.5.
+  place, as 2.5 did. On protocol 4 everything is as in 2.5. Two limits: a program that already holds the drawer (a
+  Shell `CD`'d into it, an assign, an open Workbench window) still saves into it, and its file goes with it, as in 2.5;
+  and if the Amiga resets or loses power mid-delete, what is left stays as `.webadf-del-…` in that drawer's parent.
 - **The folder setting** is the file `ENVARC:webadf/ReceiveDir`, copied to `ENV:webadf/ReceiveDir`. The default is
   `RAM:`.
 - **Nothing is overwritten:** a second `Foo.lha` arrives as `Foo_2.lha`. Nothing is written outside the folder,

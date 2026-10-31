@@ -653,6 +653,44 @@ static void protocol_4_deletes_in_place(void) {
     CHECK_EQ_INT(F.renames, 0);   /* a file DELETE is unchanged */
 }
 
+/* Final review (Transfer 2.6) minors 3 and 7. */
+static void a_stop_restores_the_disks_spelling(void) {
+    setup(1, 1); ff_add(&F, "Work:Old", 1); ff_put(&F, "Work:Old/locked", "x", 1, 1, ""); hello5();
+    F.nocase = 1;
+    req("DELETE s 8:Work:OLD\n");
+    CHECK(strcmp(ob, "DEL s 0\nERR s denied 21:locked: dos error 222\n") == 0, ob);
+    F.nocase = 0;
+    CHECK(has("Work:Old") && has("Work:Old/locked") && !has("Work:OLD") && !hidden_left(), "back as Old, not OLD");
+}
+static void a_stop_on_the_drawer_itself_renames_it_back(void) {
+    int i;
+    setup(1, 1); i = ff_add(&F, "Work:E", 1); F.e[i].prot = 1; ff_put(&F, "Work:E/f", "x", 1, 0, ""); hello5();
+    CHECK(strcmp(req("DELETE s 6:Work:E\n"), "DEL s 1\nERR s denied 13:dos error 222\n") == 0, ob);
+    CHECK(has("Work:E") && !has("Work:E/f") && !hidden_left(), "emptied, and back under its name");
+}
+static void a_lost_connection_says_where_the_rest_is(void) {
+    static char b[RX_UP_BLOCK + 1]; char nm[40]; int i;
+    setup(1, 1); ff_add(&F, "Work:D", 1);
+    for (i = 0; i < 20; i++) { sprintf(nm, "Work:D/f%02d", i); ff_put(&F, nm, "", 0, 0, ""); }
+    strcpy(F.plant, "Work:D/x"); hello5(); feed("DELETE w 6:Work:D\n");
+    rx_take_output(&S, b, sizeof b - 1);
+    rx_disconnected(&S);
+    { int k = last_ev(RX_EV_REQ); char want[80];
+      snprintf(want, sizeof want, "the rest is in %s: connection lost", hid("w", 0));
+      CHECK(k >= 0 && strcmp(ev_text[k], want) == 0 && strcmp(ev_path[k], "Work:D") == 0, ev_text[k]); }
+    CHECK(holds("Work:D/x", "new") && hidden_left(), "both kept");
+}
+static void the_rest_is_in_is_cut_to_79_bytes(void) {
+    const char *deep = "Work:D/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    char pre[64];
+    setup(1, 1); ff_add(&F, "Work:D", 1); ff_add(&F, "Work:D/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1); ff_put(&F, deep, "x", 1, 1, "");
+    strcpy(F.plant, "Work:D/x"); hello5();
+    req("DELETE s 6:Work:D\n");
+    snprintf(pre, sizeof pre, "DEL s 0\nERR s denied 79:the rest is in %s: aaaa", hid("s", 0));
+    CHECK(strncmp(ob, pre, strlen(pre)) == 0, ob);
+    CHECK(strlen(strchr(strstr(ob, "79:"), ':') + 1) == 79 + 1, "79 bytes and the newline");
+}
+
 int main(void) {
     RUN(a_protocol_4_hello_answers_both_switches); RUN(older_hellos_are_answered_as_before);
     RUN(a_changed_write_switch_makes_the_hello_stale);
@@ -677,6 +715,8 @@ int main(void) {
     RUN(the_old_name_taken_says_where_the_rest_is); RUN(a_taken_hidden_name_takes_the_next);
     RUN(the_first_rename_failing_deletes_in_place); RUN(writing_off_mid_delete_renames_it_back);
     RUN(a_lost_connection_renames_it_back); RUN(protocol_4_deletes_in_place);
+    RUN(a_stop_restores_the_disks_spelling); RUN(a_stop_on_the_drawer_itself_renames_it_back);
+    RUN(a_lost_connection_says_where_the_rest_is); RUN(the_rest_is_in_is_cut_to_79_bytes);
     (void)feedn; (void)lines_starting; (void)last_ev; (void)ff_put;
     return REPORT();
 }
