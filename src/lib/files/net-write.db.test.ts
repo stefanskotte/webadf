@@ -158,6 +158,17 @@ describe('one-line writes on a volume', () => {
     expect(await writes('w3')).toEqual([]);
   });
 
+  it('the board root and a volume say why they cannot be written to; a board that can write says nothing', async () => {
+    for (const d of ['w1', 'w3']) {
+      await getDb().insert(remoteRequests).values({ id: `vols-${d}`, orgId: 'o1', deviceId: d, kind: 'vols', amigaPath: '', status: 'done',
+        answer: { volumes: [{ name: 'Work', device: 'DH1:', size: 1, free: 1, date: DATE }], entries: [] }, answeredAt: new Date() });
+    }
+    await remember('Work:', [], 'w3');
+    expect((await netDriver.list(ctx, parsePath('NET:/w3')!))!.net).toMatchObject({ browse: null, write: OFF });
+    expect((await netDriver.list(ctx, parsePath('NET:/w1')!))!.net).toMatchObject({ browse: null, write: null });
+    expect(await netDriver.list(ctx, parsePath('NET:/w3/Work')!)).toMatchObject({ writable: false, readOnlyReason: OFF, net: { write: OFF } });
+  });
+
   it('the job says how its writes went: a delete counting up, then stopped half way', async () => {
     const r = await op({ op: 'delete', sources: [W('old')] });
     const job = (r as { job: { id: string } }).job.id;

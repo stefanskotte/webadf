@@ -142,7 +142,8 @@ async function listBoardRoot(ctx: FsCtx, t: SendTarget, now: number, opts: { fre
   entries.push({ name: QUEUE_FOLDER, kind: 'dir', path: netPath(t.id, QUEUE_FOLDER), size: null, date: null, protection: null,
     comment: null, marks: [`${load.files} waiting`] });
   return { path: netPath(t.id), crumbs: boardCrumbs(t), entries, writable: false, readOnlyReason: NET_OPEN_VOLUME, disk: null,
-    net: { board: t.id, boardName: t.name, volume: null, amigaPath: null, readAt, cut: false, browse: block },
+    // Why its volumes cannot be written to, when they can be read (phase 2, spec 2026-10-31 §4.2).
+    net: { board: t.id, boardName: t.name, volume: null, amigaPath: null, readAt, cut: false, browse: block, write: block === null ? writeOf(t, now) : null },
     meta: block ?? `${volumes.length} ${volumes.length === 1 ? 'volume' : 'volumes'}` };
 }
 
