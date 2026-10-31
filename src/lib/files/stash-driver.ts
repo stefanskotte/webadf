@@ -13,6 +13,7 @@ import { protectionString } from '@/lib/adffs/dir';
 import { uploadFailureText } from '@/lib/from-amiga-ui';
 import { UPLOAD_AREA_MAX_BYTES, UPLOAD_AREA_MAX_FILES } from '@/lib/amiga-upload-limits';
 import { formatPath, parsePath, type FsPath } from './path';
+import { isKeptWords, keptWords } from '@/lib/remote-browse';
 import { keepBothName, rowsUnder, sameStashName, STASH_FILE_MAX, stashTree, type StashNode } from './stash-paths';
 import { openArchive, type OpenedArchive } from './stash-archive';
 import {
@@ -469,9 +470,11 @@ async function within(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
 }
 
 /**
- * Delete. With `unchanged` (a move's second half), a source goes only while its rows are exactly the ones collected,
- * with the bits and comment they had; otherwise it stays and its item says so (REMOVE_FAILED). A failed stub under it
- * holds no bytes and goes with it.
+ * Delete. With `unchanged` (a move's second half, spec 2026-10-31 §9), only what was copied goes: each collected file
+ * still as it was collected (the same row, or by its path below the moved entry when the copy named no row; the bytes,
+ * bits and comment it had), then each collected drawer, deepest first, only once nothing is left under it. What stays --
+ * a file saved into the drawer meanwhile, one changed since -- keeps its drawers, and the item says so: a drawer kept
+ * "Kept STASH:/X: something new is in it", a file changed REMOVE_FAILED. A failed stub under it holds no bytes and goes.
  */
 async function remove(ctx: OpCtx, sources: string[], unchanged?: ReadonlyMap<string, IncomingItem[]>): Promise<Outcome> {
   const s = await loadStash(ctx);
@@ -484,19 +487,28 @@ async function remove(ctx: OpCtx, sources: string[], unchanged?: ReadonlyMap<str
     }
     try {
       const e = entryAt(s, raw);
-      const collected = new Map((unchanged.get(raw) ?? []).filter((i) => i.id !== undefined).map((i) => [i.id!, i] as const));
+      const copied = unchanged.get(raw) ?? [];
       const rows = rowsUnder(e.node).map((i) => s.rows[i]);
-      const now = live(rows);
-      const asCollected = now.length === collected.size && now.every((r) => {
-        const c = collected.get(r.id);
-        return !!c && c.kind === r.kind && c.protection === r.protection && (c.comment ?? '') === r.comment
-          && (r.kind === 'dir' || c.sha256 === r.blobSha256);
-      });
-      if (!asCollected) refuse('conflict', 409, REMOVE_FAILED);
-      ids.push(...rows.map((r) => r.id));
+      const below = (r: StashRow) => segsOf(r.path).slice(e.shown.length);
+      const sameRel = (a: string[], b: string[]) => a.length === b.length && a.every((x, k) => same(x, b[k]));
+      const under = (a: string[], b: string[]) => a.length > b.length && b.every((x, k) => same(x, a[k]));
+      const match = (c: IncomingItem, r: StashRow) => (c.id !== undefined ? c.id === r.id : sameRel(c.rel.slice(1), below(r)));
+      const gone = new Set(rows.filter((r) => r.status === 'failed').map((r) => r.id));
+      for (const c of copied) {
+        if (c.kind !== 'file') continue;
+        const r = live(rows).find((x) => x.kind === 'file' && !gone.has(x.id) && match(c, x));
+        if (r && c.protection === r.protection && (c.comment ?? '') === r.comment && c.sha256 === r.blobSha256) gone.add(r.id);
+      }
+      for (const c of copied.filter((x) => x.kind === 'dir').sort((a, b) => b.rel.length - a.rel.length)) {
+        const r = rows.find((x) => x.kind === 'dir' && !gone.has(x.id) && match(c, x));
+        if (r && !rows.some((x) => !gone.has(x.id) && under(below(x), below(r)))) gone.add(r.id);
+      }
+      ids.push(...gone);
+      if (rows.some((r) => !gone.has(r.id))) refuse('conflict', 409, e.node.kind === 'dir' ? keptWords(raw) : REMOVE_FAILED);
     } catch (err) {
       if (!(err instanceof Refused)) throw err;
-      results.set(raw, { source: raw, ok: false, refusal: { code: err.refusal.code, detail: REMOVE_FAILED } });
+      const detail = err.refusal.detail && isKeptWords(err.refusal.detail) ? err.refusal.detail : REMOVE_FAILED;
+      results.set(raw, { source: raw, ok: false, refusal: { code: err.refusal.code, detail } });
     }
   }
   await deleteStash(getDb(), ctx.orgId, ids);

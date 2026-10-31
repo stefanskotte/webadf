@@ -124,10 +124,11 @@ export async function queueTransferFromBlob(db: Db, a: { orgId: string; deviceId
 /**
  * `dest`, `onClash` (NET: volumes phase 2): a copy onto a volume -- the absolute Amiga path and the clash mode; the
  * row's `path` is then the file's name (what the Upload page shows). `moveSource`: the Files path a move removes once
- * every row of the job naming it is delivered (plan W7).
+ * every row of the job naming it is delivered (plan W7); `moveItem` the entry of it this row copies (`Pack/sub/x`, spec
+ * 2026-10-31 §9), so the move removes exactly that.
  */
 export type QueueFile = { path: string; sha256: string; sizeBytes: number; protection: number; comment: string; bytes?: Uint8Array;
-  dest?: string; onClash?: ClashMode; moveSource?: string };
+  dest?: string; onClash?: ClashMode; moveSource?: string; moveItem?: string };
 export type QueueManyResult =
   | { ok: true; ids: string[] }
   | { ok: false; reason: 'bad_name' | 'too_large' | 'queue_full' | 'no_device' | 'no_blob' | 'empty'; path?: string };
@@ -174,7 +175,7 @@ export async function queueTransfers(db: Db, a: { orgId: string; deviceId: strin
       path: c.path, sizeBytes: c.size, crc32: crcs[k], protection: c.f.protection >>> 0, comment: cleanComment(c.f.comment),
       blobSha256: c.f.sha256, createdAt: new Date(now.getTime() + k), expiresAt: new Date(now.getTime() + SEND_EXPIRE_MS),
       amigaDest: c.f.dest ?? null, onClash: c.f.dest !== undefined ? c.f.onClash ?? 'keep' : null, jobId: a.jobId ?? null,
-      moveSource: c.f.moveSource ?? null }));
+      moveSource: c.f.moveSource ?? null, moveItem: c.f.moveItem ?? null }));
     await tx.insert(transfers).values(rows);
     await tx.update(devices).set({ sendVersion: sql`${devices.sendVersion} + 1` }).where(eq(devices.id, a.deviceId));
     return { ok: true as const, ids: rows.map((r) => r.id) };

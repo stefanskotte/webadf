@@ -10,6 +10,8 @@ import {
   setComment, setProtection, type AdfEntry, type BatchOp, type CostItem, type WriteError, type WriteResult,
 } from '@/lib/adffs';
 import { sameName } from '@/lib/adffs/write';
+import { createHash } from 'node:crypto';
+import { keptWords } from '@/lib/remote-browse';
 import { applyDiskEdit, type DiskEditOutcome } from '@/lib/disk-write';
 import { isMountedReason } from '@/lib/mount-wording';
 import { childOf, formatPath, isWithin, parsePath, type FsPath } from './path';
@@ -269,12 +271,24 @@ async function commitPlan(ctx: Run, dd: ResolvedDisk, destLoc: Loc, plan: Plan) 
 
 type Removal = { raw: string; loc: Loc; d: ResolvedDisk; hit: Hit; copied: PlanItem[] };
 
-/** Each source disk loses its originals, one edit per disk, each only while it is still what was copied. A disk whose edit is refused marks its items in `results`. */
+/**
+ * Each source disk loses what was copied of its originals, one edit per disk (spec 2026-10-31 §9): each copied file
+ * still exactly as it was copied, then each copied folder, deepest first, only once it is empty. What stays -- a file
+ * saved into the folder since (a board's write, another tab), one changed since, an entry made again in its place --
+ * keeps its folders, and its item says so: a folder "Kept LIBRARY:/…: something new is in it", a file REMOVE_FAILED.
+ * A disk whose edit is refused marks its items in `results`.
+ */
 async function removeCopied(ctx: Run, list: Removal[], results: Map<string, OpItem>) {
   for (const [d, group] of groupBy(list, (s) => s.d)) {
+    const kept = new Set<string>();
     try {
-      await edit(ctx, d, chain(...deepestFirst(group).map((s) => onEntry(s.loc.names, (adf, h) => (
-        stillAsCopied(adf, h, s) ? deleteEntry(adf, h.parentBlock, h.entry.block) : { ok: false, reason: CONFLICT })))));
+      // applyDiskEdit may run the step again on newer bytes: what was kept is what the last run kept.
+      await edit(ctx, d, (adf) => { kept.clear(); return chain(...deepestFirst(group).map((s) => removeAsCopied(s, kept)))(adf); });
+      for (const s of group) {
+        if (kept.has(s.raw)) {
+          results.set(s.raw, { source: s.raw, ok: false, refusal: { code: 'conflict', detail: s.hit.entry.kind === 'dir' ? keptWords(s.raw) : REMOVE_FAILED } });
+        }
+      }
     } catch (e) {
       if (!(e instanceof Refused)) throw e;
       for (const s of group) results.set(s.raw, { source: s.raw, ok: false, refusal: { code: e.refusal.code, detail: REMOVE_FAILED } });
@@ -282,24 +296,52 @@ async function removeCopied(ctx: Run, list: Removal[], results: Map<string, OpIt
   }
 }
 
-// Not an adffs WriteError: the engine's own refusal, which applyDiskEdit passes through and fromEdit maps to `conflict`.
-const CONFLICT = 'conflict' as WriteError;
+/** The entry at `names` in these bytes, or null. */
+function find(adf: Uint8Array, names: string[]): Hit | null {
+  const v = readVolume(adf);
+  if (!v.ok) return null;
+  const hit = resolveInDisk({ root: v.root, rootBlock: v.rootBlock, intl: v.volume.intl }, names);
+  return hit?.entry ? (hit as Hit) : null;
+}
 
-/**
- * The original about to be deleted is exactly what was copied: the same header block, and a fresh walk of it gives the
- * same names, bytes, dates, bits and comments. The copy was read from the snapshot loadDisk took; anything saved to the
- * source since (a board's write, another tab) would otherwise be deleted without ever having been copied.
- */
-function stillAsCopied(adf: Uint8Array, h: Hit, s: { hit: Hit; copied: PlanItem[] }): boolean {
-  if (h.entry.block !== s.hit.entry.block) return false;
+/** One file as it is now is the one copied: bits, comment, date (when the copy knew it), bytes (or their sha-256). */
+function sameAsCopied(adf: Uint8Array, h: Hit, c: PlanItem): boolean {
+  if (h.entry.kind !== 'file') return false;
   const now: PlanItem[] = [];
-  try { walk(adf, h.entry, s.copied[0].rel, now); } catch (e) { if (e instanceof Refused) return false; throw e; }
-  const sameBytes = (a?: Uint8Array, b?: Uint8Array) => (!a && !b) || (!!a && !!b && a.length === b.length && a.every((x, i) => x === b[i]));
-  return now.length === s.copied.length && now.every((n, i) => {
-    const c = s.copied[i];
-    return n.rel.join('/') === c.rel.join('/') && n.kind === c.kind && n.protection === c.protection && n.comment === c.comment
-      && n.date?.getTime() === c.date?.getTime() && sameBytes(n.bytes, c.bytes);
-  });
+  try { walk(adf, h.entry, c.rel, now); } catch (e) { if (e instanceof Refused) return false; throw e; }
+  const n = now[0];
+  if (!n || n.protection !== c.protection || (n.comment ?? '') !== (c.comment ?? '')) return false;
+  if (c.date && n.date?.getTime() !== c.date.getTime()) return false;
+  if (c.bytes) return !!n.bytes && n.bytes.length === c.bytes.length && n.bytes.every((x, i) => x === c.bytes![i]);
+  return !!c.sha256 && !!n.bytes && createHash('sha256').update(n.bytes).digest('hex') === c.sha256;
+}
+
+/** The step that removes what was copied of one source; anything it leaves marks `kept`. */
+function removeAsCopied(s: Removal, kept: Set<string>): Step {
+  return (adf) => {
+    const top = find(adf, s.loc.names);
+    // Gone, or not the entry collected (deleted and made again since, however alike): nothing of it was copied.
+    if (!top || top.entry.block !== s.hit.entry.block) { kept.add(s.raw); return { ok: true, adf }; }
+    let cur = adf;
+    const at = (c: PlanItem) => [...s.loc.names, ...c.rel.slice(1)];
+    for (const c of s.copied.filter((x) => x.kind === 'file')) {
+      const h = find(cur, at(c));
+      if (!h || !sameAsCopied(cur, h, c)) { kept.add(s.raw); continue; }
+      const r = deleteEntry(cur, h.parentBlock, h.entry.block);
+      if (!r.ok) return r;
+      cur = r.adf;
+    }
+    for (const c of s.copied.filter((x) => x.kind === 'dir').sort((a, b) => b.rel.length - a.rel.length)) {
+      const h = find(cur, at(c));
+      if (!h || h.entry.kind !== 'dir') continue;
+      if (h.entry.children.length) { kept.add(s.raw); continue; }
+      const r = deleteEntry(cur, h.parentBlock, h.entry.block);
+      if (!r.ok) return r;
+      cur = r.adf;
+    }
+    // A file top changed, or a folder with something new left in it: kept (marked above).
+    return { ok: true, adf: cur };
+  };
 }
 
 /** Children before their parents, so deleting both never deletes through an already-deleted folder. */

@@ -19,16 +19,45 @@ import { remoteRequests } from '@/db/schema/remote-requests';
 import { newRequestId } from '@/lib/remote-wire';
 import { parsePath } from './path';
 import { driverFor } from './drivers';
-import { Refused, type OpCtx } from './driver';
+import { Refused, REMOVE_FAILED, type IncomingItem, type OpCtx } from './driver';
+import { isKeptWords } from '@/lib/remote-browse';
 import { isNetVolumePath, placeOf, removeCopiedOnVolume } from './net-write';
 import { refusalWords } from './words';
 
 const ACTIVE_ROWS = ['queued', 'sending'];
 
 type Part = { id: string; kind: string; status: string; amigaPath: string; target: unknown; deviceId: string };
+type Row = { blobSha256: string; sizeBytes: number; protection: number; comment: string; moveItem: string | null };
+type Removal = { kind: 'removed' } | { kind: 'kept'; label: string } | { kind: 'refused'; why: string };
 
-/** Remove what a move of one source copied, as the person who moved it; null when it went (or was sent), else why not. */
-async function removeSource(orgId: string, userId: string | null, source: string, jobId: string, parts: Part[]): Promise<string | null> {
+/**
+ * What a move of a STASH:/LIBRARY: entry copied (spec §9), as its driver's `unchanged`: each delivered row's file by
+ * its path below the entry (`move_item`) with the bytes, bits and comment it went with, each Makedir's drawer, and the
+ * drawers between. Null when a row does not say which entry it copied (queued before §9): then nothing is removed.
+ */
+function copiedOf(rows: Row[], mkdirs: Part[]): IncomingItem[] | null {
+  if (rows.some((r) => !r.moveItem)) return null;
+  const out = new Map<string, IncomingItem>();
+  const dir = (rel: string[]) => {
+    for (let k = 1; k <= rel.length; k++) {
+      const at = rel.slice(0, k);
+      out.set(`d:${at.join('/').toLowerCase()}`, out.get(`d:${at.join('/').toLowerCase()}`) ?? { rel: at, kind: 'dir', date: null, protection: 0, comment: null });
+    }
+  };
+  for (const r of rows) {
+    const rel = r.moveItem!.split('/');
+    dir(rel.slice(0, -1));
+    out.set(`f:${rel.join('/').toLowerCase()}`, { rel, kind: 'file', sha256: r.blobSha256, size: r.sizeBytes, date: null, protection: r.protection, comment: r.comment });
+  }
+  for (const m of mkdirs) {
+    const item = (m.target as { moveItem?: string }).moveItem;
+    if (item) dir(item.split('/'));
+  }
+  return [...out.values()];
+}
+
+/** Remove what a move of one source copied, as the person who moved it: removed (or sent), kept in part, or refused. */
+async function removeSource(orgId: string, userId: string | null, source: string, jobId: string, parts: Part[], rows: Row[]): Promise<Removal> {
   const p = parsePath(source);
   const ctx: OpCtx = { orgId, userId, versions: [] };
   try {
@@ -38,14 +67,19 @@ async function removeSource(orgId: string, userId: string | null, source: string
       const drawers = gets.flatMap((g) => (g.target as { moveDrawers?: string[] }).moveDrawers ?? []);
       const files = gets.map((g) => g.amigaPath).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
       await removeCopiedOnVolume(ctx, source, files, drawers, jobId);
-      return null;
+      return { kind: 'removed' };
     }
-    const r = p && driverFor(p.device)?.remove ? await driverFor(p.device)!.remove!(ctx, [source]) : null;
-    if (!r || r.kind !== 'done') return refusalWords('failed');
+    const d = p ? driverFor(p.device) : null;
+    const copied = copiedOf(rows, parts.filter((x) => x.kind === 'mkdir'));
+    if (!d?.remove || !copied) return { kind: 'refused', why: refusalWords('failed') };
+    const r = await d.remove(ctx, [source], new Map([[source, copied]]));
+    if (r.kind !== 'done') return { kind: 'refused', why: refusalWords('failed') };
     const bad = r.items.find((i) => !i.ok);
-    return bad && !bad.ok ? (bad.refusal.detail ?? refusalWords(bad.refusal.code)) : null;
+    if (!bad || bad.ok) return { kind: 'removed' };
+    if (bad.refusal.detail && isKeptWords(bad.refusal.detail)) return { kind: 'kept', label: source };
+    return { kind: 'refused', why: bad.refusal.detail === REMOVE_FAILED ? refusalWords(bad.refusal.code) : bad.refusal.detail ?? refusalWords(bad.refusal.code) };
   } catch (e) {
-    if (e instanceof Refused) return e.refusal.detail ?? refusalWords(e.refusal.code);
+    if (e instanceof Refused) return { kind: 'refused', why: e.refusal.detail ?? refusalWords(e.refusal.code) };
     throw e;
   }
 }
@@ -65,7 +99,8 @@ export async function settleMove(db: Db, orgId: string, jobId: string, source: s
       .from(remoteRequests).where(getMarked(jobId, source)).orderBy(remoteRequests.createdAt, remoteRequests.id).for('update');
     const gets = parts.filter((g) => g.kind === 'get');
     const mkdirs = parts.filter((g) => g.kind === 'mkdir');
-    const rows = await tx.select({ id: transfers.id, status: transfers.status, userId: transfers.createdByUserId, deviceId: transfers.deviceId })
+    const rows = await tx.select({ id: transfers.id, status: transfers.status, userId: transfers.createdByUserId, deviceId: transfers.deviceId,
+      blobSha256: transfers.blobSha256, sizeBytes: transfers.sizeBytes, protection: transfers.protection, comment: transfers.comment, moveItem: transfers.moveItem })
       .from(transfers).where(rowMarked(jobId, source)).for('update');
     if (parts.length === 0 && rows.length === 0) return false;
     // Still on its way: a get not settled, a Makedir not answered, or a queue row waiting or moving.
@@ -77,14 +112,18 @@ export async function settleMove(db: Db, orgId: string, jobId: string, source: s
     let removed = false;
     if (arrived) {
       const userId = (gets[0]?.target as { userId?: string } | undefined)?.userId ?? rows[0]?.userId ?? null;
-      const why = await removeSource(orgId, userId, source, jobId, parts);
-      removed = why === null;
-      if (why !== null) {
+      const out = await removeSource(orgId, userId, source, jobId, parts, rows);
+      removed = out.kind === 'removed';
+      const at = placeOf(parsePath(source));
+      const said = { id: newRequestId(), orgId, deviceId: gets[0]?.deviceId ?? rows[0]?.deviceId ?? parts[0].deviceId, kind: 'delete',
+        amigaPath: at?.amiga ?? source, fetchId: jobId, answeredAt: new Date() };
+      if (out.kind === 'refused') {
         // Said in the job, as a delete that could not be done (final review I-2): the person sees the move became a copy.
-        const at = placeOf(parsePath(source));
-        await tx.insert(remoteRequests).values({ id: newRequestId(), orgId, deviceId: gets[0]?.deviceId ?? rows[0]?.deviceId ?? parts[0].deviceId, kind: 'delete',
-          amigaPath: at?.amiga ?? source, fetchId: jobId, status: 'failed', errorCode: 'moved', answeredAt: new Date(),
-          errorText: `Copied, but the original could not be removed — ${why}`, target: { label: at?.shown ?? source } });
+        await tx.insert(remoteRequests).values({ ...said, status: 'failed', errorCode: 'moved',
+          errorText: `Copied, but the original could not be removed — ${out.why}`, target: { label: at?.shown ?? source } });
+      } else if (out.kind === 'kept') {
+        // What the move left because something new is in it (spec §9): said in the job, not a failure.
+        await tx.insert(remoteRequests).values({ ...said, status: 'done', answer: { removed: 0, kept: true }, target: { label: out.label, kept: true } });
       }
     }
     if (parts.length) {

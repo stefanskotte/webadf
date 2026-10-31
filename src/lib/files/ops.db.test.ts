@@ -251,6 +251,41 @@ describe('fix round 1', () => {
     expect(await text('LIBRARY:/g5/d5/Moving')).toBe('abc');
     expect(await text('LIBRARY:/g4/d4/Moving')).toBe('xyz');
   });
+  // Spec 2026-10-31 §9: a move removes only what it copied -- a file saved into the folder meanwhile stays, with its folders.
+  it('§9: a folder moved between disks leaves what was saved into it meanwhile, and says it kept it', async () => {
+    const enc = (t: string) => new TextEncoder().encode(t);
+    const { applyDiskEdit } = await import('@/lib/disk-write');
+    const r0 = await applyDiskEdit('o1', 'd4', applyBatch([{ op: 'mkdir', parentPath: '', name: 'Box' }, { op: 'add', parentPath: 'Box', name: 'one', bytes: enc('1') },
+      { op: 'mkdir', parentPath: 'Box', name: 'Sub' }, { op: 'add', parentPath: 'Box/Sub', name: 'two', bytes: enc('2') }, { op: 'mkdir', parentPath: 'Box', name: 'Empty' }]), null);
+    if (!r0.ok) throw new Error(r0.reason);
+    seam.afterNextEdit = async (real) => {   // the copy into d5 just landed; now a board saves a new file into d4's Box/Sub
+      const r = await real('o1', 'd4', applyBatch([{ op: 'add', parentPath: 'Box/Sub', name: 'new', bytes: enc('n') }]));
+      if (!r.ok) throw new Error(r.reason);
+    };
+    expect(await runOp(ctx, { op: 'move', sources: ['LIBRARY:/g4/d4/Box'], dest: 'LIBRARY:/g5/d5', onClash: 'ask' })).toMatchObject({
+      kind: 'done', items: [{ source: 'LIBRARY:/g4/d4/Box', ok: false, refusal: { code: 'conflict', detail: 'Kept LIBRARY:/g4/d4/Box: something new is in it' } }] });
+    const names = async (p: string) => (await listLibrary(ctx, P(p)))?.entries.map((e) => e.name).sort() ?? null;
+    expect(await names('LIBRARY:/g4/d4/Box')).toEqual(['Sub']);
+    expect(await names('LIBRARY:/g4/d4/Box/Sub')).toEqual(['new']);
+    expect(await names('LIBRARY:/g5/d5/Box')).toEqual(['Empty', 'Sub', 'one']);
+    expect(await text('LIBRARY:/g5/d5/Box/Sub/two')).toBe('2');
+  });
+  it('§9: a STASH: folder moved onto a disk leaves a file put into it meanwhile', async () => {
+    const enc = (t: string) => new TextEncoder().encode(t);
+    const { insertStash, listStash } = await import('@/lib/stash');
+    const put = async (path: string, body: string) => {
+      const b = enc(body); const h = createHash('sha256').update(b).digest('hex');
+      await diskStore.put(h, b, { overwrite: true });
+      const r = await insertStash(getDb(), 'o1', 'browser', [{ path, kind: 'file', sha256: h, sizeBytes: b.length, date: null, protection: 0, comment: '' }]);
+      if (!r.ok) throw new Error(r.code);
+    };
+    await put('Pack/one.txt', 'one'); await put('Pack/In/two.txt', 'two');
+    seam.afterNextEdit = async () => { await put('Pack/In/new.txt', 'new'); };
+    expect(await runOp(ctx, { op: 'move', sources: ['STASH:/Pack'], dest: 'LIBRARY:/g5/d5', onClash: 'ask' })).toMatchObject({
+      kind: 'done', items: [{ source: 'STASH:/Pack', ok: false, refusal: { code: 'conflict', detail: 'Kept STASH:/Pack: something new is in it' } }] });
+    expect((await listStash(getDb(), 'o1')).map((r) => r.path)).toEqual(['Pack/In/new.txt']);
+    expect(await text('LIBRARY:/g5/d5/Pack/In/two.txt')).toBe('two');
+  });
   it('refuses replacing a file with itself as name_exists, not cycle', async () => {
     const s = await sha('d5');
     expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g5/d5/Moving'], dest: 'LIBRARY:/g5/d5', onClash: 'replace' })).toEqual({

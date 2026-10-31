@@ -165,3 +165,7 @@ Run files-net-writes, files-net-volumes, files-net (desktop), plus `pnpm test`, 
 - Task 3: complete (tests: pnpm test:db src/lib/files/ + remote-requests + transfers → 264/264; vitest manager-rules 31/31 (kept case RED against the old file first); tsc clean)
 - Task 3: Ruling: the copied files' DELETEs go in Amiga-path order (case-insensitive), not get order — gets of one insert share a timestamp, so their order is not the walk's — cost if wrong: none (each is one object)
 - Task 3: Ruling: a volume → LIBRARY: move is covered by the same settle path (one test, a disk image) — drawers onto LIBRARY: are refused before anything is asked, as before — cost if wrong: none
+- Task 4: complete (tests: pnpm test:db src/lib/files/ + remote-requests + transfers → 267/267; the three §9 tests RED first; tsc clean)
+- Task 4: Ruling: a move row queued before migration 0056 (no move_item) removes nothing; the job says "Copied, but the original could not be removed — Something went wrong." — the server cannot tell what it copied — cost if wrong: an in-flight move at deploy becomes a copy
+- Task 4: Ruling: the Makedirs a copy onto a volume makes for a drawer's parents (they hold files) are move parts too; the move waits for all of them — cost if wrong: none (they answer done or exists)
+- Task 4: Ruling: a STASH: comment is compared against the queue row's cleaned comment; a comment cleaning changed counts as changed (kept) — cost if wrong: a rare file stays in STASH: after a move

@@ -314,6 +314,29 @@ describe('moves', () => {
     expect(await names()).toEqual(['In/k.txt']);
   });
 
+  // Spec 2026-10-31 §9 (web ruling I-1 fixed): only what was copied leaves STASH:; the move says what it kept.
+  it('§9: a STASH: drawer moved onto a volume leaves a file put into it meanwhile, and an empty drawer goes once made there', async () => {
+    await stash('Pack/one.txt', '1'); await stash('Pack/In/two.txt', '2'); await stash('Pack/E', '', 'dir');
+    const r = await op({ op: 'move', sources: ['STASH:/Pack'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
+    const job = (r as { job: { id: string } }).job.id;
+    const queued = await rows();
+    expect(queued.map((x) => [x.amigaDest, x.moveSource, x.moveItem])).toEqual([
+      ['Work:Tools/Pack/one.txt', 'STASH:/Pack', 'Pack/one.txt'], ['Work:Tools/Pack/In/two.txt', 'STASH:/Pack', 'Pack/In/two.txt']]);
+    const mks = await writes();
+    expect(mks.map((m) => [m.kind, m.amigaPath, (m.target as { moveItem?: string }).moveItem])).toEqual([
+      ['mkdir', 'Work:Tools/Pack', 'Pack'], ['mkdir', 'Work:Tools/Pack/E', 'Pack/E']]);
+    await stash('Pack/In/new.txt', 'new');   // saved into the drawer while the move runs
+    for (const x of queued) await deliver(x.id, { ok: true, savedAs: x.amigaDest! });
+    const names = async () => (await listStash(getDb(), 'o1')).map((x) => x.path).sort();
+    expect(await names()).toEqual(['Pack/E', 'Pack/In/new.txt', 'Pack/In/two.txt', 'Pack/one.txt']);   // the Makedir is not made yet
+    await takeWaiting(getDb(), 'w1');
+    for (const mk of mks) await answerPiece(getDb(), 'w1', mk.id, { piece: 0, lines: [`DONE ${mk.id} 1`], last: true });
+    const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!;
+    expect(await names()).toEqual(['Pack/In/new.txt']);
+    expect(p).toMatchObject({ waiting: 0, failed: [] });
+    expect(p.writes.filter((w) => w.kept).map((w) => w.label)).toEqual(['STASH:/Pack']);
+  });
+
   it('within one volume: a RENAME into the drawer; Replace deletes what is there first; a drawer never into itself', async () => {
     expect(await op({ op: 'move', sources: [W('x')], dest: 'NET:/w1/Work/Sub', onClash: 'ask' })).toMatchObject({ kind: 'done' });
     expect(await lines()).toEqual([['rename', 'Work:x', { to: 'Work:Sub/x', label: 'Work:x' }]]);

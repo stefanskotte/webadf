@@ -266,16 +266,18 @@ export async function copyOntoVolume(ctx: OpCtx, dir: FsPath, tops: IncomingTop[
 
   // Drawers holding no file arrive by a Makedir each, parents first; a drawer made meanwhile is as good (`ensure`).
   const holdsFile = (rel: string[]) => files.some((f) => f.rel.length > rel.length && rel.every((s, k) => sameStashName(s, f.rel[k])));
+  // A move's Makedirs are parts of it (spec §9): each names the entry it copies (its rel as collected).
   const mkdirs: WriteReq[] = going.flatMap((g) => g.top.items.filter((i) => i.kind === 'dir').map((i) => [g.name, ...i.rel.slice(1)])
     .filter((rel) => !holdsFile(rel))
     .flatMap((rel) => rel.map((_, k) => rel.slice(0, k + 1)))
     .filter((rel, k, all) => all.findIndex((x) => x.join('/').toLowerCase() === rel.join('/').toLowerCase()) === k)
-    .map((rel) => ({ kind: 'mkdir' as const, amigaPath: joinAmiga(at.amiga, ...rel), ensure: true, label: joinAmiga(at.shown, ...rel) })));
+    .map((rel) => ({ kind: 'mkdir' as const, amigaPath: joinAmiga(at.amiga, ...rel), ensure: true, label: joinAmiga(at.shown, ...rel),
+      ...(opts.move ? { move: { source: g.top.source, item: [g.top.items[0].rel[0], ...rel.slice(1)].join('/') } } : {}) })));
 
   const shas = await mapLimit(files, 12, ({ i }) => (i.sha256 ? Promise.resolve(i.sha256) : storeSendBytes(i.bytes!)));
   const queue: QueueFile[] = files.map(({ g, i, rel }, k) => ({ path: rel[rel.length - 1], sha256: shas[k], sizeBytes: i.bytes?.length ?? i.size!,
     protection: i.protection, comment: i.comment ?? '', ...(i.bytes ? { bytes: i.bytes } : {}),
-    dest: joinAmiga(at.amiga, ...rel), onClash: g.mode, ...(opts.move ? { moveSource: g.top.source } : {}) }));
+    dest: joinAmiga(at.amiga, ...rel), onClash: g.mode, ...(opts.move ? { moveSource: g.top.source, moveItem: i.rel.join('/') } : {}) }));
   const job = newRequestId();
   // The queue first: a copy it refuses makes no drawers on the Amiga either (final review I-4).
   if (queue.length) {
