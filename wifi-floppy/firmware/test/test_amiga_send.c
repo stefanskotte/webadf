@@ -798,8 +798,9 @@ static void a_put_that_crosses_a_request_after_an_upload_goes_first(void) {
     CHECK(strstr(F.out, "TAKE 2 ") != NULL, "and was told to go on");
 }
 
-// Fix round 1, finding 2: lines held for an owed piece hold the PONG too, so no PING may go out meanwhile.
-static void no_ping_while_lines_wait_for_a_piece(void) {
+// Final review M2 (re-graded Important): Transfer drops a connection silent for 75 s (RX_IDLE_SECS), so PINGs go on
+// while lines are held for an owed piece; only the PONG deadline is suspended. The PONGs queue behind the held lines.
+static void pings_continue_while_lines_wait_for_a_piece(void) {
     char line[64];
     ready3(1);
     wake(1, "DIR d 5:Work:\n"); run(3);
@@ -811,14 +812,20 @@ static void no_ping_while_lines_wait_for_a_piece(void) {
     reply("ENT d f 1 0 1.0.0 3:400 0:"); run(3);
     CHECK(F.in_head != F.in_tail, "line 401 held in the socket");
     clear_out();
-    for (int i = 0; i < 12; i++) {
+    int pings = 0;
+    for (int i = 0; i < 18; i++) {                       // 120 s of outage
         F.now += (AS_PING_MS + AS_PONG_MS) / 6; run(2);
+        for (const char *q = F.out; (q = strstr(q, "PING\n")) != NULL; q += 5) { reply("PONG"); pings++; }
+        clear_out();
     }
-    CHECK(F.sock == AS_SOCK_OPEN, "the link stays up");
-    CHECK(strstr(F.out, "PING") == NULL, "no PING while lines are held");
+    CHECK(pings >= 3, "PINGs keep going while lines are held");
+    CHECK(F.sock == AS_SOCK_OPEN, "no drop: the PONG deadline is suspended");
     CHECK(F.in_head != F.in_tail, "still held");
     F.req_post_status = 0; F.now += 40000; run(3);
-    CHECK(F.in_head == F.in_tail, "read once the piece posted");
+    CHECK(F.in_head == F.in_tail, "the held line and the queued PONGs are read once the piece posted");
+    CHECK(!S.ping_out, "a PONG was read");
+    F.now += AS_PONG_MS + 1000; run(3);
+    CHECK(F.sock == AS_SOCK_OPEN, "the socket stays open");
 }
 
 // Fix round 1, finding 3: a 4xx the retry cannot cure is a refusal, like done_owed's.
@@ -1479,6 +1486,80 @@ static void a_got_without_a_tag_adds_no_entry(void) {
     CHECK(ar_got_by_tag(&RQ, "420") == NULL, "no stale tag");
 }
 
+// Final review C1: out of Network mode, or with no Amiga address, nothing can be fetched. Both acks then report the
+// poll's own version -- else the server's reqMoved/xfer check answers every poll at once (a tight poll loop).
+static void network_off_acks_both_versions(void) {
+    fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, false, 0xAC100AEDu, 5); wake(5, "VOLS a\n"); run(3);
+    CHECK_EQ_INT(as_acked_version(&S), 5);
+    CHECK_EQ_INT(as_req_acked(&S), 5);
+    CHECK_EQ_INT(F.queue_fetches, 0); CHECK_EQ_INT(F.req_fetches, 0);
+    CHECK(!as_has_work(&S), "no work while off");
+}
+static void network_back_on_fetches_the_queue_and_the_requests(void) {
+    fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, false, 0xAC100AEDu, 5); wake(5, "VOLS a\n"); run(3);
+    CHECK_EQ_INT(as_req_acked(&S), 5);
+    as_set_inputs(&S, true, 0xAC100AEDu, 5); run(3);  // the internal cursors stayed behind: both are fetched
+    CHECK_EQ_INT(F.queue_fetches, 1); CHECK_EQ_INT(F.req_fetches, 1);
+    CHECK_EQ_INT(as_acked_version(&S), 5); CHECK_EQ_INT(as_req_acked(&S), 5);
+    CHECK(ar_pending(&RQ) || RQ.active, "the request is held for Transfer");
+}
+static void no_amiga_address_acks_both_versions_then_fetches(void) {
+    fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0, 5); wake(5, "VOLS a\n"); run(3);
+    CHECK_EQ_INT(as_acked_version(&S), 5);
+    CHECK_EQ_INT(as_req_acked(&S), 5);
+    CHECK_EQ_INT(F.queue_fetches, 0); CHECK_EQ_INT(F.req_fetches, 0);
+    as_set_inputs(&S, true, 0xAC100AEDu, 5); run(3);
+    CHECK_EQ_INT(F.queue_fetches, 1); CHECK_EQ_INT(F.req_fetches, 1);
+}
+
+// Final review I1: core1 ticks the engine only between long polls, so the 5 s reconnect after a protocol 3 drop
+// must count as work, or it waits behind a 25 s long poll.
+static void a_protocol_3_drop_reconnects_in_5s_without_a_long_poll(void) {
+    ready3(1);
+    F.recv_closed = true; run(1);                       // Transfer closed the idle connection
+    F.recv_closed = false;
+    CHECK_EQ_INT(F.connects, 1);
+    const uint32_t t0 = F.now;
+    for (int i = 0; i < 2000 && F.connects < 2; i++) {
+        F.budget = F.accept_max;
+        if (as_has_work(&S)) { as_tick(&S); as_step(&S); F.now += 20; }
+        else F.now += 25000;                            // core1's long poll
+    }
+    CHECK_EQ_INT(F.connects, 2);
+    CHECK(F.now - t0 <= AS_RETRY_WAITING_MS + 100, "reconnected within about 5 s");
+}
+
+// Final review I2 (amends plan ruling F9): during a copy the board fetches again before each GET, so a listing from
+// another pane goes before the next GET instead of after every file.
+static void a_listing_fetched_during_a_copy_goes_before_the_next_get(void) {
+    ready3(1);
+    wake(1, "GET g1 6:Work:a\nGET g2 6:Work:b\n"); run(3);
+    CHECK(strcmp(F.out, "GET g1 6:Work:a\n") == 0, F.out);
+    reply("GOT g1 7"); reply(PUT7); run(3);
+    CHECK_EQ_INT(F.opens, 1);
+    CHECK(strstr(F.out, "GET g2") == NULL, "g2 waits for g1's upload");
+    const int fetches = F.req_fetches;
+    snprintf(F.reqs, sizeof F.reqs, "DIR d 5:Work:\n");   // another pane asks while the file moves
+    run(3);
+    CHECK_EQ_INT(F.req_fetches, fetches);                 // never fetched while a file moves
+    clear_out();
+    amiga_sends("hello", 5); end_line("7", (const uint8_t *)"hello", 5); run(4);
+    CHECK_EQ_INT(F.closes, 1);
+    CHECK_EQ_INT(F.req_fetches, fetches + 1);             // fetched once before g2 would go
+    CHECK(strstr(F.out, "DIR d 5:Work:\n") != NULL, F.out);
+    CHECK(strstr(F.out, "GET g2") == NULL, "the listing goes first");
+    reply("DONE d 0"); run(4);
+    CHECK(strstr(F.out, "GET g2 6:Work:b\n") != NULL, F.out);
+    CHECK(strstr(F.out, "DIR d 5:Work:\n") < strstr(F.out, "GET g2 6:Work:b\n"), "in that order");
+    CHECK(F.req_fetches <= fetches + 2, "one fetch per GET start, not a loop");
+}
+
 int main(void) {
     RUN(off_or_no_address_does_nothing);
     RUN(connects_to_6800_and_says_hello);
@@ -1574,7 +1655,7 @@ int main(void) {
     RUN(browse_off_still_relays_and_transfer_says_off);
     RUN(a_failing_fetch_backs_off);
     RUN(a_put_that_crosses_a_request_after_an_upload_goes_first);
-    RUN(no_ping_while_lines_wait_for_a_piece);
+    RUN(pings_continue_while_lines_wait_for_a_piece);
     RUN(a_403_piece_is_refused_not_retried);
     RUN(got_ties_the_upload_to_the_request);
     RUN(an_upload_not_from_a_get_carries_no_request);
@@ -1586,5 +1667,10 @@ int main(void) {
     RUN(a_get_answered_err_has_no_entry);
     RUN(a_refused_piece_discards_the_rest_and_the_next_request_goes);
     RUN(a_got_without_a_tag_adds_no_entry);
+    RUN(network_off_acks_both_versions);
+    RUN(network_back_on_fetches_the_queue_and_the_requests);
+    RUN(no_amiga_address_acks_both_versions_then_fetches);
+    RUN(a_protocol_3_drop_reconnects_in_5s_without_a_long_poll);
+    RUN(a_listing_fetched_during_a_copy_goes_before_the_next_get);
     return REPORT();
 }

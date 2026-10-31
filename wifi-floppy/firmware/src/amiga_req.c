@@ -10,14 +10,37 @@ static void cpy(char *d, size_t cap, const char *s) { size_t k = strnlen(s, cap 
 
 void ar_init(as_req_t *r) { memset(r, 0, sizeof *r); }
 
+int ar_fetch_room(as_req_t *r) {
+    // A held last line without its newline would run into the first fetched one.
+    if (r->fetched_len > 0 && r->fetched_len < AR_FETCH_BYTES && r->fetched[r->fetched_len - 1] != '\n') {
+        r->fetched[r->fetched_len++] = '\n';
+        r->fetched[r->fetched_len] = 0;
+    }
+    return AR_FETCH_BYTES - r->fetched_len;
+}
 void ar_fetched(as_req_t *r, int n) {
     if (n < 0) n = 0;
-    if (n > AR_FETCH_BYTES) n = AR_FETCH_BYTES;
-    r->fetched[n] = 0;
-    r->fetched_len = n;
-    r->fetched_off = 0;
+    if (n > AR_FETCH_BYTES - r->fetched_len) n = AR_FETCH_BYTES - r->fetched_len;
+    r->fetched_len += n;
+    r->fetched[r->fetched_len] = 0;
 }
-bool ar_pending(const as_req_t *r) { return r->fetched_off < r->fetched_len; }
+bool ar_pending(const as_req_t *r) { return r->fetched_len > 0; }
+bool ar_only_gets(const as_req_t *r) {
+    if (r->fetched_len <= 0) return false;
+    for (int o = 0; o < r->fetched_len; ) {
+        const char *l = r->fetched + o;
+        const char *nl = memchr(l, '\n', (size_t)(r->fetched_len - o));
+        if (strncmp(l, "GET ", 4) != 0) return false;   // a shorter line stops the compare at its '\n' or the NUL
+        o = nl ? (int)(nl - r->fetched) + 1 : r->fetched_len;
+    }
+    return true;
+}
+// Cuts [at, at + n) out of the held lines.
+static void cut(as_req_t *r, int at, int n) {
+    memmove(r->fetched + at, r->fetched + at + n, (size_t)(r->fetched_len - at - n));
+    r->fetched_len -= n;
+    r->fetched[r->fetched_len] = 0;
+}
 
 static bool rid_ok(const char *t, int n) {
     if (n < 1 || n > AR_RID_MAX) return false;
@@ -37,32 +60,54 @@ static bool path_ok(const char *p, int n) {
     return true;
 }
 
+// The line at `at`: its kind (AR_NONE when malformed), its length without the newline, and with it.
+static ar_kind_t line_at(const as_req_t *r, int at, int *n_out, int *adv_out, int *idn_out) {
+    const char *l = r->fetched + at;
+    const char *nl = memchr(l, '\n', (size_t)(r->fetched_len - at));
+    const int n = nl ? (int)(nl - l) : r->fetched_len - at;
+    *n_out = n;
+    *adv_out = n + (nl ? 1 : 0);
+    ar_kind_t k = AR_NONE;
+    int vl = 0;
+    if (n > 5 && strncmp(l, "VOLS ", 5) == 0) { k = AR_VOLS; vl = 5; }
+    else if (n > 4 && strncmp(l, "DIR ", 4) == 0) { k = AR_DIR; vl = 4; }
+    else if (n > 4 && strncmp(l, "GET ", 4) == 0) { k = AR_GET; vl = 4; }
+    if (k == AR_NONE) return AR_NONE;
+    const char *id = l + vl;
+    const char *sp = memchr(id, ' ', (size_t)(n - vl));
+    const int idn = sp ? (int)(sp - id) : n - vl;
+    *idn_out = idn;
+    const bool ok = n <= AR_LINE_MAX && rid_ok(id, idn) &&
+                    (k == AR_VOLS ? sp == NULL : (sp != NULL && path_ok(sp + 1, n - vl - idn - 1)));
+    return ok ? k : AR_NONE;
+}
+
+// VOLS and DIR go before any GET: someone waits for a pane, while a GET is one file of a copy (final review I2,
+// amending plan ruling F9). Each kind keeps its order. Malformed lines met on the way are cut out and counted.
 bool ar_take(as_req_t *r, int *skipped) {
-    while (ar_pending(r)) {
-        const char *l = r->fetched + r->fetched_off;
-        const char *nl = memchr(l, '\n', (size_t)(r->fetched_len - r->fetched_off));
-        const int n = nl ? (int)(nl - l) : r->fetched_len - r->fetched_off;
-        r->fetched_off += n + (nl ? 1 : 0);
-        ar_kind_t k = AR_NONE;
-        int vl = 0;
-        if (n > 5 && strncmp(l, "VOLS ", 5) == 0) { k = AR_VOLS; vl = 5; }
-        else if (n > 4 && strncmp(l, "DIR ", 4) == 0) { k = AR_DIR; vl = 4; }
-        else if (n > 4 && strncmp(l, "GET ", 4) == 0) { k = AR_GET; vl = 4; }
-        const char *id = l + vl;
-        const char *sp = k == AR_NONE ? NULL : memchr(id, ' ', (size_t)(n - vl));
-        const int idn = sp ? (int)(sp - id) : n - vl;
-        const bool ok = k != AR_NONE && n <= AR_LINE_MAX && rid_ok(id, idn) &&
-                        (k == AR_VOLS ? sp == NULL : (sp != NULL && path_ok(sp + 1, n - vl - idn - 1)));
-        if (!ok) { if (skipped) (*skipped)++; continue; }
-        r->active = true; r->sent = false; r->ended = false; r->discard = false;
-        r->kind = k;
-        memcpy(r->rid, id, (size_t)idn); r->rid[idn] = 0;
-        memcpy(r->out, l, (size_t)n); r->out[n] = '\n'; r->out[n + 1] = 0; r->out_n = n + 1;
-        r->piece = 0; r->lines_total = 0; r->end_err[0] = 0; r->post_owed = false; r->post_last = false;
-        ar_body_begin(r);
-        return true;
+    int at = 0, get_at = -1, pick = -1;
+    while (at < r->fetched_len) {
+        int n, adv, idn = 0;
+        const ar_kind_t k = line_at(r, at, &n, &adv, &idn);
+        if (k == AR_NONE) { if (skipped) (*skipped)++; cut(r, at, adv); continue; }
+        if (k != AR_GET) { pick = at; break; }
+        if (get_at < 0) get_at = at;
+        at += adv;
     }
-    return false;
+    if (pick < 0) pick = get_at;
+    if (pick < 0) return false;
+    int n, adv, idn = 0;
+    const ar_kind_t k = line_at(r, pick, &n, &adv, &idn);
+    const char *l = r->fetched + pick;
+    const int vl = k == AR_VOLS ? 5 : 4;
+    r->active = true; r->sent = false; r->ended = false; r->discard = false;
+    r->kind = k;
+    memcpy(r->rid, l + vl, (size_t)idn); r->rid[idn] = 0;
+    memcpy(r->out, l, (size_t)n); r->out[n] = '\n'; r->out[n + 1] = 0; r->out_n = n + 1;
+    cut(r, pick, adv);
+    r->piece = 0; r->lines_total = 0; r->end_err[0] = 0; r->post_owed = false; r->post_last = false;
+    ar_body_begin(r);
+    return true;
 }
 
 void ar_body_begin(as_req_t *r) {
@@ -158,7 +203,9 @@ ar_got_t *ar_got_add(as_req_t *r, const char *rid, const char *tag) {
     return g;
 }
 ar_got_t *ar_got_by_tag(as_req_t *r, const char *tag) {
-    for (int i = 0; i < AR_MAX; i++) if (r->got[i].used && strcmp(r->got[i].tag, tag) == 0) return &r->got[i];
+    // A failed entry is matched by rid only (its late ERR): never to a new upload that reuses the tag.
+    for (int i = 0; i < AR_MAX; i++)
+        if (r->got[i].used && !r->got[i].err_owed && strcmp(r->got[i].tag, tag) == 0) return &r->got[i];
     return NULL;
 }
 ar_got_t *ar_got_by_rid(as_req_t *r, const char *rid) {

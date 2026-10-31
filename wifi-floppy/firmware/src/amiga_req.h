@@ -10,7 +10,8 @@
 
 #define AR_RID_MAX 40                 // the server's request id: 1-40 of [A-Za-z0-9_-]
 #define AR_MAX 8                      // = the server's fetch limit (remote-requests.ts takeWaiting)
-#define AR_FETCH_BYTES 4096           // 8 lines of "GET <40> 255:<255>\n" (305 bytes each) with room to spare
+#define AR_FETCH_BYTES 8192           // held lines plus a fetch merged after them (final review I2; PSRAM)
+#define AR_REFETCH_ROOM (AR_MAX * 320) // a fetch needs this much free: 8 lines of "GET <40> 255:<255>\n" are 2440
 #define AR_BODY_BYTES 32768           // one piece's JSON body (= DC_POST_BODY_MAX, plan ruling F2)
 #define AR_PIECE_LINES 400            // = the server's lines.max(400)
 #define AR_LINE_MAX 640               // = AS_LINE_MAX and the server's z.string().max(640)
@@ -33,8 +34,8 @@ typedef struct ar_got {
 // The board's request state. The caller's, in PSRAM on the board (main.c), like as_up_t.
 typedef struct as_req {
     uint32_t want_v, have_v;          // the poll's req.v, and the v acked (the one seen before the last fetch)
-    char fetched[AR_FETCH_BYTES + 1]; // request lines not yet taken: fetched_off .. fetched_len
-    int fetched_len, fetched_off;
+    char fetched[AR_FETCH_BYTES + 1]; // request lines not yet taken, from the start: a taken line is cut out
+    int fetched_len;
     // The request being answered (taken from `fetched`): sent to Transfer, or answered by the board itself.
     bool active, sent, ended, discard;   // ended: its last line is in; discard: the server refused a piece (F6)
     ar_kind_t kind;
@@ -53,12 +54,19 @@ typedef struct as_req {
     uint32_t got_seq;
     char late[AR_LATE_BYTES];         // a late ERR's body, built when it is posted
     bool browse;                      // READY 3's flag: Transfer's switch, for the poll
+    // amiga_send.c's own flags, here so that SRAM does not grow (final review):
+    bool quick;                       // a protocol 3 drop: the reconnect in AS_RETRY_WAITING_MS counts as work (I1)
+    bool refetched;                   // fetched since the last request was taken: the next GET goes without (I2)
+    bool ping_held;                   // lines were held for a piece: the PONG deadline restarts when they are not (M2)
 } as_req_t;
 
 void ar_init(as_req_t *r);
-// n bytes were fetched into r->fetched: kept, to be taken line by line.
+// Before a fetch: the bytes free after the held lines (which end in a newline). Fetch into r->fetched + fetched_len.
+int ar_fetch_room(as_req_t *r);
+// n bytes were fetched into r->fetched + fetched_len: kept after the held lines, to be taken line by line.
 void ar_fetched(as_req_t *r, int n);
 bool ar_pending(const as_req_t *r);   // a fetched line waits to be taken
+bool ar_only_gets(const as_req_t *r); // lines are held, and every one is a GET
 // Takes the next valid request line: active, kind, rid and out set, piece 0 begun. Malformed lines are skipped (and
 // counted in *skipped when it is not NULL). False when none is left.
 bool ar_take(as_req_t *r, int *skipped);

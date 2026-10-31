@@ -1628,15 +1628,22 @@ row and Queue alone.
     other lines.
   - **Observed in FS-UAE:** every volume in VOLS gets a device (Ram Disk RAM:, Workbench3.2 DF1:, Work DH0:); RAM Disk
     shows size 0; an empty drive is not listed.
-  - **Next: firmware 1.22.0 (spec §3), then the A500 bench (§7).**
+  - **Firmware 1.22.0 (spec §3) is the entry below; the A500 bench (§7) follows its TEST build.**
 - **Firmware 1.22.0 (2026-10-31, plan `docs/superpowers/plans/2026-10-31-firmware-1-22-net-volumes.md`):** the board
   fetches `GET /api/device/req` when the poll's `req.v` moves (acking the v seen before the fetch), relays VOLS/DIR/GET
   to Transfer one at a time on protocol 3 (`WEBADF 3 <key>` -> `READY 3 <0|1>`), and posts answers in pieces of at most
   32 KB / 400 lines. GOT ties the GET to its upload (`"request"` on the open); late ERRs go as piece 1. Board-made
-  errors: norx, old, timeout. State in PSRAM (`g_send_req`); SRAM +132 B (plan budget 128 B; accepted, heap floor
-  checked on the bench). Rulings F1-F13 in the plan. Fix-round behaviors: a PUT from Transfer that crosses a request
-  always gets its turn, no PING goes out while lines wait for an owed piece, a piece POST answered with a 4xx other
-  than 401/408/429 is a refusal, and a GOT without a tag adds no entry. TEST build and the A500 bench (spec §7) next.
+  errors: norx, old, timeout. State in PSRAM (`g_send_req`); against master `.data` 11092 (+0), `.bss` 430032 (+156:
+  +132 for the feature, +24 for the req poll object; plan budget 128 B; accepted, heap floor checked on the bench),
+  `.psram_noload` 7913164 (+45268, of 8388608). Rulings F1-F13 in the plan. Fix-round behaviors: a PUT from Transfer
+  that crosses a request always gets its turn, a piece POST answered with a 4xx other than 401/408/429 is a refusal,
+  and a GOT without a tag adds no entry. Final-review fixes: out of Network mode or with no Amiga address, both
+  `xferAck` and `reqAck` report the poll's own version (C1: else the server answered every poll at once); the 5 s
+  reconnect after a protocol 3 drop counts as work, so no 25 s long poll delays it (I1); during a copy the board
+  fetches once more before each GET and VOLS/DIR go before GETs (I2, amends F9; `AR_FETCH_BYTES` 8192); PINGs go on
+  while lines wait for an owed piece, only the PONG deadline is suspended (M2: Transfer drops a link silent 75 s);
+  the req poll object is 48 B (M4); a failed GOT entry is never matched by tag. TEST build and the A500 bench (spec
+  §7) next.
 **Parked/deferred by the operator:** PaulaNET compression (LZSA2, pre-encode N+1); proof of possession at ingest.
 Entries below marked SHIPPED/FIXED/FOLDED are kept for their history only.
 

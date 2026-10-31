@@ -1211,7 +1211,7 @@ static void dc_take_xfer(device_client_t *c, char *json) {
 // NET: volumes (fw 1.22.0): lifts `req` ({"v":N}) out of a 200 poll body and BLANKS it before any flat lookup, as
 // dc_take_xfer does. The server sends it on every body to a board that sends reqAck.
 static void dc_take_req(device_client_t *c, char *json) {
-    static char obj[24];   // {"v":4294967295} is 16; static: see the STACK note
+    static char obj[48];   // {"v":4294967295} is 16; 48 as xfer, so a field added later still fits (final review M4); static: see the STACK note
     if (!json_object(json, "req", obj, sizeof obj, true)) return;
     uint32_t v;
     if (!json_u32_strict(obj, "v", &v)) return;

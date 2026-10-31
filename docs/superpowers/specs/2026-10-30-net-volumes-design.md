@@ -114,7 +114,10 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
     GET answered GOT whose file has not finished fails the same way (piece 1); a GET's upload refused with `NO` fails
     the GET `toolarge` (`NO size`) or `io` (F5).
   - A drop at protocol 3 reconnects after 5 s, so Transfer's switch shows within seconds; requests fetched meanwhile
-    wait for it (F8).
+    wait for it (F8). The wait counts as the engine's work, so no 25 s long poll delays the reconnect (final review I1).
+  - While the held request lines are only GETs (a copy), the board fetches once more before it relays each GET and
+    merges the new lines; VOLS and DIR go before any GET, so a pane is not kept waiting behind a copy (final review I2,
+    amends F9).
 - **Testing:** host tests in `test/test_amiga_send.c` (relay, pieces, a request waiting behind a moving file, each
   board-made error, GOT tied to the upload open).
 - **Release:** a TEST build on the bench first; released after the A500 bench (§7).

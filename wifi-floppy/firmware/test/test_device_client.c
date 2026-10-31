@@ -3886,6 +3886,15 @@ static void req_version_is_read_from_the_poll(void) {
     CHECK_EQ_INT(c.req_version, 9);
 }
 
+// Final review M4: a field the server may add to req one day must not stop the wake-ups (obj 24 -> 48, as xfer).
+static void req_with_a_future_field_still_wakes(void) {
+    boot(); dc_set_req(&c, 0, 0, false);
+    push_ok_json("{\"version\":3,\"desired\":null,\"req\":{\"v\":9,\"x\":\"0123456789abcdef\"}}");
+    dc_step(&c);
+    CHECK_EQ_INT(c.req_version, 9);
+    CHECK(c.req_seen, "seen");
+}
+
 static void fetch_req_gets_the_lines(void) {
     boot();
     char buf[64];
@@ -3991,7 +4000,7 @@ int main(void) {
     RUN(an_update_boot_says_so);
     RUN(send_poll_params_only_once_set); RUN(send_version_is_read_from_the_poll); RUN(send_ip_hint_is_read_from_xfer); RUN(parse_ipv4_is_strict); RUN(send_queue_fetch);
     RUN(send_chunk_fetch); RUN(send_done_post);
-    RUN(req_poll_params_only_once_set); RUN(the_worst_case_poll_with_req_is_sent_whole); RUN(req_version_is_read_from_the_poll);
+    RUN(req_poll_params_only_once_set); RUN(the_worst_case_poll_with_req_is_sent_whole); RUN(req_version_is_read_from_the_poll); RUN(req_with_a_future_field_still_wakes);
     RUN(fetch_req_gets_the_lines); RUN(post_req_sends_the_piece); RUN(post_req_takes_a_32k_body);
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected
     // needs real PSRAM backing (everything else in this file either never

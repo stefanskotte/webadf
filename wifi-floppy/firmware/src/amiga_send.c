@@ -12,6 +12,7 @@ _Static_assert(AR_LINE_MAX == AS_LINE_MAX, "an answer line is a line from Transf
 #define AS_TXT_SILENT "Transfer stopped answering"
 static void req_on_drop(amiga_send_t *s);
 static bool req_work(const amiga_send_t *s);
+static bool reconnect_soon(const amiga_send_t *s, uint32_t t);
 
 static uint32_t now(const amiga_send_t *s) { return s->ops->now_ms(s->ops->ctx); }
 static void http_failed(amiga_send_t *s, const char *what, int st);
@@ -58,6 +59,7 @@ static void drop(amiga_send_t *s, char rx, const char *why) {
     s->out_n = 0;
     s->ping_out = false;
     const bool quick = up_cut || (s->req && s->peer_v >= 3);   // plan ruling F8: Transfer's switch shows quickly
+    if (s->req && s->peer_v >= 3) s->req->quick = true;         // ... and counts as work until then (final review I1)
     s->peer_v = 0;
     s->list_owed = false;
     s->t_retry = now(s) + (quick ? AS_RETRY_WAITING_MS : retry_ms(s));
@@ -286,11 +288,17 @@ bool as_has_work(const amiga_send_t *s) {
     return s->done_owed || file_moving(s) || s->phase == AS_CONNECTING || s->phase == AS_HELLO
         || (fetch_owed(s) && !file_moving(s))
         || (s->phase == AS_READY && (s->list_owed || s->out_n > 0 || next_present(s) || (s->up && s->up->pending)))
-        || (s->req && req_work(s));
+        || (s->req && req_work(s))
+        // Final review I1: the reconnect after a protocol 3 drop is due within 5 s. As work, core1 ticks the engine in
+        // 20 ms steps meanwhile; otherwise it would wait behind a 25 s long poll.
+        || (s->req && s->req->quick && s->phase == AS_IDLE && reconnect_soon(s, now(s)));
 }
 
 char as_rx(const amiga_send_t *s) { return s->rx; }
-uint32_t as_acked_version(const amiga_send_t *s) { return s->have_version; }
+// Network off, or no Amiga address: nothing can be fetched, so the poll's own version is acked -- otherwise the
+// server answers every poll at once (final review C1). have_version stays: Network back on fetches as owed.
+static bool offline(const amiga_send_t *s) { return !s->net_on || s->ip == 0; }
+uint32_t as_acked_version(const amiga_send_t *s) { return offline(s) ? s->want_version : s->have_version; }
 
 // --- Uploads (protocol 2, spec 2026-10-18 §3, §5) -------------------------------------------------------------------
 static bool up_moving(const amiga_send_t *s) { return s->phase >= AS_UP_OPEN && s->phase <= AS_UP_CLOSE; }
@@ -521,9 +529,18 @@ static bool up_close(amiga_send_t *s, uint32_t t, bool http) {
 
 // --- NET: volumes (spec 2026-10-30 section 3, fw 1.22.0) --------------------------------------------------------------
 static bool up_busy(const amiga_send_t *s) { return s->up && (s->up->pending || up_moving(s)); }
+// Final review I2 (amends plan ruling F9): while the held lines are only GETs -- a copy -- the board fetches once
+// more before it relays each GET, so a listing from another pane goes next (ar_take prefers it) instead of after
+// every file. Once per GET start: `refetched` is set by any fetch and cleared when a request is taken.
+static bool req_refetch_owed(const amiga_send_t *s) {
+    const as_req_t *r = s->req;
+    return !r->refetched && !r->active && s->phase == AS_READY && !up_busy(s) && ar_only_gets(r) &&
+           AR_FETCH_BYTES - r->fetched_len >= AR_REFETCH_ROOM;
+}
 static bool req_fetch_owed(const amiga_send_t *s) {
     const as_req_t *r = s->req;
-    return r->want_v != r->have_v && !ar_pending(r) && !file_moving(s);   // plan ruling F9
+    if (file_moving(s)) return false;
+    return ar_pending(r) ? req_refetch_owed(s) : r->want_v != r->have_v;
 }
 // A reconnect is due within 5 s: a request waits for it rather than being answered norx (plan ruling F8).
 static bool reconnect_soon(const amiga_send_t *s, uint32_t t) {
@@ -577,11 +594,13 @@ static bool req_http(amiga_send_t *s, uint32_t t) {
     }
     if (req_fetch_owed(s)) {
         const uint32_t v = r->want_v;   // the v the poll said, BEFORE the fetch (spec section 3): that is the ack
-        int n = s->ops->fetch_req(s->ops->ctx, r->fetched, AR_FETCH_BYTES);
+        const int room = ar_fetch_room(r);   // the new lines go after the held ones
+        int n = s->ops->fetch_req(s->ops->ctx, r->fetched + r->fetched_len, room);
         if (n < 0) { http_failed(s, "requests", n); return true; }
         s->backoff_ms = 0;
         ar_fetched(r, n);
         r->have_v = v;
+        r->refetched = true;
         return true;
     }
     return false;
@@ -595,6 +614,7 @@ static bool req_board(amiga_send_t *s, uint32_t t) {
     const bool took = ar_take(r, &bad);
     req_log_take(bad);
     if (!took) return bad > 0;
+    r->refetched = false;
     wf_logf(WF_INFO, "req: %.8s norx", r->rid);
     ar_end_err(r, "norx", AS_TXT_NORX);
     return true;
@@ -606,9 +626,11 @@ static bool req_start(amiga_send_t *s, uint32_t t) {
     as_req_t *r = s->req;
     int bad = 0;
     if (r->active || s->out_n > 0 || up_busy(s)) return false;   // a waiting PUT goes first (plan ruling F3)
+    if (req_refetch_owed(s) && !in_backoff(s)) return false;      // the next GET waits for one fetch (final review I2)
     const bool took = ar_take(r, &bad);
     req_log_take(bad);
     if (!took) return false;
+    r->refetched = false;
     if (s->peer_v < 3) {
         wf_logf(WF_INFO, "req: %.8s old (Transfer protocol %u)", r->rid, (unsigned)s->peer_v);
         ar_end_err(r, "old", AS_TXT_OLD);
@@ -685,12 +707,13 @@ static void req_on_drop(amiga_send_t *s) {
     if (r->active && r->sent) ar_end_err(r, "norx", AS_TXT_LOST);
     for (int i = 0; i < AR_MAX; i++) if (r->got[i].used) ar_got_fail(&r->got[i], "norx", AS_TXT_LOST);
     r->browse = false;
+    r->ping_held = false;
 }
 
 void as_set_req(amiga_send_t *s, as_req_t *r) { s->req = s->up ? r : NULL; if (s->req) ar_init(s->req); }
 void as_set_req_version(amiga_send_t *s, uint32_t v) { if (s->req) s->req->want_v = v; }
 bool as_req_capable(const amiga_send_t *s) { return s->req != NULL; }
-uint32_t as_req_acked(const amiga_send_t *s) { return s->req ? s->req->have_v : 0; }
+uint32_t as_req_acked(const amiga_send_t *s) { return s->req ? (offline(s) ? s->req->want_v : s->req->have_v) : 0; }
 int as_rx_proto(const amiga_send_t *s) { return s->phase >= AS_READY ? s->peer_v : 0; }
 bool as_browse(const amiga_send_t *s) { return s->req && as_rx_proto(s) == 3 && s->req->browse; }
 
@@ -761,6 +784,7 @@ static bool run(amiga_send_t *s, bool http) {
     case AS_IDLE:
         if (!s->fetched_once) return false;   // know the queue first: it sets the retry cadence
         if ((int32_t)(t - s->t_retry) < 0) return false;
+        if (s->req) s->req->quick = false;   // the quick reconnect is made (final review I1)
         if (s->ops->connect(s->ops->ctx, s->ip, AS_PORT) < 0) { s->rx = 'u'; s->t_retry = t + retry_ms(s); return false; }
         s->phase = AS_CONNECTING;
         s->t_phase = t;
@@ -894,11 +918,21 @@ static bool run(amiga_send_t *s, bool http) {
             if (s->req && req_start(s, t)) return true;
             if (down && !(s->req && s->req->active)) { s->up_last = false; start_file(s); if (!flush(s)) drop(s, 'u', "send"); return true; }
         }
-        // Lines held for an owed piece hold the PONG too (req_room): no PING, and no PONG timeout, meanwhile.
+        // Lines held for an owed piece hold the PONG too (req_room). Transfer drops a connection silent for 75 s
+        // (RX_IDLE_SECS), so the PINGs go on every AS_PING_MS, one outstanding or not, and only the PONG deadline is
+        // suspended; it restarts when the hold ends (final review M2). The PONGs queue in Transfer's socket.
         if (s->req && s->req->active && s->req->sent && !s->req->ended && !s->req->discard && s->req->post_owed) {
-            s->t_ping = t;
+            s->req->ping_held = true;
+            if (t - s->t_ping > AS_PING_MS) {
+                push(s, (const uint8_t *)"PING\n", 5);
+                if (!flush(s)) { drop(s, 'u', "send"); return true; }
+                s->ping_out = true;
+                s->t_ping = t;
+                return true;
+            }
             break;
         }
+        if (s->req && s->req->ping_held) { s->req->ping_held = false; s->t_ping = t; }   // the deadline restarts
         if (s->ping_out && t - s->t_ping > AS_PONG_MS) { drop(s, 'u', "no PONG"); return true; }
         if (!s->ping_out && t - s->t_ping > AS_PING_MS) {
             push(s, (const uint8_t *)"PING\n", 5);

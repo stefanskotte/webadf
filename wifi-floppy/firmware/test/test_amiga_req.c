@@ -30,10 +30,11 @@ static void malformed_lines_are_skipped_and_counted(void) {
          "VOLS 01234567890123456789012345678901234567890\nGET g 4:Work\nVOLS ok\n");
     int bad = 0;
     CHECK(ar_take(&R, &bad), "the first valid line is found");
-    CHECK(strcmp(R.rid, "g") == 0, R.rid);
+    CHECK(strcmp(R.rid, "ok") == 0, R.rid);              // a listing goes before a GET (final review I2)
     CHECK_EQ_INT(bad, 8);
     ar_finish(&R);
-    CHECK(ar_take(&R, &bad) && strcmp(R.rid, "ok") == 0, "then the next");
+    CHECK(ar_take(&R, &bad) && strcmp(R.rid, "g") == 0, "then the GET");
+    CHECK_EQ_INT(bad, 8);
 }
 
 static void a_last_line_without_newline_still_counts(void) {
@@ -169,6 +170,53 @@ static void a_full_got_table_drops_the_oldest(void) {
     CHECK(ar_got_by_rid(&R, "r1") != NULL && ar_got_by_tag(&R, "99") != NULL, "the rest stay");
 }
 
+// Final review I2: VOLS and DIR go before any GET (someone waits for a pane); each kind keeps its order.
+static void listings_are_taken_before_gets_in_order(void) {
+    load("GET g1 6:Work:a\nDIR d1 5:Work:\nGET g2 6:Work:b\nVOLS v\nDIR d2 4:DH0:\n");
+    static const char *const want[] = { "d1", "v", "d2", "g1", "g2" };
+    for (int i = 0; i < 5; i++) {
+        CHECK(ar_take(&R, NULL), want[i]);
+        CHECK(strcmp(R.rid, want[i]) == 0, R.rid);
+        ar_finish(&R);
+    }
+    CHECK(!ar_pending(&R) && !ar_take(&R, NULL), "none left");
+}
+
+// Final review I2: lines fetched later join the ones still held, after them.
+static void fetched_lines_merge_with_the_ones_held(void) {
+    load("GET g1 6:Work:a\nGET g2 6:Work:b\nGET g3 6:Work:c");   // the last line has no newline
+    CHECK(ar_take(&R, NULL) && strcmp(R.rid, "g1") == 0, R.rid);
+    ar_finish(&R);
+    CHECK(ar_only_gets(&R), "only GETs held");
+    const int room = ar_fetch_room(&R);
+    CHECK_EQ_INT(room, AR_FETCH_BYTES - R.fetched_len);
+    CHECK(R.fetched[R.fetched_len - 1] == '\n', "the held lines end in a newline");
+    CHECK(room >= AR_REFETCH_ROOM, "room for a whole fetch");
+    memcpy(R.fetched + R.fetched_len, "DIR d 5:Work:\nGET g4 6:Work:d\n", 30); ar_fetched(&R, 30);
+    CHECK(!ar_only_gets(&R), "a listing is held now");
+    static const char *const want[] = { "d", "g2", "g3", "g4" };
+    for (int i = 0; i < 4; i++) {
+        CHECK(ar_take(&R, NULL), want[i]);
+        CHECK(strcmp(R.rid, want[i]) == 0, R.rid);
+        ar_finish(&R);
+    }
+    CHECK(!ar_pending(&R) && !ar_only_gets(&R), "none left");
+    CHECK_EQ_INT(ar_fetch_room(&R), AR_FETCH_BYTES);
+}
+
+// Hardening (final review): a failed entry can never be matched to a new upload's tag.
+static void a_failed_got_is_never_matched_by_tag(void) {
+    ar_init(&R);
+    ar_got_t *g = ar_got_add(&R, "g1", "7");
+    ar_got_fail(g, "norx", "The connection to Transfer was lost");
+    CHECK(ar_got_by_tag(&R, "7") == NULL, "not by its tag");
+    CHECK(ar_got_by_rid(&R, "g1") == g && ar_got_owed(&R) == g, "still owed, by rid");
+    ar_got_t *h = ar_got_add(&R, "g2", "7");
+    CHECK(ar_got_by_tag(&R, "7") == h, "the new GET's entry");
+    ar_got_late(h, "ERR g2 io 3:bad");
+    CHECK(ar_got_by_tag(&R, "7") == NULL, "a late ERR too");
+}
+
 int main(void) {
     RUN(takes_vols_dir_and_get_in_order);
     RUN(malformed_lines_are_skipped_and_counted);
@@ -186,5 +234,8 @@ int main(void) {
     RUN(got_table_ties_tag_and_rid);
     RUN(a_late_err_keeps_transfers_own_line);
     RUN(a_full_got_table_drops_the_oldest);
+    RUN(listings_are_taken_before_gets_in_order);
+    RUN(fetched_lines_merge_with_the_ones_held);
+    RUN(a_failed_got_is_never_matched_by_tag);
     return REPORT();
 }
