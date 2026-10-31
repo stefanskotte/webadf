@@ -31,12 +31,17 @@ static void relay(void *u, const rx_event *e) { (void)u; cur_ui->on_event(cur_ui
 
 static char o[RX_UP_BLOCK];      /* the block going out */
 static LONG o_len, o_off;
+/* ENOBUFS: the stack is out of buffer memory for now (seen with fast memory hidden on the A500, bench 2026-10-31). Not
+   fatal: wait RX_NOBUFS_US without asking for writability (the socket still reports writable, so asking would spin the
+   68000 the stack needs to free its buffers), then send again. A board that hears nothing for long closes as usual. */
+#define RX_NOBUFS_US 200000
+static int nobufs;
 
 static void drop(net_ui *ui, rx_session *s, LONG *cl) {
     rx_disconnected(s);
     CloseSocket(*cl);
     *cl = -1;
-    o_len = o_off = 0;
+    o_len = o_off = 0; nobufs = 0;
     if (ui->on_link) ui->on_link(ui->u, 0);
 }
 
@@ -63,8 +68,10 @@ int net_run(net_ui *ui, afs_ctx *ctx, rx_fs *fs, rx_session *s, rx_upq *q) {
         LONG n, maxfd = ls;
         int bad = 0, round;
         FD_ZERO(&r); FD_ZERO(&w); FD_SET(ls, &r);
-        if (cl >= 0) { FD_SET(cl, &r); if (o_off < o_len) FD_SET(cl, &w); if (cl > maxfd) maxfd = cl; }
+        if (cl >= 0) { FD_SET(cl, &r); if (o_off < o_len && !nobufs) FD_SET(cl, &w); if (cl > maxfd) maxfd = cl; }
         tv.tv_secs = (cl >= 0 && o_off == o_len && rx_want_output(s)) ? 0 : 1; tv.tv_micro = 0;
+        if (cl >= 0 && nobufs) { tv.tv_secs = 0; tv.tv_micro = RX_NOBUFS_US; }
+        nobufs = 0;
         n = WaitSelect(maxfd + 1, &r, &w, NULL, &tv, &sigs);
         if (sigs & SIGBREAKF_CTRL_C) break;
         if ((sigs & ui->extra_sigs) && ui->on_signal(ui->u, sigs)) break;
@@ -92,7 +99,11 @@ int net_run(net_ui *ui, afs_ctx *ctx, rx_fs *fs, rx_session *s, rx_upq *q) {
             {
                 LONG sent = send(cl, (APTR)(o + o_off), o_len - o_off, 0);
                 if (sent > 0) o_off += sent;
-                else { if (sent < 0 && Errno() != EWOULDBLOCK) bad = 1; break; }
+                else {
+                    if (sent < 0 && Errno() == ENOBUFS) nobufs = 1;
+                    else if (sent < 0 && Errno() != EWOULDBLOCK) bad = 1;
+                    break;
+                }
             }
         }
         /* The switch (or the trust) changed since READY 3: close once idle and everything sent (net.c's own

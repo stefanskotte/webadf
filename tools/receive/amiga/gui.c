@@ -3,6 +3,7 @@
    requester (several files on V38+, one on V37). A checkbox lets the web app browse the Amiga's disks (read-only); the
    status line shows its last request. gadtools, asl and workbench only (V37). */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <exec/memory.h>
 #include <intuition/intuition.h>
@@ -24,9 +25,12 @@
 #include "net.h"
 #include "ui.h"
 
-struct Library *GadToolsBase, *AslBase, *WorkbenchBase;
-struct IntuitionBase *IntuitionBase;
-struct GfxBase *GfxBase;
+/* Defined (= NULL), not tentative: a tentative base lets libstubs' own definition in, and libnix then opens that library
+   at startup in every mode -- asl.library from disk, ~30 KB, which a 512 KB Amiga running the Shell form does not have
+   to spare (bench 2026-10-31). The window opens its libraries itself, below. */
+struct Library *GadToolsBase = NULL, *AslBase = NULL, *WorkbenchBase = NULL;
+struct IntuitionBase *IntuitionBase = NULL;
+struct GfxBase *GfxBase = NULL;
 
 enum { G_DIR, G_CHOOSE, G_SEND, G_RETRY, G_TRUST, G_SAVE, G_BROWSE, G_STATUS, G_LIST, G_N };
 #define ROWS_MAX 96
@@ -381,56 +385,60 @@ static void wait_window(gui *G) {
 }
 
 int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int trust, int browse) {
-    static gui G; static afs_ctx ctx; static rx_fs fs; static rx_session s; static rx_upq q;
+    /* G (68 KB: 96 rows) and the session are malloc'd here, not static, so a Shell run never holds them (512 KB bench,
+       spec 2026-10-30 §7 step 8); libnix frees them with the program. */
+    static afs_ctx ctx; static rx_fs fs; static rx_upq q;
+    gui *G = calloc(1, sizeof *G); rx_session *s = calloc(1, sizeof *s);
     char key[RX_KEY_HEX + 8];
     long i;
     int rc = RETURN_FAIL;
+    if (!G || !s) { PrintFault(ERROR_NO_FREE_STORE, (STRPTR)"Transfer"); return RETURN_FAIL; }
     IntuitionBase = (struct IntuitionBase *)OpenLibrary((STRPTR)"intuition.library", 37);
     GfxBase = (struct GfxBase *)OpenLibrary((STRPTR)"graphics.library", 37);
     GadToolsBase = OpenLibrary((STRPTR)"gadtools.library", 37);
     AslBase = OpenLibrary((STRPTR)"asl.library", 37);
     WorkbenchBase = OpenLibrary((STRPTR)"workbench.library", 37);   /* none (no Workbench): no drops, the rest works */
     if (!IntuitionBase || !GfxBase || !GadToolsBase || !AslBase) goto out;
-    memset(&G, 0, sizeof G); new_list(&G.list);
-    G.ctx = &ctx; G.fs = &fs; G.s = &s; G.q = &q;
+    new_list(&G->list);
+    G->ctx = &ctx; G->fs = &fs; G->s = s; G->q = &q;
     afs_init(&ctx, &fs, dir);
     cfg_key_load(key, sizeof key);
     rx_upq_init(&q, key);
     q.browse = browse;
-    if (trust) gui_trust(&G);   /* Transfer GUI TRUST (ruling PF18): as the Shell form, the next board's key is trusted */
-    strcpy(G.status, "Starting...");
-    strcpy(G.okstatus, "Listening on port 6800");
-    if (!(G.scr = LockPubScreen(NULL)) || !(G.vi = GetVisualInfo(G.scr, TAG_END))) goto out;
-    if (build(&G, dir) != 0) goto out;
-    if (WorkbenchBase && (G.app_port = CreateMsgPort()) != NULL)
-        G.app_win = AddAppWindowA(0, 0, G.win, G.app_port, NULL);
+    if (trust) gui_trust(G);   /* Transfer GUI TRUST (ruling PF18): as the Shell form, the next board's key is trusted */
+    strcpy(G->status, "Starting...");
+    strcpy(G->okstatus, "Listening on port 6800");
+    if (!(G->scr = LockPubScreen(NULL)) || !(G->vi = GetVisualInfo(G->scr, TAG_END))) goto out;
+    if (build(G, dir) != 0) goto out;
+    if (WorkbenchBase && (G->app_port = CreateMsgPort()) != NULL)
+        G->app_win = AddAppWindowA(0, 0, G->win, G->app_port, NULL);
     ipc_open();
-    for (i = 0; i < nwb; i++) add_wbarg(&G, &wbargs[i]);           /* shift-clicked project icons */
-    for (i = 0; send && send[i]; i++) add_path(&G, (const char *)send[i]);   /* Transfer GUI SEND ... */
+    for (i = 0; i < nwb; i++) add_wbarg(G, &wbargs[i]);           /* shift-clicked project icons */
+    for (i = 0; send && send[i]; i++) add_path(G, (const char *)send[i]);   /* Transfer GUI SEND ... */
     if (net_open() != 0) {
-        set_status(&G, "No TCP/IP stack running (bsdsocket.library)");
-        wait_window(&G);
+        set_status(G, "No TCP/IP stack running (bsdsocket.library)");
+        wait_window(G);
     } else {
         net_ui ui;
-        ui.u = &G; ui.on_event = on_event; ui.on_status = on_status;
-        ui.extra_sigs = 1UL << G.win->UserPort->mp_SigBit | (G.app_port ? 1UL << G.app_port->mp_SigBit : 0) | ipc_sigmask();
+        ui.u = G; ui.on_event = on_event; ui.on_status = on_status;
+        ui.extra_sigs = 1UL << G->win->UserPort->mp_SigBit | (G->app_port ? 1UL << G->app_port->mp_SigBit : 0) | ipc_sigmask();
         ui.on_signal = on_signal; ui.on_pass = gui_pass; ui.on_link = on_link;
-        if (net_run(&ui, &ctx, &fs, &s, &q) != 0) {
+        if (net_run(&ui, &ctx, &fs, s, &q) != 0) {
             /* e.g. Transfer is already running: say so and wait for the close gadget, as without a stack. */
-            set_status(&G, "Could not listen on port 6800");
-            wait_window(&G);
+            set_status(G, "Could not listen on port 6800");
+            wait_window(G);
         }
         net_close();
     }
     rc = RETURN_OK;
 out:
     ipc_close();
-    if (G.app_win) RemoveAppWindow(G.app_win);
-    if (G.app_port) { struct Message *m; while ((m = GetMsg(G.app_port)) != NULL) ReplyMsg(m); DeleteMsgPort(G.app_port); }
-    if (G.win) CloseWindow(G.win);
-    if (G.gl) FreeGadgets(G.gl);
-    if (G.vi) FreeVisualInfo(G.vi);
-    if (G.scr) UnlockPubScreen(NULL, G.scr);
+    if (G->app_win) RemoveAppWindow(G->app_win);
+    if (G->app_port) { struct Message *m; while ((m = GetMsg(G->app_port)) != NULL) ReplyMsg(m); DeleteMsgPort(G->app_port); }
+    if (G->win) CloseWindow(G->win);
+    if (G->gl) FreeGadgets(G->gl);
+    if (G->vi) FreeVisualInfo(G->vi);
+    if (G->scr) UnlockPubScreen(NULL, G->scr);
     if (WorkbenchBase) CloseLibrary(WorkbenchBase);
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);

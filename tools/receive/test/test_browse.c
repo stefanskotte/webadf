@@ -278,7 +278,7 @@ static void a_file_is_got_then_goes_up_at_the_front(void) {
     CHECK(strstr(ob, "GOT") == NULL, "the GET waits behind the file going up");
     feed("TAKE 1 0 1\n"); drain(); feed("DONE 1 3:One\n"); drain();
     CHECK(strcmp(ob, "GOT g1 3\nPUT 3 5 1.2.3 40 5:a.txt 4:note\n") == 0, ob);
-    CHECK_EQ_INT(Q.n, 1); CHECK_EQ_INT(Q.q[0].tag, 2);
+    CHECK_EQ_INT(Q.n, 1); CHECK_EQ_INT(Q.q[0]->tag, 2);
     { int i = last_req(); CHECK(i >= 0 && strcmp(ev_code[i], "get") == 0 && strcmp(ev_path[i], "Work:a.txt") == 0 && !ev_has_text[i], "the owner sees it"); }
 }
 static void get_refusals(void) {
@@ -323,9 +323,9 @@ static void a_dropped_connection_forgets_get_files_not_yet_gone_up(void) {
     feed("GET g1 10:Work:a.txt\n");
     feed("TAKE 1 0 1\n"); drain(); feed("DONE 1 3:One\n");
     { int k = rx_take_output(&S, b, sizeof b - 1); b[k > 0 ? k : 0] = 0; CHECK(strcmp(b, "GOT g1 3\n") == 0, b); }
-    CHECK_EQ_INT(Q.n, 2); CHECK(strcmp(Q.q[0].rid, "g1") == 0, "the GET's file is first");
+    CHECK_EQ_INT(Q.n, 2); CHECK(strcmp(Q.q[0]->rid, "g1") == 0, "the GET's file is first");
     rx_disconnected(&S);
-    CHECK_EQ_INT(Q.n, 1); CHECK_EQ_INT(Q.q[0].tag, 2);
+    CHECK_EQ_INT(Q.n, 1); CHECK_EQ_INT(Q.q[0]->tag, 2);
     { int i, seen = 0; for (i = 0; i < n_ev; i++) if (ev[i].kind == RX_EV_UP_FAILED && ev[i].tag == 3 && strcmp(ev_text[i], "connection lost") == 0) seen = 1;
       CHECK(seen, "the owner is told"); }
 }

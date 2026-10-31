@@ -103,9 +103,10 @@ typedef struct rx_up_item {
     unsigned tag; char local[RX_LOCAL_MAX + 1]; char name[RX_PATH_MAX + 1];
     char rid[RX_ID_MAX + 1];   /* a GET's request id (spec 2026-10-30 §2.2), "" for the owner's own files */
 } rx_up_item;
-/* The files waiting to go up, and the trusted board key: the front end's, outliving every connection. */
+/* The files waiting to go up, and the trusted board key: the front end's, outliving every connection. Each waiting file
+   is malloc'd when it joins and freed when it leaves: 64 items in place were 35 KB held while idle (512 KB bench). */
 typedef struct rx_upq {
-    rx_up_item q[RX_UP_MAX]; unsigned n, next_tag;
+    rx_up_item *q[RX_UP_MAX]; unsigned n, next_tag;
     char trusted[RX_KEY_HEX + 1];   /* "" until the first board: trust on first use */
     int trust_next;                 /* TRUST before the board connected: its key replaces the saved one */
     int browse;                     /* 1: the owner lets the web app browse (ENVARC:webadf/Browse; spec 2026-10-30 §2.3) */
@@ -155,7 +156,8 @@ int rx_busy(const rx_session *s);      /* 1 while a file is being received */
 
 /* Protocol 2 (spec 2026-10-18). */
 void rx_upq_init(rx_upq *q, const char *trusted);              /* trusted: ENVARC:webadf/BoardKey, or "" */
-unsigned rx_up_add(rx_upq *q, const char *local, const char *name);  /* tag, or 0: full, or a bad name */
+void rx_upq_clear(rx_upq *q);                                  /* frees every waiting file */
+unsigned rx_up_add(rx_upq *q, const char *local, const char *name);  /* tag, or 0: full, no memory, or a bad name */
 /* A GET's file (spec 2026-10-30 §2.2): first in the queue; rid ties its PUT to the request. Tag, or 0. */
 unsigned rx_up_add_front(rx_upq *q, const char *local, const char *name, const char *rid);
 int rx_upq_remove(rx_upq *q, unsigned tag);                    /* 1 removed */

@@ -8,6 +8,13 @@ app can also read your disks (read-only). Until 2.1 it was called Receive; the s
 
 It needs Kickstart 2.04 or newer, any 68000 or later, and a running TCP/IP stack (bsdsocket.library) on PaulaNET.
 
+**Memory (2.4, measured on the A500 2026-10-31):** about 100 KB while it runs in a Shell: 43 KB of code, 24 KB of fixed
+buffers, the 13 KB session and an 8 KB stack (the deepest Shell path measured 3,012 bytes: a "Please insert volume"
+requester); the window adds its 68 KB list and a 32 KB stack. A 512 KB Amiga is not enough, and not because of Transfer:
+with fast memory hidden (`NoFastMem`), `AddNetInterface` alone left 110 KB of chip memory, and once Transfer started the
+TCP/IP stack had too little left to send a 1000-entry listing. Transfer waits out ENOBUFS (out of network buffers)
+instead of dropping the connection.
+
 ## Using it
 
 - **From Workbench:** double-click it (from a Shell: `Transfer GUI`). The window, titled *WebFloppy - Receive & Send*,

@@ -1644,19 +1644,30 @@ row and Queue alone.
   while lines wait for an owed piece, only the PONG deadline is suspended (M2: Transfer drops a link silent 75 s);
   the req poll object is 48 B (M4); a failed GOT entry is never matched by tag. TEST build and the A500 bench (spec
   §7) next.
-- **A500 bench 2026-10-31 (spec §7: 1-6 pass, 7 partly, 8 fails in Transfer) and its fixes (merges db1170a6 fw, 0a7389ae web).** The bench Amiga
+- **A500 bench 2026-10-31 (spec §7: 1-6 pass, 7 partly, 8: Transfer 2.4, 512 KB unsupported) and its fixes (merges db1170a6 fw, 0a7389ae web).** The bench Amiga
   boots WITHOUT its network: in a Shell, `AddNetInterface eth0` then `run PaulaNET:Transfer BROWSE`. Passed: 1
   (volumes), 2 (two levels; Parent remembered), 3 (file and drawer to STASH:, an 880 KB ADF to LIBRARY: in 84 s, which
   mounts and boots), 4 (Workbench:big, 1001 drawers: 3 pieces, cut row, 36 s -- after the fixes), 5 (browsing off: the
   reason row; Queue delivers), 6 (Transfer quit mid-listing: "Transfer is not running" ~5 s later); 7 partly (a disk
   gone between operations: "Object not found", no requester; mid-copy the board HOLDS the eject until the drive is
   idle, so a mid-copy pull needs a real drive); heap low-water 24,576 B; C1 (long polls ~25 s with DF1 out of Network
-  mode). **8 (512 KB) FAILS, in Transfer, not the firmware:** `NoFastMem` right after a reset (chip 431 KB free), then
-  `AddNetInterface eth0` leaves 102 KB free, largest block 79 KB, and `run PaulaNET:Transfer` says "not enough memory
-  available": its BSS hunk is ONE 189,924-byte block (gui.c 117 KB -- G 68 KB, q 35 KB, s 13 KB; shell.c 49 KB -- q
-  35 KB, sess 13 KB; both modes' state is static though only one runs). 175 KB since Transfer 2.0 (2026-10-19), so no
-  Transfer 2.x has ever loaded on 512 KB with the network up. Fix candidate (not done, operator's call): allocate only
-  the running mode's state at start, smaller upload queue. Not run: the GUI switch flip (a Transfer restart showed
+  mode). **8 (512 KB): Transfer 2.4 fixes Transfer's part; 512 KB stays unsupported** (operator: "go ahead" on the fix).
+  Simulated with `NoFastMem` right after a reset (the A500 has 8 MB fast): `AddNetInterface eth0` alone leaves ~110 KB
+  chip. Transfer 2.3 could not load (its BSS was ONE 189,924 B block: gui.c 117 KB + shell.c 49 KB, both static).
+  **Transfer 2.4** (branch fix/transfer-512k): the queue's files are malloc'd per item (rx_upq 35 KB -> pointers), the
+  Shell's and the window's state are calloc'd only in their own mode (BSS 23,768 B), the Shell form's private stack is
+  8 KB (measured max on the A500: 2,582 B listing/GET/receive, 1,114 B drawer SEND + hand-off, 3,012 B a "Please
+  insert volume" requester; the window keeps 32 KB), gui.c's library bases are defined (= NULL) so libstubs no
+  longer auto-opens asl.library (~30 KB from disk) in Shell mode, and send() ENOBUFS (errno 55, seen at 512 KB) pauses
+  200 ms instead of dropping. At 512 KB 2.4 now loads, connects and receives a file, but a 1000-entry DIR dies: the
+  TCP/IP stack and PaulaNET.device have ~13 KB left, the Amiga goes silent (board: 8 frames in 40 s, "request
+  timeout"). A real 512 KB machine also holds Workbench in that memory, so it cannot run the network at all; README
+  says so. A 4 KB SO_SNDBUF/RCVBUF under low memory was tried and did not help (not kept). Bench at full memory with
+  the pinned 2.4: 1000-entry DIR, an 880 KB GET, receives, the window (rows, status line), SEND of a drawer.
+  FS-UAE: 3.1 send 29/29 (ver now 2.4), browse 10/10, shell; 3.2 browse 10/10; 2.04 shell. Review (opus): no Critical/Important.
+  Deferred minors: rx_upq_init on a non-empty queue leaks (tests only); a failed malloc in a drawer walk is silent; the
+  hand-off's "full, or the name is not allowed" also covers no memory. Driver disk **7b0c7ed5** (stored, read back);
+  05a898ca (2.3) becomes PAULANET_DISK_PREVIOUS. Not run: the GUI switch flip (a Transfer restart showed
   browsing off on the server in ~18 s). **fw 1.22.0 RELEASED 2026-10-31: seq 128 (1.22.0+gf508781d) promoted;
   GitHub fw-1.22.0 (Latest).** Found and fixed:
   - fw: `amiga_tcp.c` acked every byte on arrival into a 1 KB ring -- no TCP backpressure; now acked when read, ring
