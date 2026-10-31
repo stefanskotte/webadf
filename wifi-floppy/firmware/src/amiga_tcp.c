@@ -54,7 +54,8 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             if (w->got == w->total) T.raw = NULL;              // the raw section is over: lines again
         }
         for (; i < q->len; i++) {
-            // Past the window: a peer that ignores it. Give up (the ring holds a whole window, so never otherwise).
+            // Past the window: a peer that ignores it. Give up (the ring holds a whole window, so never otherwise; a
+            // line with no LF longer than the window just waits, nothing read, until req_silent or "no PONG" drops it).
             if (!T.ring || ring_used() == RING - 1) { wf_logf(WF_WARN, "amiga tcp: line ring full"); T.state = AS_SOCK_CLOSED; break; }
             T.ring[T.head] = b[i];
             T.head = (T.head + 1) % RING;
@@ -86,6 +87,10 @@ static void t_close(void *ctx) {
     (void)ctx;
     net_radio_lock();
     if (T.pcb) {
+        // Unread lines are acknowledged first: lwIP answers a close with unread data by RST, sent once -- a lost RST
+        // left Transfer holding the dead link, refusing the reconnect "busy" until its 75 s idle drop (review of
+        // the bench fix; seen on the A500 as a ~67 s reconnect). With the window whole, the close is a FIN.
+        for (int u = ring_used(); u > 0; ) { const u16_t k = u > 0xFFFF ? 0xFFFF : (u16_t)u; tcp_recved(T.pcb, k); u -= k; }
         tcp_arg(T.pcb, NULL);
         tcp_recv(T.pcb, NULL);
         tcp_err(T.pcb, NULL);

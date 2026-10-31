@@ -695,12 +695,15 @@ static void silent_transfer_mid_answer_is_timeout_and_drops(void) {
     ready3(1);
     wake(1, "DIR d 5:Work:\n"); run(3);
     reply("ENT d f 1 0 1.0.0 1:a 0:"); run(2);
-    F.now += AS_REQ_SILENT_MS - 1; run(2);
-    CHECK_EQ_INT(F.req_posts, 0); CHECK(F.sock == AS_SOCK_OPEN, "not yet");
+    F.now += AS_PIECE_MS; run(2);                       // the piece goes AS_PIECE_MS after its first line, not full
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"ENT d f 1 0 1.0.0 1:a 0:\"],\"last\":false}") == 0, F.req_body[0]);
+    F.now += AS_REQ_SILENT_MS - 1; run(2);              // the silence counts from the POST (the board's time is not Transfer's)
+    CHECK_EQ_INT(F.req_posts, 1); CHECK(F.sock == AS_SOCK_OPEN, "not yet");
     F.now += 2; run(3);
     CHECK(F.sock == AS_SOCK_CLOSED, "dropped (plan ruling F4)");
-    CHECK_EQ_INT(F.req_posts, 1);
-    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"ENT d f 1 0 1.0.0 1:a 0:\",\"ERR d timeout 26:Transfer stopped answering\"],\"last\":true}") == 0, F.req_body[0]);
+    CHECK_EQ_INT(F.req_posts, 2);
+    CHECK(strcmp(F.req_body[1], "{\"piece\":1,\"lines\":[\"ERR d timeout 26:Transfer stopped answering\"],\"last\":true}") == 0, F.req_body[1]);
 }
 
 // Review Focus 4.
@@ -817,7 +820,8 @@ static void a_pong_queued_behind_a_long_answer_does_not_drop(void) {
     CHECK(F.sock == AS_SOCK_OPEN, "no drop while the answer flows");
     reply("DONE d 60"); reply("PONG"); reply("PONG"); run(3);
     CHECK(!S.ping_out, "the PONGs were read after the answer");
-    CHECK(strstr(F.req_body[0], "\"DONE d 60\"") != NULL, F.req_body[0]);
+    CHECK(F.req_posts >= 6, "a piece every AS_PIECE_MS while the lines come");
+    CHECK(strstr(F.req_body[F.req_posts - 1], "\"DONE d 60\"") != NULL, F.req_body[F.req_posts - 1]);
     F.now += AS_PONG_MS + 1000; run(3);
     CHECK(F.sock == AS_SOCK_OPEN, "the socket stays open");
 }
