@@ -798,6 +798,30 @@ static void a_put_that_crosses_a_request_after_an_upload_goes_first(void) {
     CHECK(strstr(F.out, "TAKE 2 ") != NULL, "and was told to go on");
 }
 
+// A500 bench 2026-10-31: Transfer writes a 1000-entry listing into the Amiga's socket within seconds, and it drains to
+// the board at ~1.5 KB/s; the PONG to a PING sent meanwhile queues behind it (a drop "no PONG" ~20 s in). Lines arriving
+// prove Transfer alive: no PONG deadline while an answer is read (a silent Transfer still ends it: req_silent).
+static void a_pong_queued_behind_a_long_answer_does_not_drop(void) {
+    char line[64];
+    ready3(1);
+    wake(1, "DIR d 5:Work:\n"); run(3);
+    CHECK(strstr(F.out, "DIR d 5:Work:\n") != NULL, "the DIR went");
+    clear_out();
+    int pinged = 0;
+    for (int i = 0; i < 60; i++) {                      // 60 s of lines, one a second; any PONG queues behind them
+        snprintf(line, sizeof line, "ENT d f 1 0 1.0.0 3:%03d 0:", i); reply(line);
+        F.now += 1000; run(2);
+        if (strstr(F.out, "PING\n") != NULL) pinged = 1;
+    }
+    CHECK(pinged, "a PING went mid-answer");
+    CHECK(F.sock == AS_SOCK_OPEN, "no drop while the answer flows");
+    reply("DONE d 60"); reply("PONG"); reply("PONG"); run(3);
+    CHECK(!S.ping_out, "the PONGs were read after the answer");
+    CHECK(strstr(F.req_body[0], "\"DONE d 60\"") != NULL, F.req_body[0]);
+    F.now += AS_PONG_MS + 1000; run(3);
+    CHECK(F.sock == AS_SOCK_OPEN, "the socket stays open");
+}
+
 // Final review M2 (re-graded Important): Transfer drops a connection silent for 75 s (RX_IDLE_SECS), so PINGs go on
 // while lines are held for an owed piece; only the PONG deadline is suspended. The PONGs queue behind the held lines.
 static void pings_continue_while_lines_wait_for_a_piece(void) {
@@ -1656,6 +1680,7 @@ int main(void) {
     RUN(a_failing_fetch_backs_off);
     RUN(a_put_that_crosses_a_request_after_an_upload_goes_first);
     RUN(pings_continue_while_lines_wait_for_a_piece);
+    RUN(a_pong_queued_behind_a_long_answer_does_not_drop);
     RUN(a_403_piece_is_refused_not_retried);
     RUN(got_ties_the_upload_to_the_request);
     RUN(an_upload_not_from_a_get_carries_no_request);

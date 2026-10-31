@@ -919,10 +919,13 @@ static bool run(amiga_send_t *s, bool http) {
             if (s->req && req_start(s, t)) return true;
             if (down && !(s->req && s->req->active)) { s->up_last = false; start_file(s); if (!flush(s)) drop(s, 'u', "send"); return true; }
         }
-        // Lines held for an owed piece hold the PONG too (req_room). Transfer drops a connection silent for 75 s
-        // (RX_IDLE_SECS), so the PINGs go on every AS_PING_MS, one outstanding or not, and only the PONG deadline is
-        // suspended; it restarts when the hold ends (final review M2). The PONGs queue in Transfer's socket.
-        if (s->req && s->req->active && s->req->sent && !s->req->ended && !s->req->discard && s->req->post_owed) {
+        // While an answer is read, a PONG queues behind it: Transfer writes a long listing into the Amiga's socket
+        // within seconds and it drains at ~1.5 KB/s (A500 bench 2026-10-31: "no PONG" ~20 s into a 1000-entry drawer),
+        // and lines held for an owed piece hold it too (req_room). The lines prove Transfer alive, and a silent one ends
+        // the answer (req_silent). Transfer drops a connection silent for 75 s (RX_IDLE_SECS), so the PINGs go on every
+        // AS_PING_MS, one outstanding or not, and only the PONG deadline is suspended; it restarts when the answer
+        // ends (final review M2). The PONGs queue in Transfer's socket.
+        if (s->req && s->req->active && s->req->sent && !s->req->ended && !s->req->discard) {
             s->req->ping_held = true;
             if (t - s->t_ping > AS_PING_MS) {
                 push(s, (const uint8_t *)"PING\n", 5);
