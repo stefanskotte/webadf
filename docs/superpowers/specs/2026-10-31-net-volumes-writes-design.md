@@ -212,3 +212,34 @@ nothing here depends on our deployment.
 - A local copy between two volumes on one Amiga (it goes up and down; a `COPY` command can come later).
 - Setting a file's date; assigns; devices without a volume; formatting a disk.
 - Undo or a Trashcan.
+
+## 9. Amendment 2026-11-01: moves and deletes take only what they mean (protocol 5)
+
+Operator, 2026-11-01: fix the two data-loss risks the bench list named. (1) A Move deleted its source as it was at the
+end, so a file put into the source during the move was lost (web ruling I-1). (2) A drawer DELETE held no lock between
+steps, so a file put into the drawer while it was being emptied was deleted too.
+
+- **Protocol 5.** Firmware 1.23.1 says hello `WEBADF 5 <key>`; Transfer 2.6 answers `READY 5 <b> <w>`; Transfer 2.5
+  answers it `READY 4 <b> <w>` and is used as protocol 4. The poll carries `rxv=5`.
+- **`DELETE <rid> <len>:<path> one`** (optional trailing token, protocol 5 only): delete exactly that object -- a file, or
+  a drawer only when it is empty (`ERR <rid> notempty <len>:<text>` otherwise); nothing inside anything is touched;
+  `DONE <rid> 1`. Without `one`, DELETE is the drawer delete below.
+- **Drawer delete (protocol 5, no `one`):** Transfer first renames the drawer within its parent to a hidden name of at most
+  30 characters (`.webadf-del-` plus 8 hex digits derived from the rid), so nothing can be saved into it by its old path
+  any more, then empties and deletes it as before (DEL progress, the same codes; ERR text names entries relative to the
+  original drawer). If it stops on a refusal, it renames the drawer back to its original name; if that name has been
+  taken meanwhile, the ERR text says where the rest is. If the first rename fails, it deletes in place as 2.5 did.
+- **Moves (server):** a Move whose source is on a volume needs protocol 5; on protocol 4 Move from a volume is refused
+  ("Move needs Transfer 2.6 -- use Copy") and Copy stays. On protocol 5 the source is removed only for what was copied:
+  one `DELETE … one` per copied file once its copy is stored, then each copied drawer, deepest first, with `one`; a drawer
+  answered `notempty` is kept and the move says so ("Kept Work:X: something new is in it"). A Move whose source is in
+  STASH: or LIBRARY: removes only the copied entries the same way (a drawer only once empty), never the source as it is
+  at the end.
+- **Testing:** host tests of `one` (file, empty drawer, non-empty drawer -> notempty, nothing else touched) and of the
+  rename-first delete (a file created in the drawer's old path after the rename survives; a stop renames back; the
+  name-taken case); FS-UAE on 2.04/3.1/3.2; firmware host tests of `WEBADF 5`/`READY 5`/`DELETE … one`; server tests of
+  every move direction with a file added to the source mid-move (it survives, the move says what was kept), and of the
+  protocol 4 refusal; e2e against the fake board.
+- **Delivery:** server (inert until rxv=5, except the protocol 4 Move refusal and the STASH:/LIBRARY: change), Transfer
+  2.6 + driver disk, firmware 1.23.1 TEST, A500 bench (a file saved into a drawer during a Move and during a drawer
+  Delete both survive), release.
