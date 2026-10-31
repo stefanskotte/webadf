@@ -39,7 +39,9 @@ fi
 pid=""
 cleanup() { [ -n "$pid" ] && kill "$pid" 2>/dev/null || true; }
 trap cleanup EXIT
-tools_out="$work/hd/Transfer"; "$repo/tools/receive/build.sh" "$tools_out" >/dev/null
+tools_out="$work/hd/Transfer"
+# WEBADF_TRANSFER=<file>: run that binary (an older release, say) instead of building this tree.
+if [ -n "${WEBADF_TRANSFER:-}" ]; then cp "$WEBADF_TRANSFER" "$tools_out"; else "$repo/tools/receive/build.sh" "$tools_out" >/dev/null; fi
 target='Work:Out'; df0=''
 df2=''; fdc=2
 if [ "$mode" = ram ]; then target='RAM:'; fi
@@ -81,6 +83,9 @@ if [ "$mode" = write ]; then
   mkdir -p "$work/hd/Tools" "$work/hd/Old"
   printf 'a\n' > "$work/hd/a.txt"; printf 'old\n' > "$work/hd/Keep.txt"
   for i in $(seq -w 0 299); do : > "$work/hd/Old/f$i"; done
+  # protocol 5 (spec §9): One5.txt, Empty5/, Full5/f, Old5/ with 60 files
+  mkdir -p "$work/hd/Empty5" "$work/hd/Full5" "$work/hd/Old5"; printf '1' > "$work/hd/One5.txt"; printf 'f' > "$work/hd/Full5/f"
+  for i in $(seq -w 0 59); do : > "$work/hd/Old5/f$i"; done
   printf 'x' > "$work/x1"; head -c 700000 /dev/zero > "$work/big"
   xdftool "$work/prot.adf" create + format Prot ofs >/dev/null
   sleep 2   # two volume dates apart
@@ -97,7 +102,13 @@ Run >NIL: Work:Transfer TO $target GUI BROWSE WRITE SEND Work:Up/Lemmings.adf Wo
   browse) run_line="Work:Transfer BROWSE TO Work:Out >Work:receive.log";;
   # FS-UAE writes a floppy to an overlay whatever its write-protect options say: AmigaDOS's own Lock makes Prot
   # write-protected (DOS error 214), as the tab does.
+  # The busy proof: AmigaDOS's own Delete of Hold.txt must fail (in use), or w-replace-busy proves nothing. Hold2.txt
+  # is the form that did NOT hold on the A500 (Run's own redirection, closed once Run returns), for comparison.
   write) run_line="Run >NIL: Wait >Full:Hold.txt 600
+Run >Full:Hold2.txt Wait 600
+Wait 3
+Delete >Work:holddel.log Full:Hold.txt
+Delete >Work:hold2del.log Full:Hold2.txt
 Lock >NIL: DF0: ON
 Work:Transfer WRITE TO Work:Out >Work:receive.log";;
   send) e9=$(printf '\351')   # é in Latin-1: the Amiga reads the script byte by byte
@@ -175,7 +186,11 @@ case "$mode" in
             || echo "PASS BROWSE without SAVE stored nothing"
           sleep 2; echo "--- receive.log"; cat "$work/hd/receive.log" 2>/dev/null || true;;
   send) pnpm exec tsx "$repo/tools/receive/uae/send-scenarios.ts" --hd "$work/hd" || rc=1;;
-  write) pnpm exec tsx "$repo/tools/receive/run-scenarios.ts" --port 6800 --write "$work/hd" --uae || rc=1
+  write) echo "--- Delete Full:Hold.txt (held by Wait's own redirection): $(tr -d '\r' < "$work/hd/holddel.log" 2>/dev/null)"
+         echo "--- Delete Full:Hold2.txt (Run's redirection): $(tr -d '\r' < "$work/hd/hold2del.log" 2>/dev/null)"
+         grep -qi 'in use' "$work/hd/holddel.log" 2>/dev/null && echo "PASS Hold.txt is held open: AmigaDOS's Delete refused it" \
+           || { echo "FAIL Hold.txt is not held open: w-replace-busy would prove nothing"; rc=1; }
+         pnpm exec tsx "$repo/tools/receive/run-scenarios.ts" --port 6800 --write "$work/hd" --uae || rc=1
          [ -e "$work/hd/EnvArc/webadf/Write" ] && { echo "FAIL WRITE without SAVE stored the switch"; rc=1; } \
            || echo "PASS WRITE without SAVE stored nothing"
          sleep 2; echo "--- receive.log"; cat "$work/hd/receive.log" 2>/dev/null || true;;

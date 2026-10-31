@@ -331,6 +331,7 @@ export const BROWSE_SCENARIOS: BrowseScenario[] = [
 /**
  * The volumes the write scenarios expect, the same on the POSIX build and in FS-UAE (uae-test.sh write):
  * - Work (DH0:) holds Tools/ (empty), a.txt ("a\n"), Keep.txt ("old\n"), Old/ with 300 empty files f000..f299;
+ *   for protocol 5, One5.txt ("1"), Empty5/, Full5/ holding f ("f"), Old5/ with 60 empty files f00..f59;
  * - Prot (DF0:), a write-protected disk;
  * - Full (DF2:), a disk with less than 300 KB free; in FS-UAE it also holds Locked (its d-bit off), Stuck/ with two
  *   files and Stuck/locked (its d-bit off), and Hold.txt (empty), held open by a running command.
@@ -346,6 +347,10 @@ export function makeWriteFixture(root: string): string {
   // Linked/ holds a file and Libs, a link to Tools (the POSIX build only: w-delete-link)
   fs.mkdirSync(path.join(w, 'Linked')); fs.writeFileSync(path.join(w, 'Linked', 'f'), 'f');
   fs.symlinkSync(path.join(w, 'Tools'), path.join(w, 'Linked', 'Libs'));
+  // protocol 5 (spec §9): One5.txt, Empty5/, Full5/f, Old5/ with 60 files
+  fs.writeFileSync(path.join(w, 'One5.txt'), '1'); fs.mkdirSync(path.join(w, 'Empty5'));
+  fs.mkdirSync(path.join(w, 'Full5')); fs.writeFileSync(path.join(w, 'Full5', 'f'), 'f'); fs.mkdirSync(path.join(w, 'Old5'));
+  for (let i = 0; i < 60; i++) fs.writeFileSync(path.join(w, 'Old5', `f${String(i).padStart(2, '0')}`), '');
   fs.mkdirSync(path.join(root, 'Prot')); fs.mkdirSync(path.join(root, 'Full'));
   return `Work|DH0:|${w};Prot|DF0:|${path.join(root, 'Prot')};Full|DF2:|${path.join(root, 'Full')}`;
 }
@@ -355,6 +360,11 @@ export interface WriteScenario { name: string; uaeOnly?: boolean; posixOnly?: bo
 async function b4(p: number, h: string) {
   const b = await connect(p, h, { v: 4 });
   if (!b.writable) { await b.close(); throw new Error(`READY 4 ${b.browse ? 1 : 0} 0: writing is off`); }
+  return b;
+}
+async function b5(p: number, h: string) {
+  const b = await connect(p, h, { v: 5 });
+  if (!b.writable) { await b.close(); throw new Error(`READY 5 ${b.browse ? 1 : 0} 0: writing is off`); }
   return b;
 }
 const onWork = (ctl: WriteCtl, rel: string) => path.join(ctl.work, rel);
@@ -455,6 +465,39 @@ export const WRITE_SCENARIOS: WriteScenario[] = [
       if (err) return err;
       const a = await b.request(`DIR h2 ${lenp('Full:')}`);
       return a.some((l) => / f 0 [0-9a-f]+ \S+ 8:Hold\.txt /.test(l)) && !a.some((l) => l.includes(' 10:.webadf-rx ')) ? null : `Full: lists ${JSON.stringify(a)}`;
+    } finally { await b.close(); } } },
+  // Transfer 2.6, protocol 5 (spec §9): DELETE ... one, and a drawer delete that hides the drawer first.
+  { name: 'w-one-on-4', run: async (p, h, ctl) => { const b = await b4(p, h); try {
+      return oneLine(await b.request(`DELETE o0 ${lenp('Work:One5.txt')} one`), /^ERR o0 bad 11:bad request$/)
+        ?? (hostHolds(ctl, 'One5.txt', '1') ? null : 'deleted on protocol 4');
+    } finally { await b.close(); } } },
+  { name: 'w5-hello', run: async (p, h) => { const b = await connect(p, h, { v: 5 }); try {
+      return b.browse && b.writable ? null : `READY 5 ${b.browse ? 1 : 0} ${b.writable ? 1 : 0}`;
+    } finally { await b.close(); } } },
+  { name: 'w5-one-file', run: async (p, h, ctl) => { const b = await b5(p, h); try {
+      const a = await b.request(`DELETE o1 ${lenp('Work:One5.txt')} one`);
+      return a.join('|') === 'DONE o1 1' && !fs.existsSync(onWork(ctl, 'One5.txt')) ? null : `got ${JSON.stringify(a)}`;
+    } finally { await b.close(); } } },
+  { name: 'w5-one-empty', run: async (p, h, ctl) => { const b = await b5(p, h); try {
+      const a = await b.request(`DELETE o2 ${lenp('Work:Empty5')} one`);
+      return a.join('|') === 'DONE o2 1' && !fs.existsSync(onWork(ctl, 'Empty5')) ? null : `got ${JSON.stringify(a)}`;
+    } finally { await b.close(); } } },
+  { name: 'w5-one-notempty', run: async (p, h, ctl) => { const b = await b5(p, h); try {
+      return oneLine(await b.request(`DELETE o3 ${lenp('Work:Full5')} one`), /^ERR o3 notempty \d+:.+$/)
+        ?? (hostHolds(ctl, 'Full5/f', 'f') ? null : 'something inside was deleted');
+    } finally { await b.close(); } } },
+  { name: 'w5-delete-hides', run: async (p, h, ctl) => { const b = await b5(p, h); try {
+      const a = await b.request(`DELETE o4 ${lenp('Work:Old5')}`, 120000);
+      if (JSON.stringify(a) !== JSON.stringify(['DEL o4 50', 'DONE o4 61'])) return `got ${JSON.stringify(a)}`;
+      const left = fs.readdirSync(ctl.work).filter((n) => n === 'Old5' || n.startsWith('.webadf-del-'));
+      return left.length ? `left ${left.join(',')}` : null;
+    } finally { await b.close(); } } },
+  // A refusal mid-way renames the drawer back: Full:Stuck is still Full:Stuck, and nothing hidden is left.
+  { name: 'w5-delete-stops', uaeOnly: true, run: async (p, h) => { const b = await b5(p, h); try {
+      const a = await b.request(`DELETE o5 ${lenp('Full:Stuck')}`);
+      if (!(a.length === 2 && /^DEL o5 [0-2]$/.test(a[0]) && /^ERR o5 denied \d+:locked: .+$/.test(a[1]))) return `got ${JSON.stringify(a)}`;
+      const d = await b.request(`DIR o6 ${lenp('Full:')}`);
+      return d.some((l) => / d 0 [0-9a-f]+ \S+ 5:Stuck /.test(l)) && !d.some((l) => l.includes('.webadf-del-')) ? null : `Full: lists ${JSON.stringify(d)}`;
     } finally { await b.close(); } } },
   { name: 'w-protocol-3', run: async (p, h, ctl) => { const b = await connect(p, h, { v: 3 }); try {
       if (!b.browse) return 'READY 3 0';

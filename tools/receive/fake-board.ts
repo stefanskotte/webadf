@@ -52,7 +52,7 @@ export interface Board {
   maybeLine(ms: number): Promise<string | null>;
   /** READY 3's flag: the Amiga's owner lets the web app browse (protocol 3; false on 1 and 2). */
   browse: boolean;
-  /** READY 4's second flag: ... and change its disks (protocol 4; false before). */
+  /** READY 4's (or 5's) second flag: ... and change its disks (protocol 4 and 5; false before). */
   writable: boolean;
   /** Protocol 3: sends a VOLS, DIR or GET line and returns its answer, up to DONE, ERR or GOT for its id. */
   request(line: string, ms?: number): Promise<string[]>;
@@ -124,15 +124,15 @@ export function rawConnect(port: number, host = '127.0.0.1'): Promise<net.Socket
   });
 }
 
-export async function connect(port: number, host = '127.0.0.1', opts: { v?: 1 | 2 | 3 | 4; key?: string } = {}): Promise<Board> {
+export async function connect(port: number, host = '127.0.0.1', opts: { v?: 1 | 2 | 3 | 4 | 5; key?: string } = {}): Promise<Board> {
   const v = opts.v ?? 1;
   const sock = await rawConnect(port, host);
   const rd = byteReader(sock);
   sock.write(v >= 2 ? `WEBADF ${v} ${opts.key ?? BOARD_KEY}\n` : 'WEBADF 1\n');
   const hello = await rd.line();
   const m3 = v === 3 ? /^READY 3 ([01])$/.exec(hello ?? '') : null;
-  const m4 = v === 4 ? /^READY 4 ([01]) ([01])$/.exec(hello ?? '') : null;
-  if (v === 4 ? !m4 : v === 3 ? !m3 : hello !== `READY ${v}`) throw new Error(`expected READY ${v}, got ${JSON.stringify(hello)}`);
+  const m4 = v >= 4 ? new RegExp(`^READY ${v} ([01]) ([01])$`).exec(hello ?? '') : null;   // READY 5 as READY 4 (spec §9)
+  if (v >= 4 ? !m4 : v === 3 ? !m3 : hello !== `READY ${v}`) throw new Error(`expected READY ${v}, got ${JSON.stringify(hello)}`);
   const answer = async (id: string, ms = 60000) => {
     const out: string[] = [];
     for (;;) {
