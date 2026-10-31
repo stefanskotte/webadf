@@ -710,7 +710,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const inNet = netReadOnly(src);
   const board = netBoardOf(src);
   // A volume of a board's Amiga (NET: volumes, spec 2026-10-30 §5) is read, never written, in phase 1: every command
-  // that writes says "Read-only for now", whatever is picked; Copy, Download and Info act on its rows.
+  // that writes says why (phase 2: writing off, Transfer or firmware too old), whatever is picked; on a board that can
+  // write every command acts on its rows.
   const volumeRO = netVolumeReason(src);
   const volume = isNetVolume(src);
   // NET:/<board> lists its volumes and Queue: places to open, as LIBRARY: lists titles.

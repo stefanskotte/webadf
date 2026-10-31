@@ -331,6 +331,8 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
   const boardId = sent[0]?.deviceId ?? reqs.find((r) => r.kind !== 'get')?.deviceId ?? reqs[0].deviceId;
   const [d] = await db.select({ name: devices.name }).from(devices).where(eq(devices.id, boardId));
   const board = d?.name ?? 'The board';
+  // A move's get is not finished until its source is deleted (net-moves.ts drops the marker after).
+  const moving = (r: RemoteRow) => r.status === 'done' && !!(r.target as GetTarget | null)?.moveSource;
   // A relayed file is its queue row once handed over: the get then counts no more.
   const rows = reqs.filter((r) => r.kind === 'get' && !((r.target as GetTarget).relay && r.status === 'done'));
   const writes: JobWrite[] = reqs.filter((r) => (WRITE_KINDS as readonly string[]).includes(r.kind)).map((r) => {
@@ -346,9 +348,12 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
       : ['readonly', 'wprot', 'full', 'denied', 'busy', 'exists'].includes(x.errorCode ?? '') ? writeErrorWords(x.errorCode!, x.errorText ?? '', board)
       : failureText(x.errorCode, x.errorText),
   }));
+  // A move's file is not finished until its source is removed (net-moves.ts clears the marker after).
+  const settling = (x: { status: string; moveSource: string | null }) => x.status === 'delivered' && x.moveSource !== null;
   const sentCounts = {
-    total: sent.length, done: sent.filter((x) => x.status === 'delivered').length, skipped: sent.filter((x) => x.status === 'skipped').length,
-    waiting: sent.filter((x) => x.status === 'queued' || x.status === 'sending').length,
+    total: sent.length, done: sent.filter((x) => x.status === 'delivered' && !settling(x)).length,
+    skipped: sent.filter((x) => x.status === 'skipped').length,
+    waiting: sent.filter((x) => x.status === 'queued' || x.status === 'sending' || settling(x)).length,
   };
   const doneIds = rows.filter((r) => r.status === 'done' && r.uploadId).map((r) => r.uploadId!);
   const paths = doneIds.length
@@ -361,8 +366,9 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
     return { name: rel[rel.length - 1], reason };
   });
   return {
-    total: rows.length + sentCounts.total, done: rows.filter((r) => r.status === 'done').length + sentCounts.done, failed: [...failed, ...sentFailed],
-    waiting: rows.filter((r) => r.status !== 'done' && r.status !== 'failed').length + sentCounts.waiting, board,
+    total: rows.length + sentCounts.total, done: rows.filter((r) => r.status === 'done' && !moving(r)).length + sentCounts.done,
+    failed: [...failed, ...sentFailed],
+    waiting: rows.filter((r) => (r.status !== 'done' && r.status !== 'failed') || moving(r)).length + sentCounts.waiting, board,
     arrived: doneIds.flatMap((id) => (paths.has(id) ? [formatPath({ device: 'STASH', segments: paths.get(id)!.split('/') })] : [])),
     skipped: sentCounts.skipped, writes,
     direction: sent.length || reqs.some((r) => r.kind === 'get' && (r.target as GetTarget).relay) ? 'to' : 'from',

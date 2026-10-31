@@ -71,12 +71,15 @@ export async function boardTakesNext(request: APIRequestContext, token: string,
 
 // NET: volumes (spec 2026-10-30 §2.2, §4.2): a 1.22.0 board passing Files' requests to Transfer 2.3 and its answers back.
 
-export type BoardRequest = { id: string; kind: 'VOLS' | 'DIR' | 'GET'; path: string };
+/** Phase 2 (spec 2026-10-31 §2.3): the one-line writes, with RENAME's `to`, PROTECT's bits and NOTE's comment. */
+export type BoardRequest = { id: string; kind: 'VOLS' | 'DIR' | 'GET' | 'MKDIR' | 'RENAME' | 'DELETE' | 'PROTECT' | 'NOTE'; path: string;
+  to?: string; protection?: number; comment?: string };
 /**
  * What Transfer has: `fs['']` the volumes (each with its `device`), `fs['Work:']`, `fs['Work:Programs']` … a drawer's
  * entries by its Amiga path (looked up ignoring case, as AmigaDOS does). A file's bytes are `data`.
  */
-export type FakeEntry = { name: string; device?: string; dir?: boolean; data?: Buffer; comment?: string; protection?: number };
+/** `busy`: in use on the Amiga -- a DELETE that reaches it stops there (phase 2). */
+export type FakeEntry = { name: string; device?: string; dir?: boolean; data?: Buffer; comment?: string; protection?: number; busy?: boolean };
 const AMIGA_DATE = '17000.600.0';
 const lp = (s: string) => `${s.length}:${s}`;
 
@@ -85,12 +88,18 @@ export async function boardTakesRequests(request: APIRequestContext, token: stri
   const res = await request.get('/api/device/req', { headers: authHeader(token) });
   expect(res.status()).toBe(200);
   const text = Buffer.from(await res.body()).toString('latin1');
-  return text.split('\n').filter(Boolean).map((line) => {
-    const m = /^(VOLS|DIR|GET) (\S+)(?: (\d+):(.*))?$/.exec(line);
-    expect(m, line).not.toBeNull();
-    const [, kind, id, len, path = ''] = m!;
-    if (len !== undefined) expect(path.length, line).toBe(Number(len));
-    return { id, kind: kind as BoardRequest['kind'], path };
+  return text.split('\n').filter(Boolean).map((line): BoardRequest => {
+    // <KIND> <rid> then length-prefixed fields and words, as the board checks them (spec 2026-10-31 §3).
+    const c = cursor(line, 0);
+    const kind = c.word() as BoardRequest['kind'];
+    const id = c.word();
+    expect(['VOLS', 'DIR', 'GET', 'MKDIR', 'RENAME', 'DELETE', 'PROTECT', 'NOTE'], line).toContain(kind);
+    if (kind === 'VOLS') return { id, kind, path: '' };
+    const path = c.field();
+    if (kind === 'RENAME') return { id, kind, path, to: c.field() };
+    if (kind === 'PROTECT') return { id, kind, path, protection: parseInt(c.word(), 16) };
+    if (kind === 'NOTE') return { id, kind, path, comment: c.field() };
+    return { id, kind, path };
   });
 }
 
@@ -103,9 +112,85 @@ export async function boardAnswers(request: APIRequestContext, token: string, ri
 
 const entriesOf = (fs: Record<string, FakeEntry[]>, path: string) =>
   Object.entries(fs).find(([k]) => k !== '' && k.toLowerCase() === path.toLowerCase())?.[1];
+const keyOf = (fs: Record<string, FakeEntry[]>, path: string) => Object.keys(fs).find((k) => k !== '' && k.toLowerCase() === path.toLowerCase());
+/** `Work:a/b` → [`Work:a`, `b`]; `Work:a` → [`Work:`, `a`]. */
+function split(path: string): [string, string] {
+  const c = path.indexOf(':'); const s = path.lastIndexOf('/');
+  return s > c ? [path.slice(0, s), path.slice(s + 1)] : [path.slice(0, c + 1), path.slice(c + 1)];
+}
+const join = (dir: string, name: string) => (dir.endsWith(':') ? `${dir}${name}` : `${dir}/${name}`);
+
+/**
+ * What Transfer 2.5 does for one write (spec 2026-10-31 §2.3), on `fs`: MKDIR, RENAME (one volume), DELETE (a drawer
+ * depth-first, DEL every 50 removed, stopping at an entry in use), PROTECT, NOTE; answered in pieces as the board posts
+ * them (a DEL piece each 50, then DONE or ERR).
+ */
+async function boardWrites(request: APIRequestContext, token: string, fs: Record<string, FakeEntry[]>, r: BoardRequest) {
+  const err = (code: string, text: string) => boardAnswers(request, token, r.id, [`ERR ${r.id} ${code} ${lp(text)}`]);
+  const [dir, name] = split(r.path);
+  const list = entriesOf(fs, dir);
+  const e = list?.find((x) => x.name.toLowerCase() === name.toLowerCase());
+  if (r.kind === 'MKDIR') {
+    if (!list) return err('notfound', 'object not found');
+    if (e) return err('exists', 'object already exists');
+    list.push({ name, dir: true }); fs[join(keyOf(fs, dir)!, name)] = [];
+    return boardAnswers(request, token, r.id, [`DONE ${r.id} 1`]);
+  }
+  if (!list || !e) return err('notfound', 'object not found');
+  if (r.kind === 'PROTECT') { e.protection = r.protection; return boardAnswers(request, token, r.id, [`DONE ${r.id} 1`]); }
+  if (r.kind === 'NOTE') { e.comment = r.comment; return boardAnswers(request, token, r.id, [`DONE ${r.id} 1`]); }
+  if (r.kind === 'RENAME') {
+    const [toDir, toName] = split(r.to!);
+    if (toDir.slice(0, toDir.indexOf(':')).toLowerCase() !== dir.slice(0, dir.indexOf(':')).toLowerCase()) return err('xvol', 'Rename across volumes');
+    const there = entriesOf(fs, toDir);
+    if (!there) return err('notfound', 'object not found');
+    if (there.some((x) => x !== e && x.name.toLowerCase() === toName.toLowerCase())) return err('exists', 'object already exists');
+    const from = e.dir ? keyOf(fs, r.path) : undefined;
+    list.splice(list.indexOf(e), 1); e.name = toName; there.push(e);
+    if (from) {
+      const to = join(keyOf(fs, toDir)!, toName);
+      for (const key of Object.keys(fs)) if (key === from || key.startsWith(`${from}/`)) { fs[to + key.slice(from.length)] = fs[key]; delete fs[key]; }
+    }
+    return boardAnswers(request, token, r.id, [`DONE ${r.id} 1`]);
+  }
+  // DELETE: depth-first; every 50 removed a DEL piece; an entry in use stops it with the count so far.
+  let removed = 0; let piece = 0; let stop: string | null = null;
+  const drop = async (at: string, rel: string): Promise<void> => {
+    for (const c of [...(entriesOf(fs, at) ?? [])]) {
+      if (stop) return;
+      if (c.dir) await drop(join(at, c.name), `${rel}${c.name}/`);
+      if (stop) return;
+      if (c.busy) { stop = `${rel}${c.name}`; return; }
+      entriesOf(fs, at)!.splice(entriesOf(fs, at)!.indexOf(c), 1);
+      removed++;
+      if (removed % 50 === 0) {
+        await boardAnswers(request, token, r.id, [`DEL ${r.id} ${removed}`], piece++, false);
+        if (fakeBoardTiming.delMs) await new Promise((ok) => setTimeout(ok, fakeBoardTiming.delMs));
+      }
+    }
+  };
+  if (e.dir) await drop(keyOf(fs, r.path)!, `${e.name}/`);
+  if (!stop && e.busy) stop = e.name;
+  if (stop) return boardAnswers(request, token, r.id, [`DEL ${r.id} ${removed}`, `ERR ${r.id} busy ${lp(`${stop}: object in use`)}`], piece, true);
+  list.splice(list.indexOf(e), 1); removed++;
+  return boardAnswers(request, token, r.id, [`DONE ${r.id} ${removed}`], piece, true);
+}
+
+/** How long the fake Transfer pauses after each DEL piece (a test watching a big delete count up sets it). */
+export const fakeBoardTiming = { delMs: 0 };
+
+/** Words and <len>:<text> fields of one protocol line, from `at`. */
+function cursor(line: string, at: number) {
+  return {
+    word() { const j = line.indexOf(' ', at); const w = j < 0 ? line.slice(at) : line.slice(at, j); at = j < 0 ? line.length : j + 1; return w; },
+    field() { const c = line.indexOf(':', at); const n = Number(line.slice(at, c)); const v = line.slice(c + 1, c + 1 + n); at = c + 2 + n; return v; },
+    more() { return at < line.length; },
+  };
+}
 
 /** What Transfer answers to one request: the volumes, a drawer's entries, or a file's GOT and then its upload. */
 export async function boardServesOne(request: APIRequestContext, token: string, fs: Record<string, FakeEntry[]>, r: BoardRequest) {
+  if (r.kind !== 'VOLS' && r.kind !== 'DIR' && r.kind !== 'GET') { await boardWrites(request, token, fs, r); return; }
   if (r.kind === 'VOLS') {
     const vols = fs[''] ?? [];
     await boardAnswers(request, token, r.id, [
@@ -133,6 +218,54 @@ export async function boardServesOne(request: APIRequestContext, token: string, 
   await boardUploads(request, token, name, file.data, AMIGA_DATE, r.id);
 }
 
+export type VolumeNext = { id: string; dest: string | null; mode: string | null; outcome: string };
+/**
+ * The board and Transfer 2.5 taking the queue's NEXT file (spec 2026-10-31 §2.2): a plain one into ReceiveDir, a copy
+ * onto a volume (`NEXT … <len>:<Vol:path> <len>:<comment> <mode>`) onto `fs` by its clash mode -- skip answers SKIP
+ * (reported `skipped`), keep takes `name.1`, replace replaces. Null when nothing waits.
+ */
+export async function boardTakesVolumeNext(request: APIRequestContext, token: string, fs: Record<string, FakeEntry[]>): Promise<VolumeNext | null> {
+  const text = await boardQueue(request, token);
+  const line = text.split('\n')[0];
+  if (line === 'NEXT -') return null;
+  const c = cursor(line, 5);
+  const id = c.word(); const size = Number(c.word()); c.word(); const prot = parseInt(c.word(), 16); const path = c.field(); const comment = c.field();
+  const mode = c.more() ? c.word() : null;
+  const done = (o: object) => request.post(`/api/device/send/${id}/done`, { headers: authHeader(token), data: o });
+  const take = async () => {
+    const chunks: Buffer[] = [];
+    for (let off = 0; off < size; off += 16_384) {
+      const r = await request.get(`/api/device/send/${id}?offset=${off}&length=16384`, { headers: authHeader(token) });
+      chunks.push(Buffer.from(await r.body()));
+    }
+    return Buffer.concat(chunks);
+  };
+  if (!path.includes(':')) {
+    await take();
+    expect((await done({ ok: true, savedAs: path })).status()).toBe(204);
+    return { id, dest: null, mode: null, outcome: 'delivered' };
+  }
+  const [dir, name] = split(path);
+  const there = entriesOf(fs, dir)?.find((x) => x.name.toLowerCase() === name.toLowerCase());
+  if (there && mode === 'skip') { expect((await done({ ok: false, code: 'skipped', text: '' })).status()).toBe(204); return { id, dest: path, mode, outcome: 'skipped' }; }
+  const data = await take();
+  // Missing drawers on the way are made, as Transfer makes them.
+  let cur = keyOf(fs, path.slice(0, path.indexOf(':') + 1)) ?? path.slice(0, path.indexOf(':') + 1);
+  fs[cur] ??= [];
+  for (const part of dir.slice(dir.indexOf(':') + 1).split('/').filter(Boolean)) {
+    const next = join(cur, part);
+    if (!keyOf(fs, next)) { entriesOf(fs, cur)!.push({ name: part, dir: true }); fs[next] = []; }
+    cur = keyOf(fs, next)!;
+  }
+  const into = entriesOf(fs, dir)!;
+  let saved = name;
+  if (there && mode === 'replace') into.splice(into.indexOf(there), 1);
+  else if (there) { let n = 1; while (into.some((x) => x.name.toLowerCase() === `${name}.${n}`.toLowerCase())) n++; saved = `${name}.${n}`; }
+  into.push({ name: saved, data, protection: prot, comment });
+  expect((await done({ ok: true, savedAs: join(dir, saved) })).status()).toBe(204);
+  return { id, dest: path, mode, outcome: 'delivered' };
+}
+
 /** The board's req.v as its status poll reads it (spec 2026-10-30 §4.2): the devices row its token names. */
 async function reqVersionOf(token: string): Promise<number> {
   const [d] = await getDb().select({ v: devices.reqVersion }).from(devices).where(eq(devices.tokenHash, hashDeviceToken(token)));
@@ -146,10 +279,12 @@ async function reqVersionOf(token: string): Promise<number> {
  * Resolves with every request it served, in order; a test awaits it so a failed answer fails the test.
  */
 export async function boardServes(request: APIRequestContext, token: string, fs: Record<string, FakeEntry[]>, until: () => boolean,
-  served: BoardRequest[] = [], maxMs = 30_000): Promise<BoardRequest[]> {
+  served: BoardRequest[] = [], maxMs = 30_000, opts: { queue?: VolumeNext[] } = {}): Promise<BoardRequest[]> {
   const end = Date.now() + maxMs;
   let ack: number | null = null;
   while (!until() && Date.now() < end) {
+    // Phase 2: with `queue`, the board also takes its queue's files, as firmware 1.23 relays them (one per pass).
+    if (opts.queue) { const t = await boardTakesVolumeNext(request, token, fs); if (t) opts.queue.push(t); }
     const v = await reqVersionOf(token);
     if (v !== ack) {
       ack = v;

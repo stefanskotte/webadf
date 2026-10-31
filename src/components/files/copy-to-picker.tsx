@@ -40,8 +40,8 @@ export function pickReason(op: 'copy' | 'move', l: Listing | null, filing?: (l: 
   const f = filing?.(l);
   if (f !== undefined) return f;
   if (l.path === 'NET:') return NET_PICK_BOARD;
-  // A volume of a board's Amiga takes nothing in phase 1 (NET: volumes, spec 2026-10-30 §5).
-  if (isNetVolume(l)) return NET_READ_ONLY;
+  // A volume takes copies only while its board can write (phase 2, spec 2026-10-31 §4.2).
+  if (isNetVolume(l) && !l!.writable) return l!.readOnlyReason ?? NET_READ_ONLY;   // phase 2: a writable volume takes copies
   if (!acceptsCopies(l)) return `Open a disk or STASH: to ${op} into it`;
   if (!l.writable) return refusalWords('read_only', l.readOnlyReason ?? undefined);
   if (op === 'move' && netBoardOf(l)) return NET_MOVE_IN;

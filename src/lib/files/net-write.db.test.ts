@@ -297,6 +297,10 @@ describe('moves', () => {
     const [g] = await gets();
     await arrive(g.id, 'Work:x', new TextEncoder().encode('xx'));
     expect((await writes()).map((w) => `${w.kind} ${w.amigaPath}`)).toEqual(['delete Work:x']);
+    // The DELETE is the move's own: its progress waits for it.
+    const job = (r as { fetching: { id: string } }).fetching.id;
+    expect((await writes())[0].fetchId).toBe(job);
+    expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ done: 1, waiting: 0, writes: [{ kind: 'delete', status: 'waiting' }] });
   });
 
   it('between two boards\' volumes: fetched, handed to the other board\'s queue, out of STASH:; a move then deletes', async () => {

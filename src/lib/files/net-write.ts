@@ -150,10 +150,11 @@ async function byBoard(ctx: FsCtx, sources: string[]): Promise<Map<SendTarget, {
  * Delete on a volume (spec 2026-10-31 §4.1, W3): one DELETE per source -- a drawer with everything in it, by Transfer --
  * and its icon (W9). The confirm is the pane's. Each item is ok once queued; the job says how it went.
  */
-export async function removeOnVolume(ctx: OpCtx, sources: string[]): Promise<Outcome> {
+export async function removeOnVolume(ctx: OpCtx, sources: string[], opts: { jobId?: string } = {}): Promise<Outcome> {
   const items: OpItem[] = [];
   let writes = 0;
-  const job = newRequestId();
+  // A move's removal joins the move's job (net-moves.ts), so its progress waits for it.
+  const job = opts.jobId ?? newRequestId();
   for (const [t, list] of await byBoard(ctx, sources)) {
     const picked = new Set(list.map((x) => x.at.amiga.toLowerCase()));
     const reqs: WriteReq[] = [];
