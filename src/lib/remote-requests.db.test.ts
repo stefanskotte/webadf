@@ -389,7 +389,7 @@ describe('write requests', () => {
       ['rename', 'j1', 1, { to: 'Work:b.info', label: 'Work:a.info', icon: true }],
     ]);
     const taken = await takeWaiting(getDb(), deviceId, at(3));
-    expect(taken.map((r) => requestLine(r))).toEqual([
+    expect(taken.map((r) => requestLine({ ...r, kind: r.kind as never }))).toEqual([
       'RENAME ' + ids[0] + ' 6:Work:a 6:Work:b\n', 'RENAME ' + ids[1] + ' 11:Work:a.info 11:Work:b.info\n',
       expect.stringMatching(/^DIR /), expect.stringMatching(/^GET /),
     ]);
