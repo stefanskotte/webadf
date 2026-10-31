@@ -105,7 +105,7 @@ describe('NET: listing', () => {
   it('lists the boards that can receive, online first, with their marks; it takes no copies itself', async () => {
     const l = (await netDriver.list(ctx, P('NET:')))!;
     expect(l.entries.map((e) => [e.kind, e.name, e.path])).toEqual([['board', 'A500 bench', 'NET:/b1'], ['board', 'Zed', 'NET:/b2']]);
-    expect(l.entries[0].marks).toEqual(['online', 'Transfer running', 'key AB12']);
+    expect(l.entries[0].marks).toEqual(['online', 'Transfer running', 'browsable', 'key AB12']);
     expect(l.entries[1].marks).toEqual(['offline 3 h']);
     expect(l.writable).toBe(false);
     expect(l.readOnlyReason).toBe('Open a board to send files to it');
@@ -148,7 +148,7 @@ describe('copy into NET:', () => {
       protection: protectionString(5), date: rows[0].createdAt.toISOString(), marks: ['Waiting'] });
     expect(l.queue).toEqual({ deviceId: 'b1', files: 1, bytes: 7 });
     expect(l.meta).toBe('1 waiting · 0.0 of 16 MB');
-    expect((await netDriver.list(ctx, P('NET:')))!.entries[0].marks).toEqual(['online', 'Transfer running', '1 waiting', 'key AB12']);
+    expect((await netDriver.list(ctx, P('NET:')))!.entries[0].marks).toEqual(['online', 'Transfer running', 'browsable', '1 waiting', 'key AB12']);
   });
   it('queues STASH: folders as relative paths, every file of every source in one go, and bumps the cursor once', async () => {
     await emptyQueue();

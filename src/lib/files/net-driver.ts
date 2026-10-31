@@ -19,7 +19,7 @@ import { uploadBoards } from '@/lib/amiga-uploads';
 import { mapLimit } from '@/lib/pool';
 import { protectionString } from '@/lib/adffs/dir';
 import { latestFor, requestListing, type RemoteRow } from '@/lib/remote-requests';
-import { browseBlock, errorWords } from '@/lib/remote-browse';
+import { browseBlock, browseMark, errorWords } from '@/lib/remote-browse';
 import { amigaPathOf, volumeLabel, type EntryInfo, type VolumeInfo } from '@/lib/remote-wire';
 import { QUEUE_FOLDER } from '@/lib/remote-limits';
 import { formatPath, parsePath, type FsPath } from './path';
@@ -46,10 +46,15 @@ async function queueRowOf(ctx: FsCtx, board: string, id: string): Promise<boolea
   return !!row;
 }
 
-/** R6: online / offline 3 h, Transfer running, what waits, and the key Transfer shows (fw 1.19.0+). */
+/**
+ * R6: online / offline 3 h, Transfer running, whether its disks can be browsed (NET: volumes §5: "browsable" or the
+ * missing thing), what waits, and the key Transfer shows (fw 1.19.0+).
+ */
 function boardMarks(t: SendTarget, waiting: number, sending: boolean, key: string | null, now: number): string[] {
   const marks = [targetState(t, now)];
   if (receiverRunning(t, sending, now)) marks.push('Transfer running');
+  const browse = browseMark({ online: t.online, firmware: t.firmwareVersion, rx: t.rx, rxProto: t.rxProto, browseOn: t.browseOn });
+  if (browse) marks.push(browse);
   if (waiting) marks.push(`${waiting} waiting`);
   if (key) marks.push(`key ${key}`);
   return marks;
