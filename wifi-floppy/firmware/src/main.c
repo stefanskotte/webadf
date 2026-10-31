@@ -2485,7 +2485,7 @@ static void core1_main(void) {
             as_tick(&g_send);
             dc_set_send(&c, as_acked_version(&g_send), as_rx(&g_send));
             if (as_req_capable(&g_send))
-                dc_set_req(&c, as_req_acked(&g_send), as_rx_proto(&g_send), as_browse(&g_send));
+                dc_set_req(&c, as_req_acked(&g_send), as_rx_proto(&g_send), as_browse(&g_send), as_write(&g_send));
 #if WF_A2B_DISCARD
             {   // Increment 0: one line every 2 s while a copy runs, and the totals once it ends.
                 static uint32_t a2b_log_ms, a2b_logged;

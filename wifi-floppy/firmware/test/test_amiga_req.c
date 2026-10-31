@@ -217,6 +217,80 @@ static void a_failed_got_is_never_matched_by_tag(void) {
     CHECK(ar_got_by_tag(&R, "7") == NULL, "a late ERR too");
 }
 
+// --- Writes (spec 2026-10-31 section 2.3, fw 1.23.0) ---
+static void takes_each_write_kind(void) {
+    load("MKDIR m 8:Work:New\nRENAME r 6:Work:a 6:Work:b\nDELETE d 8:Work:old\nPROTECT p 6:Work:x f0\n"
+         "NOTE n 6:Work:x 5:hello\n");
+    static const struct { ar_kind_t k; const char *rid, *out; } W[] = {
+        { AR_MKDIR, "m", "MKDIR m 8:Work:New\n" }, { AR_RENAME, "r", "RENAME r 6:Work:a 6:Work:b\n" },
+        { AR_DELETE, "d", "DELETE d 8:Work:old\n" }, { AR_PROTECT, "p", "PROTECT p 6:Work:x f0\n" },
+        { AR_NOTE, "n", "NOTE n 6:Work:x 5:hello\n" },
+    };
+    for (unsigned i = 0; i < sizeof W / sizeof W[0]; i++) {
+        CHECK(ar_take(&R, NULL), W[i].out);
+        CHECK(R.kind == W[i].k, W[i].out);
+        CHECK(ar_kind_is_write(R.kind), "a write");
+        CHECK(strcmp(R.rid, W[i].rid) == 0, R.rid);
+        CHECK(strcmp(R.out, W[i].out) == 0 && R.out_n == (int)strlen(W[i].out), R.out);
+        ar_finish(&R);
+    }
+    CHECK(!ar_kind_is_write(AR_VOLS) && !ar_kind_is_write(AR_DIR) && !ar_kind_is_write(AR_GET) && !ar_kind_is_write(AR_NONE),
+          "reads are not writes");
+}
+
+// Review Focus 4.
+static void write_lines_parse_with_spaces_latin1_and_empty_comment(void) {
+    char to[256], line[700];
+    memset(to, 'x', 255); to[0] = 'W'; to[1] = ':'; to[100] = (char)0xe9; to[101] = ' '; to[255] = 0;
+    int n = snprintf(line, sizeof line, "RENAME r 8:Work:a b 255:%s\nNOTE n 6:Work:x 0:\nPROTECT p 6:Work:x FFFFFFFF\n", to);
+    ar_init(&R); memcpy(R.fetched, line, (size_t)n); ar_fetched(&R, n);
+    int bad = 0;
+    CHECK(ar_take(&R, &bad) && R.kind == AR_RENAME, "rename");
+    CHECK(R.out_n == (int)strlen("RENAME r 8:Work:a b 255:") + 255 + 1, "the whole pair");
+    CHECK(memcmp(R.out + 24, to, 255) == 0 && R.out[24 + 255] == '\n', "byte for byte");
+    ar_finish(&R);
+    CHECK(ar_take(&R, &bad) && R.kind == AR_NOTE && strcmp(R.out, "NOTE n 6:Work:x 0:\n") == 0, R.out);
+    ar_finish(&R);
+    CHECK(ar_take(&R, &bad) && R.kind == AR_PROTECT, "8 hex digits");
+    CHECK_EQ_INT(bad, 0);
+}
+
+static void malformed_write_lines_are_skipped(void) {
+    char c80[81], line[200], text[1200];
+    memset(c80, 'c', 80); c80[80] = 0;
+    snprintf(line, sizeof line, "NOTE n 6:Work:a 80:%s\n", c80);
+    int n = snprintf(text, sizeof text,
+                     "MKDIR m\nMKDIR m 0:\nRENAME r 6:Work:a\nRENAME r 6:Work:a 6:Work:b x\nPROTECT p 6:Work:a\n"
+                     "PROTECT p 6:Work:a 123456789\nPROTECT p 6:Work:a 0g\n%sDELETE d 3:a\x01" "b\nMKDIR bad! 6:Work:a\n"
+                     "DELETE d 9:Work:a\nRENAME r 6:Work:a 0:\nNOTE n 6:Work:a 5:abc\nNOTE n 6:Work:a\nMKDIR ok 6:Work:a\n", line);
+    ar_init(&R); memcpy(R.fetched, text, (size_t)n); ar_fetched(&R, n);
+    int bad = 0;
+    CHECK(ar_take(&R, &bad) && strcmp(R.rid, "ok") == 0, R.rid);
+    CHECK_EQ_INT(bad, 14);
+}
+
+static void writes_go_before_gets_in_order(void) {
+    load("GET g 6:Work:a\nMKDIR m 6:Work:b\nDIR d 5:Work:\nDELETE x 6:Work:c\nGET h 6:Work:d\n");
+    const char *want[] = { "m", "d", "x", "g", "h" };
+    for (int i = 0; i < 5; i++) { CHECK(ar_take(&R, NULL) && strcmp(R.rid, want[i]) == 0, want[i]); ar_finish(&R); }
+    load("MKDIR m 6:Work:b\nGET g 6:Work:a\n");
+    CHECK(!ar_only_gets(&R), "a write is not a GET");
+}
+
+static void del_is_an_answer_verb(void) {
+    char v[5], rid[AR_RID_MAX + 1];
+    CHECK(ar_line_verb("DEL r 50", v, rid) && !strcmp(v, "DEL") && !strcmp(rid, "r"), "DEL");
+    CHECK(!ar_line_verb("DELETE r 50", v, rid), "not a verb Transfer sends");
+}
+
+// Ruling N4: a refetch behind eight held GETs may bring eight RENAMEs of the longest form.
+static void refetch_room_takes_eight_renames(void) {
+    const int rename_max = (int)strlen("RENAME ") + AR_RID_MAX + (int)strlen(" 255:") + 255 + (int)strlen(" 255:") + 255 + 1;
+    CHECK_EQ_INT(rename_max, 568);
+    CHECK(AR_REFETCH_ROOM >= AR_MAX * rename_max, "eight renames fit a refetch");
+    CHECK(AR_FETCH_BYTES - AR_MAX * 305 >= AR_REFETCH_ROOM, "behind eight held GETs");
+}
+
 int main(void) {
     RUN(takes_vols_dir_and_get_in_order);
     RUN(malformed_lines_are_skipped_and_counted);
@@ -237,5 +311,11 @@ int main(void) {
     RUN(listings_are_taken_before_gets_in_order);
     RUN(fetched_lines_merge_with_the_ones_held);
     RUN(a_failed_got_is_never_matched_by_tag);
+    RUN(takes_each_write_kind);
+    RUN(write_lines_parse_with_spaces_latin1_and_empty_comment);
+    RUN(malformed_write_lines_are_skipped);
+    RUN(writes_go_before_gets_in_order);
+    RUN(del_is_an_answer_verb);
+    RUN(refetch_room_takes_eight_renames);
     return REPORT();
 }

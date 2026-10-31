@@ -119,6 +119,19 @@ Through phase 1's request flow (`<rid>`, one at a time, length-prefixed Latin-1 
 - **Deferred minor folded in:** a host test of `amiga_tcp.c`'s ack accounting (acked when read, the 48 KB ring).
 - A board on 1.22 never receives these requests or rows: the server offers them only to a board that reported
   `write=1`.
+- **Amendments (firmware plan 2026-10-31, `docs/superpowers/plans/2026-10-31-firmware-1-23-net-writes.md`):**
+  - **N1 (wire):** a row reaches the board only through `GET /api/device/send/queue`'s `NEXT` line (the poll's `xfer`
+    carries `v` and `ip` only), so "`xfer.next` gains `dest` and `onClash`" is that line:
+    `NEXT <id> <size> <crc> <prot> <len>:<dest> <len>:<comment> <keep|replace|skip>` -- the destination in the path's
+    place, so the line's tail is the extended `FILE`'s. The board also accepts the destination as its own field after
+    the comment (`... <len>:<path> <len>:<comment> <len>:<dest> <mode>`). A path with a `:` is absolute; an absolute
+    path with no mode is `keep`; a mode after a relative path is dropped; an unknown mode, or an entry the board cannot
+    parse, fails the row `name`. LIST lines are forwarded unchanged, so the server chooses the path a Transfer 2.4 lists.
+  - **N2:** a write request on a protocol 3 connection is answered by the board `ERR <rid> readonly 26:Writing is off in
+    Transfer`; on protocol 4 it goes to Transfer even with `<w>` `0` (Transfer answers `readonly` itself).
+  - **N3:** `&write=` rides with `&rxv=` at protocols 2-4 (`0` below 4).
+  - **N4-N6 (internal):** the refetch room fits eight longest RENAME lines; the line ring's TCP ack accounting is the
+    pure `amiga_rxring.c`; the poll's path buffer is 216 bytes.
 
 ## 4. Server and web
 

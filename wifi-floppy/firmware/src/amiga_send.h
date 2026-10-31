@@ -152,8 +152,8 @@ typedef struct amiga_send {
     uint32_t backoff_ms, t_backoff;  // after a failed HTTPS call: no work until t_backoff
     char line[AS_LINE_MAX + 1];
     as_up_t *up;                     // the caller's (PSRAM); NULL: no uploads
-    uint8_t hello_v;                 // the hello this connection sent: 1, 2 or 3
-    uint8_t peer_v;                  // Receive's READY: 2 only in answer to our protocol 2 or 3 hello, 3 only in answer to our protocol 3 hello, else 1 (0 before)
+    uint8_t hello_v;                 // the hello this connection sent: 1, 2 or 4 (3 before fw 1.23.0)
+    uint8_t peer_v;                  // Receive's READY: 2 only in answer to our protocol 2+ hello, 3 to 3+, 4 to 4, else 1 (0 before)
     bool up_last;                    // the last file to finish went up: a waiting download goes next (spec §3)
     as_req_t *req;                   // the caller's (PSRAM); NULL: no browsing (the hello stays protocol 2)
 } amiga_send_t;
@@ -194,6 +194,7 @@ void as_set_req_version(amiga_send_t *s, uint32_t req_version);   // the poll's 
 bool as_req_capable(const amiga_send_t *s);
 uint32_t as_req_acked(const amiga_send_t *s);                      // the poll's reqAck
 int as_rx_proto(const amiga_send_t *s);                            // Transfer's protocol on the open connection, 0 = none
-bool as_browse(const amiga_send_t *s);                             // READY 3's browse flag
+bool as_browse(const amiga_send_t *s);                             // READY 3's or 4's browse flag
+bool as_write(const amiga_send_t *s);                              // READY 4's write flag (fw 1.23.0; spec 2026-10-31)
 
 #endif

@@ -41,7 +41,7 @@ fail=0
 #   fw_rom.c - boot ROM, flash, watchdog; every decision it acts on
 #                       lives in fw_trial.c / fw_apply.c / fw_update.c, which are tested
 #   pnet_bridge.c     - PaulaNET Phase 1's lwIP/radio glue; its decisions are pnet_sort.c and pnet_ring.c
-#   amiga_tcp.c       - PaulaNET Phase 4's lwIP TCP to Receive; its decisions are amiga_send.c
+#   amiga_tcp.c       - PaulaNET Phase 4's lwIP TCP to Receive; its decisions are amiga_send.c, its ring and acks amiga_rxring.c
 #   boot_trail_hw.c   - the boot trail's POWMAN/watchdog registers; its decisions are boot_trail.c
 #   a2b_discard.c     - increment 0's lwIP discard service (TEST builds); it decides nothing
 # image_loader.c used to be excluded here too: it called http_get_stream(),
