@@ -54,7 +54,8 @@ function boardMoving(cut: Date) {
       and w.status = 'sent' and w.pieces > 0 and w.active_at >= ${cut})
     or exists (select 1 from devices d where d.id = remote_requests.device_id and d.send_rx_at >= ${cut} and (
       exists (select 1 from transfers t where t.device_id = d.id and t.status = 'sending')
-      or exists (select 1 from amiga_uploads u where u.device_id = d.id and u.status = 'receiving' and u.source = 'amiga'))))`;
+      or exists (select 1 from amiga_uploads u where u.device_id = d.id and u.status = 'receiving' and u.source = 'amiga'
+        and u.active_at >= ${cut}))))`;
 }
 
 /** Requests nobody answered fail `timeout`, so a pane never waits on a board that went away. */
@@ -95,15 +96,31 @@ export async function copyMoving(db: Db, deviceId: string, now = new Date()): Pr
     gte(remoteRequests.activeAt, cut),
   )).orderBy(sql`${remoteRequests.activeAt} desc`).limit(1);
   if (g) return g.path;
-  // A queue file going down, or an Amiga-side upload going up (§4.4 minor 2), while the board's receiver report is fresh.
+  // A queue file going down, or an Amiga-side upload going up (§4.4 minor 2), while the board's receiver report is fresh;
+  // an upload only while its own chunks come (one Transfer stopped mid-file stays receiving: A500 bench 2026-10-31).
   const [d] = await db.select({ at: devices.sendRxAt }).from(devices).where(eq(devices.id, deviceId));
   if (!d?.at || d.at < cut) return null;
   const [t] = await db.select({ path: sql<string>`coalesce(${transfers.amigaDest}, ${transfers.path})` }).from(transfers)
     .where(and(eq(transfers.deviceId, deviceId), eq(transfers.status, 'sending'))).limit(1);
   if (t) return t.path;
   const [u] = await db.select({ path: amigaUploads.path }).from(amigaUploads)
-    .where(and(eq(amigaUploads.deviceId, deviceId), eq(amigaUploads.status, 'receiving'), eq(amigaUploads.source, 'amiga'))).limit(1);
+    .where(and(eq(amigaUploads.deviceId, deviceId), eq(amigaUploads.status, 'receiving'), eq(amigaUploads.source, 'amiga'),
+      gte(amigaUploads.activeAt, cut))).limit(1);
   return u?.path ?? null;
+}
+
+/**
+ * The board's drawer DELETE whose DEL pieces are coming now (one came within ALIVE_PIECE_MS), in the pane's words, and
+ * how many entries it has removed; else null. Transfer answers nothing else meanwhile (A500 bench 2026-10-31: 597 entries
+ * in 89 s), so a listing asked for then waits for it, and the pane says so.
+ */
+export async function deleteRunning(db: Db, deviceId: string, now = new Date()): Promise<{ label: string; removed: number } | null> {
+  const [r] = await db.select({ amigaPath: remoteRequests.amigaPath, target: remoteRequests.target, answer: remoteRequests.answer })
+    .from(remoteRequests).where(and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.kind, 'delete'), eq(remoteRequests.status, 'sent'),
+      sql`${remoteRequests.pieces} > 0`, gte(remoteRequests.activeAt, ms(now, ALIVE_PIECE_MS))))
+    .orderBy(sql`${remoteRequests.activeAt} desc`).limit(1);
+  if (!r) return null;
+  return { label: (r.target as WriteTarget | null)?.label ?? r.amigaPath, removed: (r.answer as { removed?: number } | null)?.removed ?? 0 };
 }
 
 /** A listing arriving in pieces shows life only while one came within ALIVE_PIECE_MS (§4.4 minor 1). */

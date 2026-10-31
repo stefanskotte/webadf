@@ -163,7 +163,9 @@ async function boardWrites(request: APIRequestContext, token: string, fs: Record
       if (c.busy) { stop = `${rel}${c.name}`; return; }
       entriesOf(fs, at)!.splice(entriesOf(fs, at)!.indexOf(c), 1);
       removed++;
-      if (removed % 50 === 0) {
+      if (removed % fakeBoardTiming.delEvery === 0) {
+        // The real Transfer takes its time over each batch before it says so (A500 bench: 100 entries in ~15 s).
+        if (fakeBoardTiming.delBeforeMs) await new Promise((ok) => setTimeout(ok, fakeBoardTiming.delBeforeMs));
         await boardAnswers(request, token, r.id, [`DEL ${r.id} ${removed}`], piece++, false);
         if (fakeBoardTiming.delMs) await new Promise((ok) => setTimeout(ok, fakeBoardTiming.delMs));
       }
@@ -176,8 +178,11 @@ async function boardWrites(request: APIRequestContext, token: string, fs: Record
   return boardAnswers(request, token, r.id, [`DONE ${r.id} ${removed}`], piece, true);
 }
 
-/** How long the fake Transfer pauses after each DEL piece (a test watching a big delete count up sets it). */
-export const fakeBoardTiming = { delMs: 0 };
+/**
+ * How long the fake Transfer pauses after each DEL piece (a test watching a big delete count up sets it), and whether
+ * it leaves its queue alone for now (a test watching a copy arrive holds it, then lets it go).
+ */
+export const fakeBoardTiming = { delMs: 0, delBeforeMs: 0, delEvery: 50, queueHeld: false };
 
 /** Words and <len>:<text> fields of one protocol line, from `at`. */
 function cursor(line: string, at: number) {
@@ -284,7 +289,7 @@ export async function boardServes(request: APIRequestContext, token: string, fs:
   let ack: number | null = null;
   while (!until() && Date.now() < end) {
     // Phase 2: with `queue`, the board also takes its queue's files, as firmware 1.23 relays them (one per pass).
-    if (opts.queue) { const t = await boardTakesVolumeNext(request, token, fs); if (t) opts.queue.push(t); }
+    if (opts.queue && !fakeBoardTiming.queueHeld) { const t = await boardTakesVolumeNext(request, token, fs); if (t) opts.queue.push(t); }
     const v = await reqVersionOf(token);
     if (v !== ack) {
       ack = v;

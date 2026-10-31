@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { netPollMs, planNetSend, NET_REFRESH_ACTIVE_MS, NET_REFRESH_IDLE_MS, readAgo, nextAsk, netTitle, isNetVolume, netBoardRoot, boardNameFor, NET_READ_ONLY, listingRefusal, netCrumbs } from './net-rules';
+import { arrivesIn, netPollMs, planNetSend, NET_REFRESH_ACTIVE_MS, NET_REFRESH_IDLE_MS, readAgo, nextAsk, netTitle, isNetVolume, netBoardRoot, boardNameFor, NET_READ_ONLY, listingRefusal, netCrumbs } from './net-rules';
 import type { Listing } from './types';
 
 const L = (path: string, marks: string[][] = []): Listing => ({ path, crumbs: [], writable: true, readOnlyReason: null, disk: null, meta: '',
@@ -24,6 +24,24 @@ describe('netPollMs', () => {
     expect(netPollMs(L('STASH:'))).toBeNull();
     expect(netPollMs(L('LIBRARY:/g1/d1'))).toBeNull();
     expect(netPollMs(null)).toBeNull();
+  });
+});
+
+describe('arrivesIn', () => {
+  // A500 bench 2026-10-31: the destination pane said "Nothing here." through a whole copy onto it.
+  it('a pane at a copy\'s destination drawer, or at a drawer of the volume above it, shows the copy arriving', () => {
+    const dest = 'NET:/b1/Workbench/WebTest';
+    expect(arrivesIn('NET:/b1/Workbench/WebTest', dest)).toBe(true);
+    expect(arrivesIn('NET:/b1/Workbench', dest)).toBe(true);
+    expect(arrivesIn('NET:/b1/Workbench/WebTestX', dest)).toBe(false);
+    expect(arrivesIn('NET:/b1/Workbench/WebTest/Pack', dest)).toBe(false);
+    // The board's root and Queue are not drawers of a volume; another board, or no NET: destination, is nothing.
+    expect(arrivesIn('NET:/b1', dest)).toBe(false);
+    expect(arrivesIn('NET:/b1/Queue', 'NET:/b1/Queue')).toBe(false);
+    expect(arrivesIn('NET:/b2/Workbench', dest)).toBe(false);
+    expect(arrivesIn('STASH:', 'STASH:')).toBe(false);
+    // A drawer copied in is "Sending 3 of 7" while its files move: the pane keeps re-reading.
+    expect(netPollMs(L('NET:/b1/Workbench/WebTest', [['Sending 3 of 7']]))).toBe(3_000);
   });
 });
 

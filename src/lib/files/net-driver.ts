@@ -9,7 +9,7 @@
 // answers (remote-requests.ts), remembered 2 minutes. Phase 2 (spec 2026-10-31 §4.1): a volume a board can write to is
 // writable -- Copy onto it, Makedir, Rename, Delete, Protect and comments go through net-write.ts -- and shows the files
 // of a copy still on their way as arriving rows. SERVER ONLY.
-import { and, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, notInArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { transfers } from '@/db/schema/transfers';
 import { cancelTransfer, clearTransfer, listTransfers, queueLoad, queueTransfers, sendSummaries, type QueueFile } from '@/lib/transfers';
@@ -20,7 +20,7 @@ import { SEND_FILE_MAX, SEND_QUEUE_MAX_BYTES, SEND_QUEUE_MAX_FILES } from '@/lib
 import { uploadBoards } from '@/lib/amiga-uploads';
 import { mapLimit } from '@/lib/pool';
 import { protectionString } from '@/lib/adffs/dir';
-import { copyMoving, latestFor, pendingAlive, requestListing, type RemoteRow } from '@/lib/remote-requests';
+import { copyMoving, deleteRunning, latestFor, pendingAlive, requestListing, type RemoteRow } from '@/lib/remote-requests';
 import { browseBlock, browseMark, errorWords } from '@/lib/remote-browse';
 import { amigaPathOf, volumeLabel, type EntryInfo, type VolumeInfo } from '@/lib/remote-wire';
 import { QUEUE_FOLDER } from '@/lib/remote-limits';
@@ -37,6 +37,8 @@ const ROOT: Crumb = { label: 'NET:', path: 'NET:' };
 const netPath = (...segs: string[]) => formatPath({ device: 'NET', segments: segs });
 const MB = 1024 * 1024;
 const iso = (ms: number) => new Date(ms).toISOString();
+/** A queue row still waiting or moving. */
+const ACTIVE_ROWS = ['queued', 'sending'];
 
 export { isNetVolumePath } from './net-write';
 
@@ -114,9 +116,14 @@ async function pendingOf(t: SendTarget, row: RemoteRow | null, what: string, now
   }
   const held = row?.status === 'waiting' || (row?.status === 'sent' && row.pieces === 0);   // nothing answered yet
   const copying = held ? await copyMoving(getDb(), t.id, new Date(now)) : null;
-  if (!copying) return new Pending(`Reading ${what} from ${t.name}…`);
-  return new Pending(`Reading ${what} from ${t.name} once it has copied ${copying.slice(Math.max(copying.lastIndexOf('/'), copying.indexOf(':')) + 1)}…`, true);
+  if (copying) return new Pending(`Reading ${what} from ${t.name} once it has copied ${lastName(copying)}…`, true);
+  // A drawer DELETE counting up (phase 2): Transfer answers nothing else until it is done; the label carries its count.
+  const deleting = held ? await deleteRunning(getDb(), t.id, new Date(now)) : null;
+  if (deleting) return new Pending(`Reading ${what} from ${t.name} once it has deleted ${lastName(deleting.label)}… removed ${deleting.removed} so far`, true);
+  return new Pending(`Reading ${what} from ${t.name}…`);
 }
+/** `Work:a/b.adf` → `b.adf`, `Work:a` → `a`. */
+const lastName = (amigaPath: string) => amigaPath.slice(Math.max(amigaPath.lastIndexOf('/'), amigaPath.indexOf(':')) + 1);
 
 /**
  * NET:/<board> (§5): the Amiga's volumes, in Transfer's order, then Queue. When they cannot be read (the board cannot be
@@ -150,29 +157,51 @@ async function listBoardRoot(ctx: FsCtx, t: SendTarget, now: number, opts: { fre
 /**
  * The files of a copy onto this drawer still on their way (spec 2026-10-31 §4.1, "as STASH: shows uploads"): each
  * waiting or moving queue row whose destination is in this drawer is a row marked with its state ("Waiting", "Sending 40
- * %"), in place of a listed one of that name; a row bound for a drawer below that is not listed yet shows that drawer.
+ * %"), in place of a listed one of that name. Rows bound for a drawer below are that drawer's row, listed or not yet,
+ * marked with how far the copy into it got: "Waiting", then "Sending 3 of 7" (its files, counted over the copies still
+ * moving into it). Either mark keeps the pane re-reading (netPollMs) until the copy is through (A500 bench 2026-10-31).
  */
 async function withArriving(t: SendTarget, segs: string[], amiga: string, listed: FsEntry[], now: number): Promise<FsEntry[]> {
-  const rows = await getDb().select().from(transfers).where(and(eq(transfers.deviceId, t.id), inArray(transfers.status, ['queued', 'sending']),
+  const db = getDb();
+  const active = await db.select().from(transfers).where(and(eq(transfers.deviceId, t.id), inArray(transfers.status, ACTIVE_ROWS),
     isNotNull(transfers.amigaDest)));
-  if (rows.length === 0) return listed;
+  if (active.length === 0) return listed;
+  // The finished rows of those copies too, so a drawer can say how many of its files are through.
+  const jobs = [...new Set(active.flatMap((r) => (r.jobId ? [r.jobId] : [])))];
+  const through = jobs.length ? await db.select().from(transfers).where(and(eq(transfers.deviceId, t.id), inArray(transfers.jobId, jobs),
+    isNotNull(transfers.amigaDest), notInArray(transfers.status, ACTIVE_ROWS))) : [];
   const out = [...listed];
   const here = amiga.toLowerCase();
-  const inside = (dest: string) => (here.endsWith(':') ? dest.toLowerCase().startsWith(here) : dest.toLowerCase().startsWith(`${here}/`));
-  for (const row of rows) {
-    const dest = row.amigaDest!;
-    if (!inside(dest)) continue;
-    const below = dest.slice(here.length + (here.endsWith(':') ? 0 : 1)).split('/');
-    const name = below[0];
-    const at = out.findIndex((e) => e.name.toLowerCase() === name.toLowerCase());
-    if (below.length > 1) {
-      if (at < 0) out.push({ name, kind: 'dir', path: netPath(t.id, ...segs, name), size: null, date: null, protection: null, comment: null, marks: ['arriving'] });
+  const below = (dest: string) => {
+    if (!(here.endsWith(':') ? dest.toLowerCase().startsWith(here) : dest.toLowerCase().startsWith(`${here}/`))) return null;
+    return dest.slice(here.length + (here.endsWith(':') ? 0 : 1)).split('/');
+  };
+  const at = (name: string) => out.findIndex((e) => e.name.toLowerCase() === name.toLowerCase());
+  const drawers = new Map<string, { name: string; total: number; through: number; sending: boolean }>();
+  for (const row of [...active, ...through]) {
+    const rest = below(row.amigaDest!);
+    if (!rest) continue;
+    const name = rest[0];
+    const moving = ACTIVE_ROWS.includes(row.status);
+    if (rest.length > 1) {
+      const d = drawers.get(name.toLowerCase()) ?? { name, total: 0, through: 0, sending: false };
+      drawers.set(name.toLowerCase(), { ...d, total: d.total + 1, through: d.through + (moving ? 0 : 1), sending: d.sending || row.status === 'sending' });
       continue;
     }
+    if (!moving) continue;
     const view = toView(row, now);
     const entry: FsEntry = { name, kind: 'file', path: netPath(t.id, ...segs, name), size: row.sizeBytes, date: iso(view.createdAt),
       protection: protectionString(row.protection), comment: row.comment || null, marks: [transferState(view).text] };
-    if (at >= 0) out[at] = entry; else out.push(entry);
+    const k = at(name);
+    if (k >= 0) out[k] = entry; else out.push(entry);
+  }
+  for (const d of drawers.values()) {
+    if (d.through === d.total) continue;   // only finished rows here: a copy sharing its job with one still moving elsewhere
+    const mark = !d.sending && d.through === 0 ? 'Waiting' : `Sending ${Math.min(d.through + 1, d.total)} of ${d.total}`;
+    const k = at(d.name);
+    if (k >= 0 && out[k].kind === 'dir') out[k] = { ...out[k], marks: [mark] };
+    else if (k >= 0) out[k] = { ...out[k], kind: 'dir', size: null, marks: [mark] };   // a file a drawer replaces (review minor)
+    else out.push({ name: d.name, kind: 'dir', path: netPath(t.id, ...segs, d.name), size: null, date: null, protection: null, comment: null, marks: [mark] });
   }
   return out;
 }

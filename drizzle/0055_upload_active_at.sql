@@ -1,0 +1,1 @@
+ALTER TABLE "amiga_uploads" ADD COLUMN "active_at" timestamp with time zone;

@@ -23,7 +23,7 @@ import {
 } from '@/lib/files/pane-rules';
 import { askUntilAnswered } from '@/lib/files/ask-listing';
 import {
-  boardNameFor, isNetVolume, isVolumePlace, listingRefusal, netBoardRoot, netCrumbs, netPollMs, NET_DROP_TO_STASH, NET_MOVE_IN, NET_OPEN_VOLUME,
+  arrivesIn, boardNameFor, isNetVolume, isVolumePlace, listingRefusal, netBoardRoot, netCrumbs, netPollMs, NET_DROP_TO_STASH, NET_MOVE_IN, NET_OPEN_VOLUME,
   NET_PICK_BOARD, NET_READ_ONLY,
 } from '@/lib/files/net-rules';
 import { errorWords } from '@/lib/remote-browse';
@@ -977,6 +977,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    * it again, and `then` hears the last progress (Download, P8). The busy lock is not held: the person may go on.
    */
   function watchFetch(f: Fetching, dest: string, then?: (p: { done: number; arrived: string[] }) => void) {
+    let first = true;
     const again = () => {
       if (!alive.current) return;
       const t = setTimeout(() => { fetchTimers.current.delete(t); void tick(); }, 1000);
@@ -991,12 +992,23 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       if (!res.ok || !p) { if (res.status >= 500) { again(); return; } showFetchLine(f.id, refusalWords('failed'), true); return; }
       const s = jobStatus({ ...p, skipped: p.skipped ?? 0, writes: p.writes ?? [], direction: p.direction ?? 'from' }, p.board);
       showFetchLine(f.id, s.line, s.finished);
-      if (!s.finished) { again(); return; }
       const { panes: cur } = latest.current;
+      const sides = ['left', 'right'] as const;
+      // A copy onto a volume (phase 2, spec 2026-10-31 §4.1): a pane at its destination, or at a drawer above it, shows
+      // its files arriving at once (A500 bench 2026-10-31: "Nothing here." until a Refresh); their marks keep it
+      // re-reading (netPollMs) until they are through. Between boards the destination's rows appear only as each file
+      // reaches the server (review I-1): a pane there without an arriving mark yet is read again each tick.
+      if (!s.finished && p.direction === 'to') {
+        for (const side of sides) if (arrivesIn(cur[side].path, dest) && (first || netPollMs(cur[side].listing) === null)) void refresh(side);
+      }
+      first = false;
+      if (!s.finished) { again(); return; }
       // A job that changed the Amiga's disks (phase 2) changed drawers on both sides maybe: both read again (the
-      // server let their memory go). A copy out of a volume changed only its destination.
-      if ((p.writes ?? []).length || p.direction === 'to') reloadBoth();
-      else for (const side of ['left', 'right'] as const) if (cur[side].path === dest) void refresh(side);
+      // server let their memory go). Where the copy arrived the Amiga is asked afresh, so its own rows replace the
+      // arriving ones even when the memory outlived the copy. A copy out of a volume changed only its destination.
+      if ((p.writes ?? []).length || p.direction === 'to') {
+        for (const side of sides) void load(side, cur[side].path, { fresh: p.direction === 'to' && arrivesIn(cur[side].path, dest) });
+      } else for (const side of sides) if (cur[side].path === dest) void refresh(side);
       then?.(p);
     };
     void tick();

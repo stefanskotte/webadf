@@ -115,6 +115,18 @@ export function netPollMs(l: Listing | null): number | null {
 }
 
 /**
+ * Whether a pane at `panePath` shows a copy onto `dest` arriving (spec 2026-10-31 §4.1): it is the destination drawer,
+ * or a drawer of the same volume above it, where the copy is a row of its top-level entry. Case as AmigaDOS: ignored.
+ */
+export function arrivesIn(panePath: string, dest: string): boolean {
+  const p = parsePath(panePath);
+  const d = parsePath(dest);
+  if (!p || !d || p.device !== 'NET' || d.device !== 'NET' || p.segments.length < 2 || p.segments[1] === QUEUE_FOLDER) return false;
+  if (p.segments.length > d.segments.length) return false;
+  return p.segments.every((s, k) => s.toLowerCase() === d.segments[k].toLowerCase());
+}
+
+/**
  * Whether files of these sizes fit the board's queue as `queue` reports it (R3, R7): the queue first (the whole drop
  * against what already waits), then each file (`index`: the first that is empty or over 4 MB).
  */
