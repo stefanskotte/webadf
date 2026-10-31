@@ -60,6 +60,7 @@ async function openRow(db: Db, dev: { deviceId: string; orgId: string }, a: Open
         eq(amigaUploads.sizeBytes, a.size), eq(amigaUploads.amigaDate, a.date), gt(amigaUploads.expiresAt, now)))
       .orderBy(desc(amigaUploads.createdAt)).limit(1);
     if (same) {
+      await tx.update(amigaUploads).set({ activeAt: now }).where(eq(amigaUploads.id, same.id));
       if (rid) await touchGet(tx, { id: rid }, now, same.id);
       return { ok: true as const, id: same.id, offset: same.received };
     }
@@ -75,7 +76,7 @@ async function openRow(db: Db, dev: { deviceId: string; orgId: string }, a: Open
     // A fetched file is a Files copy (P6): source copy, no board name, as every copy row.
     await tx.insert(amigaUploads).values({ id, orgId: dev.orgId, deviceId: dev.deviceId, deviceName: rid ? null : d?.name ?? 'Board',
       path, sizeBytes: a.size, protection: a.protection >>> 0, comment, amigaDate: a.date,
-      expiresAt: new Date(now.getTime() + UPLOAD_RESUME_MS), ...(rid ? { source: 'copy' } : {}) });
+      expiresAt: new Date(now.getTime() + UPLOAD_RESUME_MS), activeAt: now, ...(rid ? { source: 'copy' } : {}) });
     if (rid) await touchGet(tx, { id: rid }, now, id);
     return { ok: true as const, id, offset: 0 };
   });
@@ -104,7 +105,7 @@ async function storeChunkRow(db: Db, deviceId: string, id: string, offset: numbe
     // Every chunk is 16 KB but the last, so a resume offset is always a chunk boundary.
     if (end > r.size || (data.byteLength !== UPLOAD_CHUNK && end !== r.size)) return { ok: false as const, status: 400 as const };
     await tx.insert(amigaUploadChunks).values({ uploadId: id, offset, data });
-    await tx.update(amigaUploads).set({ receivedBytes: end }).where(eq(amigaUploads.id, id));
+    await tx.update(amigaUploads).set({ receivedBytes: end, activeAt: now }).where(eq(amigaUploads.id, id));
     // A fetched file's chunk is its get's sign of life: the 10-minute timeout restarts (fix round 1 ruling).
     await touchGet(tx, { uploadId: id }, now);
     return { ok: true as const, received: end };

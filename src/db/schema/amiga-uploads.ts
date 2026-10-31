@@ -31,6 +31,11 @@ export const amigaUploads = pgTable('amiga_uploads', {
   /** The name the board sent, kept only when the row was stored under another (keep-both, R4): a repeated close hears it again (ruling 10). */
   sentName: text('sent_name'),
   receivedBytes: integer('received_bytes').notNull().default(0),
+  /**
+   * receiving: when it last moved (its open, a resume, a chunk). A row Transfer stopped sending (Ctrl-C) stays receiving
+   * for its resume window; this tells a listing it waits for nothing (A500 bench 2026-10-31). Null: an older row.
+   */
+  activeAt: timestamp('active_at', { withTimezone: true }),
   errorCode: text('error_code'),
   blobSha256: text('blob_sha256'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

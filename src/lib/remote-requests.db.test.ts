@@ -489,8 +489,37 @@ describe('write requests', () => {
     expect((await rowOf(ridOf(p as { state: string; row?: { id: string } }))).status).toBe('waiting');
     expect(await copyMoving(getDb(), deviceId, at(61))).toBeNull();
     await getDb().delete(transfers);
-    await getDb().insert(amigaUploads).values({ id: 'up1', orgId, deviceId, path: 'Up.txt', sizeBytes: 5, amigaDate: '1.0.0', expiresAt: at(9999) });
+    await getDb().insert(amigaUploads).values({ id: 'up1', orgId, deviceId, path: 'Up.txt', sizeBytes: 5, amigaDate: '1.0.0', expiresAt: at(9999), activeAt: at(20) });
     expect(await copyMoving(getDb(), deviceId, at(30))).toBe('Up.txt');
+    await getDb().delete(amigaUploads);
+  });
+
+  // A500 bench 2026-10-31: Transfer stopped (Ctrl-C) mid-upload leaves the row 'receiving' for its 24 h resume window,
+  // and the board's poll keeps send_rx_at fresh once Transfer runs again. An upload counts as moving only while a chunk
+  // (or its open) came within the minute: a dead one is never named, and never holds a listing past its 60 s.
+  it('an Amiga upload counts as moving only while its chunks come: a stopped one is not named and holds nothing', async () => {
+    const { amigaUploads } = await import('@/db/schema/amiga-uploads');
+    const { transfers } = await import('@/db/schema/transfers');
+    const { openUpload, storeChunk } = await import('@/lib/amiga-uploads');
+    await getDb().delete(transfers);
+    await getDb().delete(amigaUploads);
+    const o = await openUpload(getDb(), { deviceId, orgId }, { size: 20_000, date: '1.0.0', protection: 0, path: 'extras.adf', comment: '' }, at(0));
+    expect(o.ok).toBe(true);
+    const id = (o as { id: string }).id;
+    expect((await storeChunk(getDb(), deviceId, id, 0, new Uint8Array(16_384), at(10))).ok).toBe(true);
+    // The poll's receiver report stays fresh after the stop (Transfer runs again): only the upload's own clock tells.
+    await getDb().update(devices).set({ sendRxAt: at(100) }).where(eq(devices.id, deviceId));
+    expect(await copyMoving(getDb(), deviceId, at(50))).toBe('extras.adf');
+    expect(await copyMoving(getDb(), deviceId, at(100))).toBeNull();
+    const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:', fresh: true }, at(100));
+    await getDb().update(devices).set({ sendRxAt: at(160) }).where(eq(devices.id, deviceId));
+    await expireStale(getDb(), at(161));
+    expect((await rowOf(ridOf(p as { state: string; row?: { id: string } }))).status).toBe('failed');
+    // Sent again from the Amiga, it resumes and moves: named again.
+    const again = await openUpload(getDb(), { deviceId, orgId }, { size: 20_000, date: '1.0.0', protection: 0, path: 'extras.adf', comment: '' }, at(200));
+    expect(again).toMatchObject({ ok: true, id, offset: 16_384 });
+    await getDb().update(devices).set({ sendRxAt: at(200) }).where(eq(devices.id, deviceId));
+    expect(await copyMoving(getDb(), deviceId, at(230))).toBe('extras.adf');
     await getDb().delete(amigaUploads);
   });
 });
