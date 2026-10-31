@@ -209,6 +209,11 @@ describe('jobStatus', () => {
     // A Makedir a copy needs is quiet while it runs: the copy is what is said.
     expect(jobStatus(p({ total: 2, waiting: 2, writes: [w({ kind: 'mkdir', status: 'running', quiet: true })] }), 'A500').line).toBe('Copying 1 of 2 to A500…');
   });
+  // Spec 2026-10-31 §9: a move's removal that kept a drawer is said, not counted as deleted, not a failure.
+  it('says what a move kept', () => {
+    expect(jobStatus(p({ total: 2, done: 2, direction: 'from', writes: [w({ label: 'Work:Pair/a', removed: 1 }), w({ label: 'Work:Pair', kept: true })] }), 'A500'))
+      .toEqual({ line: 'Copied 2 · Deleted Work:Pair/a · Kept Work:Pair: something new is in it', finished: true });
+  });
   it('ends with what was done, and why anything was not', () => {
     expect(jobStatus(p({ writes: [w({ removed: 137 })] }), 'A500')).toEqual({ line: 'Deleted Work:old (137)', finished: true });
     expect(jobStatus(p({ writes: [w({ removed: 1 }), w({ label: 'Work:old.info', removed: 1, quiet: true })] }), 'A500').line).toBe('Deleted Work:old');

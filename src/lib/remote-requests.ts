@@ -21,6 +21,8 @@ export type RemoteRow = typeof remoteRequests.$inferSelect;
  */
 export type GetTarget = { dest: string; rel: string[]; replace: boolean; library: { collectionId: string | null } | null;
   moveSource?: string; relay?: { deviceId: string; dest: string; onClash: 'keep' | 'replace' | 'skip'; moveSource?: string };
+  /** A moved drawer's drawers as the copy walked them, itself included (Amiga paths): removed after its files (§9). */
+  moveDrawers?: string[];
   /** Who made the copy (a move's removal and a relay's queue row are theirs). */
   userId?: string };
 /** A write request (spec 2026-10-31 §2.3): `label` the object in the pane's words, `icon` a `.info` taken along (W9). */

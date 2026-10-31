@@ -5,6 +5,7 @@ import { ZIP_MAX_BYTES, type ClashChoice } from './transfer';
 import type { Listing } from './types';
 import type { OpItem } from './driver';
 import { formatPath, parentOf, parsePath } from './path';
+import { keptWords } from '@/lib/remote-browse';
 
 /**
  * The disk whose strip a pane shows: the disk its listing is inside, else -- when the listing failed because the image
@@ -148,7 +149,9 @@ export function fetchStatus(p: { total: number; done: number; failed: { name: st
 }
 
 type JobWriteView = { kind: string; label: string; to: string | null; status: 'waiting' | 'running' | 'done' | 'failed'; removed: number;
-  reason: string | null; entry: string | null; quiet: boolean };
+  reason: string | null; entry: string | null; quiet: boolean;
+  /** A move's removal that kept a drawer something new is in (spec 2026-10-31 §9). */
+  kept?: boolean };
 const RUNNING: Record<string, string> = { delete: 'Deleting', mkdir: 'Making', rename: 'Renaming', protect: 'Protecting', note: 'Setting the comment on' };
 
 /** One finished write in words: "Deleted Work:old (137)", "Made Work:New", "Renamed Work:a to Work:b". */
@@ -191,10 +194,11 @@ export function jobStatus(p: { total: number; done: number; failed: { name: stri
     const skipped = p.skipped ? `, skipped ${p.skipped} (already there)` : '';
     parts.push(p.direction === 'to' ? `Copied ${p.done} to ${board}${skipped}${failed}` : `Copied ${p.done}${failed}`);
   }
-  const ok = loud.filter((w) => w.status === 'done');
+  const ok = loud.filter((w) => w.status === 'done' && !w.kept);
   const byKind = new Map<string, JobWriteView[]>();
   for (const w of ok) byKind.set(w.kind, [...(byKind.get(w.kind) ?? []), w]);
   for (const [kind, list] of byKind) parts.push(list.length > 2 ? `${PAST[kind]} ${list.length} items` : list.map(doneWords).join(', '));
+  for (const w of p.writes.filter((x) => x.status === 'done' && x.kept)) parts.push(keptWords(w.label));
   for (const w of p.writes.filter((x) => x.status === 'failed')) {
     // A drawer delete that stopped names the entry (Transfer's text, relative to the drawer); DEL 0: nothing removed.
     parts.push(w.kind === 'delete' && w.entry

@@ -9,10 +9,10 @@ import { findSendTarget } from '@/lib/send-targets';
 import { targetState, type SendTarget } from '@/lib/send-ui';
 import { storeSendBytes } from '@/lib/send-http';
 import { mapLimit } from '@/lib/pool';
-import { writeBlock } from '@/lib/remote-browse';
+import { MOVE_OLD_TRANSFER, writeBlock } from '@/lib/remote-browse';
 import { addWrites, latestFor, type WriteReq } from '@/lib/remote-requests';
 import { amigaPathOf, newRequestId, type EntryInfo } from '@/lib/remote-wire';
-import { FETCH_MAX_BYTES, FETCH_MAX_FILES, QUEUE_FOLDER } from '@/lib/remote-limits';
+import { FETCH_MAX_BYTES, FETCH_MAX_FILES, MOVE_PROTO, QUEUE_FOLDER } from '@/lib/remote-limits';
 import { SEND_FILE_MAX, queueTransfers, type ClashMode, type QueueFile } from '@/lib/transfers';
 import { formatPath, parsePath, type FsPath } from './path';
 import {
@@ -170,6 +170,26 @@ export async function removeOnVolume(ctx: OpCtx, sources: string[], opts: { jobI
     writes += reqs.length;
   }
   return done(items, job, writes);
+}
+
+/**
+ * A move's second half off a volume (spec 2026-10-31 §9): exactly what was copied -- one DELETE … one per copied file,
+ * then each copied drawer deepest first, each with `one`, so a drawer something new was saved into stays (Transfer
+ * answers notempty: the job says it was kept). Never a drawer whole, never an icon that was not copied. Needs the
+ * board writable and on Transfer 2.6; refuses (Refused) otherwise, and nothing is sent.
+ */
+export async function removeCopiedOnVolume(ctx: OpCtx, source: string, files: string[], drawers: string[], jobId: string): Promise<void> {
+  const at = placeOfRaw(source);
+  if (!at || at.segs.length < 2) refuse('not_found', 404);
+  const t = await writableBoard(ctx, at.board);
+  if ((t.rxProto ?? 0) < MOVE_PROTO) refuse('unsupported', 409, MOVE_OLD_TRANSFER);
+  // The pane's words for an Amiga path under the source (a labelled volume's device path shown by its label).
+  const shown = (p: string) => (p.toLowerCase().startsWith(at.amiga.toLowerCase()) ? at.shown + p.slice(at.amiga.length) : p);
+  const depth = (p: string) => p.slice(p.indexOf(':') + 1).split('/').filter(Boolean).length;
+  const once = (xs: string[]) => xs.filter((x, k) => xs.findIndex((y) => y.toLowerCase() === x.toLowerCase()) === k);
+  const reqs: WriteReq[] = [...once(files), ...once(drawers).sort((a, b) => depth(b) - depth(a))]
+    .map((p) => ({ kind: 'delete', amigaPath: p, one: true, label: shown(p) }));
+  await addWrites(getDb(), { orgId: ctx.orgId, deviceId: t.id, jobId, writes: reqs });
 }
 
 /** Protect (PROTECT, the bits as AmigaDOS stores them) or a comment (NOTE) on volume entries. */

@@ -162,3 +162,6 @@ Run files-net-writes, files-net-volumes, files-net (desktop), plus `pnpm test`, 
 - Ruling: the ledger lives in this plan (as the previous plan's did), not an sdd workspace — cost if wrong: none.
 - Task 1: complete (05e42267, tests: vitest poll route + remote-wire + remote-browse + words → 120/120; migration 0056_move_item = one ADD COLUMN)
 - Task 2: complete (tests: pnpm test:db src/lib/remote-requests.db.test.ts → 37/37)
+- Task 3: complete (tests: pnpm test:db src/lib/files/ + remote-requests + transfers → 264/264; vitest manager-rules 31/31 (kept case RED against the old file first); tsc clean)
+- Task 3: Ruling: the copied files' DELETEs go in Amiga-path order (case-insensitive), not get order — gets of one insert share a timestamp, so their order is not the walk's — cost if wrong: none (each is one object)
+- Task 3: Ruling: a volume → LIBRARY: move is covered by the same settle path (one test, a disk image) — drawers onto LIBRARY: are refused before anything is asked, as before — cost if wrong: none
