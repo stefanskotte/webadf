@@ -345,7 +345,8 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
   });
   const sentFailed = sent.filter((x) => x.status === 'failed' || x.status === 'expired' || x.status === 'cancelled').map((x) => ({
     name: x.path, reason: x.status === 'expired' ? `${board} did not take it within 24 h` : x.status === 'cancelled' ? 'cancelled'
-      : ['readonly', 'wprot', 'full', 'denied', 'busy', 'exists'].includes(x.errorCode ?? '') ? writeErrorWords(x.errorCode!, x.errorText ?? '', board)
+      // A copy onto a volume's FILE refusals (Transfer 2.5): busy there is the old file in use, not Transfer busy.
+      : x.amigaDest && ['readonly', 'wprot', 'full', 'denied', 'busy'].includes(x.errorCode ?? '') ? writeErrorWords(x.errorCode!, x.errorText ?? '', board)
       : failureText(x.errorCode, x.errorText),
   }));
   // A move's file is not finished until its source is removed (net-moves.ts clears the marker after).

@@ -137,6 +137,16 @@ describe('one-line writes on a volume', () => {
     ]);
   });
 
+  // Transfer 2.5 answers `bad` to any write on a volume's root: none is ever made for the volume itself.
+  it('a volume itself is never deleted, protected or commented', async () => {
+    expect(await op({ op: 'delete', sources: ['NET:/w1/Work'] })).toMatchObject({ kind: 'done', items: [{ ok: false, refusal: { code: 'not_found' } }] });
+    for (const o of [{ op: 'protect' as const, sources: ['NET:/w1/Work'], protection: 0 },
+      { op: 'comment' as const, source: 'NET:/w1/Work', comment: 'x' }]) {
+      expect(await op(o)).toMatchObject({ kind: 'refused' });
+    }
+    expect(await writes()).toEqual([]);
+  });
+
   it('Protect is a PROTECT per source; a comment one NOTE', async () => {
     await op({ op: 'protect', sources: [W('a.txt'), W('x')], protection: 0x4f });
     await op({ op: 'comment', source: W('x'), comment: 'hi' });

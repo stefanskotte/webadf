@@ -106,8 +106,13 @@ export const HELP_TOPICS = {
           <strong>Browsing the Amiga.</strong> Inside a board, NET: lists its Amiga&apos;s volumes, then its{' '}
           <em>Queue</em> folder, where the files you send wait. Browsing needs firmware 1.22 and Transfer 2.3, with browsing
           switched on in Transfer. Each drawer takes a few seconds to read; a drawer read in the last 2 minutes opens at once
-          and says when it was read. <em>Refresh</em> (Ctrl-R) reads it again. Read-only for now: copy files to STASH:, or
-          disk images to LIBRARY:.
+          and says when it was read. <em>Refresh</em> (Ctrl-R) reads it again. Copy files from a volume to STASH:, or disk
+          images to LIBRARY:.
+        </p>
+        <p>
+          <strong>Changing the Amiga&apos;s disks.</strong> Firmware 1.23, Transfer 2.5 and{' '}
+          <em>Let the web app change my disks</em> make volumes writable: Copy, Move, Makedir, Rename, Protect, comments,
+          Delete (it cannot be undone; the .info goes along). A write-protected disk is said in words.
         </p>
         <p>
           <strong>Keys.</strong> ↑ and ↓ move, Space picks, Enter opens, Backspace goes up, Tab switches pane, / filters,

@@ -41,7 +41,8 @@ describe('help topics', () => {
       const words = text.split(/\s+/).filter(Boolean).length;
       expect(words).toBeGreaterThanOrEqual(60);
       // files covers two panes, the bank, filing and (NET: volumes) browsing the Amiga: it alone may run longer.
-      expect(words).toBeLessThanOrEqual(id === 'files' ? 360 : 280);
+      // ... and (NET: volumes phase 2) writing to them, in one short paragraph: 400 for files.
+      expect(words).toBeLessThanOrEqual(id === 'files' ? 400 : 280);
       expect(text).not.toMatch(BANNED);
     });
   }
@@ -396,13 +397,18 @@ describe('Files help (increment 4)', () => {
     for (const id of ['files', 'stash-net'] as const) expect(HELP_TOPICS[id].title + HELP_TOPICS[id].short).not.toMatch(/drive/i);
   });
 
-  it('files says how to browse the Amiga: its needs, Refresh, the Queue folder, and read-only for now (NET: volumes)', () => {
+  it('files says how to browse the Amiga: its needs, Refresh, the Queue folder (NET: volumes)', () => {
     const b = bodyText('files').replace(/\s+/g, ' ');
     for (const w of ['Browsing the Amiga', 'firmware 1.22', 'Transfer 2.3', 'browsing switched on', 'a few seconds',
-      '2 minutes', 'says when it was read', 'Refresh', 'Ctrl-R', 'Queue folder',
-      'Read-only for now: copy files to STASH:, or disk images to LIBRARY:']) expect(b).toContain(w);
-    // Phase 1 is read-only: nothing may say the Amiga's disks take files.
-    expect(b).not.toMatch(/(copy|move|write|save)[^.]*(to|onto|into) (the Amiga's|its Amiga's) (disks?|volumes?)|can be written/i);
+      '2 minutes', 'says when it was read', 'Refresh', 'Ctrl-R', 'Queue folder']) expect(b).toContain(w);
+    expect(b).not.toContain('Read-only for now');
+  });
+
+  // NET: volumes phase 2 (spec 2026-10-31 §2.4, §4.1-4.2): what writing needs, what it does, and that a delete is final.
+  it('files says how to change the Amiga\'s disks: its needs, the second switch, Delete cannot be undone', () => {
+    const b = bodyText('files').replace(/\s+/g, ' ');
+    for (const w of ['Changing the Amiga', 'Firmware 1.23', 'Transfer 2.5', 'Let the web app change my disks',
+      'Makedir', 'Rename', 'Protect', 'cannot be undone', 'the .info', 'write-protected']) expect(b).toContain(w);
   });
 
   it("stash-net points to Files for a board's volumes, and sends go into its Queue (NET: volumes)", () => {

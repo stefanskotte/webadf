@@ -218,6 +218,9 @@ describe('jobStatus', () => {
     expect(jobStatus(p({ writes: [w({ kind: 'note', label: 'Work:x' })] }), 'A500').line).toBe('Comment on Work:x');
     expect(jobStatus(p({ writes: [w({ status: 'failed', removed: 37, entry: 'Libs/foo.library', reason: 'In use on the Amiga' })] }), 'A500'))
       .toEqual({ line: 'Removed 37, then stopped at Libs/foo.library: In use on the Amiga', finished: true });
+    // Transfer 2.5: DEL 0 when a drawer delete stops before removing anything.
+    expect(jobStatus(p({ writes: [w({ status: 'failed', removed: 0, entry: 'Libs/foo.library', reason: 'In use on the Amiga' })] }), 'A500').line)
+      .toBe('Work:old: stopped at Libs/foo.library: In use on the Amiga');
     expect(jobStatus(p({ writes: [w({ kind: 'mkdir', label: 'Work:New', status: 'failed', reason: 'Already exists' })] }), 'A500').line)
       .toBe('Work:New: Already exists');
     expect(jobStatus(p({ total: 3, done: 2, skipped: 1 }), 'A500').line).toBe('Copied 2 to A500, skipped 1 (already there)');

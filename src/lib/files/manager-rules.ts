@@ -196,8 +196,10 @@ export function jobStatus(p: { total: number; done: number; failed: { name: stri
   for (const w of ok) byKind.set(w.kind, [...(byKind.get(w.kind) ?? []), w]);
   for (const [kind, list] of byKind) parts.push(list.length > 2 ? `${PAST[kind]} ${list.length} items` : list.map(doneWords).join(', '));
   for (const w of p.writes.filter((x) => x.status === 'failed')) {
-    parts.push(w.kind === 'delete' && w.removed > 0 && w.entry
-      ? `Removed ${w.removed}, then stopped at ${w.entry}: ${w.reason}` : `${w.label}: ${w.reason}`);
+    // A drawer delete that stopped names the entry (Transfer's text, relative to the drawer); DEL 0: nothing removed.
+    parts.push(w.kind === 'delete' && w.entry
+      ? (w.removed > 0 ? `Removed ${w.removed}, then stopped at ${w.entry}: ${w.reason}` : `${w.label}: stopped at ${w.entry}: ${w.reason}`)
+      : `${w.label}: ${w.reason}`);
   }
   return { line: parts.join(' · ') || 'Done', finished: true };
 }

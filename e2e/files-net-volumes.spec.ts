@@ -80,7 +80,8 @@ test('NET:/<board> lists its Amiga\'s volumes, as folders with their device and 
   await expect(rowAt(page, 'right', 'Work')).toContainText('DH1: ·');
   await expect(rowAt(page, 'right', 'Workbench')).toContainText('DH0: ·');
   await expect(page.getByTestId('pane-pending')).toHaveCount(0);
-  await expect(page.getByTestId('net-browse-reason')).toHaveCount(0);
+  // Browsable; on firmware 1.22 the row says what writing needs (phase 2, spec 2026-10-31 §4.2).
+  await expect(page.getByTestId('net-browse-reason')).toHaveText('Board firmware 1.23.0 or newer writes to the Amiga');
   expect((await board.stop()).map((r) => r.kind)).toEqual(['VOLS']);
 });
 
