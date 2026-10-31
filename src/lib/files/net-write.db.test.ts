@@ -169,10 +169,10 @@ describe('one-line writes on a volume', () => {
     await answerPiece(getDb(), 'w1', icon.id, { piece: 0, lines: [`DONE ${icon.id} 1`], last: true });
     const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!;
     expect(p.writes).toEqual([
-      { kind: 'delete', label: 'Work:old', status: 'failed', removed: 37, reason: 'In use on the Amiga', quiet: false },
-      { kind: 'delete', label: 'Work:old.info', status: 'done', removed: 1, reason: null, quiet: false },
+      { kind: 'delete', label: 'Work:old', to: null, status: 'failed', removed: 37, reason: 'In use on the Amiga', entry: 'Libs/foo.library', quiet: false },
+      { kind: 'delete', label: 'Work:old.info', to: null, status: 'done', removed: 1, reason: null, entry: null, quiet: false },
     ]);
-    expect(p).toMatchObject({ total: 0, board: 'A500' });
+    expect(p).toMatchObject({ total: 0, board: 'A500', direction: 'from' });
   });
 });
 
@@ -299,7 +299,7 @@ describe('moves', () => {
     const [row] = await rows('w2');
     expect(row).toMatchObject({ amigaDest: 'DF0:x', onClash: 'keep', jobId: job, moveSource: W('x'), sizeBytes: 2 });
     expect(await listStash(getDb(), 'o1')).toEqual([]);
-    expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ total: 1, done: 0, waiting: 1 });
+    expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ total: 1, done: 0, waiting: 1, direction: 'to' });
     await deliver(row.id, { ok: true, savedAs: 'DF0:x' }, 'w2');
     expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ total: 1, done: 1, waiting: 0 });
     expect((await writes()).map((w) => `${w.kind} ${w.amigaPath}`)).toEqual(['delete Work:x']);

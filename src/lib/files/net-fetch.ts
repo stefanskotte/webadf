@@ -296,7 +296,12 @@ const amigaParentOf = (path: string) => {
   return slash > c ? path.slice(0, slash) : path.slice(0, c + 1);
 };
 
-export type JobWrite = { kind: string; label: string; status: 'waiting' | 'running' | 'done' | 'failed'; removed: number; reason: string | null;
+/**
+ * One write of a job as the pane says it: `to` a RENAME's new path (in the pane's words where it can be), `entry` the
+ * entry a DELETE stopped at (Transfer's text names it: "Libs/foo.library: object in use").
+ */
+export type JobWrite = { kind: string; label: string; to: string | null; status: 'waiting' | 'running' | 'done' | 'failed'; removed: number;
+  reason: string | null; entry: string | null;
   /** An icon taken along or a drawer a copy needed: said only when it failed. */
   quiet: boolean };
 /**
@@ -306,6 +311,8 @@ export type JobWrite = { kind: string; label: string; status: 'waiting' | 'runni
 export type FetchProgress = {
   total: number; done: number; failed: { name: string; reason: string }[]; waiting: number; board: string; arrived: string[];
   skipped: number; writes: JobWrite[];
+  /** `to`: the files go onto the Amiga (queue rows, or relayed); `from`: a copy out of a volume. */
+  direction: 'to' | 'from';
 };
 
 /**
@@ -329,8 +336,10 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
   const writes: JobWrite[] = reqs.filter((r) => (WRITE_KINDS as readonly string[]).includes(r.kind)).map((r) => {
     const t = (r.target ?? {}) as WriteTarget;
     const status = r.status === 'waiting' ? 'waiting' : r.status === 'sent' ? 'running' : r.status === 'done' ? 'done' : 'failed';
-    return { kind: r.kind, label: t.label ?? r.amigaPath, status, removed: (r.answer as { removed?: number } | null)?.removed ?? 0,
-      reason: status === 'failed' ? writeErrorWords(r.errorCode ?? '', r.errorText ?? '', board) : null, quiet: !!(t.icon || t.ensure) };
+    const text = r.errorText ?? '';
+    const entry = r.kind === 'delete' && status === 'failed' && text.includes(': ') ? text.slice(0, text.indexOf(': ')) : null;
+    return { kind: r.kind, label: t.label ?? r.amigaPath, to: t.to ?? null, status, removed: (r.answer as { removed?: number } | null)?.removed ?? 0,
+      reason: status === 'failed' ? writeErrorWords(r.errorCode ?? '', text, board) : null, entry, quiet: !!(t.icon || t.ensure) };
   });
   const sentFailed = sent.filter((x) => x.status === 'failed' || x.status === 'expired' || x.status === 'cancelled').map((x) => ({
     name: x.path, reason: x.status === 'expired' ? `${board} did not take it within 24 h` : x.status === 'cancelled' ? 'cancelled'
@@ -356,5 +365,6 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
     waiting: rows.filter((r) => r.status !== 'done' && r.status !== 'failed').length + sentCounts.waiting, board,
     arrived: doneIds.flatMap((id) => (paths.has(id) ? [formatPath({ device: 'STASH', segments: paths.get(id)!.split('/') })] : [])),
     skipped: sentCounts.skipped, writes,
+    direction: sent.length || reqs.some((r) => r.kind === 'get' && (r.target as GetTarget).relay) ? 'to' : 'from',
   };
 }

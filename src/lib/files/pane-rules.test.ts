@@ -128,7 +128,7 @@ describe('NET: volumes (spec 2026-10-30 §5)', () => {
   const net = { board: 'b1', boardName: 'A500', volume: 'Work', amigaPath: 'Work:Programs', readAt: null, cut: false, browse: null };
   const volume = L('NET:/b1/Work/Programs', { writable: false, readOnlyReason: NET_READ_ONLY, net });
   const boardRoot = L('NET:/b1', { writable: false, readOnlyReason: NET_OPEN_VOLUME, net: { ...net, volume: null, amigaPath: null } });
-  it('a volume is read-only for now: every command that writes says so', () => {
+  it('a volume that cannot be written to: every command that writes says why', () => {
     expect(netVolumeReason(volume)).toBe('Read-only for now');
     expect(netVolumeReason(boardRoot)).toBeNull();
     expect(netVolumeReason(L('NET:/b1/Queue'))).toBeNull();
@@ -144,6 +144,31 @@ describe('NET: volumes (spec 2026-10-30 §5)', () => {
     expect(acceptsCopies(volume)).toBe(false);
     expect(acceptsCopies(boardRoot)).toBe(false);
     expect(holdsFiles(volume)).toBe(false);
+  });
+});
+
+// NET: volumes phase 2 (spec 2026-10-31 §4.1-4.2): a volume of a board that can write takes every change.
+describe('NET: volumes, writable (phase 2)', () => {
+  const net = { board: 'b1', boardName: 'A500', volume: 'Work', amigaPath: 'Work:Programs', readAt: null, cut: false, browse: null, write: null };
+  const writable = L('NET:/b1/Work/Programs', { writable: true, readOnlyReason: null, net });
+  const off = L('NET:/b1/Work/Programs', { writable: false, readOnlyReason: 'Writing is off in Transfer', net: { ...net, write: 'Writing is off in Transfer' } });
+  it('a writable volume takes copies and its rows are not queue rows; one that cannot says why', () => {
+    expect(netVolumeReason(writable)).toBeNull();
+    expect(netVolumeReason(off)).toBe('Writing is off in Transfer');
+    expect(acceptsCopies(writable)).toBe(true);
+    expect(acceptsCopies(off)).toBe(false);
+    expect(netReadOnly(writable)).toBe(false);
+    expect(netReadOnly(L('NET:/b1/Queue'))).toBe(true);
+  });
+  it('a delete on the Amiga always asks, names what goes, and says it cannot be undone', () => {
+    const vE = (name: string, kind: FsEntry['kind'] = 'file') => E(name, kind, { path: `NET:/b1/Work/${name}` });
+    expect(deleteWhere(writable)).toBe('AMIGA');
+    expect(deleteText([vE('ReadMe')], 'AMIGA')).toBe('Delete “ReadMe” from the Amiga? This cannot be undone.');
+    expect(deleteText([vE('Old', 'dir')], 'AMIGA')).toBe('Delete the drawer “Old” and everything in it from the Amiga? This cannot be undone.');
+    expect(deleteText([vE('a'), vE('B', 'dir'), vE('C', 'dir')], 'AMIGA'))
+      .toBe('Delete 3 items (2 drawers, with everything in them) from the Amiga? This cannot be undone.');
+    expect(deleteText([vE('a'), vE('b')], 'AMIGA')).toBe('Delete 2 items from the Amiga? This cannot be undone.');
+    expect(deleteText([vE('a'), vE('B', 'dir')], 'AMIGA')).toBe('Delete 2 items (1 drawer, with everything in it) from the Amiga? This cannot be undone.');
   });
 });
 

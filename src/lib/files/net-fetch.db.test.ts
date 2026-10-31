@@ -322,7 +322,7 @@ describe('fetchProgress', () => {
     const b = rows.find((x) => x.amigaPath !== 'Work:a.lha')!;
     await arrive(a.id, 'Work:a.lha', new TextEncoder().encode('lha!lha'));
     expect(await fetchProgress(getDb(), 'o1', r.fetching!.id, new Date()))
-      .toEqual({ total: 2, done: 1, failed: [], waiting: 1, board: 'A500', arrived: ['STASH:/In/a.lha'], skipped: 0, writes: [] });
+      .toEqual({ total: 2, done: 1, failed: [], waiting: 1, board: 'A500', arrived: ['STASH:/In/a.lha'], skipped: 0, writes: [], direction: 'from' });
     await answerPiece(getDb(), 'b1', b.id, { piece: 0, lines: [`ERR ${b.id} notfound 0:`], last: true });
     expect(await fetchProgress(getDb(), 'o1', r.fetching!.id, new Date()))
       .toMatchObject({ total: 2, done: 1, failed: [{ name: 'b.txt', reason: 'Object not found' }], waiting: 0 });
