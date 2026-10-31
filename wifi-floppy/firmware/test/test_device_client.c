@@ -3847,36 +3847,53 @@ static void req_poll_params_only_once_set(void) {
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
     CHECK(strstr(fake_last_request(), "reqAck") == NULL, "an untouched board polls as 1.21 did");
-    boot(); dc_set_send(&c, 4, 'u'); dc_set_req(&c, 5, 0, false);
+    boot(); dc_set_send(&c, 4, 'u'); dc_set_req(&c, 5, 0, false, false);
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
     CHECK(strstr(fake_last_request(), "&xferAck=4&rx=u&reqAck=5 HTTP/1.1\r\n") != NULL, "reqAck after rx, no rxv while unconnected");
-    boot(); dc_set_send(&c, 4, 'c'); dc_set_req(&c, 5, 3, true);
+    boot(); dc_set_send(&c, 4, 'c'); dc_set_req(&c, 5, 3, true, false);
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
-    CHECK(strstr(fake_last_request(), "&rx=c&reqAck=5&rxv=3&browse=1 HTTP/1.1\r\n") != NULL, "rxv and browse while connected");
-    boot(); dc_set_send(&c, 4, 'c'); dc_set_req(&c, 5, 2, false);
+    CHECK(strstr(fake_last_request(), "&rx=c&reqAck=5&rxv=3&browse=1&write=0 HTTP/1.1\r\n") != NULL, "rxv and browse while connected");
+    boot(); dc_set_send(&c, 4, 'c'); dc_set_req(&c, 5, 2, false, false);
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
-    CHECK(strstr(fake_last_request(), "&reqAck=5&rxv=2&browse=0 HTTP/1.1\r\n") != NULL, "a Transfer 2.2 is reported as 2");
+    CHECK(strstr(fake_last_request(), "&reqAck=5&rxv=2&browse=0&write=0 HTTP/1.1\r\n") != NULL, "a Transfer 2.2 is reported as 2");
+    // fw 1.23.0 (spec 2026-10-31 section 3, ruling N3): write rides with rxv, 0 below protocol 4.
+    boot(); dc_set_send(&c, 4, 'c'); dc_set_req(&c, 5, 4, true, true);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&reqAck=5&rxv=4&browse=1&write=1 HTTP/1.1\r\n") != NULL, "Transfer 2.5, writing on");
+    boot(); dc_set_send(&c, 4, 'c'); dc_set_req(&c, 5, 4, true, false);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&reqAck=5&rxv=4&browse=1&write=0 HTTP/1.1\r\n") != NULL, "Transfer 2.5, writing off");
+    boot(); dc_set_send(&c, 4, 'c'); dc_set_req(&c, 5, 3, true, true);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&reqAck=5&rxv=3&browse=1&write=0 HTTP/1.1\r\n") != NULL, "never write=1 below 4");
+    boot(); dc_set_send(&c, 4, 'u'); dc_set_req(&c, 5, 0, false, true);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "write") == NULL, "no write while unconnected");
 }
 
-// The worst-case poll path with every parameter at its longest: it must be sent whole (path buffer 208, request 480).
+// The worst-case poll path with every parameter at its longest: it must be sent whole (path buffer 216, request 480).
 static void the_worst_case_poll_with_req_is_sent_whole(void) {
     boot(); dc_set_df1(&c, DF1_MODE_OFF, false);
     c.since = 4294967295u; c.nfc_ack = 4294967295u; c.display_ack = 4294967295u;
     c.drive_ack = 4294967295u; c.df1_ack = 4294967295u;
     dc_set_send(&c, 4294967295u, 'u');
-    dc_set_req(&c, 4294967295u, 3, true);
+    dc_set_req(&c, 4294967295u, 4, true, true);
     dc_set_boot(&c, 0xffffffffu, true);
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
-    CHECK(strstr(fake_last_request(), "&xferAck=4294967295&rx=u&reqAck=4294967295&rxv=3&browse=1&boot=ffffffff&ota=1 HTTP/1.1\r\n") != NULL,
+    CHECK(strstr(fake_last_request(), "&xferAck=4294967295&rx=u&reqAck=4294967295&rxv=4&browse=1&write=1&boot=ffffffff&ota=1 HTTP/1.1\r\n") != NULL,
           "every parameter, in order");
 }
 
 static void req_version_is_read_from_the_poll(void) {
-    boot(); dc_set_req(&c, 0, 0, false);
+    boot(); dc_set_req(&c, 0, 0, false, false);
     push_ok_json("{\"version\":3,\"desired\":null,\"req\":{\"v\":9}}");
     dc_step(&c);
     CHECK_EQ_INT(c.req_version, 9);
@@ -3888,7 +3905,7 @@ static void req_version_is_read_from_the_poll(void) {
 
 // Final review M4: a field the server may add to req one day must not stop the wake-ups (obj 24 -> 48, as xfer).
 static void req_with_a_future_field_still_wakes(void) {
-    boot(); dc_set_req(&c, 0, 0, false);
+    boot(); dc_set_req(&c, 0, 0, false, false);
     push_ok_json("{\"version\":3,\"desired\":null,\"req\":{\"v\":9,\"x\":\"0123456789abcdef\"}}");
     dc_step(&c);
     CHECK_EQ_INT(c.req_version, 9);

@@ -541,12 +541,13 @@ typedef struct {
     // The poll's req.v (the server's request cursor), 0 until a body carries it; req_seen once one has.
     uint32_t req_version;
     bool     req_seen;
-    // What the next poll reports (dc_set_req): &reqAck=, and &rxv=&browse= while Transfer is connected at protocol 2
-    // or 3 (plan ruling F1). Absent until dc_set_req is first called, so a board that cannot browse polls as 1.21.
+    // What the next poll reports (dc_set_req): &reqAck=, and &rxv=&browse=&write= while Transfer is connected at protocol 2-4
+    // (plan rulings F1, N3). Absent until dc_set_req is first called, so a board that cannot browse polls as 1.21.
     bool     _req_on;
     uint32_t _req_ack;
     uint8_t  _req_proto;
     bool     _req_browse;
+    bool     _req_write;      // fw 1.23.0: Transfer 2.5's write switch (READY 4)
 
     // How the most recent exchange (any request) ended -- see dc_xfer_t.
     dc_xfer_t last_xfer;
@@ -963,8 +964,9 @@ void dc_set_send(device_client_t *c, uint32_t acked_version, char rx);
 int dc_fetch_req(device_client_t *c, char *buf, int cap);
 // POST /api/device/req/<rid> with one answer piece's JSON (n bytes, 1..DC_POST_BODY_MAX). HTTP status, or -1.
 int dc_post_req(device_client_t *c, const char *rid, const char *json, int n);
-// What the next poll reports: &reqAck=<acked>, plus &rxv=<proto>&browse=<0|1> when proto is 2 or 3.
-void dc_set_req(device_client_t *c, uint32_t acked_version, int proto, bool browse);
+// What the next poll reports: &reqAck=<acked>, plus &rxv=<proto>&browse=<0|1>&write=<0|1> when proto is 2, 3 or 4
+// (fw 1.23.0, ruling N3: write is 1 only at protocol 4).
+void dc_set_req(device_client_t *c, uint32_t acked_version, int proto, bool browse, bool write);
 
 // --- Uploads from the Amiga (spec 2026-10-18 §4; amiga_send.c drives these). HTTP status, or -1. resp gets the body.
 // POST /api/device/upload with {size, date, protection, path, comment}: 200 {id, offset}, or 4xx {code}.

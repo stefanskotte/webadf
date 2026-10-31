@@ -42,6 +42,7 @@
 #define DC_REQ_BUF_BYTES  448
 // The poll's own request buffer (fw 1.22.0): &reqAck=4294967295&rxv=3&browse=1 adds 33 to the worst poll request
 // (435 with &boot=ffffffff&ota=1), 468, so 480. Only the poll carries it: the other DC_REQ_BUF_BYTES users keep 448.
+// &write=1 (fw 1.23.0) adds 8: 476, still inside 480.
 #define DC_POLL_REQ_BYTES 480
 // DC_POLL_BODY_BYTES moved to device_client.h so a test can name it -- see
 // the note there. A budget a test cannot name is a budget checked by hand.
@@ -1245,11 +1246,12 @@ void dc_set_send(device_client_t *c, uint32_t acked_version, char rx) {
     c->_send_rx = (rx == 'c' || rx == 'r' || rx == 'u') ? rx : '-';
 }
 
-void dc_set_req(device_client_t *c, uint32_t acked_version, int proto, bool browse) {
+void dc_set_req(device_client_t *c, uint32_t acked_version, int proto, bool browse, bool write) {
     c->_req_on = true;
     c->_req_ack = acked_version;
-    c->_req_proto = (proto == 2 || proto == 3) ? (uint8_t)proto : 0;
+    c->_req_proto = (proto >= 2 && proto <= 4) ? (uint8_t)proto : 0;
     c->_req_browse = browse;
+    c->_req_write = write && proto == 4;
 }
 
 bool dc_drive_take(device_client_t *c, uint32_t *seq, df1_mode_t *mode) {
@@ -2174,8 +2176,9 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     // &xferAck=4294967295&rx=u (fw 1.14.0, files sent to the Amiga) makes it 146, and &boot=ffffffff&ota=1 (Disk at
     // startup) 166.
     // &reqAck=4294967295&rxv=3&browse=1 (fw 1.22.0, the web app's requests to Transfer) adds 33 to the worst: 199.
+    // &write=1 (fw 1.23.0, NET: volumes writes) adds 8: 207, so 216 (ruling N6; the_worst_case_poll_with_req_is_sent_whole).
     // test_poll_url_carries_display_ack / _drive_ack / poll_url_carries_df1_ack / send_poll_params_only_once_set send them.
-    static char path[208];
+    static char path[216];
     int plen = snprintf(path, sizeof path, "/api/device/poll?since=%lu&nfcAck=%lu&displayAck=%lu",
              (unsigned long)c->since, (unsigned long)c->nfc_ack, (unsigned long)c->display_ack);
     if (c->_df1_capable && plen > 0 && plen < (int)sizeof path)
@@ -2185,14 +2188,15 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     if (c->_send_on && plen > 0 && plen < (int)sizeof path)
         snprintf(path + plen, sizeof path - (size_t)plen, "&xferAck=%lu&rx=%c",
                  (unsigned long)c->_send_ack, c->_send_rx);
-    // NET: volumes (fw 1.22.0): reqAck after rx; rxv and browse only while Transfer is connected at protocol 2 or 3.
+    // NET: volumes (fw 1.22.0): reqAck after rx; rxv and browse only while Transfer is connected at protocol 2-4, and
+    // write beside them (fw 1.23.0, ruling N3: 0 below protocol 4, so the server is told when a 2.5 gives way to a 2.4).
     plen = (int)strnlen(path, sizeof path);
     if (c->_req_on && plen > 0 && plen < (int)sizeof path) {
         snprintf(path + plen, sizeof path - (size_t)plen, "&reqAck=%lu", (unsigned long)c->_req_ack);
         plen = (int)strnlen(path, sizeof path);
         if (c->_req_proto && plen < (int)sizeof path)
-            snprintf(path + plen, sizeof path - (size_t)plen, "&rxv=%u&browse=%u",
-                     (unsigned)c->_req_proto, c->_req_browse ? 1u : 0u);
+            snprintf(path + plen, sizeof path - (size_t)plen, "&rxv=%u&browse=%u&write=%u",
+                     (unsigned)c->_req_proto, c->_req_browse ? 1u : 0u, c->_req_write ? 1u : 0u);
     }
     // Disk at startup (dc_set_boot): last, so every older parameter keeps its place.
     static char bootp[24];   // static: see the STACK note above
