@@ -1644,14 +1644,21 @@ row and Queue alone.
   while lines wait for an owed piece, only the PONG deadline is suspended (M2: Transfer drops a link silent 75 s);
   the req poll object is 48 B (M4); a failed GOT entry is never matched by tag. TEST build and the A500 bench (spec
   §7) next.
-- **A500 bench 2026-10-31 (spec §7, in progress) and its fixes (merges db1170a6 fw, 0a7389ae web).** The bench Amiga
+- **A500 bench 2026-10-31 (spec §7: 1-6 pass, 7 partly, 8 fails in Transfer) and its fixes (merges db1170a6 fw, 0a7389ae web).** The bench Amiga
   boots WITHOUT its network: in a Shell, `AddNetInterface eth0` then `run PaulaNET:Transfer BROWSE`. Passed: 1
   (volumes), 2 (two levels; Parent remembered), 3 (file and drawer to STASH:, an 880 KB ADF to LIBRARY: in 84 s, which
   mounts and boots), 4 (Workbench:big, 1001 drawers: 3 pieces, cut row, 36 s -- after the fixes), 5 (browsing off: the
   reason row; Queue delivers), 6 (Transfer quit mid-listing: "Transfer is not running" ~5 s later); 7 partly (a disk
   gone between operations: "Object not found", no requester; mid-copy the board HOLDS the eject until the drive is
-  idle, so a mid-copy pull needs a real drive); heap low-water 24,576 B. Owed: 8 (512 KB), the C1 reboot check, and a
-  GUI switch flip (a Transfer restart showed browsing off on the server in ~18 s). Found and fixed:
+  idle, so a mid-copy pull needs a real drive); heap low-water 24,576 B; C1 (long polls ~25 s with DF1 out of Network
+  mode). **8 (512 KB) FAILS, in Transfer, not the firmware:** `NoFastMem` right after a reset (chip 431 KB free), then
+  `AddNetInterface eth0` leaves 102 KB free, largest block 79 KB, and `run PaulaNET:Transfer` says "not enough memory
+  available": its BSS hunk is ONE 189,924-byte block (gui.c 117 KB -- G 68 KB, q 35 KB, s 13 KB; shell.c 49 KB -- q
+  35 KB, sess 13 KB; both modes' state is static though only one runs). 175 KB since Transfer 2.0 (2026-10-19), so no
+  Transfer 2.x has ever loaded on 512 KB with the network up. Fix candidate (not done, operator's call): allocate only
+  the running mode's state at start, smaller upload queue. Not run: the GUI switch flip (a Transfer restart showed
+  browsing off on the server in ~18 s). **fw 1.22.0 RELEASED 2026-10-31: seq 128 (1.22.0+gf508781d) promoted;
+  GitHub fw-1.22.0 (Latest).** Found and fixed:
   - fw: `amiga_tcp.c` acked every byte on arrival into a 1 KB ring -- no TCP backpressure; now acked when read, ring
     48 KB in PSRAM (> TCP_WND), SRAM .bss -1,020 B; unread lines are acked before a close (FIN, not a once-sent RST that
     left Transfer "busy" ~67 s).
