@@ -182,5 +182,6 @@ async function crossDevice(ctx: OpCtx, req: CopyMove, srcs: FsPath[], dest: FsPa
       for (const s of list) results.set(s, { source: s, ok: false, refusal: { code: e.refusal.code, detail: REMOVE_FAILED } });
     }
   }
-  return { kind: 'done', items: req.sources.map((s) => results.get(s)!) };
+  // A move onto a NET: volume (phase 2) removes nothing now; its job says how the copy and the removal go.
+  return { kind: 'done', items: req.sources.map((s) => results.get(s)!), ...(out.job ? { job: out.job } : {}) };
 }

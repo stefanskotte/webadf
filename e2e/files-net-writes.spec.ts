@@ -184,7 +184,8 @@ test('Copy from STASH: onto a volume: each clash answer, and the queue line the 
     await page.getByTestId(`files-clash-${answer}`).click();
   };
   await copyX('skip');
-  await expect(busy(page)).toContainText(/Skipped|skipped/, { timeout: LIVE });
+  // Skip sends nothing: the toast says so.
+  await expect(page.locator('[data-sonner-toast]').filter({ hasText: /Skipped 1/ })).toBeVisible({ timeout: LIVE });
   expect(fs['Work:Tools'].find((e) => e.name === 'x.lha')!.data!.toString()).toBe('old x');
   await copyX('replace');
   await expect(busy(page)).toContainText('Copied 1 to A500', { timeout: LIVE });

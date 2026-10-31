@@ -297,6 +297,9 @@ describe('moves', () => {
     const [g] = await gets();
     await arrive(g.id, 'Work:x', new TextEncoder().encode('xx'));
     expect((await writes()).map((w) => `${w.kind} ${w.amigaPath}`)).toEqual(['delete Work:x']);
+    // What arrived moves on again, onto a drawer of the volume.
+    const back = await op({ op: 'move', sources: ['STASH:/x'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
+    expect(back).toMatchObject({ kind: 'done', items: [{ source: 'STASH:/x', ok: true }], job: { files: 1 } });
     // The DELETE is the move's own: its progress waits for it.
     const job = (r as { fetching: { id: string } }).fetching.id;
     expect((await writes())[0].fetchId).toBe(job);
