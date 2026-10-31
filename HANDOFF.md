@@ -1644,6 +1644,27 @@ row and Queue alone.
   while lines wait for an owed piece, only the PONG deadline is suspended (M2: Transfer drops a link silent 75 s);
   the req poll object is 48 B (M4); a failed GOT entry is never matched by tag. TEST build and the A500 bench (spec
   §7) next.
+- **A500 bench 2026-10-31 (spec §7, in progress) and its fixes (merges db1170a6 fw, 0a7389ae web).** The bench Amiga
+  boots WITHOUT its network: in a Shell, `AddNetInterface eth0` then `run PaulaNET:Transfer BROWSE`. Passed: 1
+  (volumes), 2 (two levels; Parent remembered), 3 (file and drawer to STASH:, an 880 KB ADF to LIBRARY: in 84 s, which
+  mounts and boots), 4 (Workbench:big, 1001 drawers: 3 pieces, cut row, 36 s -- after the fixes), 5 (browsing off: the
+  reason row; Queue delivers), 6 (Transfer quit mid-listing: "Transfer is not running" ~5 s later); 7 partly (a disk
+  gone between operations: "Object not found", no requester; mid-copy the board HOLDS the eject until the drive is
+  idle, so a mid-copy pull needs a real drive); heap low-water 24,576 B. Owed: 8 (512 KB), the C1 reboot check, and a
+  GUI switch flip (a Transfer restart showed browsing off on the server in ~18 s). Found and fixed:
+  - fw: `amiga_tcp.c` acked every byte on arrival into a 1 KB ring -- no TCP backpressure; now acked when read, ring
+    48 KB in PSRAM (> TCP_WND), SRAM .bss -1,020 B; unread lines are acked before a close (FIN, not a once-sent RST that
+    left Transfer "busy" ~67 s).
+  - fw: "no PONG" ~20 s into a 1000-entry listing -- Transfer writes it into the Amiga's socket in seconds, it drains at
+    ~1.5 KB/s and the PONG queues behind it: no PONG deadline while an answer is read (req_silent still applies); a
+    piece posts 10 s after its first line (AS_PIECE_MS); every drop logs its reason.
+  - web: a listing asked during a long copy waited (Transfer is serial) and failed at 60 s: its timeout now runs from
+    the copy's last move (`copyMoving`), the pane says "once it has copied <file>" and does not give up (Pending.alive);
+    pieces are signs of life too (active_at on every piece; label "N entries so far"; Refresh's stuck rule from
+    active_at). NET: root rows say "browsable" or the missing thing (spec §5). Spec §4.1/§4.4 amended.
+  - Deferred minors: amiga_tcp.c has no host test of the ack accounting; `alive` for a piece-arriving row is not
+    recency-bounded (bounded by the 60 s expiry); an Amiga-side upload also blocks Transfer but only gets count in the
+    copy exemption; a NET: pane opened straight into pending/failed has a blank title bar (no crumbs).
 **Parked/deferred by the operator:** PaulaNET compression (LZSA2, pre-encode N+1); proof of possession at ingest.
 Entries below marked SHIPPED/FIXED/FOLDED are kept for their history only.
 
