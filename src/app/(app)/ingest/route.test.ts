@@ -11,8 +11,8 @@ describe('GET /ingest: a 307 to the Files page (increment 3, R10)', () => {
     expect(res.headers.get('location')).toBe('/files');
   });
   it('keeps the board: ?board= opens its queue, ?from= opens STASH: beside it', async () => {
-    expect((await get('?board=dev1')).headers.get('location')).toBe('/files?left=STASH:&right=NET%3A%2Fdev1&active=right');
-    expect((await get('?from=dev1')).headers.get('location')).toBe('/files?left=STASH:&right=NET%3A%2Fdev1&active=left');
+    expect((await get('?board=dev1')).headers.get('location')).toBe('/files?left=STASH:&right=NET%3A%2Fdev1%2FQueue&active=right');
+    expect((await get('?from=dev1')).headers.get('location')).toBe('/files?left=STASH:&right=NET%3A%2Fdev1%2FQueue&active=left');
   });
   it('a repeated board names no one board', async () => {
     expect((await get('?board=a&board=b')).headers.get('location')).toBe('/files');
