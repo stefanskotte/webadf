@@ -11,7 +11,8 @@ import { deleteUserCascade } from '@/lib/admin-delete';
 import { listReleases } from '@/lib/firmware-releases';
 import { sweep } from '@/lib/tosec-sweep';
 import { mintInviteCode, signedUpOrgIds, trayRows, browseDisks } from './helpers';
-import { pairDevice, cleanupSeeded, hydrated } from './device-helpers';
+import { pairDevice, cleanupSeeded, hydrated, setBrowse } from './device-helpers';
+import { boardServes, type FakeEntry } from './amiga-board';
 import { signInAsSuperAdmin } from './admin-helpers';
 
 /**
@@ -54,6 +55,23 @@ const UPLOADS = [
 ];
 /** The demo board's name. Every picture that can show a board shows this one, never a real board's. */
 const BOARD_NAME = 'A500';
+/** What the demo board's Amiga holds, for the NET: picture: two hard-disk volumes, RAM Disk, and a drawer of projects. */
+const bytes = (n: number, fill = 'x') => Buffer.alloc(n, fill);
+const NET_FS: Record<string, FakeEntry[]> = {
+  '': [{ name: 'Workbench', device: 'DH0:' }, { name: 'Work', device: 'DH1:' }, { name: 'RAM Disk', device: 'RAM:' }],
+  'Work:': [
+    { name: 'Projects', dir: true }, { name: 'Music', dir: true }, { name: 'Tools', dir: true },
+    { name: 'Projects.info', data: bytes(1_268) }, { name: 'ReadMe', data: bytes(2_310), comment: 'start here' },
+  ],
+  'Work:Projects': [
+    { name: 'Intro', dir: true },
+    { name: 'Backup.lha', data: bytes(184_220) },
+    { name: 'Notes.txt', data: bytes(4_096), comment: 'todo for the demo' },
+    { name: 'Scroller.s', data: bytes(23_455) },
+    { name: 'Scroller', data: bytes(11_872), protection: 0 },
+    { name: 'Title.iff', data: bytes(40_960) },
+  ],
+};
 /**
  * How long identification may take. The sweep works through a queue shared by
  * every library on the live database, and an e2e DAT import (admin-scan, tosec-scan)
@@ -283,14 +301,14 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   if (!firmware) throw new Error('screenshots: no firmware release is published -- the Devices card would read as unknown');
   // What a running board reports with each poll. Sent again before the
   // Devices pictures, so the card reads Online (seen in the last minute).
-  const report = async () => {
+  const report = async (secondDrive: 'off' | 'net' = 'off') => {
     const status = await request.post('/api/device/status', {
       headers: { Authorization: `Bearer ${token}` },
       data: {
         mountedSha256: mounted.sha256, mountedDiskId: mounted.id, version,
         firmwareVersion: firmware, rssi: -58, psramFree: 6_200_000,
         playsHd: true, nfcReader: 'present', displayLayouts: true, displayVersion: 0,
-        secondDrive: 'off', driveVersion: 0,
+        secondDrive, driveVersion: 0,
       },
     });
     expect(status.status()).toBe(204);
@@ -337,6 +355,30 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   await expect(page.getByTestId('disk-strip-history')).toBeVisible();
   await page.mouse.move(0, 0);
   await shoot(page, 'disk-files', { tall: true });
+
+  // NET: volumes (spec 2026-10-30 §6 step 5): the board's own Amiga, browsed. A fake board answers through the device
+  // routes as firmware 1.22.0 with Transfer running protocol 3 and browsing on would; the board is in Network mode, as
+  // browsing needs (the Devices pictures after it report DF1 off again).
+  await report('net');
+  await setBrowse(deviceId, { firmware, rx: 'c', rxProto: 3, browseOn: true });
+  let netDone = false;
+  const net = boardServes(request, token, NET_FS, () => netDone, [], 60_000);
+  await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: `NET:/${deviceId}`, active: 'right' })}`);
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="files-manager"]');
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  });
+  const netRow = (name: string) => page.getByTestId('pane-right').locator(`[data-testid="pane-row"][data-name="${name}"]`);
+  await expect(netRow('Work')).toBeVisible({ timeout: 15_000 });
+  await netRow('Work').dblclick();
+  await expect(netRow('Projects')).toBeVisible({ timeout: 15_000 });
+  await netRow('Projects').dblclick();
+  await expect(netRow('Backup.lha')).toBeVisible({ timeout: 15_000 });
+  await netRow('Backup.lha').click();
+  await page.mouse.move(0, 0);
+  await shoot(page, 'net-volume', { tall: true });
+  netDone = true;
+  await net;
 
   await report();
   await page.goto('/devices');

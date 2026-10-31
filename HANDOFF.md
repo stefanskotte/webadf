@@ -1667,8 +1667,10 @@ row and Queue alone.
   FS-UAE: 3.1 send 29/29 (ver now 2.4), browse 10/10, shell; 3.2 browse 10/10; 2.04 shell. Review (opus): no Critical/Important.
   Deferred minors: rx_upq_init on a non-empty queue leaks (tests only); a failed malloc in a drawer walk is silent; the
   hand-off's "full, or the name is not allowed" also covers no memory. Driver disk **7b0c7ed5** (stored, read back);
-  05a898ca (2.3) becomes PAULANET_DISK_PREVIOUS. Not run: the GUI switch flip (a Transfer restart showed
-  browsing off on the server in ~18 s). **fw 1.22.0 RELEASED 2026-10-31: seq 128 (1.22.0+gf508781d) promoted;
+  05a898ca (2.3) becomes PAULANET_DISK_PREVIOUS. GUI switch flip PASSED 2026-10-31 (A500, PiKVM keyboard
+  mouse): unticking reached the server as browse_on=false 16 s after the click, re-ticking as true 26 s after.
+  README screenshot of a NET: volume added 2026-10-31 (docs/screenshots/net-volume.png, a fake board in
+  e2e/screenshots.shots.ts) -- spec §6 step 5 is complete. **fw 1.22.0 RELEASED 2026-10-31: seq 128 (1.22.0+gf508781d) promoted;
   GitHub fw-1.22.0 (Latest).** Found and fixed:
   - fw: `amiga_tcp.c` acked every byte on arrival into a 1 KB ring -- no TCP backpressure; now acked when read, ring
     48 KB in PSRAM (> TCP_WND), SRAM .bss -1,020 B; unread lines are acked before a close (FIN, not a once-sent RST that

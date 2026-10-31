@@ -115,6 +115,11 @@ protection, step to the next disk or eject.*
 *Files: two panes in the Directory Opus style over STASH:, NET: and LIBRARY: (collections are folders there). The pane
 you last clicked is the source; the buttons under the panes act on it. Each edit to a disk is a new version in its History.*
 
+![The Files page with STASH: on the left and, on the right, the A500 board's Amiga open at Work:Projects: a drawer and five files with their sizes, protection bits, dates and a comment, 41.0 MB free, Read-only for now, and the Send panel saying Transfer is running on the Amiga](docs/screenshots/net-volume.png)
+
+*NET: also lists the Amiga's own volumes when Transfer runs there with browsing ticked: open a drawer on the hard disk
+and copy files to STASH: or LIBRARY:. Read-only for now.*
+
 ![The Devices page: the A500 board online and up to date, its drive drawing with the OLED showing 9 Fingers, the disk in the drive, and the Second drive (DF1) choices](docs/screenshots/devices.png)
 
 *A board on the Devices page. The drawing's screen shows what the board's OLED shows.*
