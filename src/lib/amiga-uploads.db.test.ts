@@ -125,6 +125,19 @@ describe('amiga uploads', () => {
     expect(await U.storeChunk(db(), 'dev-nobody', o.id, 16384, data.subarray(16384, 32768))).toEqual({ ok: false, status: 404 });
   });
 
+  // NET: volumes phase 2 (§4.4 minor 2, plan W13): a stored chunk proves Transfer is there and moving a file, as a send
+  // chunk does: the board's receiver report is refreshed (throttled), and a listing then waits for the upload.
+  it('a stored chunk refreshes the board\'s receiver report', async () => {
+    const d = await device(); const data = bytes(10);
+    const stale = new Date(Date.now() - 5 * 60_000);
+    await db().update(devices).set({ sendRx: 'u', sendRxAt: stale }).where(eq(devices.id, d.deviceId));
+    const o = await opened(d, { size: 10 });
+    expect(await U.storeChunk(db(), d.deviceId, o.id, 0, data)).toEqual({ ok: true, received: 10 });
+    const [x] = await db().select({ rx: devices.sendRx, at: devices.sendRxAt }).from(devices).where(eq(devices.id, d.deviceId));
+    expect(x.rx).toBe('c');
+    expect(Date.now() - x.at!.getTime()).toBeLessThan(5_000);
+  });
+
   it('closes: size and CRC checked, the bytes in the store, the chunks gone, kept 30 days; a repeat answers the same name', async () => {
     const d = await device(); const data = bytes(40000);
     const id = await upload(d, data);

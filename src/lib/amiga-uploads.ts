@@ -5,7 +5,7 @@ import { devices } from '@/db/schema/devices';
 import { transfers } from '@/db/schema/transfers';
 import { amigaUploads, amigaUploadChunks } from '@/db/schema/amiga-uploads';
 import { remoteRequests } from '@/db/schema/remote-requests';
-import { cleanAmigaPath } from '@/lib/transfers';
+import { cleanAmigaPath, recordSendRx } from '@/lib/transfers';
 import { listStash, lockOrg, touchStashDirs } from '@/lib/stash';
 import { uniqueStashPath } from '@/lib/files/stash-paths';
 import { parsePath } from '@/lib/files/path';
@@ -86,6 +86,14 @@ export type ChunkResult = { ok: true; received: number } | { ok: false; status: 
 /** One chunk at `offset`: stored when it is the next one; a retry of a stored one changes nothing; a gap is 409. */
 export async function storeChunk(db: Db, deviceId: string, id: string, offset: number, data: Uint8Array, now = new Date()): Promise<ChunkResult> {
   if (data.byteLength < 1 || data.byteLength > UPLOAD_CHUNK) return { ok: false, status: 400 };
+  const r = await storeChunkRow(db, deviceId, id, offset, data, now);
+  // A stored chunk proves Transfer is there and moving a file up (NET: volumes phase 2, plan W13): the receiver report
+  // is refreshed as a send chunk refreshes it (throttled to one write in 30 s), so a listing waits for the upload.
+  if (r.ok) await recordSendRx(db, deviceId, 'c', now);
+  return r;
+}
+
+async function storeChunkRow(db: Db, deviceId: string, id: string, offset: number, data: Uint8Array, now: Date): Promise<ChunkResult> {
   return db.transaction(async (tx) => {
     const [r] = await tx.select({ size: amigaUploads.sizeBytes, received: amigaUploads.receivedBytes, status: amigaUploads.status })
       .from(amigaUploads).where(and(eq(amigaUploads.id, id), eq(amigaUploads.deviceId, deviceId))).for('update');

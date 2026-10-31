@@ -18,7 +18,7 @@ import { SEND_FILE_MAX, SEND_QUEUE_MAX_BYTES, SEND_QUEUE_MAX_FILES } from '@/lib
 import { uploadBoards } from '@/lib/amiga-uploads';
 import { mapLimit } from '@/lib/pool';
 import { protectionString } from '@/lib/adffs/dir';
-import { copyMoving, latestFor, requestListing, type RemoteRow } from '@/lib/remote-requests';
+import { copyMoving, latestFor, pendingAlive, requestListing, type RemoteRow } from '@/lib/remote-requests';
 import { browseBlock, browseMark, errorWords } from '@/lib/remote-browse';
 import { amigaPathOf, volumeLabel, type EntryInfo, type VolumeInfo } from '@/lib/remote-wire';
 import { QUEUE_FOLDER } from '@/lib/remote-limits';
@@ -106,7 +106,8 @@ export const browseOf = (t: SendTarget, now: number) => browseBlock({ online: t.
 async function pendingOf(t: SendTarget, row: RemoteRow | null, what: string, now: number): Promise<Pending> {
   if (row?.status === 'sent' && row.pieces > 0) {   // arriving in pieces (a 1000-entry drawer takes ~36 s)
     const a = answerOf(row);
-    return new Pending(`Reading ${what} from ${t.name}… ${a.entries.length + a.volumes.length} entries so far`, true);
+    // Alive only while a piece came lately (§4.4 minor 1, phase 2): a board that went quiet mid-answer is given up on.
+    return new Pending(`Reading ${what} from ${t.name}… ${a.entries.length + a.volumes.length} entries so far`, pendingAlive(row, new Date(now)));
   }
   const held = row?.status === 'waiting' || (row?.status === 'sent' && row.pieces === 0);   // nothing answered yet
   const copying = held ? await copyMoving(getDb(), t.id, new Date(now)) : null;
