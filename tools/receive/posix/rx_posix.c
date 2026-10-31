@@ -2,6 +2,8 @@
    Usage: rx_posix <folder> <port> [<key file>]   (port 0 = any; prints "LISTEN <port>")
    env: RX_VOLS="<name>|<device>|<host folder>;..." (protocol 3 volumes), RX_BROWSE=1 (browsing on at start);
    stdin also: "BROWSE 1" / "BROWSE 0" (spec 2026-10-30 §2.3).
+   Protocol 4 (spec 2026-10-31 §2): RX_WRITE=1 (writing on at start), stdin "WRITE 1" / "WRITE 0"; RX_WPROT=<volume
+   name> (every write there fails as a write-protected disk), RX_FULL=<volume name> (no free space there).
    stdin: "SEND <host path>" (a file or a folder, as a drop), "TRUST", "CANCEL <tag>" (protocol 2, spec 2026-10-18). */
 #define _POSIX_C_SOURCE 200809L
 #include <dirent.h>
@@ -22,16 +24,42 @@
 #include "rx_proto.h"
 
 typedef struct { const char *root; FILE *fh; FILE *rh; DIR *dh; char dpath[1024]; } pctx;
+static int host_path(const char *local, char *out, size_t cap);
+static int vol_of(const char *local);
+static long g_err;   /* protocol 4: the DOS error of the last failed file hook */
 
-/* folder + "/" + rel, with Latin-1 bytes >= 0x80 as UTF-8 (a host name must be UTF-8 on macOS). */
-static void join(pctx *c, const char *rel, char *out, size_t cap) {
-    size_t n = (size_t)snprintf(out, cap, "%s/", c->root);
+/* base + "/" + rel, with Latin-1 bytes >= 0x80 as UTF-8 (a host name must be UTF-8 on macOS). */
+static void join_to(const char *base, const char *rel, char *out, size_t cap) {
+    size_t n = (size_t)snprintf(out, cap, "%s/", base);
     for (const unsigned char *p = (const unsigned char *)rel; *p && n + 3 < cap; p++) {
         if (*p < 0x80) out[n++] = (char)*p;
         else { out[n++] = (char)(0xC0 | (*p >> 6)); out[n++] = (char)(0x80 | (*p & 0x3F)); }
     }
     out[n] = 0;
 }
+/* folder + "/" + rel; an Amiga path ("Work:x", protocol 4) is its volume's host folder + "/" + x instead. */
+static void join(pctx *c, const char *rel, char *out, size_t cap) {
+    const char *colon = strchr(rel, ':');
+    if (colon) {
+        char base[1024]; char vol[64]; size_t n = (size_t)(colon - rel);
+        snprintf(vol, sizeof vol, "%.*s:", (int)(n < 60 ? n : 60), rel);
+        if (host_path(vol, base, sizeof base) != 0) { snprintf(out, cap, "/nonexistent-volume/%s", colon + 1); return; }
+        n = strlen(base); if (n && base[n - 1] == '/') base[n - 1] = 0;
+        join_to(base, colon + 1, out, cap);
+        return;
+    }
+    join_to(c->root, rel, out, cap);
+}
+static long dos_err(int e) {
+    switch (e) {
+    case EROFS: return 214; case ENOSPC: return 221; case EACCES: case EPERM: return 223; case ENOENT: return 205;
+    case EEXIST: return 203; case ENOTEMPTY: return 216; case EXDEV: return 215; case ENOTDIR: case EISDIR: return 212;
+    case EBUSY: return 202; default: return 219;
+    }
+}
+static int failed(long e) { g_err = e; return -1; }
+/* RX_WPROT names a volume whose disk is write-protected: every write on it fails with DOS error 214. */
+static int wprot(const char *rel);
 /* A host name (UTF-8) as the Amiga would name it (Latin-1): two-byte sequences up to U+00FF, anything else '_'. */
 static void to_latin1(const char *in, char *out, size_t cap) {
     size_t n = 0;
@@ -74,6 +102,33 @@ static int host_path(const char *local, char *out, size_t cap) {
     }
     return -1;
 }
+static int vol_of(const char *local) {
+    const char *colon = strchr(local, ':');
+    size_t n;
+    if (!colon) return -1;
+    n = (size_t)(colon - local);
+    for (int i = 0; i < g_nvols; i++) {
+        size_t dn = strlen(g_vols[i].dev) - 1;
+        if ((strlen(g_vols[i].name) == n && strncasecmp(g_vols[i].name, local, n) == 0) ||
+            (dn == n && strncasecmp(g_vols[i].dev, local, n) == 0)) return i;
+    }
+    return -1;
+}
+static int env_vol(const char *rel, const char *env) {
+    const char *e = getenv(env); int i = vol_of(rel);
+    return e && i >= 0 && strcasecmp(g_vols[i].name, e) == 0;
+}
+static int wprot(const char *rel) { return env_vol(rel, "RX_WPROT"); }
+/* Protection bits and comments set on the Amiga's paths (a host file has neither): kept here, by host path. */
+typedef struct { char path[1024]; unsigned long prot; char comment[RX_COMMENT_MAX + 1]; } pmeta;
+static pmeta g_meta[64]; static int g_nmeta;
+static pmeta *meta_at(const char *hp, int add) {
+    for (int i = 0; i < g_nmeta; i++) if (!strcmp(g_meta[i].path, hp)) return &g_meta[i];
+    if (!add || g_nmeta == 64) return NULL;
+    memset(&g_meta[g_nmeta], 0, sizeof g_meta[0]);
+    snprintf(g_meta[g_nmeta].path, sizeof g_meta[0].path, "%s", hp);
+    return &g_meta[g_nmeta++];
+}
 static void amiga_date(time_t mtime, unsigned long *d, unsigned long *m, unsigned long *t) {
     long s = (long)mtime - 252460800L;   /* AmigaDOS counts from 1978-01-01 */
     if (s < 0) s = 0;
@@ -91,20 +146,69 @@ static unsigned long p_free(void *x) {
 static int p_exists(void *x, const char *rel) { char p[1024]; struct stat st; join(x, rel, p, sizeof p); return lstat(p, &st) == 0; }
 static int p_make_dir(void *x, const char *rel) {
     char p[1024]; struct stat st; join(x, rel, p, sizeof p);
+    if (wprot(rel)) return failed(214);
     if (mkdir(p, 0755) == 0) return 0;
-    return (errno == EEXIST && stat(p, &st) == 0 && S_ISDIR(st.st_mode)) ? 0 : -1;
+    if (errno == EEXIST && stat(p, &st) == 0 && S_ISDIR(st.st_mode)) return 0;
+    return failed(dos_err(errno));
 }
-static int p_open_w(void *x, const char *rel) { pctx *c = x; char p[1024]; join(c, rel, p, sizeof p); c->fh = fopen(p, "wb"); return c->fh ? 0 : -1; }
-static int p_write(void *x, const unsigned char *b, unsigned long n) { return fwrite(b, 1, n, ((pctx *)x)->fh) == n ? 0 : -1; }
-static int p_close_w(void *x) { pctx *c = x; int r = fclose(c->fh); c->fh = NULL; return r == 0 ? 0 : -1; }
+static int p_open_w(void *x, const char *rel) {
+    pctx *c = x; char p[1024]; join(c, rel, p, sizeof p);
+    if (wprot(rel)) return failed(214);
+    c->fh = fopen(p, "wb");
+    return c->fh ? 0 : failed(dos_err(errno));
+}
+static int p_write(void *x, const unsigned char *b, unsigned long n) { return fwrite(b, 1, n, ((pctx *)x)->fh) == n ? 0 : failed(221); }
+static int p_close_w(void *x) { pctx *c = x; int r = fclose(c->fh); c->fh = NULL; return r == 0 ? 0 : failed(dos_err(errno)); }
 static int p_rename(void *x, const char *from, const char *to) {
     char a[1024], b[1024]; join(x, from, a, sizeof a); join(x, to, b, sizeof b);
-    if (access(b, F_OK) == 0) return -1;
-    return rename(a, b) == 0 ? 0 : -1;
+    if (wprot(from)) return failed(214);
+    if (access(b, F_OK) == 0) return failed(203);
+    return rename(a, b) == 0 ? 0 : failed(dos_err(errno));
 }
-static int p_remove(void *x, const char *rel) { char p[1024]; join(x, rel, p, sizeof p); return unlink(p) == 0 ? 0 : -1; }
+static int p_remove(void *x, const char *rel) {
+    char p[1024]; join(x, rel, p, sizeof p);
+    if (wprot(rel)) return failed(214);
+    return unlink(p) == 0 ? 0 : failed(dos_err(errno));
+}
 static int p_set_meta(void *x, const char *rel, unsigned long prot, const char *comment) {
-    (void)x; printf("META %s %lx %s\n", rel, prot, comment); return 0;
+    printf("META %s %lx %s\n", rel, prot, comment);
+    if (strchr(rel, ':')) {
+        char p[1024]; pmeta *m; join(x, rel, p, sizeof p);
+        if ((m = meta_at(p, 1)) != NULL) { m->prot = prot; snprintf(m->comment, sizeof m->comment, "%s", comment); }
+    }
+    return 0;
+}
+/* Protocol 4: the writes on the Amiga's paths, with DOS errors. */
+static long p_err(void *x) { (void)x; return g_err; }
+static unsigned long p_free_at(void *x, const char *path) { (void)x; return env_vol(path, "RX_FULL") ? 0 : 0xFFFFFFFFUL; }
+static long p_w_mkdir(void *x, const char *path) {
+    char p[1024]; join(x, path, p, sizeof p);
+    if (wprot(path)) return 214;
+    return mkdir(p, 0755) == 0 ? 0 : dos_err(errno);
+}
+static long p_w_rename(void *x, const char *from, const char *to) { return p_rename(x, from, to) == 0 ? 0 : g_err; }
+static long p_w_delete(void *x, const char *path) {
+    char p[1024]; struct stat st; join(x, path, p, sizeof p);
+    if (wprot(path)) return 214;
+    if (lstat(p, &st) != 0) return dos_err(errno);
+    if ((S_ISDIR(st.st_mode) ? rmdir(p) : unlink(p)) != 0) return dos_err(errno);
+    return 0;
+}
+static long p_w_protect(void *x, const char *path, unsigned long prot) {
+    char p[1024]; struct stat st; pmeta *m; join(x, path, p, sizeof p);
+    if (wprot(path)) return 214;
+    if (lstat(p, &st) != 0) return dos_err(errno);
+    if ((m = meta_at(p, 1)) != NULL) m->prot = prot;
+    printf("PROT %s %lx\n", path, prot);
+    return 0;
+}
+static long p_w_note(void *x, const char *path, const char *comment) {
+    char p[1024]; struct stat st; pmeta *m; join(x, path, p, sizeof p);
+    if (wprot(path)) return 214;
+    if (lstat(p, &st) != 0) return dos_err(errno);
+    if ((m = meta_at(p, 1)) != NULL) snprintf(m->comment, sizeof m->comment, "%s", comment);
+    printf("NOTE %s %s\n", path, comment);
+    return 0;
 }
 /* Protocol 2: host paths are given as they are (absolute or from the working folder). */
 static int p_is_dir(void *x, const char *local) {
@@ -165,6 +269,7 @@ static long p_dir_next(void *x, rx_dent *e) {
         to_latin1(d->d_name, e->name, sizeof e->name);
         e->is_dir = S_ISDIR(st.st_mode); e->size = e->is_dir ? 0 : (unsigned long)st.st_size;
         amiga_date(st.st_mtime, &e->days, &e->mins, &e->ticks);
+        { pmeta *m = meta_at(p, 0); if (m) { e->prot = m->prot; snprintf(e->comment, sizeof e->comment, "%s", m->comment); } }
         return 1;
     }
     return 0;
@@ -185,6 +290,12 @@ static void p_fault(void *x, long err, char *text, unsigned cap) {
     if (err == RX_DOS_NOT_FOUND) snprintf(text, cap, "object not found");
     else if (err == RX_DOS_WRONG_TYPE) snprintf(text, cap, "object is wrong type");
     else if (err == RX_DOS_READ_PROTECTED) snprintf(text, cap, "file is read protected");
+    else if (err == 202) snprintf(text, cap, "object in use");
+    else if (err == 203) snprintf(text, cap, "object already exists");
+    else if (err == 214) snprintf(text, cap, "disk is write-protected");
+    else if (err == 216) snprintf(text, cap, "directory not empty");
+    else if (err == 221) snprintf(text, cap, "disk is full");
+    else if (err == 222) snprintf(text, cap, "file is protected from deletion");
     else snprintf(text, cap, "error %ld", err);
 }
 
@@ -207,9 +318,10 @@ static void on_event(void *u, const rx_event *e) {
     case RX_EV_UP_DONE: printf("UP_DONE %u %s\n", e->tag, e->path); break;
     case RX_EV_UP_FAILED: printf("UP_FAILED %u %s %s\n", e->tag, e->code ? e->code : "-", e->text ? e->text : ""); break;
     case RX_EV_REQ:
-        printf("REQ %s %s %lu%s %s\n", e->code, e->path && e->path[0] ? e->path : "-", e->size, e->bytes ? " cut" : "",
-               e->text ? e->text : "ok");
+        printf("REQ %s %s%s%s %lu%s %s\n", e->code, e->path && e->path[0] ? e->path : "-", e->to ? " " : "", e->to ? e->to : "",
+               e->size, e->bytes ? " cut" : "", e->text ? e->text : "ok");
         break;
+    case RX_EV_SKIP: printf("SKIP %s %s\n", e->id, e->path); break;
     default: break;
     }
 }
@@ -233,6 +345,7 @@ static void command(char *l, rx_upq *q, rx_fs *fs, rx_session *s, int connected)
     } else if (!strncmp(l, "CANCEL ", 7)) {
         rx_up_cancel(s, q, (unsigned)strtoul(l + 7, NULL, 10));
     } else if (!strcmp(l, "BROWSE 1") || !strcmp(l, "BROWSE 0")) q->browse = l[7] == '1';
+    else if (!strcmp(l, "WRITE 1") || !strcmp(l, "WRITE 0")) q->write = l[6] == '1';
 }
 
 int main(int argc, char **argv) {
@@ -244,7 +357,8 @@ int main(int argc, char **argv) {
     pctx ctx = { 0 };
     rx_fs fs = { &ctx, p_folder_ok, p_free, p_exists, p_make_dir, p_open_w, p_write, p_close_w, p_rename, p_remove, p_set_meta,
                  p_is_dir, p_list, p_open_r, p_read, p_close_r,
-                 p_vols, p_dir_open, p_dir_next, p_dir_close, p_stat, p_fault };   /* protocol 3, used only while Q.browse */
+                 p_vols, p_dir_open, p_dir_next, p_dir_close, p_stat, p_fault,   /* protocol 3, used only while Q.browse */
+                 p_err, p_free_at, p_w_mkdir, p_w_rename, p_w_delete, p_w_protect, p_w_note };   /* protocol 4 */
     struct sockaddr_in a;
     socklen_t al = sizeof a;
     int one = 1, ls, cl = -1, stdin_open = 1;
@@ -263,6 +377,7 @@ int main(int argc, char **argv) {
     rx_upq_init(&Q, key);
     vols_load();
     Q.browse = getenv("RX_BROWSE") && getenv("RX_BROWSE")[0] == '1';
+    Q.write = getenv("RX_WRITE") && getenv("RX_WRITE")[0] == '1';
     rx_init(&S, &fs, on_event, &S);
     ls = socket(AF_INET, SOCK_STREAM, 0);
     setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
