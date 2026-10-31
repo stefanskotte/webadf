@@ -169,3 +169,5 @@ Run files-net-writes, files-net-volumes, files-net (desktop), plus `pnpm test`, 
 - Task 4: Ruling: a move row queued before migration 0056 (no move_item) removes nothing; the job says "Copied, but the original could not be removed — Something went wrong." — the server cannot tell what it copied — cost if wrong: an in-flight move at deploy becomes a copy
 - Task 4: Ruling: the Makedirs a copy onto a volume makes for a drawer's parents (they hold files) are move parts too; the move waits for all of them — cost if wrong: none (they answer done or exists)
 - Task 4: Ruling: a STASH: comment is compared against the queue row's cleaned comment; a comment cleaning changed counts as changed (kept) — cost if wrong: a rare file stays in STASH: after a move
+- Task 5: complete (tests: vitest src/lib/help → 118/118)
+- Task 5: Ruling: the files help topic's word cap raised 400 -> 415 for one sentence on what a Move removes — the existing paragraph's words are each asserted elsewhere — cost if wrong: a longer help body

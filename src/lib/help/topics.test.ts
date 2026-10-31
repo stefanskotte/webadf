@@ -41,8 +41,8 @@ describe('help topics', () => {
       const words = text.split(/\s+/).filter(Boolean).length;
       expect(words).toBeGreaterThanOrEqual(60);
       // files covers two panes, the bank, filing and (NET: volumes) browsing the Amiga: it alone may run longer.
-      // ... and (NET: volumes phase 2) writing to them, in one short paragraph: 400 for files.
-      expect(words).toBeLessThanOrEqual(id === 'files' ? 400 : 280);
+      // ... and (NET: volumes phase 2) writing to them, in one short paragraph, with what a Move removes (§9): 415 for files.
+      expect(words).toBeLessThanOrEqual(id === 'files' ? 415 : 280);
       expect(text).not.toMatch(BANNED);
     });
   }
