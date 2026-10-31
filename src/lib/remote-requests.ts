@@ -41,14 +41,17 @@ export const isWriteKind = (k: string): k is WriteKind => WRITES.includes(k);
 const LINE_KINDS = ['vols', 'dir', ...WRITE_KINDS];
 
 /**
- * The board is moving a file now, so Transfer answers nothing else meanwhile (A500 bench 2026-10-31; phase 2 §4.4): a
- * get's file going up, a queue file going down (a send, or a copy onto a volume), or an Amiga-side upload. The last two
+ * The board is busy now, so Transfer answers nothing else meanwhile (A500 bench 2026-10-31; phase 2 §4.4): a get's file
+ * going up, a queue file going down (a send, or a copy onto a volume), an Amiga-side upload, or another request whose
+ * answer is arriving in pieces (a drawer DELETE sending DEL, a long listing: final review C3). The last two
  * have no clock of their own: the board's receiver report (send_rx_at, stamped by every chunk) is it.
  */
 function boardMoving(cut: Date) {
   return sql`(exists (select 1 from remote_requests g
       where g.device_id = remote_requests.device_id and g.kind = 'get' and (
         (g.status = 'fetching' and g.active_at >= ${cut}) or (g.status = 'done' and g.answered_at >= ${cut})))
+    or exists (select 1 from remote_requests w where w.device_id = remote_requests.device_id and w.id <> remote_requests.id
+      and w.status = 'sent' and w.pieces > 0 and w.active_at >= ${cut})
     or exists (select 1 from devices d where d.id = remote_requests.device_id and d.send_rx_at >= ${cut} and (
       exists (select 1 from transfers t where t.device_id = d.id and t.status = 'sending')
       or exists (select 1 from amiga_uploads u where u.device_id = d.id and u.status = 'receiving' and u.source = 'amiga'))))`;

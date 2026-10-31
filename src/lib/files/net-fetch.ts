@@ -30,7 +30,7 @@ import { formatPath, parsePath, type FsPath } from './path';
 import { refuse, skippedItem, type Clash, type CopyMove, type OpCtx, type OpItem, type Outcome } from './driver';
 import { browseOf, isNetVolumePath } from './net-driver';
 import { clashMode, joinAmiga, moveWithinVolume, mustRemoveOnVolume, placeOf, sameVolume, writableBoard } from './net-write';
-import { settleMoveOfGet, settleMoveOfTransfer } from './net-moves';
+import { settleMoveOfGet, settleMoveOfTransfer, settleMovesOfJob } from './net-moves';
 import { shelfDest } from './shelf';
 import { ADDED_UNFILED } from './shelf-rules';
 import { keepBothName, sameStashName, stashFind, stashTree } from './stash-paths';
@@ -321,6 +321,8 @@ export type FetchProgress = {
  */
 export async function fetchProgress(db: Db, orgId: string, fetchId: string, now: Date): Promise<FetchProgress | null> {
   await expireStale(db, now);
+  // A move whose parts all ended -- however they ended -- is settled here, so the job finishes (final review C2).
+  await settleMovesOfJob(db, orgId, fetchId);
   const reqs = await db.select().from(remoteRequests)
     .where(and(eq(remoteRequests.fetchId, fetchId), eq(remoteRequests.orgId, orgId)))
     .orderBy(asc(remoteRequests.createdAt), asc(remoteRequests.id));

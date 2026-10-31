@@ -228,12 +228,18 @@ export async function copyOntoVolume(ctx: OpCtx, dir: FsPath, tops: IncomingTop[
   }
   if (clashes.length) return { kind: 'clashes', clashes };
 
-  const files = going.flatMap((g) => g.top.items.filter((i) => i.kind === 'file').map((i) => ({ g, i, rel: [g.name, ...i.rel.slice(1)] })));
+  const sizeOf = (i: IncomingTop['items'][number]) => i.bytes?.length ?? i.size;
+  // An empty file is left out (the board's queue carries no 0-byte file; final review I-3): a picked one is refused as
+  // its own item, one inside a drawer is skipped and the rest of the drawer goes.
+  for (const g of [...going]) {
+    const only = g.top.items.length === 1 && g.top.items[0].kind === 'file' && sizeOf(g.top.items[0]) === 0;
+    if (only) { results.set(g.top.source, { source: g.top.source, ok: false, refusal: { code: 'unsupported', detail: `${g.name} is empty` } }); going.splice(going.indexOf(g), 1); }
+  }
+  const files = going.flatMap((g) => g.top.items.filter((i) => i.kind === 'file' && sizeOf(i) !== 0).map((i) => ({ g, i, rel: [g.name, ...i.rel.slice(1)] })));
   for (const { i, rel } of files) {
-    const size = i.bytes?.length ?? i.size;
+    const size = sizeOf(i);
     if (size === undefined || (!i.bytes && !i.sha256)) refuse('failed', 500, `${rel.join('/')} came without its bytes`);
     if (size > SEND_FILE_MAX) refuse('too_large', 413, `${rel.join('/')} is over 4 MB`);
-    if (size === 0) refuse('unsupported', 400, `${rel.join('/')} is empty`);
   }
   if (files.length > FETCH_MAX_FILES) refuse('too_large', 413, `at most ${FETCH_MAX_FILES} files at a time`);
   if (files.reduce((n, f) => n + (f.i.bytes?.length ?? f.i.size!), 0) > FETCH_MAX_BYTES) refuse('too_large', 413, `at most ${FETCH_MAX_BYTES / MB} MB at a time`);
@@ -251,7 +257,7 @@ export async function copyOntoVolume(ctx: OpCtx, dir: FsPath, tops: IncomingTop[
     protection: i.protection, comment: i.comment ?? '', ...(i.bytes ? { bytes: i.bytes } : {}),
     dest: joinAmiga(at.amiga, ...rel), onClash: g.mode, ...(opts.move ? { moveSource: g.top.source } : {}) }));
   const job = newRequestId();
-  if (mkdirs.length) await addWrites(getDb(), { orgId: ctx.orgId, deviceId: t.id, jobId: job, writes: mkdirs });
+  // The queue first: a copy it refuses makes no drawers on the Amiga either (final review I-4).
   if (queue.length) {
     const r = await queueTransfers(getDb(), { orgId: ctx.orgId, deviceId: t.id, userId: ctx.userId, files: queue, jobId: job });
     if (!r.ok) {
@@ -265,6 +271,7 @@ export async function copyOntoVolume(ctx: OpCtx, dir: FsPath, tops: IncomingTop[
       }
     }
   }
+  if (mkdirs.length) await addWrites(getDb(), { orgId: ctx.orgId, deviceId: t.id, jobId: job, writes: mkdirs });
   for (const g of going) results.set(g.top.source, { source: g.top.source, ok: true });
   return { kind: 'done', items: tops.map((x) => results.get(x.source)!), written: [],
     ...(queue.length + mkdirs.length ? { job: { id: job, files: queue.length, writes: mkdirs.length } } : {}) };

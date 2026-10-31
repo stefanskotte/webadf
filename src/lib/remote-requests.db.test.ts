@@ -451,6 +451,20 @@ describe('write requests', () => {
     expect((await latestFor(getDb(), deviceId, 'dir', 'Work:', at(6))).state).toBe('none');
   });
 
+  // Final review C3: Transfer answers one request at a time; what waits behind a drawer delete sending DEL pieces waits.
+  it('final review C3: a write held behind a delete whose DEL pieces keep coming does not time out', async () => {
+    const [d, icon] = await addWrites(getDb(), { orgId, deviceId, jobId: 'jc3', writes: [
+      { kind: 'delete', amigaPath: 'Work:old', label: 'Work:old' },
+      { kind: 'delete', amigaPath: 'Work:old.info', label: 'Work:old.info' },
+    ] }, t0);
+    await takeWaiting(getDb(), deviceId, t0);
+    await answer(d, [`DEL ${d} 50`], 0, false, at(40));
+    await expireStale(getDb(), at(70));
+    expect((await rowOf(icon)).status).toBe('sent');
+    await expireStale(getDb(), at(101));
+    expect((await rowOf(icon)).status).toBe('failed');
+  });
+
   it('a listing arriving in pieces is alive only while a piece came within 30 s (§4.4)', async () => {
     const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:Big', fresh: false }, t0);
     await takeWaiting(getDb(), deviceId, t0);

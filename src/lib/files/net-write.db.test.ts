@@ -332,4 +332,83 @@ describe('moves', () => {
     expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ total: 1, done: 1, waiting: 0 });
     expect((await writes()).map((w) => `${w.kind} ${w.amigaPath}`)).toEqual(['delete Work:x']);
   });
+
+  // Final review C1: a drawer moved between volumes arrives file by file; its source may go only once all of it has.
+  it('final review C1: a drawer moved between volumes is deleted only once every file of it arrived', async () => {
+    await remember('DF0:', [], 'w2');
+    await remember('Work:Pair', [ent('a', 1), ent('b', 1)]);
+    await remember('Work:', [ent('Pair', 0, true)]);
+    const r = await op({ op: 'move', sources: [W('Pair')], dest: 'NET:/w2/DF0', onClash: 'ask' });
+    const job = (r as { job: { id: string } }).job.id;
+    const [ga, gb] = (await gets()).sort((x, y) => x.amigaPath.localeCompare(y.amigaPath));
+    await arrive(ga.id, 'Work:Pair/a', new TextEncoder().encode('a'));
+    const [ra] = await rows('w2');
+    await deliver(ra.id, { ok: true, savedAs: 'DF0:Pair/a' }, 'w2');
+    expect(await writes()).toEqual([]);   // b has not arrived: Work:Pair stays
+    await arrive(gb.id, 'Work:Pair/b', new TextEncoder().encode('b'));
+    const rb = (await rows('w2')).find((x) => x.id !== ra.id)!;
+    await deliver(rb.id, { ok: true, savedAs: 'DF0:Pair/b' }, 'w2');
+    expect((await writes()).map((w) => `${w.kind} ${w.amigaPath}`)).toEqual(['delete Work:Pair']);
+    expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ total: 2, done: 2, waiting: 0 });
+  });
+
+  it('final review C1/C2: one file of a moved drawer fails: the source stays, and the job finishes saying so', async () => {
+    await remember('DF0:', [], 'w2');
+    await remember('Work:Pair', [ent('a', 1), ent('b', 1)]);
+    await remember('Work:', [ent('Pair', 0, true)]);
+    const r = await op({ op: 'move', sources: [W('Pair')], dest: 'NET:/w2/DF0', onClash: 'ask' });
+    const job = (r as { job: { id: string } }).job.id;
+    const [ga, gb] = (await gets()).sort((x, y) => x.amigaPath.localeCompare(y.amigaPath));
+    await arrive(ga.id, 'Work:Pair/a', new TextEncoder().encode('a'));
+    const [ra] = await rows('w2');
+    await deliver(ra.id, { ok: true, savedAs: 'DF0:Pair/a' }, 'w2');
+    await answerPiece(getDb(), 'w1', gb.id, { piece: 0, lines: [`ERR ${gb.id} notfound 0:`], last: true });
+    const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!;
+    expect(p).toMatchObject({ total: 2, done: 1, waiting: 0, failed: [{ name: 'b' }] });
+    expect(await writes()).toEqual([]);
+  });
+
+  it('final review C2: a move onto a volume whose other file fails readonly (writing off) finishes; the source stays', async () => {
+    await stash('Two/m.txt', 'm'); await stash('Two/k.txt', 'k');
+    const r = await op({ op: 'move', sources: ['STASH:/Two'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
+    const job = (r as { job: { id: string } }).job.id;
+    const [m] = await rows();
+    await deliver(m.id, { ok: true, savedAs: 'Work:Tools/Two/x' });
+    const { failWritesWhenOff } = await import('@/lib/transfers');
+    await failWritesWhenOff(getDb(), 'w1');
+    expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ waiting: 0, failed: [{ reason: 'Writing is off in Transfer' }] });
+    expect((await listStash(getDb(), 'o1')).map((x) => x.path).filter((x) => x.endsWith('.txt')).sort()).toEqual(['Two/k.txt', 'Two/m.txt']);
+  });
+
+  it('final review I-2: a move whose source cannot be removed says so in its job', async () => {
+    const r = await op({ op: 'move', sources: [W('x')], dest: 'STASH:', onClash: 'keep-both' });
+    const job = (r as { fetching: { id: string } }).fetching.id;
+    const [g] = await gets();
+    await getDb().update(devices).set({ writeOn: false }).where(eq(devices.id, 'w1'));
+    await arrive(g.id, 'Work:x', new TextEncoder().encode('xx'));
+    const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!;
+    expect(p).toMatchObject({ done: 1, waiting: 0 });
+    expect(p.writes).toEqual([expect.objectContaining({ kind: 'delete', label: 'Work:x', status: 'failed',
+      reason: 'Copied, but the original could not be removed — Writing is off in Transfer' })]);
+  });
+});
+
+describe('final review fixes: copies onto a volume', () => {
+  beforeEach(async () => { await remember('Work:Tools', []); });
+
+  it('I-3: an empty file inside a drawer is left out, the rest is copied', async () => {
+    await stash('Box/full.txt', 'full');
+    await stash('Box/empty.txt', '');
+    const r = await op({ op: 'copy', sources: ['STASH:/Box'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
+    expect(r).toMatchObject({ kind: 'done', items: [{ source: 'STASH:/Box', ok: true }], job: { files: 1 } });
+    expect((await rows()).map((x) => x.amigaDest)).toEqual(['Work:Tools/Box/full.txt']);
+  });
+
+  it('I-4: a copy the queue refuses makes no drawers on the Amiga', async () => {
+    for (let i = 0; i < 33; i++) await stash(`Many2/f${i}`, `${i}`);
+    await stash('Many2/Empty', '', 'dir');
+    expect(await op({ op: 'copy', sources: ['STASH:/Many2'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' }))
+      .toMatchObject({ kind: 'refused', refusal: { code: 'queue_full' } });
+    expect(await writes()).toEqual([]);
+  });
 });
