@@ -221,7 +221,56 @@ static void take_err(amiga_send_t *s, const char *line) {
     set_failure(s, i ? code : "write", text);
 }
 
-// Starts the queue's NEXT file: "FILE " + everything after "NEXT ".
+// The queue's NEXT entry after "NEXT " (ruling N1): "<id> <size> <crc> <prot> <len>:<path> <len>:<comment>", then
+// optionally "<len>:<dest>" and a mode. A path with a ':' is absolute: the destination itself. Pointers into the line.
+typedef struct nf {
+    int head_n;                 // "<id> <size> <crc> <prot>"
+    int rel_n;                  // up to the end of the comment: today's FILE tail
+    const char *comment, *dest, *mode;
+    int comment_n, dest_n, mode_n;
+} nf_t;
+static bool mode_word(const char *t, int n) {
+    return (n == 4 && !strncmp(t, "keep", 4)) || (n == 7 && !strncmp(t, "replace", 7)) || (n == 4 && !strncmp(t, "skip", 4));
+}
+// "<volume>:<parts>" (spec 2026-10-31 section 2.2): a volume of 1-30 characters without '/', and a name after the
+// colon (FILE names a file); 1-255 bytes, no control byte. The parts' own rules are Transfer's to check.
+static bool abs_path_ok(const char *p, int n) {
+    int colon = -1;
+    if (n < 1 || n > 255) return false;
+    for (int i = 0; i < n; i++) {
+        const unsigned char c = (unsigned char)p[i];
+        if (c < 0x20 || c == 0x7f) return false;
+        if (colon < 0 && c == '/') return false;
+        if (colon < 0 && c == ':') colon = i;
+    }
+    return colon >= 1 && colon <= 30 && colon < n - 1;
+}
+static bool next_parse(const char *line, nf_t *f) {
+    const char *p = line, *t, *path;
+    int n, path_n;
+    uint32_t v;
+    memset(f, 0, sizeof *f);
+    t = word(&p, &n); if (n < 1) return false;
+    t = word(&p, &n); if (!dec32(t, n, &v)) return false;
+    t = word(&p, &n); if (!hex32(t, n, &v)) return false;
+    t = word(&p, &n); if (!hex32(t, n, &v)) return false;
+    f->head_n = (int)(t + n - line);
+    if (!lenfield(&p, &path, &path_n) || path_n < 1 || path_n > 255) return false;
+    if (!lenfield(&p, &f->comment, &f->comment_n) || f->comment_n > 79) return false;
+    f->rel_n = (int)(f->comment + f->comment_n - line);
+    if (*p >= '0' && *p <= '9') {
+        if (!lenfield(&p, &f->dest, &f->dest_n) || !memchr(f->dest, ':', (size_t)f->dest_n)) return false;
+    }
+    if (*p) { f->mode = word(&p, &f->mode_n); if (!mode_word(f->mode, f->mode_n)) return false; }
+    if (*p) return false;
+    if (!f->dest && memchr(path, ':', (size_t)path_n)) { f->dest = path; f->dest_n = path_n; }
+    if (!f->dest) return true;                       // relative: a mode is dropped, the row lands in ReceiveDir
+    if (!abs_path_ok(f->dest, f->dest_n)) return false;
+    if (!f->mode) { f->mode = "keep"; f->mode_n = 4; }
+    return true;
+}
+
+// Starts the queue's NEXT file: "FILE " + everything after "NEXT " (a relative path), or the extended FILE.
 static void start_file(amiga_send_t *s) {
     const char *nl = memchr(s->queue, '\n', (size_t)s->queue_len);
     int len = nl ? (int)(nl - s->queue) : s->queue_len;
@@ -239,7 +288,31 @@ static void start_file(amiga_send_t *s) {
     s->size = (uint32_t)size;
     s->off = 0;
     s->chunk_len = 0;
-    int n = snprintf(s->out_line, sizeof s->out_line, "FILE %.*s\n", len - 5, rest);
+    // Copy onto a volume (fw 1.23.0, spec 2026-10-31 section 2.2, ruling N1): the entry may name an absolute
+    // destination and a clash mode. Parsed from a NUL-terminated copy in s->line (scratch here: the read loop is over).
+    memcpy(s->line, rest, (size_t)(len - 5));
+    s->line[len - 5] = 0;
+    nf_t f;
+    if (!next_parse(s->line, &f)) {
+        wf_logf(WF_WARN, "send: %.8s entry unreadable", s->id);
+        set_failure(s, "name", "the board could not read this file's entry");
+        return;
+    }
+    int n;
+    if (f.dest) {
+        if (!(s->req && s->peer_v == 4 && s->req->write)) {
+            // Never sent: Transfer 2.4 would put it in ReceiveDir, and 2.5 with writing off refuses it anyway.
+            wf_logf(WF_INFO, "send: %.8s readonly (Transfer protocol %u%s)", s->id, (unsigned)s->peer_v,
+                    s->peer_v == 4 ? ", writing off" : "");
+            set_failure(s, "readonly", AS_TXT_RO);
+            return;
+        }
+        n = snprintf(s->out_line, sizeof s->out_line, "FILE %.*s %d:%.*s %d:%.*s %.*s\n", f.head_n, s->line,
+                     f.dest_n, f.dest_n, f.dest, f.comment_n, f.comment_n, f.comment, f.mode_n, f.mode);
+    } else {
+        n = snprintf(s->out_line, sizeof s->out_line, "FILE %.*s\n", f.rel_n, s->line);   // today's FILE, byte for byte
+    }
+    if (n < 0 || n >= (int)sizeof s->out_line) { set_failure(s, "name", "the board could not read this file's entry"); return; }
     push(s, (const uint8_t *)s->out_line, n);
     s->phase = AS_FILE_SENT;
     s->t_phase = now(s);
@@ -875,6 +948,11 @@ static bool run(amiga_send_t *s, bool http) {
             } else if (is_for_me(s, s->line, "ERR ")) {
                 take_err(s, s->line);
                 s->phase = AS_READY;
+            } else if (is_for_me(s, s->line, "SKIP ")) {
+                // Protocol 4 (spec 2026-10-31 section 2.2): the name exists and the mode is skip; no bytes follow.
+                set_failure(s, "skipped", "");
+                s->phase = AS_READY;
+                wf_logf(WF_INFO, "send: %.8s skipped (the name exists)", s->id);
             }
             break;
         case AS_AWAIT_OK:

@@ -1714,7 +1714,125 @@ static void a_drop_mid_delete_ends_norx_lost(void) {
           F.req_body[0]);
     CHECK(!as_write(&S), "unknown while closed");
 }
-//@@T4@@
+
+// Copy onto a volume (spec 2026-10-31 section 2.2; ruling N1: the NEXT line carries the destination and the mode).
+// The queue gets `next` (its NEXT line's tail) at version 2, and the board fetches it.
+static void queue_next(const char *tail) {
+    snprintf(F.queue, sizeof F.queue, "NEXT %s %s\nLIST 0\n", ID, tail);
+    as_set_inputs(&S, true, 0xAC100AEDu, 2);
+    run(3);
+}
+static bool sent_file(const char *tail) {
+    char want[700]; snprintf(want, sizeof want, "FILE %s %s\n", ID, tail);
+    return strstr(F.out, want) != NULL;
+}
+
+static void a_dest_row_goes_as_the_extended_file(void) {
+    ready4(1, 1);
+    memcpy(F.file, "hello", 5); F.file_len = 5;
+    queue_next("5 3610a686 0 16:Work:Tools/x.txt 0: replace");
+    CHECK(sent_file("5 3610a686 0 16:Work:Tools/x.txt 0: replace"), F.out);
+    char go[80]; snprintf(go, sizeof go, "GO %s", ID); reply(go); clear_out(); run(3);
+    CHECK(strcmp(F.out, "hello") == 0, "bytes");
+    char ok[120]; snprintf(ok, sizeof ok, "OK %s 16:Work:Tools/x.txt", ID); reply(ok);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    run(3);
+    CHECK_EQ_INT(F.posts, 1);
+    CHECK(strcmp(F.posted, "{\"ok\":true,\"savedAs\":\"Work:Tools/x.txt\"}") == 0, F.posted);
+}
+
+static void a_dest_as_its_own_field_is_accepted(void) {
+    ready4(1, 1);
+    queue_next("5 3610a686 0 5:x.txt 3:a b 16:Work:Tools/x.txt skip");
+    CHECK(sent_file("5 3610a686 0 16:Work:Tools/x.txt 3:a b skip"), F.out);
+}
+
+static void an_absolute_path_without_a_mode_is_keep(void) {
+    ready4(1, 1);
+    queue_next("5 3610a686 0 16:Work:Tools/x.txt 4:note");
+    CHECK(sent_file("5 3610a686 0 16:Work:Tools/x.txt 4:note keep"), F.out);
+}
+
+static void a_latin1_dest_with_spaces_goes_byte_for_byte(void) {
+    ready4(1, 1);
+    queue_next("5 3610a686 0 16:Work:T\xe9 st/x y.z 0: keep");
+    CHECK(sent_file("5 3610a686 0 16:Work:T\xe9 st/x y.z 0: keep"), F.out);
+}
+
+// Review Focus 2.
+static void a_dest_row_with_writing_off_fails_readonly_and_the_next_goes(void) {
+    ready4(1, 0);
+    queue_next("5 3610a686 0 16:Work:Tools/x.txt 0: replace");
+    CHECK(strstr(F.out, "FILE") == NULL, "never sent");
+    CHECK_EQ_INT(F.posts, 1);
+    CHECK(strcmp(F.posted_id, ID) == 0, F.posted_id);
+    CHECK(strcmp(F.posted, "{\"ok\":false,\"code\":\"readonly\",\"text\":\"Writing is off in Transfer\"}") == 0, F.posted);
+    const int fetches = F.queue_fetches;
+    snprintf(F.queue, sizeof F.queue, "NEXT %s 5 3610a686 0 5:Hello 0:\nLIST 0\n", ID);
+    run(3);
+    CHECK(F.queue_fetches > fetches, "refetched after the outcome");
+    char want[120]; snprintf(want, sizeof want, "FILE %s 5 3610a686 0 5:Hello 0:\n", ID);
+    CHECK(strstr(F.out, want) != NULL, "the relative row goes");
+}
+
+static void a_dest_row_to_transfer_2_4_fails_readonly(void) {
+    ready3(1);
+    queue_next("5 3610a686 0 16:Work:Tools/x.txt 0: keep");
+    CHECK(strstr(F.out, "FILE") == NULL, "never sent to a 2.4");
+    CHECK(strcmp(F.posted, "{\"ok\":false,\"code\":\"readonly\",\"text\":\"Writing is off in Transfer\"}") == 0, F.posted);
+}
+
+static void skip_is_reported_as_skipped(void) {
+    ready4(1, 1);
+    queue_next("5 3610a686 0 16:Work:Tools/x.txt 0: skip");
+    CHECK(sent_file("5 3610a686 0 16:Work:Tools/x.txt 0: skip"), F.out);
+    char sk[80]; snprintf(sk, sizeof sk, "SKIP %s", ID); reply(sk);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    run(3);
+    CHECK_EQ_INT(F.posts, 1);
+    CHECK(strcmp(F.posted, "{\"ok\":false,\"code\":\"skipped\",\"text\":\"\"}") == 0, F.posted);
+    CHECK_EQ_INT(F.chunk_fetches, 0);                     // no bytes follow a SKIP
+    CHECK(as_rx(&S) == 'c' && F.sock == AS_SOCK_OPEN, "the connection stays");
+}
+
+static void a_skip_for_another_id_is_ignored(void) {
+    ready4(1, 1);
+    queue_next("5 3610a686 0 16:Work:Tools/x.txt 0: skip");
+    reply("SKIP 99999999-2222-4333-8444-555555555555"); run(3);
+    CHECK_EQ_INT(F.posts, 0);
+}
+
+static void wprot_full_denied_pass_through(void) {
+    static const char *const codes[] = { "wprot", "full", "denied", "busy", "readonly" };
+    for (int i = 0; i < 5; i++) {
+        ready4(1, 1);
+        queue_next("5 3610a686 0 16:Work:Tools/x.txt 0: replace");
+        char e[120]; snprintf(e, sizeof e, "ERR %s %s 4:Text", ID, codes[i]); reply(e);
+        snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+        run(3);
+        char want[120]; snprintf(want, sizeof want, "{\"ok\":false,\"code\":\"%s\",\"text\":\"4:Text\"}", codes[i]);
+        CHECK(strcmp(F.posted, want) == 0, F.posted);
+    }
+}
+
+static void an_unknown_mode_fails_the_row_name(void) {
+    ready4(1, 1);
+    queue_next("5 3610a686 0 16:Work:Tools/x.txt 0: overwrite");
+    CHECK(strstr(F.out, "FILE") == NULL, "never sent");
+    CHECK(strstr(F.posted, "\"code\":\"name\"") != NULL, F.posted);
+}
+
+static void a_relative_row_is_unchanged_at_protocol_4(void) {
+    ready4(1, 1);
+    queue_next("5 3610a686 40 9:Hello.txt 4:note");
+    CHECK(sent_file("5 3610a686 40 9:Hello.txt 4:note"), F.out);
+    ready4(1, 0);                                         // writing off: a relative row still goes (ReceiveDir)
+    queue_next("5 3610a686 40 9:Hello.txt 4:note");
+    CHECK(sent_file("5 3610a686 40 9:Hello.txt 4:note"), F.out);
+    ready4(1, 1);
+    queue_next("5 3610a686 40 9:Hello.txt 0: replace");   // a mode on a relative path is dropped (ruling N1)
+    CHECK(sent_file("5 3610a686 40 9:Hello.txt 0:"), F.out);
+}
 
 int main(void) {
     RUN(off_or_no_address_does_nothing);
@@ -1838,6 +1956,16 @@ int main(void) {
     RUN(del_lines_keep_a_long_delete_alive);
     RUN(a_partial_delete_posts_del_then_err);
     RUN(a_drop_mid_delete_ends_norx_lost);
-    //@@R4@@
+    RUN(a_dest_row_goes_as_the_extended_file);
+    RUN(a_dest_as_its_own_field_is_accepted);
+    RUN(an_absolute_path_without_a_mode_is_keep);
+    RUN(a_latin1_dest_with_spaces_goes_byte_for_byte);
+    RUN(a_dest_row_with_writing_off_fails_readonly_and_the_next_goes);
+    RUN(a_dest_row_to_transfer_2_4_fails_readonly);
+    RUN(skip_is_reported_as_skipped);
+    RUN(a_skip_for_another_id_is_ignored);
+    RUN(wprot_full_denied_pass_through);
+    RUN(an_unknown_mode_fails_the_row_name);
+    RUN(a_relative_row_is_unchanged_at_protocol_4);
     return REPORT();
 }
