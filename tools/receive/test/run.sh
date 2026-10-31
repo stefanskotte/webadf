@@ -7,7 +7,7 @@ fail=0
 CC="${CC:-cc}"
 for t in test_*.c; do
   bin=".build/${t%.c}"
-  "$CC" -std=c99 -O1 -g -Wall -Wextra -Werror -I../core -I../../../wifi-floppy/firmware/test \
+  "$CC" -std=c99 -O1 -g -Wall -Wextra -Werror -DRX_TEST_HOOKS -I../core -I../../../wifi-floppy/firmware/test \
     -o "$bin" "$t" ../core/rx_crc.c ../core/rx_names.c ../core/rx_proto.c
   "$bin" || fail=1
 done

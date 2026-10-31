@@ -94,4 +94,36 @@ static void sendable_devices(void) {
     CHECK(!rx_device_sendable("DF0:x"), "after the colon");
 }
 
-int main(void) { RUN(ok_paths); RUN(bad_paths); RUN(candidates); RUN(utoa); RUN(base_names); RUN(sendable_names); RUN(sendable_devices); return REPORT(); }
+/* Protocol 4 (spec 2026-10-31 §2.2): "Vol:drawer/name", the volume part 1-30 bytes, the rest as rx_path_ok. */
+static void absolute_paths(void) {
+    CHECK(rx_abs_path_ok("Work:a"), "a file on a volume");
+    CHECK(rx_abs_path_ok("Work:Tools/x.txt"), "in a drawer");
+    CHECK(rx_abs_path_ok("Gr\xfc\xdf" "e:Caf\xe9"), "latin-1");
+    CHECK(rx_abs_path_ok("DF0:a"), "a device name");
+    CHECK(rx_abs_path_ok("123456789012345678901234567890:a"), "a 30-byte volume");
+    CHECK(rx_abs_path_ok("Ram Disk:a"), "a space in the volume");
+    CHECK(!rx_abs_path_ok("Work:"), "the root is not a file");
+    CHECK(!rx_abs_path_ok(":a"), "no volume");
+    CHECK(!rx_abs_path_ok("a"), "no colon");
+    CHECK(!rx_abs_path_ok(""), "empty");
+    CHECK(!rx_abs_path_ok("Work:/a"), "a leading slash");
+    CHECK(!rx_abs_path_ok("Work:a//b"), "a double slash");
+    CHECK(!rx_abs_path_ok("Work:a/"), "a trailing slash");
+    CHECK(!rx_abs_path_ok("Work:.."), "dotdot");
+    CHECK(!rx_abs_path_ok("Work:a/./b"), "dot");
+    CHECK(!rx_abs_path_ok("1234567890123456789012345678901:a"), "a 31-byte volume");
+    CHECK(!rx_abs_path_ok("Work:1234567890123456789012345678901"), "a 31-byte part");
+    CHECK(!rx_abs_path_ok("Wo/rk:a"), "a slash in the volume");
+    CHECK(!rx_abs_path_ok("Work:a:b"), "a second colon");
+    CHECK(!rx_abs_path_ok("Wo\x01rk:a"), "a control byte in the volume");
+    CHECK(!rx_abs_path_ok("Work:a\x7f"), "a DEL in a part");
+}
+static void absolute_candidates(void) {
+    char out[RX_PATH_MAX + 1];
+    CHECK_EQ_INT(rx_candidate("Work:Keep.txt", 2, out), 0); CHECK(strcmp(out, "Work:Keep_2.txt") == 0, out);
+    CHECK_EQ_INT(rx_candidate("Work:a/b.txt", 3, out), 0); CHECK(strcmp(out, "Work:a/b_3.txt") == 0, out);
+    CHECK_EQ_INT(rx_candidate("Work:123456789012345678901234567890", 2, out), 0);
+    CHECK(strcmp(out, "Work:1234567890123456789012345678_2") == 0, "the volume does not count in the 30 bytes");
+}
+
+int main(void) { RUN(absolute_paths); RUN(absolute_candidates); RUN(ok_paths); RUN(bad_paths); RUN(candidates); RUN(utoa); RUN(base_names); RUN(sendable_names); RUN(sendable_devices); return REPORT(); }

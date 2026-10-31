@@ -5,6 +5,9 @@
 /* 1 if path is a safe relative path: 1..255 bytes, '/'-separated parts of 1..30 bytes, no ':', no byte < 0x20
    or 0x7f, no part "." or "..", no leading, trailing or double '/'. */
 int rx_path_ok(const char *path);
+/* 1 if path is an Amiga path to write (protocol 4, spec 2026-10-31 §2.2): "<volume>:<rest>", the volume part 1..30
+   bytes with no '/', ':' or control byte, rest a non-empty rx_path_ok path; 255 bytes at most in all. */
+int rx_abs_path_ok(const char *path);
 /* Candidate n for path into out[RX_PATH_MAX+1]: n <= 1 is path itself; n >= 2 puts "_n" before the last part's
    extension (its last '.', unless that dot starts the name), cutting the stem so the part stays <= 30 bytes.
    Returns 0, or -1 if it cannot fit. */

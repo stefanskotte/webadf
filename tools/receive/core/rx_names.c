@@ -33,8 +33,16 @@ unsigned rx_utoa(unsigned long v, char *out) {
     return n;
 }
 
+int rx_abs_path_ok(const char *path) {
+    const char *colon = strchr(path, ':'), *p;
+    if (!colon || colon == path || colon - path > RX_PART_MAX || strlen(path) > RX_PATH_MAX) return 0;
+    for (p = path; p < colon; p++) if ((unsigned char)*p < 0x20 || *p == 0x7f || *p == '/') return 0;
+    return rx_path_ok(colon + 1);
+}
+
 int rx_candidate(const char *path, unsigned n, char *out) {
-    const char *last = strrchr(path, '/');
+    const char *last = strrchr(path, '/'), *colon = strrchr(path, ':');
+    if (colon && (!last || colon > last)) last = colon;   /* "Work:a.txt": the name after the volume (protocol 4) */
     size_t dirlen = last ? (size_t)(last - path + 1) : 0;
     const char *name = path + dirlen;
     size_t nlen = strlen(name), stem, extlen, slen;

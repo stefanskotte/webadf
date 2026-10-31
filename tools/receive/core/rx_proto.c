@@ -6,12 +6,27 @@
 
 #define PROGRESS_STEP 16384UL
 
+#ifdef RX_TEST_HOOKS   /* host tests: a malloc that fails on demand, and a count of what is held (plan ruling W16) */
+long rx_test_fail_alloc, rx_test_live;
+static void *rx_malloc(size_t n) {
+    void *p;
+    if (rx_test_fail_alloc > 0 && --rx_test_fail_alloc == 0) return NULL;
+    p = malloc(n);
+    if (p) rx_test_live++;
+    return p;
+}
+static void rx_free(void *p) { if (p) { rx_test_live--; free(p); } }
+#else
+#define rx_malloc malloc
+#define rx_free free
+#endif
+
 static void emit_full(rx_session *s, int kind, const char *id, const char *path, unsigned long size,
                       unsigned long bytes, const char *text, unsigned tag, const char *code, const char *key) {
     rx_event e;
     if (!s->on_event) return;
     e.kind = kind; e.id = id; e.path = path; e.size = size; e.bytes = bytes; e.text = text;
-    e.tag = tag; e.code = code; e.key = key;
+    e.tag = tag; e.code = code; e.key = key; e.to = 0;
     s->on_event(s->uctx, &e);
 }
 static void emit(rx_session *s, int kind, const char *id, const char *path, unsigned long size,
@@ -147,7 +162,7 @@ static void on_hello(rx_session *s, cur *c) {
         if (s->upq) emit_trust(s, "old");
         return;
     }
-    s->peer_v = v >= 3 ? 3 : 2;
+    s->peer_v = v >= 4 ? 4 : v == 3 ? 3 : 2;
     if (!tok(c, &t, &n) || !hex_key(t, n, s->peer_key)) s->peer_key[0] = 0;
     if (!s->upq) s->trust = RX_TRUST_NONE;
     else if (!s->peer_key[0]) { s->trust = RX_TRUST_OTHER; code = "other"; }
@@ -156,7 +171,10 @@ static void on_hello(rx_session *s, cur *c) {
         s->trust = RX_TRUST_OK; code = "new";
     } else if (strcmp(s->upq->trusted, s->peer_key) == 0) { s->trust = RX_TRUST_OK; code = "ok"; }
     else { s->trust = RX_TRUST_OTHER; code = "other"; }
-    if (s->peer_v == 3) {
+    if (s->peer_v == 4) {   /* spec 2026-10-31 §2.1: READY 4 <b> <w>, w only with b */
+        s->hello_browse = rx_browse_on(s); s->hello_write = rx_write_on(s);
+        puts_(s, s->hello_write ? "READY 4 1 1\n" : s->hello_browse ? "READY 4 1 0\n" : "READY 4 0 0\n");
+    } else if (s->peer_v == 3) {
         s->hello_browse = rx_browse_on(s);
         puts_(s, s->hello_browse ? "READY 3 1\n" : "READY 3 0\n");
     } else puts_(s, "READY 2\n");
@@ -183,10 +201,11 @@ void rx_key4(const char *key, char out[5]) {
 /* --- protocol 3: requests (spec 2026-10-30 §2.2) --- */
 static const char *const REQ_WORD[] = { "", "vols", "dir", "get" };
 int rx_browse_on(const rx_session *s) { return s->upq && s->upq->browse && s->peer_v >= 3 && s->trust == RX_TRUST_OK; }
+int rx_write_on(const rx_session *s) { return rx_browse_on(s) && s->upq->write && s->peer_v >= 4; }
 /* A request starts only with nothing moving: a file being received or going up finishes first (spec §2.2 Order). */
 static int req_idle(const rx_session *s) { return !s->in_data && s->up_phase == RX_UP_IDLE && !s->up_closing; }
 int rx_hello_stale(const rx_session *s) {
-    return s->peer_v >= 3 && s->hello_browse != rx_browse_on(s) && req_idle(s) &&
+    return s->peer_v >= 3 && (s->hello_browse != rx_browse_on(s) || (s->peer_v >= 4 && s->hello_write != rx_write_on(s))) && req_idle(s) &&
            s->req_kind == RX_REQ_NONE && s->wait_kind == RX_REQ_NONE && s->out_n == 0;
 }
 /* in, without control bytes (a newline would end the line early), into out[cap]. */
@@ -402,14 +421,17 @@ static void on_request(rx_session *s, cur *c, int kind) {
 
 /* --- protocol 2: the queue (in memory only: spec §2) --- */
 void rx_upq_init(rx_upq *q, const char *trusted) {
+    if (q->n <= RX_UP_MAX) rx_upq_clear(q);   /* a queue used before: its items go (spec 2026-10-31 §2.5) */
     memset(q, 0, sizeof *q);
     if (trusted && !hex_key(trusted, (unsigned)strlen(trusted), q->trusted)) q->trusted[0] = 0;
 }
-void rx_upq_clear(rx_upq *q) { while (q->n) free(q->q[--q->n]); }
+void rx_upq_clear(rx_upq *q) { while (q->n) rx_free(q->q[--q->n]); }
 static unsigned up_add_at(rx_upq *q, unsigned at, const char *local, const char *name, const char *rid) {
     rx_up_item *it;
-    if (q->n >= RX_UP_MAX || !local[0] || strlen(local) > RX_LOCAL_MAX || !rx_path_ok(name)) return 0;
-    if (!(it = malloc(sizeof *it))) return 0;
+    if (q->n >= RX_UP_MAX) { q->why = RX_ADD_FULL; return 0; }
+    if (!local[0] || strlen(local) > RX_LOCAL_MAX || !rx_path_ok(name)) { q->why = RX_ADD_NAME; return 0; }
+    if (!(it = rx_malloc(sizeof *it))) { q->why = RX_ADD_NOMEM; return 0; }
+    q->why = RX_ADD_OK;
     memmove(&q->q[at + 1], &q->q[at], (q->n - at) * sizeof q->q[0]);
     q->n++;
     q->q[at] = it;
@@ -425,7 +447,7 @@ unsigned rx_up_add_front(rx_upq *q, const char *local, const char *name, const c
 int rx_upq_remove(rx_upq *q, unsigned tag) {
     unsigned i;
     for (i = 0; i < q->n; i++) if (q->q[i]->tag == tag) {
-        free(q->q[i]);
+        rx_free(q->q[i]);
         memmove(&q->q[i], &q->q[i + 1], (q->n - i - 1) * sizeof q->q[0]);
         q->n--;
         return 1;
@@ -457,18 +479,19 @@ static void walk_each(void *u, const char *nm, int is_dir) {
     } else if (rx_up_add(w->q, w->local, w->name)) {
         w->n++;
         if (w->added) w->added(w->u, w->q->q[w->q->n - 1]);
-    }
+    } else if (w->q->why == RX_ADD_NOMEM) w->q->lost++;
     w->local[ll] = 0;
     w->name[nl] = 0;
 }
 int rx_up_add_tree(rx_upq *q, const rx_fs *fs, const char *local, const char *name, rx_added_fn added, void *u) {
     static rx_walk w;   /* static: the Amiga's stack is small, and a walk is never nested */
     int d;
+    q->lost = 0;
     if (strlen(local) > RX_LOCAL_MAX || strlen(name) > RX_PATH_MAX) return -1;
     d = fs->is_dir(fs->ctx, local);
     if (d < 0) return -1;
     if (d == 0) {
-        if (!rx_up_add(q, local, name)) return 0;
+        if (!rx_up_add(q, local, name)) { if (q->why == RX_ADD_NOMEM) q->lost = 1; return 0; }
         if (added) added(u, q->q[q->n - 1]);
         return 1;
     }

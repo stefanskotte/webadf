@@ -94,6 +94,7 @@ typedef struct rx_event {
     unsigned tag;         /* UP_*: the item */
     const char *code;     /* TRUST, UP_FAILED */
     const char *key;      /* TRUST: the board's key ("" when it sent none) */
+    const char *to;       /* REQ "rename": the new path (protocol 4); else NULL */
 } rx_event;
 typedef void (*rx_event_fn)(void *uctx, const rx_event *ev);
 
@@ -110,7 +111,11 @@ typedef struct rx_upq {
     char trusted[RX_KEY_HEX + 1];   /* "" until the first board: trust on first use */
     int trust_next;                 /* TRUST before the board connected: its key replaces the saved one */
     int browse;                     /* 1: the owner lets the web app browse (ENVARC:webadf/Browse; spec 2026-10-30 §2.3) */
+    int write;                      /* 1: ... and change the disks (ENVARC:webadf/Write; spec 2026-10-31 §2.4); needs browse */
+    int why;                        /* why the last add failed: RX_ADD_* (spec 2026-10-31 §2.5) */
+    unsigned lost;                  /* files the last rx_up_add_tree could not queue for want of memory */
 } rx_upq;
+enum { RX_ADD_OK, RX_ADD_FULL, RX_ADD_NOMEM, RX_ADD_NAME };
 enum { RX_TRUST_NONE, RX_TRUST_OK, RX_TRUST_OTHER, RX_TRUST_OLD };
 enum { RX_UP_IDLE, RX_UP_ASKED, RX_UP_SKIP, RX_UP_DATA, RX_UP_ENDED };   /* PUT out; CRC over the resumed part; bytes; END out */
 
@@ -129,7 +134,8 @@ typedef struct rx_session { /* fields private to rx_proto.c except list/list_n *
     int up_phase, up_closing, up_cancel; rx_up_item up_cur; rx_finfo up_info;
     unsigned long up_off, up_credit, up_stored, up_sent, up_skip, up_crc;
     /* protocol 3 */
-    int hello_browse;                                   /* what READY 3 said */
+    int hello_browse;                                   /* what READY 3 (or READY 4's <b>) said */
+    int hello_write;                                    /* what READY 4's <w> said (protocol 4) */
     int req_kind, req_open, req_nvols; unsigned req_i, req_count;
     char req_id[RX_ID_MAX + 1], req_path[RX_LOCAL_MAX + 1];             /* the request being answered */
     int wait_kind; char wait_id[RX_ID_MAX + 1], wait_path[RX_LOCAL_MAX + 1];   /* the one request waiting */
@@ -155,14 +161,16 @@ void rx_disconnected(rx_session *s);   /* the peer went away: drop a half-writte
 int rx_busy(const rx_session *s);      /* 1 while a file is being received */
 
 /* Protocol 2 (spec 2026-10-18). */
-void rx_upq_init(rx_upq *q, const char *trusted);              /* trusted: ENVARC:webadf/BoardKey, or "" */
+/* trusted: ENVARC:webadf/BoardKey, or "". q is zeroed or initialized before: what it still holds is freed. */
+void rx_upq_init(rx_upq *q, const char *trusted);
 void rx_upq_clear(rx_upq *q);                                  /* frees every waiting file */
 unsigned rx_up_add(rx_upq *q, const char *local, const char *name);  /* tag, or 0: full, no memory, or a bad name */
 /* A GET's file (spec 2026-10-30 §2.2): first in the queue; rid ties its PUT to the request. Tag, or 0. */
 unsigned rx_up_add_front(rx_upq *q, const char *local, const char *name, const char *rid);
 int rx_upq_remove(rx_upq *q, unsigned tag);                    /* 1 removed */
 typedef void (*rx_added_fn)(void *u, const rx_up_item *it);
-/* A file, or a drawer walked (64 files at most, .info files skipped, sub-paths kept); files added, or -1. */
+/* A file, or a drawer walked (64 files at most, .info files skipped, sub-paths kept); files added, or -1. q->lost: the
+   files a failed malloc left out. */
 int rx_up_add_tree(rx_upq *q, const rx_fs *fs, const char *local, const char *name, rx_added_fn added, void *u);
 void rx_attach(rx_session *s, rx_upq *q);   /* after rx_init: this connection may upload from q */
 int rx_uploads_on(const rx_session *s);     /* 1: a protocol 2 board with the trusted key */
@@ -173,6 +181,8 @@ int rx_browse_on(const rx_session *s);    /* 1: requests are answered (switch on
 /* 1 when READY 3's flag no longer matches the switch (or the trust) and the connection is idle: the front end closes
    it, so the board reconnects and hears the new flag (plan ruling T1). */
 int rx_hello_stale(const rx_session *s);
+/* Protocol 4 (spec 2026-10-31 §2): 1 while writes are answered (both switches on, protocol 4, the trusted key). */
+int rx_write_on(const rx_session *s);
 /* The protocol code for an AmigaDOS error (plan ruling T3); want_dir: the request wanted a drawer (DIR), not a file. */
 const char *rx_err_code(long err, int want_dir);
 /* An RX_EV_REQ in the owner's words (spec §2.3): "listed volumes", "listed Work:Programs", "copying Work:a.lha" (GOT:
@@ -180,4 +190,7 @@ const char *rx_err_code(long err, int want_dir);
    "could not list Work:x: <why>"; a path over 40 bytes ends "...". Cut to cap. */
 void rx_req_words(const rx_event *e, char *out, unsigned cap);
 
+#ifdef RX_TEST_HOOKS   /* host tests only: rx_test_fail_alloc = n makes the n-th next allocation fail */
+extern long rx_test_fail_alloc, rx_test_live;
+#endif
 #endif
