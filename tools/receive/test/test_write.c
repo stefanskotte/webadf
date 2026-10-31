@@ -71,7 +71,7 @@ static void a_protocol_4_hello_answers_both_switches(void) {
     setup(0, 1); hello4(); CHECK(strcmp(ob, "READY 4 0 0\n") == 0, "writing needs browsing");
     CHECK(!rx_write_on(&S), "off without browsing");
     setup(1, 1); feed("WEBADF 4 " KEY2 "\n"); drain(); CHECK(strcmp(ob, "READY 4 0 0\n") == 0, "another key: neither");
-    setup(1, 1); feed("WEBADF 9 " KEY "\n"); drain(); CHECK(strcmp(ob, "READY 4 1 1\n") == 0, "a newer board is answered as 4");
+    setup(1, 1); feed("WEBADF 4 " KEY "\n"); drain(); CHECK(strcmp(ob, "READY 4 1 1\n") == 0, "protocol 4 as in 2.5");
 }
 static void older_hellos_are_answered_as_before(void) {
     setup(1, 1); feed("WEBADF 3 " KEY "\n"); drain(); CHECK(strcmp(ob, "READY 3 1\n") == 0, ob);
@@ -476,6 +476,67 @@ static void write_error_codes(void) {
     CHECK(strcmp(rx_err_code(226, 1), "io") == 0, "226 as before"); CHECK(strcmp(rx_err_code(216, 1), "io") == 0, "216");
 }
 
+/* --- Transfer 2.6, protocol 5 (spec §9) --- */
+static void hello5(void) { feed("WEBADF 5 " KEY "\n"); drain(); }
+static void a_protocol_5_hello(void) {
+    setup(1, 1); hello5(); CHECK(strcmp(ob, "READY 5 1 1\n") == 0, ob); CHECK(rx_write_on(&S), "writing on");
+    setup(1, 0); hello5(); CHECK(strcmp(ob, "READY 5 1 0\n") == 0, ob);
+    setup(0, 1); hello5(); CHECK(strcmp(ob, "READY 5 0 0\n") == 0, ob);
+    setup(1, 1); feed("WEBADF 5 " KEY2 "\n"); drain(); CHECK(strcmp(ob, "READY 5 0 0\n") == 0, "another key");
+    setup(1, 1); feed("WEBADF 9 " KEY "\n"); drain(); CHECK(strcmp(ob, "READY 5 1 1\n") == 0, "a newer board is answered as 5");
+    setup(1, 1); hello5(); Q.write = 0; CHECK(rx_hello_stale(&S), "the write flag is heard on 5 too");
+}
+static void delete_one_a_file(void) {
+    setup(1, 1); ff_put(&F, "Work:x", "x", 1, 0, ""); ff_put(&F, "Work:y", "y", 1, 0, ""); hello5();
+    CHECK(strcmp(req("DELETE o 6:Work:x one\n"), "DONE o 1\n") == 0, ob);
+    CHECK(!has("Work:x") && holds("Work:y", "y"), "only x");
+    { int i = last_ev(RX_EV_REQ); CHECK(i >= 0 && strcmp(ev_code[i], "delete") == 0 && ev[i].size == 1 && strcmp(ev_path[i], "Work:x") == 0, "the owner sees it"); }
+}
+static void delete_one_an_empty_drawer(void) {
+    setup(1, 1); ff_add(&F, "Work:E", 1); hello5();
+    CHECK(strcmp(req("DELETE o 6:Work:E one\n"), "DONE o 1\n") == 0, ob);
+    CHECK(!has("Work:E"), "gone");
+}
+static void delete_one_a_full_drawer_is_notempty(void) {
+    int n;
+    setup(1, 1); ff_add(&F, "Work:D", 1); ff_put(&F, "Work:D/a", "a", 1, 0, ""); ff_add(&F, "Work:D/Sub", 1);
+    ff_put(&F, "Work:D/Sub/b", "b", 1, 0, ""); ff_add(&F, "Work:D/Empty", 1); hello5(); n = F.n;
+    CHECK(strcmp(req("DELETE o 6:Work:D one\n"), "ERR o notempty 13:dos error 216\n") == 0, ob);
+    CHECK_EQ_INT(F.n, n);
+    CHECK(holds("Work:D/a", "a") && holds("Work:D/Sub/b", "b") && has("Work:D/Empty") && has("Work:D"), "nothing inside touched");
+    { int i = last_ev(RX_EV_REQ); CHECK(i >= 0 && strcmp(ev_text[i], "dos error 216") == 0 && strcmp(ev_path[i], "Work:D") == 0, "the owner is told"); }
+}
+static void delete_one_a_link(void) {
+    int i;
+    setup(1, 1); ff_add(&F, "Work:Sys", 1); ff_put(&F, "Work:Sys/x.library", "x", 1, 0, "");
+    i = ff_add(&F, "Work:Alias", 1); strcpy(F.e[i].link_to, "Work:Sys"); hello5();
+    CHECK(strcmp(req("DELETE o 10:Work:Alias one\n"), "DONE o 1\n") == 0, ob);
+    CHECK(!has("Work:Alias") && holds("Work:Sys/x.library", "x") && has("Work:Sys"), "only the link");
+}
+static void delete_one_refusals(void) {
+    int i;
+    setup(1, 1); ff_put(&F, "Work:L", "x", 1, 1, ""); hello5();
+    CHECK(strcmp(req("DELETE o 6:Work:L one\n"), "ERR o denied 13:dos error 222\n") == 0, ob); CHECK(has("Work:L"), "kept");
+    CHECK(strcmp(req("DELETE o 6:Work:N one\n"), "ERR o notfound 13:dos error 205\n") == 0, ob);
+    i = ff_put(&F, "Work:B", "x", 1, 0, ""); F.e[i].busy = 1;
+    CHECK(strcmp(req("DELETE o 6:Work:B one\n"), "ERR o busy 13:dos error 202\n") == 0, ob);
+    strcpy(F.wprot, "Floppy:"); ff_put(&F, "Floppy:f", "x", 1, 0, "");
+    CHECK(strcmp(req("DELETE o 8:Floppy:f one\n"), "ERR o wprot 13:dos error 214\n") == 0, ob);
+    CHECK(strcmp(req("DELETE o 5:Work: one\n"), "ERR o bad 11:bad request\n") == 0, "a volume root");
+    setup(1, 0); ff_put(&F, "Work:x", "x", 1, 0, ""); hello5();
+    CHECK(strcmp(req("DELETE o 6:Work:x one\n"), "ERR o readonly 26:writing is off in Transfer\n") == 0, ob);
+    CHECK(has("Work:x"), "kept");
+}
+static void one_on_protocol_4_is_bad(void) {
+    setup(1, 1); ff_put(&F, "Work:x", "x", 1, 0, ""); hello4();
+    CHECK(strcmp(req("DELETE o 6:Work:x one\n"), "ERR o bad 11:bad request\n") == 0, ob); CHECK(has("Work:x"), "kept");
+    setup(1, 1); ff_put(&F, "Work:x", "x", 1, 0, ""); hello5();
+    CHECK(strcmp(req("DELETE o 6:Work:x two\n"), "ERR o bad 11:bad request\n") == 0, "another token");
+    CHECK(strcmp(req("DELETE o 6:Work:x one one\n"), "ERR o bad 11:bad request\n") == 0, "twice");
+    CHECK(strcmp(req("MKDIR o 6:Work:y one\n"), "ERR o bad 11:bad request\n") == 0, "only DELETE takes it");
+    CHECK(has("Work:x") && !has("Work:y"), "kept");
+}
+
 int main(void) {
     RUN(a_protocol_4_hello_answers_both_switches); RUN(older_hellos_are_answered_as_before);
     RUN(a_changed_write_switch_makes_the_hello_stale);
@@ -494,6 +555,8 @@ int main(void) {
     RUN(switching_writing_off_stops_a_delete_between_steps); RUN(a_lost_connection_ends_a_delete);
     RUN(a_write_request_waits_behind_a_file); RUN(malformed_write_requests_are_bad); RUN(the_owners_words_for_writes);
     RUN(write_error_codes);
+    RUN(a_protocol_5_hello); RUN(delete_one_a_file); RUN(delete_one_an_empty_drawer);
+    RUN(delete_one_a_full_drawer_is_notempty); RUN(delete_one_a_link); RUN(delete_one_refusals); RUN(one_on_protocol_4_is_bad);
     (void)feedn; (void)lines_starting; (void)last_ev; (void)ff_put;
     return REPORT();
 }

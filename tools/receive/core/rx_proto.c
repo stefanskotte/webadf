@@ -162,7 +162,7 @@ static void on_hello(rx_session *s, cur *c) {
         if (s->upq) emit_trust(s, "old");
         return;
     }
-    s->peer_v = v >= 4 ? 4 : v == 3 ? 3 : 2;
+    s->peer_v = v >= 5 ? 5 : v == 4 ? 4 : v == 3 ? 3 : 2;
     if (!tok(c, &t, &n) || !hex_key(t, n, s->peer_key)) s->peer_key[0] = 0;
     if (!s->upq) s->trust = RX_TRUST_NONE;
     else if (!s->peer_key[0]) { s->trust = RX_TRUST_OTHER; code = "other"; }
@@ -171,9 +171,10 @@ static void on_hello(rx_session *s, cur *c) {
         s->trust = RX_TRUST_OK; code = "new";
     } else if (strcmp(s->upq->trusted, s->peer_key) == 0) { s->trust = RX_TRUST_OK; code = "ok"; }
     else { s->trust = RX_TRUST_OTHER; code = "other"; }
-    if (s->peer_v == 4) {   /* spec 2026-10-31 §2.1: READY 4 <b> <w>, w only with b */
+    if (s->peer_v >= 4) {   /* spec 2026-10-31 §2.1: READY 4 <b> <w>, w only with b; §9: READY 5 alike */
         s->hello_browse = rx_browse_on(s); s->hello_write = rx_write_on(s);
-        puts_(s, s->hello_write ? "READY 4 1 1\n" : s->hello_browse ? "READY 4 1 0\n" : "READY 4 0 0\n");
+        puts_(s, s->peer_v == 5 ? "READY 5 " : "READY 4 ");
+        puts_(s, s->hello_write ? "1 1\n" : s->hello_browse ? "1 0\n" : "0 0\n");
     } else if (s->peer_v == 3) {
         s->hello_browse = rx_browse_on(s);
         puts_(s, s->hello_browse ? "READY 3 1\n" : "READY 3 0\n");
@@ -469,6 +470,14 @@ static void write_start(rx_session *s) {
     case RX_REQ_NOTE: e = s->fs->w_note(s->fs->ctx, s->req_path, s->req_arg); break;
     default: {   /* DELETE: a file (or a link) at once; a drawer step by step in req_pump */
         int is_dir = 0, is_link = 0;
+        if (s->req_num) {   /* "one" (spec §9; plan ruling X3): AmigaDOS itself refuses a drawer that is not empty */
+            if ((e = s->fs->w_delete(s->fs->ctx, s->req_path)) == RX_DOS_NOT_EMPTY) {
+                char f[80];
+                f[0] = 0; s->fs->fault(s->fs->ctx, e, f, sizeof f);
+                s->req_count = 0; req_fail_text(s, "notempty", f[0] ? f : "drawer is not empty"); return;
+            }
+            break;
+        }
         if ((e = entry_kind(s, s->req_path, &is_dir, &is_link)) == 0 && (!is_dir || is_link)) e = s->fs->w_delete(s->fs->ctx, s->req_path);
         else if (e == 0) { s->req_count = 0; s->del_top = (unsigned)strlen(s->req_path); s->del_drawer = 1; return; }
         break;
@@ -548,13 +557,15 @@ static void refuse_req(rx_session *s, int kind, const char *id, const char *path
 }
 static int no_control(const char *p) { for (; *p; p++) if ((unsigned char)*p < 0x20 || (unsigned char)*p == 0x7f) return 0; return 1; }
 /* A write request's arguments after its path (protocol 4): RENAME's target, PROTECT's bits, NOTE's comment. */
-static int write_args(cur *c, int kind, const char *path, char *arg, unsigned long *bits) {
+static int write_args(const rx_session *s, cur *c, int kind, const char *path, char *arg, unsigned long *bits) {
     const char *t; unsigned n;
     arg[0] = 0; *bits = 0;
     if (!rx_abs_path_ok(path)) return 0;   /* a volume and a name: never a volume's root (plan ruling W4) */
     if (kind == RX_REQ_RENAME) return lenstr(c, arg, RX_LOCAL_MAX + 1, 0) && rx_abs_path_ok(arg);
     if (kind == RX_REQ_PROTECT) return tok(c, &t, &n) && num(t, n, 16, bits);
     if (kind == RX_REQ_NOTE) return lenstr(c, arg, RX_COMMENT_MAX + 1, 0) && no_control(arg);
+    /* spec §9: protocol 5's "DELETE <rid> <path> one" deletes that object only; on protocol 4 the token is junk */
+    if (kind == RX_REQ_DELETE && s->peer_v >= 5 && c->p < c->end) { *bits = 1; return tok(c, &t, &n) && is(t, n, "one"); }
     return 1;
 }
 /* "VOLS <rid>", "DIR <rid> <len>:<path>", "GET <rid> <len>:<path>", and the writes (protocol 4): refused at once, or
@@ -567,7 +578,7 @@ static void on_request(rx_session *s, cur *c, int kind) {
     if (!tok(c, &t, &n) || !id_ok(t, n)) { req_err(s, "", "bad", "bad request"); return; }
     memcpy(id, t, n); id[n] = 0;
     if ((kind != RX_REQ_VOLS && (!lenstr(c, path, sizeof path, 0) || !local_path_ok(path))) ||
-        (is_write(kind) && !write_args(c, kind, path, arg, &nm)) || c->p < c->end) {
+        (is_write(kind) && !write_args(s, c, kind, path, arg, &nm)) || c->p < c->end) {
         refuse_req(s, kind, id, path, "bad", "bad request"); return;
     }
     if (is_write(kind) && !rx_write_on(s)) { refuse_req(s, kind, id, path, "readonly", "writing is off in Transfer"); return; }
