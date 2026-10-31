@@ -34,6 +34,8 @@
 
 // NET: volumes (spec 2026-10-30 section 3, fw 1.22.0).
 #define AS_REQ_SILENT_MS 30000u      // Transfer silent this long mid-answer: ERR timeout, and the connection goes (F4)
+#define AS_PIECE_MS 10000u           // a piece is posted this long after its first line, full or not (A500 bench: a slow
+                                     //   drawer showed the server nothing for over 60 s, and the pane no progress)
 
 // Uploads (protocol 2, spec 2026-10-18 §3, §5).
 #define AS_KEY_HEX 32                // the board key in the hello

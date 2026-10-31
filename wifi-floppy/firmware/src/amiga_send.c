@@ -46,6 +46,7 @@ static bool flush(amiga_send_t *s) {
 // Closes the connection and starts over: any file in flight stays queued on the server (no outcome is posted), and
 // Receive deletes its temporary file when the connection goes.
 static void drop(amiga_send_t *s, char rx, const char *why) {
+    if (s->phase != AS_IDLE) wf_logf(WF_INFO, "send: connection to Transfer dropped (%s)", why);
     if (s->req) req_on_drop(s);
     if (s->phase >= AS_FILE_SENT && s->phase <= AS_AWAIT_OK) wf_logf(WF_WARN, "send: %.8s aborted (%s)", s->id, why);
     // An upload cut off (an Amiga reset, bench B5 2026-10-21) comes back as a fresh Receive that waits 60 s for the
@@ -646,11 +647,12 @@ static bool req_start(amiga_send_t *s, uint32_t t) {
 
 // Before reading the next line: false while the piece being gathered cannot take one more. It is closed and waits for
 // its POST, and Transfer's lines wait in the socket meanwhile: its own buffer paces the drawer scan (spec section 2.2).
-static bool req_room(amiga_send_t *s) {
+// A piece also closes AS_PIECE_MS after its first line, so a slow drawer shows the server progress (A500 bench).
+static bool req_room(amiga_send_t *s, uint32_t t) {
     as_req_t *r = s->req;
     if (!r || !r->active || !r->sent || r->ended || r->discard) return true;
     if (r->post_owed) return false;
-    if (ar_body_full(r)) { ar_body_close(r, false); return false; }
+    if (ar_body_full(r) || (r->body_lines > 0 && t - r->t_piece >= AS_PIECE_MS)) { ar_body_close(r, false); return false; }
     return true;
 }
 
@@ -675,6 +677,7 @@ static bool req_line(amiga_send_t *s, uint32_t t) {
                 if (ok) ar_got_add(r, rid, tag);
             }
         }
+        if (r->body_lines == 0) r->t_piece = t;
         (void)ar_body_add(r, s->line);       // req_room made room for any line before it was read
         if (end) ar_body_close(r, true);
         return true;
@@ -814,7 +817,7 @@ static bool run(amiga_send_t *s, bool http) {
     // Connected phases: push what is pending, then read Receive's lines.
     if (!flush(s)) { drop(s, 'u', "send"); return true; }
     for (;;) {
-        if (s->req && !req_room(s)) break;   // a full piece waits for its POST: the lines wait in the socket
+        if (s->req && !req_room(s, t)) break;   // a full piece waits for its POST: the lines wait in the socket
         int r = s->ops->recv_line(s->ops->ctx, s->line, sizeof s->line);
         if (r < 0) { drop(s, 'u', "closed"); return true; }
         if (r == 0) break;
@@ -918,10 +921,13 @@ static bool run(amiga_send_t *s, bool http) {
             if (s->req && req_start(s, t)) return true;
             if (down && !(s->req && s->req->active)) { s->up_last = false; start_file(s); if (!flush(s)) drop(s, 'u', "send"); return true; }
         }
-        // Lines held for an owed piece hold the PONG too (req_room). Transfer drops a connection silent for 75 s
-        // (RX_IDLE_SECS), so the PINGs go on every AS_PING_MS, one outstanding or not, and only the PONG deadline is
-        // suspended; it restarts when the hold ends (final review M2). The PONGs queue in Transfer's socket.
-        if (s->req && s->req->active && s->req->sent && !s->req->ended && !s->req->discard && s->req->post_owed) {
+        // While an answer is read, a PONG queues behind it: Transfer writes a long listing into the Amiga's socket
+        // within seconds and it drains at ~1.5 KB/s (A500 bench 2026-10-31: "no PONG" ~20 s into a 1000-entry drawer),
+        // and lines held for an owed piece hold it too (req_room). The lines prove Transfer alive, and a silent one ends
+        // the answer (req_silent). Transfer drops a connection silent for 75 s (RX_IDLE_SECS), so the PINGs go on every
+        // AS_PING_MS, one outstanding or not, and only the PONG deadline is suspended; it restarts when the answer
+        // ends (final review M2). The PONGs queue in Transfer's socket.
+        if (s->req && s->req->active && s->req->sent && !s->req->ended) {   // a discarded answer drains the same way
             s->req->ping_held = true;
             if (t - s->t_ping > AS_PING_MS) {
                 push(s, (const uint8_t *)"PING\n", 5);

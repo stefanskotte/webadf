@@ -16,12 +16,18 @@
 #include "lwip/ip_addr.h"
 #include <string.h>
 
-#define RING 1024   // Receive's lines (replies, PUT, END); an upload's raw bytes go to the PSRAM ring instead
+#define RING AMIGA_TCP_RING_BYTES
+// Transfer's lines (replies, PUT, END, NET: volumes answers); an upload's raw bytes go to the PSRAM ring instead.
+// A line byte is acknowledged to lwIP (tcp_recved) only when t_recv_line has taken it, so the receive window is the
+// backpressure and Transfer waits in its own socket while core1 is busy (an HTTPS call): the ring holds a whole window
+// and cannot overflow. Bench 2026-10-31: with every byte acknowledged on arrival a 1 KB ring overflowed under a drawer
+// listing while core1 waited 11 s on a TLS reconnect -- a merged line, then the connection dropped.
+_Static_assert(RING > TCP_WND, "the line ring must hold a whole receive window");
 
 static struct {
     struct tcp_pcb *pcb;
     volatile int state;          // AS_SOCK_*
-    uint8_t ring[RING];
+    uint8_t *ring;               // RING bytes in PSRAM (main.c); NULL: no PSRAM, sending is off and nothing connects
     volatile int head, tail;     // bytes [tail, head) are unread
     as_raw_t *volatile raw;      // an upload's raw section (fw 1.19.0): its bytes go to the PSRAM ring first
 } T;
@@ -32,9 +38,10 @@ static int ring_used(void) { return (T.head - T.tail + RING) % RING; }
 
 static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) {
     (void)arg; (void)err;
-    if (!p) { T.state = AS_SOCK_CLOSED; return ERR_OK; }   // the Amiga closed (Receive quit)
+    if (!p) { wf_logf(WF_INFO, "amiga tcp: Transfer closed the connection"); T.state = AS_SOCK_CLOSED; return ERR_OK; }
     // T.raw is read once per pbuf, here in lwIP's context; t_raw_arm and t_close change it only under
     // net_radio_lock(), which this callback runs inside, so a disarm on core1 never lands mid-feed.
+    u32_t raw_n = 0;   // raw bytes are acknowledged now (the upload's credit paces them); line bytes when taken
     for (struct pbuf *q = p; q; q = q->next) {
         const uint8_t *b = q->payload;
         u16_t i = 0;
@@ -43,15 +50,18 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
             const int k = as_raw_feed(w, b, q->len);
             if (k < 0) { T.state = AS_SOCK_CLOSED; break; }   // past the credit: amiga_send drops the connection
             i = (u16_t)k;
+            raw_n += (u32_t)k;
             if (w->got == w->total) T.raw = NULL;              // the raw section is over: lines again
         }
         for (; i < q->len; i++) {
-            if (ring_used() == RING - 1) { T.state = AS_SOCK_CLOSED; break; }   // a peer that floods: give up
+            // Past the window: a peer that ignores it. Give up (the ring holds a whole window, so never otherwise; a
+            // line with no LF longer than the window just waits, nothing read, until req_silent or "no PONG" drops it).
+            if (!T.ring || ring_used() == RING - 1) { wf_logf(WF_WARN, "amiga tcp: line ring full"); T.state = AS_SOCK_CLOSED; break; }
             T.ring[T.head] = b[i];
             T.head = (T.head + 1) % RING;
         }
     }
-    tcp_recved(pcb, p->tot_len);
+    while (raw_n > 0) { const u16_t k = raw_n > 0xFFFFu ? 0xFFFFu : (u16_t)raw_n; tcp_recved(pcb, k); raw_n -= k; }
     pbuf_free(p);
     return ERR_OK;
 }
@@ -77,6 +87,10 @@ static void t_close(void *ctx) {
     (void)ctx;
     net_radio_lock();
     if (T.pcb) {
+        // Unread lines are acknowledged first: lwIP answers a close with unread data by RST, sent once -- a lost RST
+        // left Transfer holding the dead link, refusing the reconnect "busy" until its 75 s idle drop (review of
+        // the bench fix; seen on the A500 as a ~67 s reconnect). With the window whole, the close is a FIN.
+        for (int u = ring_used(); u > 0; ) { const u16_t k = u > 0xFFFF ? 0xFFFF : (u16_t)u; tcp_recved(T.pcb, k); u -= k; }
         tcp_arg(T.pcb, NULL);
         tcp_recv(T.pcb, NULL);
         tcp_err(T.pcb, NULL);
@@ -148,6 +162,7 @@ static int t_recv_line(void *ctx, char *out, int cap) {
         }
         out[n] = 0;
         T.tail = (T.tail + lf + 1) % RING;
+        if (T.pcb) tcp_recved(T.pcb, (u16_t)(lf + 1));   // taken: the window reopens by as much (a line < RING < 64 KB)
         r = 1;
     }
     net_radio_unlock();
@@ -181,8 +196,9 @@ static int h_req_fetch(void *ctx, char *buf, int cap) { (void)ctx; return dc_fet
 static int h_req_post(void *ctx, const char *rid, const char *json, int n) { (void)ctx; return dc_post_req(g_dc, rid, json, n); }
 static uint32_t h_now(void *ctx) { (void)ctx; return to_ms_since_boot(get_absolute_time()); }
 
-void amiga_tcp_ops(as_ops_t *ops, device_client_t *c) {
+void amiga_tcp_ops(as_ops_t *ops, device_client_t *c, uint8_t *ring) {
     g_dc = c;
+    T.ring = ring;
     T.state = AS_SOCK_CLOSED;
     ops->ctx = NULL;
     ops->connect = t_connect;

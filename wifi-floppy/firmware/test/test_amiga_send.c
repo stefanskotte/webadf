@@ -695,12 +695,15 @@ static void silent_transfer_mid_answer_is_timeout_and_drops(void) {
     ready3(1);
     wake(1, "DIR d 5:Work:\n"); run(3);
     reply("ENT d f 1 0 1.0.0 1:a 0:"); run(2);
-    F.now += AS_REQ_SILENT_MS - 1; run(2);
-    CHECK_EQ_INT(F.req_posts, 0); CHECK(F.sock == AS_SOCK_OPEN, "not yet");
+    F.now += AS_PIECE_MS; run(2);                       // the piece goes AS_PIECE_MS after its first line, not full
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"ENT d f 1 0 1.0.0 1:a 0:\"],\"last\":false}") == 0, F.req_body[0]);
+    F.now += AS_REQ_SILENT_MS - 1; run(2);              // the silence counts from the POST (the board's time is not Transfer's)
+    CHECK_EQ_INT(F.req_posts, 1); CHECK(F.sock == AS_SOCK_OPEN, "not yet");
     F.now += 2; run(3);
     CHECK(F.sock == AS_SOCK_CLOSED, "dropped (plan ruling F4)");
-    CHECK_EQ_INT(F.req_posts, 1);
-    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"ENT d f 1 0 1.0.0 1:a 0:\",\"ERR d timeout 26:Transfer stopped answering\"],\"last\":true}") == 0, F.req_body[0]);
+    CHECK_EQ_INT(F.req_posts, 2);
+    CHECK(strcmp(F.req_body[1], "{\"piece\":1,\"lines\":[\"ERR d timeout 26:Transfer stopped answering\"],\"last\":true}") == 0, F.req_body[1]);
 }
 
 // Review Focus 4.
@@ -796,6 +799,31 @@ static void a_put_that_crosses_a_request_after_an_upload_goes_first(void) {
     reply("PUT 2 5 1.2.3 0 9:Hello.txt 0:"); run(4);    // Transfer sent it before it read VOLS
     CHECK(F.opens == opens + 1, "the crossing PUT opened");
     CHECK(strstr(F.out, "TAKE 2 ") != NULL, "and was told to go on");
+}
+
+// A500 bench 2026-10-31: Transfer writes a 1000-entry listing into the Amiga's socket within seconds, and it drains to
+// the board at ~1.5 KB/s; the PONG to a PING sent meanwhile queues behind it (a drop "no PONG" ~20 s in). Lines arriving
+// prove Transfer alive: no PONG deadline while an answer is read (a silent Transfer still ends it: req_silent).
+static void a_pong_queued_behind_a_long_answer_does_not_drop(void) {
+    char line[64];
+    ready3(1);
+    wake(1, "DIR d 5:Work:\n"); run(3);
+    CHECK(strstr(F.out, "DIR d 5:Work:\n") != NULL, "the DIR went");
+    clear_out();
+    int pinged = 0;
+    for (int i = 0; i < 60; i++) {                      // 60 s of lines, one a second; any PONG queues behind them
+        snprintf(line, sizeof line, "ENT d f 1 0 1.0.0 3:%03d 0:", i); reply(line);
+        F.now += 1000; run(2);
+        if (strstr(F.out, "PING\n") != NULL) pinged = 1;
+    }
+    CHECK(pinged, "a PING went mid-answer");
+    CHECK(F.sock == AS_SOCK_OPEN, "no drop while the answer flows");
+    reply("DONE d 60"); reply("PONG"); reply("PONG"); run(3);
+    CHECK(!S.ping_out, "the PONGs were read after the answer");
+    CHECK(F.req_posts >= 6, "a piece every AS_PIECE_MS while the lines come");
+    CHECK(strstr(F.req_body[F.req_posts - 1], "\"DONE d 60\"") != NULL, F.req_body[F.req_posts - 1]);
+    F.now += AS_PONG_MS + 1000; run(3);
+    CHECK(F.sock == AS_SOCK_OPEN, "the socket stays open");
 }
 
 // Final review M2 (re-graded Important): Transfer drops a connection silent for 75 s (RX_IDLE_SECS), so PINGs go on
@@ -1656,6 +1684,7 @@ int main(void) {
     RUN(a_failing_fetch_backs_off);
     RUN(a_put_that_crosses_a_request_after_an_upload_goes_first);
     RUN(pings_continue_while_lines_wait_for_a_piece);
+    RUN(a_pong_queued_behind_a_long_answer_does_not_drop);
     RUN(a_403_piece_is_refused_not_retried);
     RUN(got_ties_the_upload_to_the_request);
     RUN(an_upload_not_from_a_get_carries_no_request);

@@ -58,6 +58,7 @@ typedef struct as_req {
     bool quick;                       // a protocol 3 drop: the reconnect in AS_RETRY_WAITING_MS counts as work (I1)
     bool refetched;                   // fetched since the last request was taken: the next GET goes without (I2)
     bool ping_held;                   // lines were held for a piece: the PONG deadline restarts when they are not (M2)
+    uint32_t t_piece;                 // the piece's first line came: it is posted AS_PIECE_MS later, full or not
 } as_req_t;
 
 void ar_init(as_req_t *r);

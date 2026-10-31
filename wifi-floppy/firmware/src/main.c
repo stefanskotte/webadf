@@ -100,6 +100,9 @@ static __uninitialized_psram("sendc") uint8_t g_send_chunk_buf[AS_UP_RING_BYTES]
 static __uninitialized_psram("sendup") as_up_t g_send_up;
 // NET: volumes' request state (fw 1.22.0): the fetched lines, the 32 KB answer piece and the GOT table. PSRAM, SRAM +0.
 static __uninitialized_psram("sendreq") as_req_t g_send_req;
+// Transfer's lines (amiga_tcp.c): a whole TCP receive window, so a busy core1 holds Transfer back instead of losing
+// its bytes (bench 2026-10-31). PSRAM, SRAM +0.
+static __uninitialized_psram("tcpring") uint8_t g_tcp_ring[AMIGA_TCP_RING_BYTES];
 // The board key (spec 2026-10-18 §5-6): core0 loads or makes it at boot, before core1 starts; core1 only reads it.
 static __uninitialized_psram("bkey") struct { uint8_t raw[KEY_STORE_BYTES]; char hex[2 * KEY_STORE_BYTES + 1]; bool ok, unsaved; } g_board_key;
 // The key is stored by core0's deferred-write rule, which needs DF1's bookkeeping; CMake already refuses WF_PNET_L2
@@ -2249,15 +2252,16 @@ static void core1_main(void) {
         // Uploads from the Amiga (1.19.0) use the same engine.
         static amiga_send_t g_send;
         static as_ops_t g_send_ops;
-        amiga_tcp_ops(&g_send_ops, &c);
         {
             // Not backed by PSRAM (a board without it): sending stays off rather than writing into nothing.
             const bool psram_ok = psram_check_address(&g_send_queue_buf[sizeof g_send_queue_buf - 1]) &&
+                                  psram_check_address(&g_tcp_ring[sizeof g_tcp_ring - 1]) &&
                                   psram_check_address(&g_send_chunk_buf[sizeof g_send_chunk_buf - 1]) &&
                                   psram_check_address((uint8_t *)&g_send_up + sizeof g_send_up - 1) &&
                                   psram_check_address((uint8_t *)&g_send_req + sizeof g_send_req - 1) &&
                                   psram_check_address((uint8_t *)&g_board_key + sizeof g_board_key - 1);
             if (!psram_ok) wf_logf(WF_ERR, "send: buffers are not backed by PSRAM -- sending to the Amiga is off");
+            amiga_tcp_ops(&g_send_ops, &c, psram_ok ? g_tcp_ring : NULL);
             as_init(&g_send, &g_send_ops, psram_ok ? g_send_queue_buf : NULL, psram_ok ? g_send_chunk_buf : NULL,
                     psram_ok ? &g_send_up : NULL);
             // Protocol 2 (fw 1.19.0): the key in the hello, and its 4 digits in the status report (spec §6).
