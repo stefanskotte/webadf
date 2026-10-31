@@ -129,7 +129,7 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
 - `remote_requests`: id, org_id, device_id, kind (`vols`|`dir`|`get`), amiga_path, status
   (`waiting`|`sent`|`done`|`failed`), error_code, error_text, answer (jsonb: volumes or entries), pieces received,
   cut (bool), copy target (jsonb, GET only: destination path and clash rule), upload_id (GET), created_at, sent_at,
-  answered_at.
+  active_at (the last sign of life, every kind: taken, a piece, a get's GOT/open/chunk; §4.4), answered_at.
 - `devices.req_version` (integer, default 0), bumped in the same transaction as a new request, and again by a board's
   fetch that leaves requests waiting (§3 Fetch).
 - Rows older than 24 h are deleted when a new request is added (no new cron; self-host identical).
@@ -158,9 +158,15 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
    if found it lists it, with its age.
 2. Otherwise it reuses a `waiting`/`sent` request for that path, or adds one, and answers 202 `pending` (plan ruling P1:
    the list route itself, no request id).
-3. The pane asks the same list URL every 500 ms; after 20 s it stops with "A500 didn't answer".
-4. Refresh (`fresh`) skips step 1, and replaces a pending request older than 20 s (failed `timeout`) instead of sharing
-   it.
+3. The pane asks the same list URL every 500 ms; after 20 s without a sign of life it stops with "A500 didn't answer".
+   Signs of life (A500 bench 2026-10-31, amendment): pieces arriving (the label counts the entries so far; the board
+   posts a piece at least every 10 s), and a request not yet answered while the board moves a copy's file (Transfer
+   answers nothing meanwhile; the label says "once it has copied <file>"). The 202 then carries `alive`.
+4. Refresh (`fresh`) skips step 1, and replaces a pending request with no sign of life for 20 s (failed `timeout`)
+   instead of sharing it; the 20 s count from `active_at` (taken by the board, or its last piece).
+- Server timeouts (amendment): a vols/dir request fails `timeout` 60 s after its last sign of life -- taken by the
+  board or its last piece (`active_at`), or, not answered at all, the board's copy last moving (a get fetching or done
+  within the 60 s).
 - The board must be online, on firmware 1.22+ and reported protocol 3 with browsing on; otherwise the driver answers
   the reason at once without adding a request.
 
@@ -184,7 +190,7 @@ PaulaNET Phase 4 (`2026-10-16-paulanet-phase4-send-to-amiga-design.md` §2) and 
 | firmware below 1.22 | Firmware 1.22 or newer is needed |
 | Transfer not running (`norx`) / board offline | the board card's reason |
 | `notfound` | Object not found |
-| `timeout`, 20 s with no answer | A500 didn't answer — Refresh to try again |
+| `timeout`, 20 s with no answer and no sign of life | A500 didn't answer — Refresh to try again |
 | others | Transfer's text |
 
 ### 4.7 Testing

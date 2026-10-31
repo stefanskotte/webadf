@@ -8,17 +8,21 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 /**
  * `ask` until it answers something other than `{ pending }`: every PANE_ASK_MS, with `fresh` on the first ask only (the
  * request is on its way after that), until it lands, is refused, or PANE_GIVE_UP_MS pass (then `giveUp()`'s answer).
+ * A pending answer marked `alive` shows life (it waits behind a copy the board is moving, or its answer is arriving in
+ * pieces; A500 bench 2026-10-31): the clock starts again after each, so the pane gives up only PANE_GIVE_UP_MS after
+ * the last sign of life.
  * `onPending` hears each label; once `wanted()` is false (the pane went elsewhere, or the manager unmounted) it stops
  * at once with null, without a word, and asks no more.
  */
 export async function askUntilAnswered<R extends object>(path: string, o: {
-  ask(path: string, fresh: boolean): Promise<R | { pending: string }>; fresh?: boolean;
+  ask(path: string, fresh: boolean): Promise<R | { pending: string; alive?: boolean }>; fresh?: boolean;
   wanted(): boolean; onPending(label: string): void; giveUp(): R;
 }): Promise<R | null> {
-  const started = Date.now();
+  let started = Date.now();
   let r = await o.ask(path, !!o.fresh);
   while ('pending' in r) {
     if (!o.wanted()) return null;
+    if (r.alive) started = Date.now();
     o.onPending(r.pending);
     await sleep(PANE_ASK_MS);
     if (!o.wanted()) return null;

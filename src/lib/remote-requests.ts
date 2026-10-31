@@ -1,6 +1,6 @@
 // NET: volumes (spec 2026-10-30 §4): the queue of requests from Files to a board's Amiga (list volumes, list a drawer,
 // fetch a file). Answers are remembered REMEMBER_MS, arrive in pieces, and a request nobody answers times out.
-import { and, asc, eq, inArray, lt, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, lt, or, sql } from 'drizzle-orm';
 import type { Db } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { remoteRequests } from '@/db/schema/remote-requests';
@@ -22,9 +22,16 @@ const ms = (now: Date, back: number) => new Date(now.getTime() - back);
 export async function expireStale(db: Db, now = new Date()): Promise<void> {
   const list = inArray(remoteRequests.kind, ['vols', 'dir']);
   const cutList = ms(now, LIST_TIMEOUT_MS);
+  // One behind a copy (A500 bench 2026-10-31): Transfer answers nothing while a get's file moves, so a listing still
+  // waiting, or taken by the board and held with nothing answered, has its 60 s run from when the copy last moved. A
+  // listing's pieces are signs of life too: its 60 s run from the last one.
+  const noCopy = sql`not exists (select 1 from remote_requests g
+      where g.device_id = remote_requests.device_id and g.kind = 'get' and (
+        (g.status = 'fetching' and g.active_at >= ${cutList}) or (g.status = 'done' and g.answered_at >= ${cutList})))`;
   await db.update(remoteRequests).set({ status: 'failed', errorCode: 'timeout', errorText: '', answeredAt: now }).where(or(
-    and(list, eq(remoteRequests.status, 'sent'), lt(remoteRequests.sentAt, cutList)),
-    and(list, eq(remoteRequests.status, 'waiting'), lt(remoteRequests.createdAt, cutList)),
+    and(list, eq(remoteRequests.status, 'sent'), lt(sql`coalesce(${remoteRequests.activeAt}, ${remoteRequests.sentAt})`, cutList),
+      or(sql`${remoteRequests.pieces} > 0`, noCopy)),
+    and(list, eq(remoteRequests.status, 'waiting'), lt(remoteRequests.createdAt, cutList), noCopy),
   ));
   // A get times out after 10 minutes with no get activity (fix round 1 ruling): its own once fetching; while only sent,
   // the board's -- Transfer works through the batch one file at a time, so one queued behind busy siblings is not lost.
@@ -38,6 +45,18 @@ export async function expireStale(db: Db, now = new Date()): Promise<void> {
         where b.device_id = remote_requests.device_id and b.kind = 'get' and coalesce(b.active_at, b.sent_at) >= ${cutGet})`),
     ),
   ));
+}
+
+/**
+ * The Amiga path of the board's get whose file is moving now (it moved within the last LIST_TIMEOUT_MS), else null: a
+ * listing asked for meanwhile waits for it (A500 bench 2026-10-31), and the pane says so.
+ */
+export async function copyMoving(db: Db, deviceId: string, now = new Date()): Promise<string | null> {
+  const [g] = await db.select({ path: remoteRequests.amigaPath }).from(remoteRequests).where(and(
+    eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.kind, 'get'), eq(remoteRequests.status, 'fetching'),
+    gte(remoteRequests.activeAt, ms(now, LIST_TIMEOUT_MS)),
+  )).orderBy(sql`${remoteRequests.activeAt} desc`).limit(1);
+  return g?.path ?? null;
 }
 
 /** A get its file can still arrive for: sent or fetching, or failed only by the timeout (a late arrival revives it). */
@@ -73,7 +92,10 @@ export async function requestListing(
 ): Promise<ListingState> {
   // Two panes on one drawer share one request; a visit within the memory reuses the answer, a Refresh does not. A
   // Refresh after the pane gave up (PANE_GIVE_UP_MS) asks again: the stuck request fails `timeout` (final review).
-  const stuck = (s: ListingState) => a.fresh && s.state === 'pending' && now.getTime() - s.row.createdAt.getTime() >= PANE_GIVE_UP_MS;
+  // Stuck counts from its last sign of life -- the board took it, or a piece came (A500 bench 2026-10-31: a 1000-entry
+  // drawer arrives over ~36 s, and a Refresh meanwhile must not start it over).
+  const stuck = (s: ListingState) => a.fresh && s.state === 'pending' &&
+    now.getTime() - (s.row.activeAt ?? s.row.createdAt).getTime() >= PANE_GIVE_UP_MS;
   const keep = (s: ListingState) => (s.state === 'pending' && !stuck(s)) || (s.state !== 'none' && s.state !== 'pending' && !a.fresh);
   const cur = await latestFor(db, a.deviceId, a.kind, a.amigaPath, now);
   if (keep(cur)) return cur;
@@ -142,7 +164,8 @@ export async function answerPiece(
     if (r.status === 'done' || r.status === 'failed' || p.piece < r.pieces) return { ok: true as const };
     if (p.piece > r.pieces || (r.status !== 'sent' && r.status !== 'fetching')) return { ok: false as const, status: 409 as const };
     const prev = (r.answer ?? { volumes: [], entries: [] }) as { volumes: VolumeInfo[]; entries: EntryInfo[] };
-    const set: Partial<RemoteRow> = { pieces: r.pieces + 1, ...(r.kind === 'get' ? { activeAt: now } : {}) };
+    // Every piece is a sign of life: a listing's timeout runs from its last one (A500 bench 2026-10-31), a get's too.
+    const set: Partial<RemoteRow> = { pieces: r.pieces + 1, activeAt: now };
     let end: 'done' | 'failed' | null = null;
     for (const line of p.lines) {
       const a = parseAnswerLine(rid, line);

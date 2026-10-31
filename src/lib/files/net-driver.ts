@@ -18,8 +18,8 @@ import { SEND_FILE_MAX, SEND_QUEUE_MAX_BYTES, SEND_QUEUE_MAX_FILES } from '@/lib
 import { uploadBoards } from '@/lib/amiga-uploads';
 import { mapLimit } from '@/lib/pool';
 import { protectionString } from '@/lib/adffs/dir';
-import { latestFor, requestListing, type RemoteRow } from '@/lib/remote-requests';
-import { browseBlock, errorWords } from '@/lib/remote-browse';
+import { copyMoving, latestFor, requestListing, type RemoteRow } from '@/lib/remote-requests';
+import { browseBlock, browseMark, errorWords } from '@/lib/remote-browse';
 import { amigaPathOf, volumeLabel, type EntryInfo, type VolumeInfo } from '@/lib/remote-wire';
 import { QUEUE_FOLDER } from '@/lib/remote-limits';
 import { formatPath, parsePath, type FsPath } from './path';
@@ -46,10 +46,16 @@ async function queueRowOf(ctx: FsCtx, board: string, id: string): Promise<boolea
   return !!row;
 }
 
-/** R6: online / offline 3 h, Transfer running, what waits, and the key Transfer shows (fw 1.19.0+). */
+/**
+ * R6: online / offline 3 h, Transfer running, whether its disks can be browsed (NET: volumes §5: "browsable" or the
+ * missing thing), what waits, and the key Transfer shows (fw 1.19.0+).
+ */
 function boardMarks(t: SendTarget, waiting: number, sending: boolean, key: string | null, now: number): string[] {
   const marks = [targetState(t, now)];
-  if (receiverRunning(t, sending, now)) marks.push('Transfer running');
+  const running = receiverRunning(t, sending, now);
+  if (running) marks.push('Transfer running');
+  const browse = browseMark({ online: t.online, firmware: t.firmwareVersion, running, rxProto: t.rxProto, browseOn: t.browseOn });
+  if (browse) marks.push(browse);
   if (waiting) marks.push(`${waiting} waiting`);
   if (key) marks.push(`key ${key}`);
   return marks;
@@ -93,6 +99,22 @@ export const browseOf = (t: SendTarget, now: number) => browseBlock({ online: t.
   rxProto: t.rxProto, browseOn: t.browseOn, name: t.name, offlineWords: targetState(t, now) });
 
 /**
+ * A listing asked for and not answered yet: "Reading Work:Programs from A500…". Two show life the pane cannot see, so
+ * their label says so and the pane does not give up on them (A500 bench 2026-10-31): one arriving in pieces ("… 400
+ * entries so far"), and one not answered at all while the board moves a copy's file (Transfer answers nothing meanwhile).
+ */
+async function pendingOf(t: SendTarget, row: RemoteRow | null, what: string, now: number): Promise<Pending> {
+  if (row?.status === 'sent' && row.pieces > 0) {   // arriving in pieces (a 1000-entry drawer takes ~36 s)
+    const a = answerOf(row);
+    return new Pending(`Reading ${what} from ${t.name}… ${a.entries.length + a.volumes.length} entries so far`, true);
+  }
+  const held = row?.status === 'waiting' || (row?.status === 'sent' && row.pieces === 0);   // nothing answered yet
+  const copying = held ? await copyMoving(getDb(), t.id, new Date(now)) : null;
+  if (!copying) return new Pending(`Reading ${what} from ${t.name}…`);
+  return new Pending(`Reading ${what} from ${t.name} once it has copied ${copying.slice(Math.max(copying.lastIndexOf('/'), copying.indexOf(':')) + 1)}…`, true);
+}
+
+/**
  * NET:/<board> (§5): the Amiga's volumes, in Transfer's order, then Queue. When they cannot be read (the board cannot be
  * browsed, or the volumes request failed) `net.browse` says why and Queue is listed alone: the queue works regardless.
  */
@@ -105,7 +127,7 @@ async function listBoardRoot(ctx: FsCtx, t: SendTarget, now: number, opts: { fre
     const s = await requestListing(db, { orgId: ctx.orgId, deviceId: t.id, kind: 'vols', amigaPath: '', fresh: !!opts.fresh }, new Date(now));
     if (s.state === 'ready') { volumes = answerOf(s.row).volumes; readAt = now - s.ageMs; }
     else if (s.state === 'failed') block = errorWords(s.row.errorCode ?? '', s.row.errorText ?? '', t.name);
-    else throw new Pending(`Reading volumes from ${t.name}…`);
+    else throw await pendingOf(t, s.state === 'pending' ? s.row : null, 'volumes', now);
   }
   const load = await queueLoad(db, t.id, new Date(now));
   const entries: FsEntry[] = volumes.map((v) => {
@@ -146,7 +168,7 @@ async function listVolume(ctx: FsCtx, t: SendTarget, segs: string[], now: number
     if (code === 'timeout') refuse('failed', 504, words);
     refuse('read_only', 409, words);
   }
-  if (s.state !== 'ready') throw new Pending(`Reading ${at.shown} from ${t.name}…`);
+  if (s.state !== 'ready') throw await pendingOf(t, s.state === 'pending' ? s.row : null, at.shown, now);
   const entries = answerOf(s.row).entries.map((e): FsEntry => ({ name: e.name, kind: e.dir ? 'dir' : 'file',
     path: netPath(t.id, ...segs, e.name), size: e.dir ? null : e.size, date: e.date, protection: protectionString(e.protection),
     comment: e.comment || null, marks: [] }));

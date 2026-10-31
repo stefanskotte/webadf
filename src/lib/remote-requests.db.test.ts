@@ -23,7 +23,7 @@ const { organization } = await import('@/db/schema/auth');
 const { devices } = await import('@/db/schema/devices');
 const { remoteRequests } = await import('@/db/schema/remote-requests');
 const rr = await import('./remote-requests');
-const { requestListing, latestFor, takeWaiting, answerPiece, addGets, getForUpload, settleGet, expireStale } = rr;
+const { requestListing, latestFor, takeWaiting, answerPiece, addGets, getForUpload, settleGet, expireStale, touchGet, copyMoving } = rr;
 
 const deviceId = 'rb1';
 const orgId = 'ro1';
@@ -237,6 +237,82 @@ describe('the request store', () => {
     await expireStale(getDb(), at(1191));
     expect((await rowOf(g1))).toMatchObject({ status: 'failed', errorCode: 'timeout' });
     expect((await rowOf(g2))).toMatchObject({ status: 'failed', errorCode: 'timeout' });
+  });
+
+  // A500 bench 2026-10-31: Transfer answers nothing while a get's file moves, and the board fetches nothing meanwhile, so
+  // a listing asked for during a long copy waits for it -- and times out 60 s after the copy last moved, not after the ask.
+  it('a waiting listing behind a moving copy waits for it, and times out 60 s after the copy last moved', async () => {
+    const t = { dest: 'STASH:', rel: ['a.adf'], replace: false, library: null };
+    const [g] = await addGets(getDb(), { orgId, deviceId, fetchId: 'fc', files: [{ amigaPath: 'Work:a.adf', target: t }] }, t0);
+    await takeWaiting(getDb(), deviceId, t0);
+    await answerPiece(getDb(), deviceId, g, { piece: 0, lines: [`GOT ${g} 1`], last: true }, at(1));
+    const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:d', fresh: false }, at(2));
+    expect(await copyMoving(getDb(), deviceId, at(2))).toBe('Work:a.adf');
+    await touchGet(getDb(), { id: g }, at(50));
+    await touchGet(getDb(), { id: g }, at(100));
+    await expireStale(getDb(), at(150));
+    expect((await rowOf(ridOf(p))).status).toBe('waiting');
+    await settleGet(getDb(), g, { ok: true }, at(130));
+    expect(await copyMoving(getDb(), deviceId, at(131))).toBeNull();
+    await expireStale(getDb(), at(189));
+    expect((await rowOf(ridOf(p))).status).toBe('waiting');
+    await expireStale(getDb(), at(191));
+    expect(await rowOf(ridOf(p))).toMatchObject({ status: 'failed', errorCode: 'timeout' });
+  });
+
+  // A500 bench 2026-10-31: a 1000-entry drawer arrives in three pieces over ~36 s, and RAM: lists at ~15 entries a
+  // second: a listing's 60 s run from its last piece, not from when the board took it.
+  it('a listing whose pieces keep arriving does not time out; 60 s after its last piece it does', async () => {
+    const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:big', fresh: false }, t0);
+    const rid = ridOf(p);
+    await takeWaiting(getDb(), deviceId, t0);
+    const ents = (n: number) => Array.from({ length: n }, (_, i) => `ENT ${rid} d 0 0 9100.0.0 5:d${String(i).padStart(4, '0')} 0:`);
+    await answerPiece(getDb(), deviceId, rid, { piece: 0, lines: ents(400), last: false }, at(40));
+    await answerPiece(getDb(), deviceId, rid, { piece: 1, lines: ents(400), last: false }, at(80));
+    await expireStale(getDb(), at(139));
+    expect((await rowOf(rid)).status).toBe('sent');
+    await expireStale(getDb(), at(141));
+    expect(await rowOf(rid)).toMatchObject({ status: 'failed', errorCode: 'timeout' });
+  });
+
+  it('Refresh shares a listing whose pieces are arriving, however old; one silent 20 s is asked again', async () => {
+    const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:big2', fresh: false }, t0);
+    const rid = ridOf(p);
+    await takeWaiting(getDb(), deviceId, t0);
+    await answerPiece(getDb(), deviceId, rid, { piece: 0, lines: [`ENT ${rid} d 0 0 9100.0.0 1:a 0:`], last: false }, at(30));
+    const shared = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:big2', fresh: true }, at(45));
+    expect(shared.state === 'pending' && shared.row.id).toBe(rid);
+    const again = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:big2', fresh: true }, at(51));
+    expect(again.state === 'pending' && again.row.id).not.toBe(rid);
+  });
+
+  // Review of the bench fix: the board fetches whenever no file is moving -- right after GOT too -- and then holds the
+  // listing while Transfer's PUT moves the file. 'sent' with nothing answered waits for the copy the same way.
+  it('a listing the board took but holds behind a moving copy waits for it too', async () => {
+    const t = { dest: 'STASH:', rel: ['a.adf'], replace: false, library: null };
+    const [g] = await addGets(getDb(), { orgId, deviceId, fetchId: 'fe', files: [{ amigaPath: 'Work:a.adf', target: t }] }, t0);
+    await takeWaiting(getDb(), deviceId, t0);
+    await answerPiece(getDb(), deviceId, g, { piece: 0, lines: [`GOT ${g} 1`], last: true }, at(1));
+    const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:held', fresh: false }, at(2));
+    await takeWaiting(getDb(), deviceId, at(3));
+    expect((await rowOf(ridOf(p))).status).toBe('sent');
+    await touchGet(getDb(), { id: g }, at(60));
+    await touchGet(getDb(), { id: g }, at(110));
+    await expireStale(getDb(), at(150));
+    expect((await rowOf(ridOf(p))).status).toBe('sent');
+    await expireStale(getDb(), at(171));
+    expect(await rowOf(ridOf(p))).toMatchObject({ status: 'failed', errorCode: 'timeout' });
+  });
+
+  it('a copy that stopped moving holds no listing back', async () => {
+    const t = { dest: 'STASH:', rel: ['a.adf'], replace: false, library: null };
+    const [g] = await addGets(getDb(), { orgId, deviceId, fetchId: 'fd', files: [{ amigaPath: 'Work:a.adf', target: t }] }, t0);
+    await takeWaiting(getDb(), deviceId, t0);
+    await answerPiece(getDb(), deviceId, g, { piece: 0, lines: [`GOT ${g} 1`], last: true }, at(1));
+    const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:d', fresh: false }, at(2));
+    expect(await copyMoving(getDb(), deviceId, at(62))).toBeNull();
+    await expireStale(getDb(), at(63));
+    expect(await rowOf(ridOf(p))).toMatchObject({ status: 'failed', errorCode: 'timeout' });
   });
 
   it('a get that failed timeout is still found for its late upload', async () => {

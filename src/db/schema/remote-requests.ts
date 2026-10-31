@@ -25,7 +25,10 @@ export const remoteRequests = pgTable('remote_requests', {
   uploadId: text('upload_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   sentAt: timestamp('sent_at', { withTimezone: true }),
-  /** get: the last sign of life (fetched, GOT, its upload opened or a chunk stored); the 10-minute timeout runs from it. */
+  /**
+   * The last sign of life: taken by the board, a piece of its answer (any kind), and for a get its GOT, its upload
+   * opened or a chunk stored. A get's 10-minute timeout and a listing's 60 s run from it (A500 bench 2026-10-31).
+   */
   activeAt: timestamp('active_at', { withTimezone: true }),
   answeredAt: timestamp('answered_at', { withTimezone: true }),
 }, (t) => [
