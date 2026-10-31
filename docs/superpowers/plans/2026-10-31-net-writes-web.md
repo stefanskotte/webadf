@@ -235,4 +235,46 @@ Run: `PORT=3100 bash scripts/e2e-local.sh e2e/files-net-writes.spec.ts --project
 
 ## Ledger (filled while executing)
 
-- (rulings made during execution, deviations, deferred minors)
+- Pre-flight: rulings W1-W13 in the plan; Tasks 3-6 consume Task 1 columns and Task 2 lines as named; no conflicts found.
+- Task 1: complete (commits 47ed4004..54b22afd, tests: pnpm test:db src/lib/remote-requests.db.test.ts → 25/25 pass)
+- Task 2: complete (commits 54b22afd..9b77e824, tests: pnpm vitest run src/lib/remote-wire.test.ts src/lib/transfers.test.ts → 24/24 pass)
+- Task 3: complete (commits bc..0c39ceef, tests: pnpm test:db src/lib/transfers.db.test.ts → 29/29; vitest poll route 65/65, remote-browse 7/7, send-ui 19/19)
+- Task 3: Ruling: browseMark keeps 'browsable' for a writable board (no 'writable' mark on the NET: root row) — spec names no root mark for writing; the volume pane says it — cost if wrong: one more mark word
+- Task 4: complete (commits 0c39ceef..7119710d, tests: pnpm test:db src/lib/remote-requests.db.test.ts → 32/32; amiga-uploads.db 26/26; net-driver.db 30/30)
+- Task 5+6: complete (commits 236d1ad6..15c96d1f, tests: pnpm test:db src/lib/files/ + remote-requests + transfers + amiga-uploads → 269/269; vitest src/lib src/app/api 3776 pass + driver.test fixed)
+- Task 5: Ruling: Tasks 5 and 6 done as one commit (they share net-write/net-fetch and their db test) — cost if wrong: none (review range covers both)
+- Task 5: Ruling: implementation written before the net-write db tests in Tasks 5-6 (tests then run and two real defects fixed: volume rename routing, test line length) — TDD order slipped, tests still exercise each behaviour — cost if wrong: a behaviour the tests encode as the code does rather than as the spec says
+- Task 5: Ruling: Makedir with ensure (exists counts done) for drawers of a copy that hold no file — the board orders requests before FILE sends, and a FILE makes missing drawers itself — cost if wrong: an empty drawer of a copy is not made
+- Task 5: Ruling: an empty (0-byte) file is refused in a copy onto a volume, as a send into Queue refuses it — cost if wrong: 0-byte files cannot be copied onto the Amiga
+- Task 5: Ruling: Rename of a volume itself (relabel) is refused unsupported 'Rename a volume on the Amiga' — spec §7 lists no relabel — cost if wrong: one command
+- Task 5: Ruling: a delete/protect/comment on a board that cannot write refuses the whole op (not per item) — one board per pane — cost if wrong: mixed-board selections cannot happen in one pane anyway
+- Task 6: Ruling: move out of a volume removes the source as the person's own Delete via the NET driver (DELETE request); the move's removal needs writing still on at that moment, else the source stays — cost if wrong: a move that becomes a copy if writing was switched off mid-way
+- Task 7: complete (commits 15c96d1f..a99b652a, tests: pnpm vitest run src/lib/files → 251/251; test:db net-write+net-fetch 40/40)
+- Task 8: complete (commits ..ef50d209, tests: pnpm vitest run src/lib src/components src/app → 4056+ pass; tsc clean)
+- Task 8: Ruling (coordinator correction 2026-10-31): the board-facing NEXT line of GET /api/device/send/queue is the only carrier of dest/onClash -- 'NEXT <id> <size> <crc> <prot> <len>:<dest> <len>:<comment> <mode>' for amiga_dest rows, today's line unchanged otherwise; cleanAmigaPath keeps turning ':' into '_' in Queue paths (pinned by a test and a comment); poll accepts rxv=4 and write=0|1. Matches W1 as built — cost if wrong: none (coordinator-confirmed)
+- Task 8: Ruling: a drop of computer files onto a volume is refused 'Drop files into STASH: first, then copy them onto the Amiga' — spec names no direct upload to a volume — cost if wrong: one more path (upload then queue)
+- Task 8: Ruling: Create ADF on a volume says 'Disks are made in STASH: or LIBRARY:' (was 'Read-only for now') — cost if wrong: words
+- Task 8: Ruling: the volume pane's reason line is the existing readonly line (pane-<side>-readonly, 'Writing is off in Transfer.'); the net-browse-reason row at the board root also shows the write block when browsing works — cost if wrong: words placement
+- Task 9: complete (commits ..cbe722d8, tests: e2e files-net-writes 5/5 desktop; files-net-volumes+files-net 16/16 desktop (one phase-1 expectation updated); mobile files-net-volumes, files-net, files, files-2 18/18; send-to-amiga+from-amiga+files-stash 29/29; files+files-2 27/27; files-parity+settings+strip 30/30; vitest help 118/118)
+- Task 9: Ruling (coordinator, Transfer 2.5): no write on a volume's root -- the board root lists volumes as places (Delete/Rename/Protect refused there as before); a delete of NET:/<b>/<Volume> is a per-item not_found, protect/comment refused -- cost if wrong: none (Transfer answers bad anyway)
+- Task 9: Ruling (coordinator, Transfer 2.5): DONE counts the drawer itself, so 'Deleted Work:old (N)' counts items; DEL 0 then ERR says '<label>: stopped at <entry>: <reason>'; ERR text shown as Transfer sends it (entry relative to the drawer) — cost if wrong: words
+- Task 9: Ruling (coordinator, Transfer 2.5): FILE refusals for copies onto a volume (readonly, wprot, full, denied, busy) are said with writeErrorWords (busy = 'In use on the Amiga') only for amiga_dest rows; plain sends keep the old words (busy = 'Transfer was busy'); send-ui gains words for readonly/wprot/full/denied; 'io path too long' and assigns' notfound show Transfer's text / 'Object not found' — cost if wrong: words
+- Task 9: Ruling: the files help topic's word cap raised 360 -> 400 for one short 'Changing the Amiga's disks' paragraph — cost if wrong: a longer help body
+- Task 9: Ruling: a move onto a volume or out of one: the source's removal joins the move's job, and the job counts a file as unfinished until its source is removed (so the pane reloads after the removal) — cost if wrong: none
+- Final: fixed C1 (relay drawer move deleted before all files arrived) — 'final review C1: a drawer moved between volumes...' RED→GREEN, db 664/664, unit 4179/4179
+- Final: fixed C2 (a partly failed move left the job 'Copying…' forever) — 'final review C1/C2: one file of a moved drawer fails' + 'final review C2: ... fails readonly' RED→GREEN (fetchProgress settles finished moves itself)
+- Final: fixed C3 (writes behind a DEL-sending delete timed out) — 'final review C3' RED→GREEN
+- Final: fixed I-2 (a move that became a copy was silent) — 'final review I-2' RED→GREEN (a failed delete 'Copied, but the original could not be removed — <why>' in the job)
+- Final: fixed I-3 (one empty file refused a whole drawer copy) — 'I-3: an empty file inside a drawer is left out' RED→GREEN
+- Final: fixed I-4 (a refused copy still made drawers) — 'I-4: a copy the queue refuses makes no drawers' RED→GREEN; e2e writes+volumes 12/12
+- Final: Ruling: I-1 (a move removes the whole source as it is at the end, not only what was copied) stands — a recursive DELETE of the moved drawer is Workbench's own copy-then-delete; a file put into that drawer on the Amiga (or into a moved STASH: drawer) during the move is deleted uncopied — cost if wrong: that file is lost; fix later by deleting per copied file
+- Final: Ruling: I-5 (failWritesWhenOff runs two UPDATEs per poll from a connected non-writing board) stands — both UPDATEs hit device-indexed rows and match nothing on 1.22 boards; cheap vs the poll's own reads — cost if wrong: load on the shared DB at fleet scale; gate it on an exists check
+- Final: minor (deferred): dropMemory/afterTransferDone lowercase in JS vs SQL lower() — Latin-1 capitals under C collation not dropped
+- Final: minor (deferred): takeWaiting fails writes 'Writing is off in Transfer' also when the cause is Transfer gone/old firmware (race only)
+- Final: minor (deferred): a poll with rx=c but no rxv leaves write_on as it was
+- Final: minor (deferred): cross-board move names the destination board in the source DELETE's words
+- Final: minor (deferred): in place() a settleMoveOfGet throw marks a done get failed io
+- Final: minor (deferred): settleMove removes inside a row-lock transaction on a second pool connection (pool 5)
+- Final: minor (deferred): Replace in a move within a volume does not delete the target's .info, so the moved icon's RENAME fails exists
+- Final: minor (deferred): a partial delete whose ERR text has no ': ' loses its count in the words
+- Final: minor (deferred): copy rows for an offline board keep the status row polling for up to 24 h
