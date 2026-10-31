@@ -1,4 +1,5 @@
-/* rx_fs over dos.library (V37). Paths are the folder joined with the core's '/'-separated relative path. */
+/* rx_fs over dos.library (V37). Paths are the folder joined with the core's '/'-separated relative path; a path with a
+   ':' is the Amiga's own (protocol 4: the web app writes to a volume) and is used as it is. */
 #include <string.h>
 #include <exec/memory.h>
 #include <dos/dosextens.h>
@@ -19,6 +20,7 @@ static unsigned long mul_cap(unsigned long a, unsigned long b) { return (b && a 
 
 static void join(afs_ctx *c, const char *rel, char *out) {
     size_t n;
+    if (strchr(rel, ':')) { strcpy(out, rel); return; }   /* plan ruling W1: a relative path never holds a ':' */
     strcpy(out, c->root);
     n = strlen(out);
     if (n && out[n - 1] != ':' && out[n - 1] != '/' && rel[0]) strcat(out, "/");
@@ -35,9 +37,9 @@ static int a_folder_ok(void *x) {
     UnLock(l);
     return ok;
 }
-static unsigned long a_free(void *x) {
-    afs_ctx *c = x;
-    BPTR l = Lock((STRPTR)c->root, SHARED_LOCK);
+/* Free bytes on the volume of p (a folder, or a volume name with its colon). */
+static unsigned long free_of(const char *p) {
+    BPTR l = Lock((STRPTR)p, SHARED_LOCK);
     struct InfoData *id;
     unsigned long r = 0xFFFFFFFFUL;
     if (!l) return 0;
@@ -58,47 +60,70 @@ static unsigned long a_free(void *x) {
     UnLock(l);
     return r;
 }
+static unsigned long a_free(void *x) { return free_of(((afs_ctx *)x)->root); }
+/* Every write runs quiet (spec 2026-10-31 §2.3): a write-protected, full or missing disk is an error, never a
+   requester that would stop Transfer and the board. A failure keeps IoErr() for the core (a_err). */
+static int failed(afs_ctx *c, APTR w) { c->err = IoErr(); quiet_off(w); return -1; }
 static int a_exists(void *x, const char *rel) {
-    char p[512]; BPTR l;
+    char p[512]; BPTR l; APTR w = quiet_on();
     join(x, rel, p);
     l = Lock((STRPTR)p, SHARED_LOCK);
-    if (!l) return 0;
-    UnLock(l);
-    return 1;
+    if (l) UnLock(l);
+    quiet_off(w);
+    return l ? 1 : 0;
 }
 static int a_make_dir(void *x, const char *rel) {
-    char p[512]; BPTR l;
-    join(x, rel, p);
+    afs_ctx *c = x; char p[512]; BPTR l; APTR w = quiet_on();
+    join(c, rel, p);
     l = CreateDir((STRPTR)p);
-    if (l) { UnLock(l); return 0; }
+    if (l) { UnLock(l); quiet_off(w); return 0; }
+    c->err = IoErr();
+    quiet_off(w);
     return a_exists(x, rel) ? 0 : -1;
 }
 static int a_open_w(void *x, const char *rel) {
-    afs_ctx *c = x; char p[512];
+    afs_ctx *c = x; char p[512]; APTR w = quiet_on();
     join(c, rel, p);
     c->fh = Open((STRPTR)p, MODE_NEWFILE);
-    return c->fh ? 0 : -1;
+    if (!c->fh) return failed(c, w);
+    quiet_off(w);
+    return 0;
 }
 static int a_write(void *x, const unsigned char *b, unsigned long n) {
-    return Write(((afs_ctx *)x)->fh, (APTR)b, (LONG)n) == (LONG)n ? 0 : -1;
+    afs_ctx *c = x; APTR w = quiet_on();
+    if (Write(c->fh, (APTR)b, (LONG)n) != (LONG)n) return failed(c, w);
+    quiet_off(w);
+    return 0;
 }
 static int a_close_w(void *x) {
-    afs_ctx *c = x; LONG ok = Close(c->fh);
+    afs_ctx *c = x; APTR w = quiet_on(); LONG ok = Close(c->fh);
     c->fh = 0;
-    return ok ? 0 : -1;
+    if (!ok) return failed(c, w);
+    quiet_off(w);
+    return 0;
 }
 static int a_rename(void *x, const char *from, const char *to) {
-    char a[512], b[512];
-    join(x, from, a); join(x, to, b);
-    return Rename((STRPTR)a, (STRPTR)b) ? 0 : -1;
+    afs_ctx *c = x; char a[512], b[512]; APTR w = quiet_on();
+    join(c, from, a); join(c, to, b);
+    if (!Rename((STRPTR)a, (STRPTR)b)) return failed(c, w);
+    quiet_off(w);
+    return 0;
 }
-static int a_remove(void *x, const char *rel) { char p[512]; join(x, rel, p); return DeleteFile((STRPTR)p) ? 0 : -1; }
+static int a_remove(void *x, const char *rel) {
+    afs_ctx *c = x; char p[512]; APTR w = quiet_on();
+    join(c, rel, p);
+    if (!DeleteFile((STRPTR)p)) return failed(c, w);
+    quiet_off(w);
+    return 0;
+}
 static int a_set_meta(void *x, const char *rel, unsigned long prot, const char *comment) {
-    char p[512]; int ok;
-    join(x, rel, p);
+    afs_ctx *c = x; char p[512]; int ok; APTR w = quiet_on();
+    join(c, rel, p);
     ok = SetProtection((STRPTR)p, (LONG)prot) != 0;
     if (comment[0]) ok = SetComment((STRPTR)p, (STRPTR)comment) != 0 && ok;
-    return ok ? 0 : -1;
+    if (!ok) return failed(c, w);
+    quiet_off(w);
+    return 0;
 }
 /* Protocol 2 (spec 2026-10-18 §2): the Amiga's own paths, read with a shared lock in 8 KB blocks. */
 static int a_is_dir(void *x, const char *local) {
@@ -279,6 +304,29 @@ static void a_fault(void *x, long err, char *text, unsigned cap) {
     (void)x;
     if (Fault(err, NULL, (STRPTR)text, (LONG)cap) <= 0) text[0] = 0;
 }
+/* --- Protocol 4 (spec 2026-10-31 §2): writes on the Amiga's own paths, quiet, answered with the DOS error --- */
+static long a_err(void *x) { return ((afs_ctx *)x)->err; }
+/* Free bytes on the volume of an Amiga path: its volume part, colon included ("Work:" of "Work:a/b"). */
+static unsigned long a_free_at(void *x, const char *path) {
+    char v[40]; const char *colon = strchr(path, ':'); size_t n = colon ? (size_t)(colon - path + 1) : 0;
+    unsigned long r; APTR w;
+    (void)x;
+    if (!n || n >= sizeof v) return 0;
+    memcpy(v, path, n); v[n] = 0;
+    w = quiet_on(); r = free_of(v); quiet_off(w);
+    return r;
+}
+static long done(APTR w, int ok) { long e = ok ? 0 : IoErr(); quiet_off(w); return ok ? 0 : (e ? e : ERROR_OBJECT_NOT_FOUND); }
+static long a_w_mkdir(void *x, const char *path) {
+    APTR w = quiet_on(); BPTR l = CreateDir((STRPTR)path);
+    (void)x;
+    if (l) UnLock(l);
+    return done(w, l != 0);
+}
+static long a_w_rename(void *x, const char *from, const char *to) { APTR w = quiet_on(); (void)x; return done(w, Rename((STRPTR)from, (STRPTR)to) != 0); }
+static long a_w_delete(void *x, const char *path) { APTR w = quiet_on(); (void)x; return done(w, DeleteFile((STRPTR)path) != 0); }
+static long a_w_protect(void *x, const char *path, unsigned long prot) { APTR w = quiet_on(); (void)x; return done(w, SetProtection((STRPTR)path, (LONG)prot) != 0); }
+static long a_w_note(void *x, const char *path, const char *comment) { APTR w = quiet_on(); (void)x; return done(w, SetComment((STRPTR)path, (STRPTR)comment) != 0); }
 void afs_base_name(const char *path, char *out) { rx_base_name(path, out); }   /* the rule is the core's, host-tested */
 void afs_set_root(afs_ctx *c, const char *root) { strncpy(c->root, root, sizeof c->root - 1); c->root[sizeof c->root - 1] = 0; }
 void afs_init(afs_ctx *c, rx_fs *fs, const char *root) {
@@ -290,4 +338,7 @@ void afs_init(afs_ctx *c, rx_fs *fs, const char *root) {
     fs->is_dir = a_is_dir; fs->list = a_list; fs->open_r = a_open_r; fs->read = a_read; fs->close_r = a_close_r;
     fs->vols = a_vols; fs->dir_open = a_dir_open; fs->dir_next = a_dir_next; fs->dir_close = a_dir_close;
     fs->stat = a_stat; fs->fault = a_fault;
+    fs->err = a_err; fs->free_at = a_free_at;
+    fs->w_mkdir = a_w_mkdir; fs->w_rename = a_w_rename; fs->w_delete = a_w_delete; fs->w_protect = a_w_protect;
+    fs->w_note = a_w_note;
 }
