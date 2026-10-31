@@ -248,6 +248,11 @@ export const devices = pgTable('devices', {
   rxProto: integer('rx_proto'),
   /** Transfer's browsing switch from READY 3 (?browse=1). */
   browseOn: boolean('browse_on').notNull().default(false),
+  /**
+   * NET: volumes phase 2 (spec 2026-10-31 §4.3): Transfer's writing switch from READY 4 (?write=1, with rxv=4 and
+   * browse=1). Cleared whenever browse_on is (Transfer gone). Writes are offered only while it is true.
+   */
+  writeOn: boolean('write_on').notNull().default(false),
   /** The receiver state the board last reported (?rx=): c connected, r refused, u unreachable, - unknown/off. */
   sendRx: text('send_rx'),
   sendRxAt: timestamp('send_rx_at', { withTimezone: true }),

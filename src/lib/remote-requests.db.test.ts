@@ -65,6 +65,12 @@ describe('remote_requests schema', () => {
       and column_name in ('req_version','rx_proto','browse_on') order by column_name`);
     expect(c.rows.map((r) => r.column_name)).toEqual(['browse_on', 'req_version', 'rx_proto']);
   });
+  it('has the writes columns (phase 2): transfers.amiga_dest, on_clash, job_id, move_source; devices.write_on', async () => {
+    const c = await getDb().execute(sql`select table_name || '.' || column_name as c from information_schema.columns
+      where (table_name = 'transfers' and column_name in ('amiga_dest','on_clash','job_id','move_source'))
+         or (table_name = 'devices' and column_name = 'write_on') order by 1`);
+    expect(c.rows.map((r) => r.c)).toEqual(['devices.write_on', 'transfers.amiga_dest', 'transfers.job_id', 'transfers.move_source', 'transfers.on_clash']);
+  });
   it('indexes upload_id: every chunk of every upload looks its get up by it', async () => {
     const i = await getDb().execute(sql`select indexdef from pg_indexes where tablename = 'remote_requests' and indexname = 'remote_requests_upload_idx'`);
     expect(i.rows.map((r) => r.indexdef)).toEqual([expect.stringContaining('(upload_id)')]);

@@ -19,7 +19,7 @@ export const transfers = pgTable('transfers', {
   protection: bigint('protection', { mode: 'number' }).notNull().default(0),
   comment: text('comment').notNull().default(''),
   blobSha256: text('blob_sha256').notNull(),
-  /** queued | sending | delivered | failed | cancelled | expired */
+  /** queued | sending | delivered | failed | cancelled | expired | skipped (a copy onto a volume answered Skip) */
   status: text('status').notNull().default('queued'),
   errorCode: text('error_code'),
   errorText: text('error_text'),
@@ -29,4 +29,15 @@ export const transfers = pgTable('transfers', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
-}, (t) => [index('transfers_device_idx').on(t.deviceId, t.status, t.createdAt)]);
+  /**
+   * NET: volumes phase 2 (spec 2026-10-31 §4.1): a copy onto one of the Amiga's volumes. `amiga_dest` is the absolute
+   * Amiga path (`Work:Tools/x`, Latin-1 characters), `on_clash` keep | replace | skip; both null for an ordinary send
+   * into ReceiveDir. `job_id`: the Files operation the row belongs to (its progress, plan W6); `move_source`: the Files
+   * path a move removes once every row of its job naming it is delivered (plan W7). A board is offered such a row only
+   * while it reports writing on (rxv=4, write=1).
+   */
+  amigaDest: text('amiga_dest'),
+  onClash: text('on_clash'),
+  jobId: text('job_id'),
+  moveSource: text('move_source'),
+}, (t) => [index('transfers_device_idx').on(t.deviceId, t.status, t.createdAt), index('transfers_job_idx').on(t.jobId)]);
