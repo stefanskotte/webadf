@@ -15,7 +15,7 @@ with fast memory hidden (`NoFastMem`), `AddNetInterface` alone left 110 KB of ch
 TCP/IP stack had too little left to send a 1000-entry listing. Transfer waits out ENOBUFS (out of network buffers)
 instead of dropping the connection. Transfer 2.5 adds 7.4 KB of code (50,016 B) and 1,396 B of fixed buffers (BSS
 25,188 B) to 2.4's, measured from the hunks; the Shell stack stays 8 KB (a drawer delete keeps its place in one path,
-with no recursion). Transfer 2.6 adds 944 B of code (50,960 B) and 240 B of fixed buffers (BSS 25,428 B), no stack.
+with no recursion). Transfer 2.6 adds 956 B of code (50,972 B) and 320 B of fixed buffers (BSS 25,508 B), and no stack.
 
 ## Using it
 
