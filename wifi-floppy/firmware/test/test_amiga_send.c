@@ -516,7 +516,7 @@ static void the_hello_is_protocol_3_with_requests(void) {
     fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
     snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
     as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
-    char want[64]; snprintf(want, sizeof want, "WEBADF 3 %s\n", KEY);
+    char want[64]; snprintf(want, sizeof want, "WEBADF 4 %s\n", KEY);
     CHECK(strcmp(F.out, want) == 0, F.out);
     CHECK_EQ_INT(as_rx_proto(&S), 0);
     reply("READY 3 1"); run(2);
@@ -1588,6 +1588,134 @@ static void a_listing_fetched_during_a_copy_goes_before_the_next_get(void) {
     CHECK(F.req_fetches <= fetches + 2, "one fetch per GET start, not a loop");
 }
 
+// --- NET: volumes, writes (spec 2026-10-31 sections 2-3, fw 1.23.0) ---
+// Connected to Transfer 2.5 (READY 4 <browse> <write>), the queue empty, nothing fetched yet.
+static void ready4(int browse, int write) {
+    fresh();
+    as_set_key(&S, KEY);
+    as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1);
+    run(2); F.sock = AS_SOCK_OPEN; run(1);
+    char r[16]; snprintf(r, sizeof r, "READY 4 %d %d", browse, write); reply(r); run(2);
+    clear_out();
+}
+static const char *RO = "ERR m readonly 26:Writing is off in Transfer";
+
+static void the_hello_is_protocol_4_with_requests(void) {
+    fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
+    char want[64]; snprintf(want, sizeof want, "WEBADF 4 %s\n", KEY);
+    CHECK(strcmp(F.out, want) == 0, F.out);
+    reply("READY 4 1 1"); run(2);
+    CHECK_EQ_INT(as_rx_proto(&S), 4); CHECK(as_browse(&S), "browsing on"); CHECK(as_write(&S), "writing on");
+    ready4(1, 0);
+    CHECK_EQ_INT(as_rx_proto(&S), 4); CHECK(as_browse(&S), "browsing on"); CHECK(!as_write(&S), "writing off");
+    ready4(0, 1);                                       // <w> is 1 only with <b> 1: a Transfer that says otherwise
+    CHECK(!as_browse(&S) && !as_write(&S), "browse off means write off");
+    ready4(0, 0);
+    CHECK_EQ_INT(as_rx_proto(&S), 4); CHECK(!as_browse(&S) && !as_write(&S), "both off");
+}
+
+static void a_malformed_ready_4_counts_as_1(void) {
+    fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
+    reply("READY 4 1"); run(2);
+    CHECK_EQ_INT(as_rx_proto(&S), 1); CHECK(!as_write(&S), "no write");
+}
+
+static void a_ready_4_to_a_protocol_2_hello_counts_as_1(void) {
+    fresh(); as_set_key(&S, KEY);                       // uploads, no requests: WEBADF 2
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
+    reply("READY 4 1 1"); run(2);
+    CHECK_EQ_INT(as_rx_proto(&S), 1); CHECK(!as_write(&S), "no write");
+}
+
+// Review Focus 1.
+static void transfer_2_4_answers_ready_3_and_writes_are_readonly(void) {
+    ready3(1);                                          // the hello was WEBADF 4; Transfer 2.4 answers READY 3 1
+    CHECK_EQ_INT(as_rx_proto(&S), 3); CHECK(as_browse(&S), "browsing"); CHECK(!as_write(&S), "no writes");
+    wake(1, "MKDIR m 8:Work:New\nDIR d 5:Work:\n"); run(4);
+    CHECK(strstr(F.out, "MKDIR") == NULL, "never sent to a 2.4");
+    CHECK_EQ_INT(F.req_posts, 1);
+    char want[160]; snprintf(want, sizeof want, "{\"piece\":0,\"lines\":[\"%s\"],\"last\":true}", RO);
+    CHECK(strcmp(F.req_body[0], want) == 0, F.req_body[0]);
+    CHECK(strstr(F.out, "DIR d 5:Work:\n") != NULL, "the read still goes");
+    reply("DONE d 0"); run(3);
+    CHECK_EQ_INT(F.req_posts, 2);
+}
+
+static void each_write_is_relayed_at_protocol_4(void) {
+    static const char *const L[] = { "MKDIR a 8:Work:New", "RENAME b 6:Work:a 6:Work:b", "DELETE c 8:Work:old",
+                                     "PROTECT d 6:Work:x f0", "NOTE e 6:Work:x 5:hello" };
+    static const char *const rid[] = { "a", "b", "c", "d", "e" };
+    ready4(1, 1);
+    wake(1, "MKDIR a 8:Work:New\nRENAME b 6:Work:a 6:Work:b\nDELETE c 8:Work:old\nPROTECT d 6:Work:x f0\nNOTE e 6:Work:x 5:hello\n");
+    for (int i = 0; i < 5; i++) {
+        run(3);
+        char want[80]; snprintf(want, sizeof want, "%s\n", L[i]);
+        CHECK(strncmp(F.out, want, strlen(want)) == 0, F.out); clear_out();
+        char done[16]; snprintf(done, sizeof done, "DONE %s 1", rid[i]); reply(done); run(3);
+        CHECK_EQ_INT(F.req_posts, i + 1);
+        char body[80]; snprintf(body, sizeof body, "{\"piece\":0,\"lines\":[\"DONE %s 1\"],\"last\":true}", rid[i]);
+        CHECK(strcmp(F.req_body[i], body) == 0, F.req_body[i]);
+    }
+}
+
+static void a_write_with_writing_off_still_goes_to_transfer(void) {
+    ready4(1, 0);
+    wake(1, "MKDIR m 8:Work:New\n"); run(3);
+    CHECK(strcmp(F.out, "MKDIR m 8:Work:New\n") == 0, F.out);   // Transfer answers readonly itself (ruling N2)
+    reply(RO); run(3);
+    char want[160]; snprintf(want, sizeof want, "{\"piece\":0,\"lines\":[\"%s\"],\"last\":true}", RO);
+    CHECK(strcmp(F.req_body[0], want) == 0, F.req_body[0]);
+}
+
+// Review Focus 3: a drawer of thousands of entries takes minutes; DEL lines are its signs of life.
+static void del_lines_keep_a_long_delete_alive(void) {
+    ready4(1, 1);
+    wake(1, "DELETE x 8:Work:old\n"); run(3);
+    CHECK(strcmp(F.out, "DELETE x 8:Work:old\n") == 0, F.out);
+    for (int i = 1; i <= 5; i++) {
+        F.now += 20000;
+        char l[24]; snprintf(l, sizeof l, "DEL x %d", i * 50); reply(l); run(3);
+        CHECK(F.sock == AS_SOCK_OPEN, "alive");
+    }
+    CHECK(F.req_posts >= 1, "progress posted");
+    CHECK(strstr(F.req_body[0], "\"DEL x 50\"") != NULL, F.req_body[0]);
+    F.now += AS_PIECE_MS; run(3);                       // the last DEL's piece goes; the silence counts from its POST
+    const int posts = F.req_posts;
+    F.now += AS_REQ_SILENT_MS + 1; run(3);
+    CHECK(F.sock == AS_SOCK_CLOSED, "30 s without a DEL: timeout");
+    CHECK(F.req_posts > posts, "the timeout posted");
+    CHECK(strstr(F.req_body[F.req_posts - 1], "ERR x timeout") != NULL, F.req_body[F.req_posts - 1]);
+}
+
+static void a_partial_delete_posts_del_then_err(void) {
+    ready4(1, 1);
+    wake(1, "DELETE x 8:Work:old\n"); run(3);
+    reply("DEL x 37"); reply("ERR x busy 30:Libs/foo.library: object in use"); run(3);
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"DEL x 37\",\"ERR x busy 30:Libs/foo.library: object in use\"],\"last\":true}") == 0,
+          F.req_body[0]);
+    CHECK(!RQ.active, "done");
+}
+
+static void a_drop_mid_delete_ends_norx_lost(void) {
+    ready4(1, 1);
+    wake(1, "DELETE x 8:Work:old\n"); run(3);
+    reply("DEL x 50"); run(2);
+    F.recv_closed = true; run(3);
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strcmp(F.req_body[0], "{\"piece\":0,\"lines\":[\"DEL x 50\",\"ERR x norx 35:The connection to Transfer was lost\"],\"last\":true}") == 0,
+          F.req_body[0]);
+    CHECK(!as_write(&S), "unknown while closed");
+}
+//@@T4@@
+
 int main(void) {
     RUN(off_or_no_address_does_nothing);
     RUN(connects_to_6800_and_says_hello);
@@ -1701,5 +1829,15 @@ int main(void) {
     RUN(no_amiga_address_acks_both_versions_then_fetches);
     RUN(a_protocol_3_drop_reconnects_in_5s_without_a_long_poll);
     RUN(a_listing_fetched_during_a_copy_goes_before_the_next_get);
+    RUN(the_hello_is_protocol_4_with_requests);
+    RUN(a_malformed_ready_4_counts_as_1);
+    RUN(a_ready_4_to_a_protocol_2_hello_counts_as_1);
+    RUN(transfer_2_4_answers_ready_3_and_writes_are_readonly);
+    RUN(each_write_is_relayed_at_protocol_4);
+    RUN(a_write_with_writing_off_still_goes_to_transfer);
+    RUN(del_lines_keep_a_long_delete_alive);
+    RUN(a_partial_delete_posts_del_then_err);
+    RUN(a_drop_mid_delete_ends_norx_lost);
+    //@@R4@@
     return REPORT();
 }

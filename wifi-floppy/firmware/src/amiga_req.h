@@ -55,7 +55,8 @@ typedef struct as_req {
     ar_got_t got[AR_MAX];
     uint32_t got_seq;
     char late[AR_LATE_BYTES];         // a late ERR's body, built when it is posted
-    bool browse;                      // READY 3's flag: Transfer's switch, for the poll
+    bool browse;                      // READY 3's or 4's browse flag: Transfer's switch, for the poll
+    bool write;                       // READY 4's write flag (fw 1.23.0): writes reach Transfer's disks
     // amiga_send.c's own flags, here so that SRAM does not grow (final review):
     bool quick;                       // a protocol 3 drop: the reconnect in AS_RETRY_WAITING_MS counts as work (I1)
     bool refetched;                   // fetched since the last request was taken: the next GET goes without (I2)

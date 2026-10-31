@@ -10,6 +10,7 @@ _Static_assert(AR_LINE_MAX == AS_LINE_MAX, "an answer line is a line from Transf
 #define AS_TXT_LOST "The connection to Transfer was lost"
 #define AS_TXT_OLD "Transfer 2.3 or newer is needed"
 #define AS_TXT_SILENT "Transfer stopped answering"
+#define AS_TXT_RO "Writing is off in Transfer"   // = Transfer 2.5's own readonly text and the web app's words (spec 4.1)
 static void req_on_drop(amiga_send_t *s);
 static bool req_work(const amiga_send_t *s);
 static bool reconnect_soon(const amiga_send_t *s, uint32_t t);
@@ -637,6 +638,13 @@ static bool req_start(amiga_send_t *s, uint32_t t) {
         ar_end_err(r, "old", AS_TXT_OLD);
         return true;
     }
+    if (s->peer_v == 3 && ar_kind_is_write(r->kind)) {
+        // Transfer 2.3/2.4 know no writes (ruling N2): the board answers as 2.5 with writing off would. At protocol 4
+        // a write goes even with writing off -- Transfer answers readonly itself, as it answers off for browsing (F11).
+        wf_logf(WF_INFO, "req: %.8s readonly (Transfer protocol 3)", r->rid);
+        ar_end_err(r, "readonly", AS_TXT_RO);
+        return true;
+    }
     push(s, (const uint8_t *)r->out, r->out_n);
     r->sent = true;
     r->t_last = t;
@@ -710,6 +718,7 @@ static void req_on_drop(amiga_send_t *s) {
     if (r->active && r->sent) ar_end_err(r, "norx", AS_TXT_LOST);
     for (int i = 0; i < AR_MAX; i++) if (r->got[i].used) ar_got_fail(&r->got[i], "norx", AS_TXT_LOST);
     r->browse = false;
+    r->write = false;
     r->ping_held = false;
 }
 
@@ -718,7 +727,8 @@ void as_set_req_version(amiga_send_t *s, uint32_t v) { if (s->req) s->req->want_
 bool as_req_capable(const amiga_send_t *s) { return s->req != NULL; }
 uint32_t as_req_acked(const amiga_send_t *s) { return s->req ? (offline(s) ? s->req->want_v : s->req->have_v) : 0; }
 int as_rx_proto(const amiga_send_t *s) { return s->phase >= AS_READY ? s->peer_v : 0; }
-bool as_browse(const amiga_send_t *s) { return s->req && as_rx_proto(s) == 3 && s->req->browse; }
+bool as_browse(const amiga_send_t *s) { return s->req && as_rx_proto(s) >= 3 && s->req->browse; }
+bool as_write(const amiga_send_t *s) { return s->req && as_rx_proto(s) == 4 && s->req->write; }
 
 // The shared engine: as_tick runs it without HTTPS, as_step with at most one request.
 static bool run(amiga_send_t *s, bool http) {
@@ -795,7 +805,7 @@ static bool run(amiga_send_t *s, bool http) {
     case AS_CONNECTING:
         if (sock == AS_SOCK_OPEN) {
             if (s->up && s->up->key[0]) {   // protocol 2 (fw 1.19.0): uploads; protocol 3 (fw 1.22.0): requests too
-                s->hello_v = s->req ? 3 : 2;
+                s->hello_v = s->req ? 4 : 2;   // protocol 4 (fw 1.23.0): writes too; Transfer 2.4 answers READY 3
                 int n = snprintf(s->up->line, sizeof s->up->line, "WEBADF %u %s\n", (unsigned)s->hello_v, s->up->key);
                 push(s, (const uint8_t *)s->up->line, n);
             } else {
@@ -831,12 +841,19 @@ static bool run(amiga_send_t *s, bool http) {
         switch (s->phase) {
         case AS_HELLO:
             if (strncmp(s->line, "READY ", 6) == 0) {
-                // Receive 1 says READY 1 to anything; READY 2 counts only as the answer to a protocol 2 or 3 hello
-                // (Transfer 2.2 answers a protocol 3 hello READY 2), READY 3 <0|1> only as the answer to protocol 3.
+                // Receive 1 says READY 1 to anything; READY 2 counts only as the answer to a protocol 2-4 hello
+                // (Transfer 2.2 answers a protocol 3 hello READY 2), READY 3 <0|1> only as the answer to protocol 3 or 4
+                // (Transfer 2.3/2.4 answer a protocol 4 hello so: no writes), READY 4 <b> <w> only to protocol 4.
                 const char *v = s->line + 6;
-                if (s->hello_v == 3 && v[0] == '3' && v[1] == ' ' && (v[2] == '0' || v[2] == '1') && v[3] == 0) {
+                const bool b01 = v[0] && v[1] == ' ' && (v[2] == '0' || v[2] == '1');
+                if (s->hello_v == 4 && v[0] == '4' && b01 && v[3] == ' ' && (v[4] == '0' || v[4] == '1') && v[5] == 0) {
+                    s->peer_v = 4;
+                    s->req->browse = v[2] == '1';
+                    s->req->write = s->req->browse && v[4] == '1';   // <w> is 1 only when <b> is (spec 2.1)
+                } else if (s->hello_v >= 3 && v[0] == '3' && b01 && v[3] == 0) {
                     s->peer_v = 3;
                     s->req->browse = v[2] == '1';
+                    s->req->write = false;
                 } else {
                     s->peer_v = (s->hello_v >= 2 && v[0] == '2' && v[1] == 0) ? 2 : 1;
                 }
@@ -846,7 +863,9 @@ static bool run(amiga_send_t *s, bool http) {
                 s->t_ping = t;
                 wf_logf(WF_INFO, "send: receiver connected %lu.%lu.%lu.%lu protocol %u%s", (unsigned long)(s->ip >> 24),
                         (unsigned long)((s->ip >> 16) & 255), (unsigned long)((s->ip >> 8) & 255), (unsigned long)(s->ip & 255),
-                        (unsigned)s->peer_v, s->peer_v == 3 ? (s->req->browse ? ", browsing on" : ", browsing off") : "");
+                        (unsigned)s->peer_v, s->peer_v < 3 ? "" : !s->req->browse ? ", browsing off"
+                                             : s->peer_v == 3 ? ", browsing on" : s->req->write ? ", browsing and writing on"
+                                             : ", browsing on, writing off");
             }
             break;
         case AS_FILE_SENT:
