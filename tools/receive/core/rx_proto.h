@@ -73,6 +73,16 @@ typedef struct rx_fs {
     void (*dir_close)(void *ctx);                      /* the drawer's lock released */
     long (*stat)(void *ctx, const char *path, rx_finfo *info, int *is_dir);   /* 0, or a DOS error */
     void (*fault)(void *ctx, long err, char *text, unsigned cap);             /* AmigaDOS's words for err */
+    /* Protocol 4 (spec 2026-10-31 §2): writes. A path with a ':' is the Amiga's own (Work:x/y): the file hooks above
+       pass it through instead of joining it to the folder (plan ruling W1). Every write runs with DOS requesters off
+       (pr_WindowPtr = -1). */
+    long (*err)(void *ctx);                                    /* the DOS error of the last failed file hook above */
+    unsigned long (*free_at)(void *ctx, const char *path);     /* free bytes on path's volume; 0xFFFFFFFF unknown */
+    long (*w_mkdir)(void *ctx, const char *path);              /* these five: 0, or a DOS error */
+    long (*w_rename)(void *ctx, const char *from, const char *to);
+    long (*w_delete)(void *ctx, const char *path);             /* one file, or one empty drawer */
+    long (*w_protect)(void *ctx, const char *path, unsigned long prot);
+    long (*w_note)(void *ctx, const char *path, const char *comment);
 } rx_fs;
 
 enum { RX_EV_HELLO, RX_EV_LIST, RX_EV_BEGIN, RX_EV_PROGRESS, RX_EV_DONE, RX_EV_FAILED,
@@ -81,8 +91,9 @@ enum { RX_EV_HELLO, RX_EV_LIST, RX_EV_BEGIN, RX_EV_PROGRESS, RX_EV_DONE, RX_EV_F
        RX_EV_UP_PROGRESS,    /* bytes = stored on the web app (MORE's <stored> field) */
        RX_EV_UP_DONE,        /* path = the name as stored */
        RX_EV_UP_FAILED,      /* text = why; code = the board's NO code, or "local" */
-       RX_EV_REQ };          /* a web request answered (protocol 3): id = its id, code "vols"|"dir"|"get", path (vols:
+       RX_EV_REQ,            /* a web request answered (protocol 3): id = its id, code "vols"|"dir"|"get", path (vols:
                                 ""), size = entries sent, bytes = 1 if cut, text = NULL, or why it was refused */
+       RX_EV_SKIP };         /* protocol 4: FILE <id> ... skip, and the name exists: id, path (nothing was written) */
 enum { RX_REQ_NONE, RX_REQ_VOLS, RX_REQ_DIR, RX_REQ_GET };
 typedef struct rx_event {
     int kind;
@@ -117,6 +128,7 @@ typedef struct rx_upq {
 } rx_upq;
 enum { RX_ADD_OK, RX_ADD_FULL, RX_ADD_NOMEM, RX_ADD_NAME };
 enum { RX_TRUST_NONE, RX_TRUST_OK, RX_TRUST_OTHER, RX_TRUST_OLD };
+enum { RX_MODE_NONE, RX_MODE_KEEP, RX_MODE_REPLACE, RX_MODE_SKIP };   /* FILE's clash mode (protocol 4) */
 enum { RX_UP_IDLE, RX_UP_ASKED, RX_UP_SKIP, RX_UP_DATA, RX_UP_ENDED };   /* PUT out; CRC over the resumed part; bytes; END out */
 
 typedef struct rx_session { /* fields private to rx_proto.c except list/list_n */
@@ -128,6 +140,7 @@ typedef struct rx_session { /* fields private to rx_proto.c except list/list_n *
     char cur_tmp[RX_PATH_MAX + sizeof RX_TMP_NAME];   /* the path's folder (< 255 bytes) + the temp name */
     unsigned long cur_size, cur_left, cur_crc_want, cur_crc, cur_prot, cur_mark;
     int cur_open, cur_write_failed;
+    int cur_mode; long cur_err;   /* protocol 4: RX_MODE_* (an absolute path), and the DOS error of a failed write */
     char out[RX_OUT_MAX]; unsigned out_n;
     /* protocol 2 */
     rx_upq *upq; int peer_v, trust, proto_err; char peer_key[RX_KEY_HEX + 1];
@@ -185,6 +198,8 @@ int rx_hello_stale(const rx_session *s);
 int rx_write_on(const rx_session *s);
 /* The protocol code for an AmigaDOS error (plan ruling T3); want_dir: the request wanted a drawer (DIR), not a file. */
 const char *rx_err_code(long err, int want_dir);
+/* FILE's code for an AmigaDOS error on an absolute path (plan ruling W9): wprot, full, denied, busy, else write. */
+const char *rx_file_code(long err);
 /* An RX_EV_REQ in the owner's words (spec §2.3): "listed volumes", "listed Work:Programs", "copying Work:a.lha" (GOT:
    the file is only queued then),
    "could not list Work:x: <why>"; a path over 40 bytes ends "...". Cut to cap. */

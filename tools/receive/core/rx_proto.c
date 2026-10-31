@@ -674,8 +674,10 @@ int rx_idle_secs(const rx_session *s) { return s->up_phase != RX_UP_IDLE ? RX_UP
 int rx_up_reading_ahead(const rx_session *s) { return s->up_phase == RX_UP_SKIP && !s->up_closing; }
 
 /* --- files --- */
+/* The drawer part of path, with its separator: "a/b/" of "a/b/c", "Work:" of "Work:c" (protocol 4). */
 static void parent_of(const char *path, char *dst) {
-    const char *last = strrchr(path, '/');
+    const char *last = strrchr(path, '/'), *colon = strrchr(path, ':');
+    if (colon && (!last || colon > last)) last = colon;
     size_t n = last ? (size_t)(last - path + 1) : 0;
     memcpy(dst, path, n);
     dst[n] = 0;
@@ -690,6 +692,23 @@ static int make_parents(rx_session *s, const char *path) {
     }
     return 0;
 }
+const char *rx_file_code(long err) {
+    switch (err) {
+    case 214: return "wprot";
+    case 221: return "full";
+    case 222: case 223: case 224: return "denied";
+    case RX_DOS_IN_USE: return "busy";
+    default: return "write";
+    }
+}
+/* The DOS error of the last failed file hook (0 when the glue keeps none). */
+static long rx_ferr(const rx_session *s) { return s->fs->err ? s->fs->err(s->fs->ctx) : 0; }
+static void fault_text(rx_session *s, long err, const char *dflt, char *out, unsigned cap) {
+    char t[80];
+    t[0] = 0;
+    if (err) s->fs->fault(s->fs->ctx, err, t, sizeof t);
+    clean(t[0] ? t : dflt, out, cap);
+}
 static void fail_file(rx_session *s, const char *code, const char *text) {
     if (s->cur_open) { s->fs->close_w(s->fs->ctx); s->cur_open = 0; }
     s->fs->remove(s->fs->ctx, s->cur_tmp);
@@ -697,19 +716,38 @@ static void fail_file(rx_session *s, const char *code, const char *text) {
     s->in_data = 0;
     emit(s, RX_EV_FAILED, s->cur_id, s->cur_path, s->cur_size, 0, text);
 }
+/* An absolute FILE's failure: the code and AmigaDOS's words for the DOS error (plan ruling W9). */
+static void fail_file_err(rx_session *s, long err, const char *dflt) {
+    char t[80];
+    fault_text(s, err, dflt, t, sizeof t);
+    fail_file(s, rx_file_code(err), t);
+}
 static void finish_file(rx_session *s) {
     char saved[RX_PATH_MAX + 1], digits[12];
     unsigned n;
     int closed = s->fs->close_w(s->fs->ctx);
+    long cerr = closed != 0 ? rx_ferr(s) : 0;
     s->cur_open = 0;
-    if (s->cur_write_failed || closed != 0) { fail_file(s, "write", "cannot write"); return; }
+    if (s->cur_write_failed || closed != 0) {
+        if (s->cur_mode) fail_file_err(s, s->cur_write_failed ? s->cur_err : cerr, "cannot write");
+        else fail_file(s, "write", "cannot write");
+        return;
+    }
     if (s->cur_crc != s->cur_crc_want) { fail_file(s, "crc", "checksum mismatch"); return; }
-    for (n = 1; n <= 99; n++) {
+    if (s->cur_mode == RX_MODE_REPLACE) {   /* spec §2.2: the old file goes only now, after the CRC matched */
+        strcpy(saved, s->cur_path);
+        if (s->fs->exists(s->fs->ctx, saved) && s->fs->remove(s->fs->ctx, saved) != 0) { fail_file_err(s, rx_ferr(s), "cannot delete"); return; }
+        if (s->fs->rename(s->fs->ctx, s->cur_tmp, saved) != 0) { fail_file_err(s, rx_ferr(s), "cannot write"); return; }
+        n = 1;
+    } else for (n = 1; n <= 99; n++) {
         if (rx_candidate(s->cur_path, n, saved) != 0) { n = 100; break; }
         if (!s->fs->exists(s->fs->ctx, saved)) break;
     }
     if (n > 99) { fail_file(s, "name", "no free name"); return; }
-    if (s->fs->rename(s->fs->ctx, s->cur_tmp, saved) != 0) { fail_file(s, "write", "cannot write"); return; }
+    if (s->cur_mode != RX_MODE_REPLACE && s->fs->rename(s->fs->ctx, s->cur_tmp, saved) != 0) {
+        if (s->cur_mode) fail_file_err(s, rx_ferr(s), "cannot write"); else fail_file(s, "write", "cannot write");
+        return;
+    }
     s->fs->set_meta(s->fs->ctx, saved, s->cur_prot, s->cur_comment);
     puts_(s, "OK "); puts_(s, s->cur_id); puts_(s, " ");
     rx_utoa((unsigned long)strlen(saved), digits); puts_(s, digits); puts_(s, ":"); puts_(s, saved); puts_(s, "\n");
@@ -717,10 +755,44 @@ static void finish_file(rx_session *s) {
     emit(s, RX_EV_DONE, s->cur_id, saved, s->cur_size, s->cur_size, 0);
 }
 
+static int vol_known(rx_session *s, const char *path);
+/* An absolute FILE (protocol 4, spec 2026-10-31 §2.2): checked, then the temporary file opened in the target drawer.
+   0: GO may follow; -1: answered (refused or skipped). */
+static int abs_file_start(rx_session *s, const char *id, unsigned long size) {
+    rx_finfo info; int is_dir = 0, k; unsigned long fr; char t[80];
+    if (!rx_abs_path_ok(s->cur_path)) { refuse(s, id, s->cur_path, "name", "bad name"); return -1; }
+    if (!rx_write_on(s)) { refuse(s, id, s->cur_path, "readonly", "writing is off in Transfer"); return -1; }
+    k = vol_known(s, s->cur_path);
+    if (k < 0) { refuse(s, id, s->cur_path, "folder", "cannot read the volume list"); return -1; }
+    if (!k) { refuse(s, id, s->cur_path, "folder", "no such volume"); return -1; }
+    memset(&info, 0, sizeof info);
+    if (s->fs->stat(s->fs->ctx, s->cur_path, &info, &is_dir) == 0) {
+        if (s->cur_mode == RX_MODE_SKIP) {
+            puts_(s, "SKIP "); puts_(s, id); puts_(s, "\n");
+            emit(s, RX_EV_SKIP, id, s->cur_path, size, 0, 0);
+            return -1;
+        }
+        if (is_dir && s->cur_mode == RX_MODE_REPLACE) { refuse(s, id, s->cur_path, "denied", "a drawer has that name"); return -1; }
+    }
+    fr = s->fs->free_at(s->fs->ctx, s->cur_path);
+    if (fr < 8192UL || fr - 8192UL < size) { refuse(s, id, s->cur_path, "full", "not enough space"); return -1; }
+    if (make_parents(s, s->cur_path) != 0) {
+        long e = rx_ferr(s);
+        fault_text(s, e, "cannot create folder", t, sizeof t); refuse(s, id, s->cur_path, rx_file_code(e), t); return -1;
+    }
+    parent_of(s->cur_path, s->cur_tmp);
+    strcat(s->cur_tmp, RX_TMP_NAME);
+    if (s->fs->open_w(s->fs->ctx, s->cur_tmp) != 0) {
+        long e = rx_ferr(s);
+        fault_text(s, e, "cannot write", t, sizeof t); refuse(s, id, s->cur_path, rx_file_code(e), t); return -1;
+    }
+    return 0;
+}
 static void on_file(rx_session *s, cur *c) {
     const char *t; unsigned n;
     unsigned long size, crc, prot;
     char id[RX_ID_MAX + 1];
+    int mode = RX_MODE_NONE;
     id[0] = 0;
     if (!tok(c, &t, &n) || !id_ok(t, n)) { refuse(s, "", "", "name", "bad request"); return; }
     memcpy(id, t, n); id[n] = 0;
@@ -731,6 +803,20 @@ static void on_file(rx_session *s, cur *c) {
     if (!lenstr(c, s->cur_path, sizeof s->cur_path, 0) || !lenstr(c, s->cur_comment, sizeof s->cur_comment, 1)) {
         refuse(s, id, "", "name", "bad request"); return;
     }
+    if (c->p < c->end) {   /* protocol 4: keep|replace|skip, and nothing after it */
+        if (!tok(c, &t, &n)) mode = -1;
+        else if (is(t, n, "keep")) mode = RX_MODE_KEEP;
+        else if (is(t, n, "replace")) mode = RX_MODE_REPLACE;
+        else if (is(t, n, "skip")) mode = RX_MODE_SKIP;
+        else mode = -1;
+        if (c->p < c->end) mode = -1;
+    }
+    /* plan ruling W2: an absolute path needs a mode, and a mode an absolute path */
+    if (mode < 0 || (mode != RX_MODE_NONE) != (strchr(s->cur_path, ':') != NULL)) { refuse(s, id, s->cur_path, "name", "bad request"); return; }
+    s->cur_mode = mode;
+    if (mode) {
+        if (abs_file_start(s, id, size) != 0) return;
+    } else {
     if (!rx_path_ok(s->cur_path)) { refuse(s, id, s->cur_path, "name", "bad name"); return; }
     if (!s->fs->folder_ok(s->fs->ctx)) { refuse(s, id, s->cur_path, "folder", "folder not found"); return; }
     {
@@ -741,6 +827,7 @@ static void on_file(rx_session *s, cur *c) {
     parent_of(s->cur_path, s->cur_tmp);
     strcat(s->cur_tmp, RX_TMP_NAME);
     if (s->fs->open_w(s->fs->ctx, s->cur_tmp) != 0) { refuse(s, id, s->cur_path, "write", "cannot write"); return; }
+    }
     strcpy(s->cur_id, id);
     s->cur_size = s->cur_left = size; s->cur_crc_want = crc; s->cur_crc = 0; s->cur_prot = prot;
     s->cur_mark = 0; s->cur_open = 1; s->cur_write_failed = 0; s->in_data = 1;
@@ -798,7 +885,7 @@ int rx_feed(rx_session *s, const unsigned char *data, unsigned long n) {
             unsigned long room = PROGRESS_STEP - (done0 % PROGRESS_STEP);   /* cross one 16 KB mark per pass */
             unsigned long take = n < s->cur_left ? n : s->cur_left;
             if (take > room) take = room;
-            if (!s->cur_write_failed && s->fs->write(s->fs->ctx, data, take) != 0) s->cur_write_failed = 1;
+            if (!s->cur_write_failed && s->fs->write(s->fs->ctx, data, take) != 0) { s->cur_write_failed = 1; s->cur_err = rx_ferr(s); }
             s->cur_crc = rx_crc32_update(s->cur_crc, data, take);
             s->cur_left -= take; data += take; n -= take;
             {
