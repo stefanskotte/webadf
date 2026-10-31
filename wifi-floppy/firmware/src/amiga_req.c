@@ -60,6 +60,42 @@ static bool path_ok(const char *p, int n) {
     return true;
 }
 
+// "<len>:<bytes>" at p (before end), len in [min, max], no control byte. Where it ends (the end of the line or a
+// space follow it), or NULL when malformed. Writes' fields (fw 1.23.0, spec 2026-10-31 section 2.3).
+static const char *field(const char *p, const char *end, unsigned min, unsigned max) {
+    int d = 0;
+    unsigned len = 0;
+    if (!p || p >= end) return NULL;
+    while (p + d < end && d < 4 && p[d] >= '0' && p[d] <= '9') { len = len * 10u + (unsigned)(p[d] - '0'); d++; }
+    if (d == 0 || p + d >= end || p[d] != ':' || len < min || len > max || (long)len > end - (p + d + 1)) return NULL;
+    const char *q = p + d + 1;
+    for (unsigned i = 0; i < len; i++) if ((unsigned char)q[i] < 0x20 || (unsigned char)q[i] == 0x7f) return NULL;
+    q += len;
+    return (q == end || *q == ' ') ? q : NULL;
+}
+// The next field starts after one space; NULL at the end of the line.
+static const char *next(const char *p, const char *end) { return (p && p < end && *p == ' ') ? p + 1 : NULL; }
+// 1-8 hex digits filling [p, end).
+static bool hexw(const char *p, const char *end) {
+    const long n = end - p;
+    if (n < 1 || n > 8) return false;
+    for (const char *c = p; c < end; c++)
+        if (!((*c >= '0' && *c <= '9') || (*c >= 'a' && *c <= 'f') || (*c >= 'A' && *c <= 'F'))) return false;
+    return true;
+}
+
+static const struct { const char *verb; ar_kind_t kind; } KINDS[] = {
+    { "VOLS ", AR_VOLS }, { "DIR ", AR_DIR }, { "GET ", AR_GET },
+    { "MKDIR ", AR_MKDIR }, { "RENAME ", AR_RENAME }, { "DELETE ", AR_DELETE }, { "PROTECT ", AR_PROTECT },
+    { "NOTE ", AR_NOTE },
+};
+bool ar_kind_is_write(ar_kind_t k) { return k >= AR_MKDIR && k <= AR_NOTE; }
+// The verb's length with its space, for a kind ar_take found.
+static int verb_len(ar_kind_t k) {
+    for (unsigned i = 0; i < sizeof KINDS / sizeof KINDS[0]; i++) if (KINDS[i].kind == k) return (int)strlen(KINDS[i].verb);
+    return 0;
+}
+
 // The line at `at`: its kind (AR_NONE when malformed), its length without the newline, and with it.
 static ar_kind_t line_at(const as_req_t *r, int at, int *n_out, int *adv_out, int *idn_out) {
     const char *l = r->fetched + at;
@@ -69,17 +105,29 @@ static ar_kind_t line_at(const as_req_t *r, int at, int *n_out, int *adv_out, in
     *adv_out = n + (nl ? 1 : 0);
     ar_kind_t k = AR_NONE;
     int vl = 0;
-    if (n > 5 && strncmp(l, "VOLS ", 5) == 0) { k = AR_VOLS; vl = 5; }
-    else if (n > 4 && strncmp(l, "DIR ", 4) == 0) { k = AR_DIR; vl = 4; }
-    else if (n > 4 && strncmp(l, "GET ", 4) == 0) { k = AR_GET; vl = 4; }
-    if (k == AR_NONE) return AR_NONE;
-    const char *id = l + vl;
+    for (unsigned i = 0; i < sizeof KINDS / sizeof KINDS[0] && k == AR_NONE; i++) {
+        const int v = (int)strlen(KINDS[i].verb);
+        if (n > v && strncmp(l, KINDS[i].verb, (size_t)v) == 0) { k = KINDS[i].kind; vl = v; }
+    }
+    if (k == AR_NONE || n > AR_LINE_MAX) return AR_NONE;
+    const char *id = l + vl, *end = l + n;
     const char *sp = memchr(id, ' ', (size_t)(n - vl));
     const int idn = sp ? (int)(sp - id) : n - vl;
     *idn_out = idn;
-    const bool ok = n <= AR_LINE_MAX && rid_ok(id, idn) &&
-                    (k == AR_VOLS ? sp == NULL : (sp != NULL && path_ok(sp + 1, n - vl - idn - 1)));
-    return ok ? k : AR_NONE;
+    if (!rid_ok(id, idn)) return AR_NONE;
+    if (k == AR_VOLS) return sp == NULL ? k : AR_NONE;
+    if (sp == NULL) return AR_NONE;
+    if (k == AR_DIR || k == AR_GET) return path_ok(sp + 1, (int)(end - sp - 1)) ? k : AR_NONE;
+    // The writes: the path, then RENAME's target, PROTECT's bits or NOTE's comment (0-79 bytes).
+    const char *p = field(sp + 1, end, 1, 255);
+    if (!p) return AR_NONE;
+    switch (k) {
+    case AR_MKDIR: case AR_DELETE: return p == end ? k : AR_NONE;
+    case AR_RENAME: return field(next(p, end), end, 1, 255) == end ? k : AR_NONE;
+    case AR_PROTECT: { const char *h = next(p, end); return h && hexw(h, end) ? k : AR_NONE; }
+    case AR_NOTE: return field(next(p, end), end, 0, 79) == end ? k : AR_NONE;
+    default: return AR_NONE;
+    }
 }
 
 // VOLS and DIR go before any GET: someone waits for a pane, while a GET is one file of a copy (final review I2,
@@ -99,7 +147,7 @@ bool ar_take(as_req_t *r, int *skipped) {
     int n, adv, idn = 0;
     const ar_kind_t k = line_at(r, pick, &n, &adv, &idn);
     const char *l = r->fetched + pick;
-    const int vl = k == AR_VOLS ? 5 : 4;
+    const int vl = verb_len(k);
     r->active = true; r->sent = false; r->ended = false; r->discard = false;
     r->kind = k;
     memcpy(r->rid, l + vl, (size_t)idn); r->rid[idn] = 0;
@@ -177,7 +225,7 @@ void ar_end_err(as_req_t *r, const char *code, const char *text) {
 }
 
 bool ar_line_verb(const char *line, char verb[5], char rid[AR_RID_MAX + 1]) {
-    static const char *const V[] = { "VOL", "ENT", "DONE", "ERR", "GOT" };
+    static const char *const V[] = { "VOL", "ENT", "DONE", "ERR", "GOT", "DEL" };   // DEL: a drawer delete's progress (1.23)
     for (unsigned i = 0; i < sizeof V / sizeof V[0]; i++) {
         const size_t vl = strlen(V[i]);
         if (strncmp(line, V[i], vl) != 0 || line[vl] != ' ') continue;

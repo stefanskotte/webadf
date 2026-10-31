@@ -11,7 +11,7 @@
 #define AR_RID_MAX 40                 // the server's request id: 1-40 of [A-Za-z0-9_-]
 #define AR_MAX 8                      // = the server's fetch limit (remote-requests.ts takeWaiting)
 #define AR_FETCH_BYTES 8192           // held lines plus a fetch merged after them (final review I2; PSRAM)
-#define AR_REFETCH_ROOM (AR_MAX * 320) // a fetch needs this much free: 8 lines of "GET <40> 255:<255>\n" are 2440
+#define AR_REFETCH_ROOM (AR_MAX * (AR_LINE_MAX + 1)) // a fetch needs this much free: 8 of the longest lines, RENAME (568) included (ruling N4)
 #define AR_BODY_BYTES 32768           // one piece's JSON body (= DC_POST_BODY_MAX, plan ruling F2)
 #define AR_PIECE_LINES 400            // = the server's lines.max(400)
 #define AR_LINE_MAX 640               // = AS_LINE_MAX and the server's z.string().max(640)
@@ -19,7 +19,9 @@
 #define AR_ERR_MAX 200                // "ERR <40> <code> <len>:<text>": Transfer's text is at most 79
 #define AR_LATE_BYTES 1280            // a late ERR's whole body: AR_ERR_MAX escaped (x6) plus the frame
 
-typedef enum { AR_NONE = 0, AR_VOLS, AR_DIR, AR_GET } ar_kind_t;
+// The writes (fw 1.23.0, spec 2026-10-31 section 2.3) go to Transfer only at protocol 4 (amiga_send.c).
+typedef enum { AR_NONE = 0, AR_VOLS, AR_DIR, AR_GET, AR_MKDIR, AR_RENAME, AR_DELETE, AR_PROTECT, AR_NOTE } ar_kind_t;
+bool ar_kind_is_write(ar_kind_t k);
 
 // A GET Transfer answered GOT: its file comes up later as an upload with this tag. err_owed: the GET failed after its
 // GOT (Transfer's late ERR, the upload refused, the connection lost); `err` is the line to post as piece 1.
@@ -85,7 +87,7 @@ void ar_end_err(as_req_t *r, const char *code, const char *text);
 void ar_finish(as_req_t *r);          // the request is done with: nothing more is posted for it
 // "ERR <rid> <code> <len>:<text>" into out[cap]; the text is cut to 79 characters. Length, or -1.
 int ar_err_line(char *out, int cap, const char *rid, const char *code, const char *text);
-// A line from Transfer: its verb (VOL, ENT, DONE, ERR or GOT) and rid. False for any other line.
+// A line from Transfer: its verb (VOL, ENT, DEL, DONE, ERR or GOT) and rid. False for any other line.
 bool ar_line_verb(const char *line, char verb[5], char rid[AR_RID_MAX + 1]);
 // The GOT table.
 ar_got_t *ar_got_add(as_req_t *r, const char *rid, const char *tag);   // the oldest entry goes when it is full
