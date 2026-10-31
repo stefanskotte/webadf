@@ -780,6 +780,64 @@ static void a_failing_fetch_backs_off(void) {
     F.req_status = 0; F.now += 1100; run(3);
     CHECK_EQ_INT(F.req_fetches, 2); CHECK_EQ_INT(as_req_acked(&S), 1);
 }
+// Fix round 1, finding 1: after an upload a queued download used to starve a crossing PUT (300 s, then NO offline).
+static void a_put_that_crosses_a_request_after_an_upload_goes_first(void) {
+    char q[600];
+    ready3(1);
+    reply(PUT5); run(1); amiga_sends("hello", 5); end_line("1", (const uint8_t *)"hello", 5); run(4);
+    CHECK_EQ_INT(F.closes, 1);                          // one complete upload: up_last is set
+    clear_out();
+    snprintf(q, sizeof q, "NEXT %s 5 3610a686 0 5:Hello 0:\nLIST 1\n%s 5 5:Hello\n", ID, ID);
+    snprintf(F.queue, sizeof F.queue, "%s", q);
+    as_set_inputs(&S, true, 0xAC100AEDu, 2);
+    wake(1, "VOLS a\n"); run(4);
+    CHECK(strstr(F.out, "VOLS a\n") != NULL, "the request went");
+    const int opens = F.opens;
+    reply("PUT 2 5 1.2.3 0 9:Hello.txt 0:"); run(4);    // Transfer sent it before it read VOLS
+    CHECK(F.opens == opens + 1, "the crossing PUT opened");
+    CHECK(strstr(F.out, "TAKE 2 ") != NULL, "and was told to go on");
+}
+
+// Fix round 1, finding 2: lines held for an owed piece hold the PONG too, so no PING may go out meanwhile.
+static void no_ping_while_lines_wait_for_a_piece(void) {
+    char line[64];
+    ready3(1);
+    wake(1, "DIR d 5:Work:\n"); run(3);
+    F.req_post_status = -1;
+    for (int i = 0; i < 400; ) {
+        for (int k = 0; k < 10 && i < 400; k++, i++) { snprintf(line, sizeof line, "ENT d f 1 0 1.0.0 3:%03d 0:", i); reply(line); }
+        run(2);
+    }
+    reply("ENT d f 1 0 1.0.0 3:400 0:"); run(3);
+    CHECK(F.in_head != F.in_tail, "line 401 held in the socket");
+    clear_out();
+    for (int i = 0; i < 12; i++) {
+        F.now += (AS_PING_MS + AS_PONG_MS) / 6; run(2);
+    }
+    CHECK(F.sock == AS_SOCK_OPEN, "the link stays up");
+    CHECK(strstr(F.out, "PING") == NULL, "no PING while lines are held");
+    CHECK(F.in_head != F.in_tail, "still held");
+    F.req_post_status = 0; F.now += 40000; run(3);
+    CHECK(F.in_head == F.in_tail, "read once the piece posted");
+}
+
+// Fix round 1, finding 3: a 4xx the retry cannot cure is a refusal, like done_owed's.
+static void a_403_piece_is_refused_not_retried(void) {
+    ready3(1);
+    F.req_post_status = 403;
+    wake(1, "VOLS a\nVOLS b\n"); run(3);
+    reply("DONE a 0"); run(4);
+    CHECK_EQ_INT(F.req_posts, 1);
+    CHECK(strcmp(F.req_rid[0], "a") == 0, F.req_rid[0]);
+    F.req_post_status = 0;
+    run(3);
+    CHECK_EQ_INT(F.req_posts, 1);                       // never retried
+    CHECK(strstr(F.out, "VOLS b\n") != NULL, "the next request goes");
+    reply("DONE b 0"); run(3);
+    CHECK_EQ_INT(F.req_posts, 2);
+    CHECK(strcmp(F.req_rid[1], "b") == 0, F.req_rid[1]);
+}
+
 static const char *UID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";   // the fake server's upload id
 // Window values come from the constant (plan ruling PF3: Task 11 may change it). BIGN is always past the window.
 #define CH AS_CHUNK_BYTES
@@ -1393,5 +1451,8 @@ int main(void) {
     RUN(a_put_that_crosses_a_request_goes_first);
     RUN(browse_off_still_relays_and_transfer_says_off);
     RUN(a_failing_fetch_backs_off);
+    RUN(a_put_that_crosses_a_request_after_an_upload_goes_first);
+    RUN(no_ping_while_lines_wait_for_a_piece);
+    RUN(a_403_piece_is_refused_not_retried);
     return REPORT();
 }

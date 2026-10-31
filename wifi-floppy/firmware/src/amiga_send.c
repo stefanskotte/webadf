@@ -542,8 +542,8 @@ static bool req_http(amiga_send_t *s, uint32_t t) {
                                       (unsigned long)r->lines_total, (unsigned long)r->piece + 1);
             ar_body_posted(r);
             r->t_last = t;
-        } else if (st == 400 || st == 404 || st == 409) {
-            // Refused for good (the request is gone, replaced by a Refresh, or failed): nothing more is posted for it,
+        } else if (st >= 400 && st < 500 && st != 401 && st != 408 && st != 429) {
+            // Refused for good (a 4xx but 401/408/429: the request is gone, replaced by a Refresh, or failed): nothing more is posted for it,
             // and the rest of its answer is read and dropped (plan ruling F6).
             wf_logf(WF_WARN, "req: %.8s piece %lu refused (%d)", r->rid, (unsigned long)r->piece, st);
             ar_got_t *g = ar_got_by_rid(r, r->rid);
@@ -560,7 +560,7 @@ static bool req_http(amiga_send_t *s, uint32_t t) {
     if (g) {
         int n = ar_late_body(r, g);
         int st = s->ops->post_req(s->ops->ctx, g->rid, r->late, n);
-        if ((st >= 200 && st < 300) || st == 400 || st == 404 || st == 409) {
+        if ((st >= 200 && st < 300) || (st >= 400 && st < 500 && st != 401 && st != 408 && st != 429)) {
             s->backoff_ms = 0;
             wf_logf(WF_INFO, "req: %.8s failed after GOT (%d)", g->rid, st);
             ar_got_remove(g);
@@ -846,7 +846,9 @@ static bool run(amiga_send_t *s, bool http) {
         {
             // Spec §3 arbitration: a waiting PUT goes before the next download -- except right after an upload, when
             // a waiting download (or one the queue may hold: an outcome or a fetch is owed) goes first. Turns.
-            const bool down = !s->done_owed && !fetch_owed(s) && next_present(s);
+            // An active request is no download's rival for the PUT's turn: it cannot start one, and Transfer answers nothing while
+            // its PUT waits for TAKE (ruling F3) -- so the PUT must not be held back by a download behind it.
+            const bool down = !s->done_owed && !fetch_owed(s) && next_present(s) && !(s->req && s->req->active);
             // During a backoff nothing is sure to come: the PUT goes rather than wait the backoff out.
             const bool unsure = (s->done_owed || fetch_owed(s)) && !in_backoff(s);
             if (s->up && s->up->pending && !(s->up_last && (down || unsure))) {
@@ -866,6 +868,11 @@ static bool run(amiga_send_t *s, bool http) {
             // never before a waiting PUT (req_start checks it, ruling F3); and a download waits for an answer.
             if (s->req && req_start(s, t)) return true;
             if (down && !(s->req && s->req->active)) { s->up_last = false; start_file(s); if (!flush(s)) drop(s, 'u', "send"); return true; }
+        }
+        // Lines held for an owed piece hold the PONG too (req_room): no PING, and no PONG timeout, meanwhile.
+        if (s->req && s->req->active && s->req->sent && !s->req->ended && !s->req->discard && s->req->post_owed) {
+            s->t_ping = t;
+            break;
         }
         if (s->ping_out && t - s->t_ping > AS_PONG_MS) { drop(s, 'u', "no PONG"); return true; }
         if (!s->ping_out && t - s->t_ping > AS_PING_MS) {
