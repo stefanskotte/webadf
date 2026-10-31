@@ -96,13 +96,13 @@ describe('the driver disk rollout (plan 2026-10-17 R16)', () => {
     expect(driverDiskFor({ df1Sha256: null, netDriverSeenAt: new Date(NOW) }, NOW)).toBe(PAULANET_DISK_SHA256);
     expect(driverDiskFor({ df1Sha256: PAULANET_DISK_SHA256, netDriverSeenAt: new Date(NOW) }, NOW)).toBe(PAULANET_DISK_SHA256);
   });
-  it('serves and keeps the current disk and every older one, and nothing else (Transfer 2.4, 2026-10-31)', () => {
-    expect(PAULANET_DISK_OLDER).toEqual([PAULANET_DISK_PREVIOUS, '9f58337d1a8bde3da2cce4fc26e97eed9ca77f9c16b12c58fea0373e898699fa',
+  it('serves and keeps the current disk and every older one, and nothing else (Transfer 2.5, 2026-10-31)', () => {
+    expect(PAULANET_DISK_OLDER).toEqual([PAULANET_DISK_PREVIOUS, '05a898caa137cb2e24f1aa0f30784126a3e88276aaf80387af446d1e204bbb45', '9f58337d1a8bde3da2cce4fc26e97eed9ca77f9c16b12c58fea0373e898699fa',
       '36bce70c114ad2eff6cdbb720ffaeabdbf79856592211080b437f7ac3110f796',
       '6e799db55e95a52900bff0ea6e3155b7787a44bcd5c5371510522cff0d5820f9',
       '1ca4f4cb402042e9c842bcf7af91fb86cf5587125ba64134b26f4d25d35a352d',
       'fb363d45c3b6c26592ada627c1cddc68b32c93c003a82328617a487dce5aa287', '05170a83c279157fc50a2a9a595f4caf1ec194253127d93232f6fd5bfc008c9e']);
-    expect(PAULANET_DISK_PREVIOUS).toBe('05a898caa137cb2e24f1aa0f30784126a3e88276aaf80387af446d1e204bbb45');
+    expect(PAULANET_DISK_PREVIOUS).toBe('7b0c7ed5557f72d84e21f03fd7c54eccc773fd1d3dc4d749e60eede081b4fc12');
     for (const sha of [PAULANET_DISK_SHA256, ...PAULANET_DISK_OLDER]) {
       expect(isDriverDisk(sha)).toBe(true);
       expect(servedWithoutEntitlement(sha)).toBe(true);
