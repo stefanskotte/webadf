@@ -27,6 +27,10 @@
                                              is for a PONG, GO, OK or refusal that arrives meanwhile (put() drops
                                              what does not fit) */
 /* AmigaDOS error numbers (dos/dos.h), for the core's choice of protocol code (plan ruling T3). */
+/* Protocol 4 (spec 2026-10-31 §2.3): a drawer delete says DEL every RX_DEL_EVERY entries; it removes at most
+   RX_DEL_PASS entries per output pass, so the loop keeps answering PINGs and the window between steps. */
+#define RX_DEL_EVERY 50
+#define RX_DEL_PASS 4
 #define RX_DOS_IN_USE 202
 #define RX_DOS_DIR_NOT_FOUND 204
 #define RX_DOS_NOT_FOUND 205
@@ -94,7 +98,8 @@ enum { RX_EV_HELLO, RX_EV_LIST, RX_EV_BEGIN, RX_EV_PROGRESS, RX_EV_DONE, RX_EV_F
        RX_EV_REQ,            /* a web request answered (protocol 3): id = its id, code "vols"|"dir"|"get", path (vols:
                                 ""), size = entries sent, bytes = 1 if cut, text = NULL, or why it was refused */
        RX_EV_SKIP };         /* protocol 4: FILE <id> ... skip, and the name exists: id, path (nothing was written) */
-enum { RX_REQ_NONE, RX_REQ_VOLS, RX_REQ_DIR, RX_REQ_GET };
+enum { RX_REQ_NONE, RX_REQ_VOLS, RX_REQ_DIR, RX_REQ_GET,
+       RX_REQ_MKDIR, RX_REQ_RENAME, RX_REQ_DELETE, RX_REQ_PROTECT, RX_REQ_NOTE };   /* the writes: protocol 4 */
 typedef struct rx_event {
     int kind;
     const char *id;       /* BEGIN, PROGRESS, DONE, FAILED */
@@ -152,6 +157,10 @@ typedef struct rx_session { /* fields private to rx_proto.c except list/list_n *
     int req_kind, req_open, req_nvols; unsigned req_i, req_count;
     char req_id[RX_ID_MAX + 1], req_path[RX_LOCAL_MAX + 1];             /* the request being answered */
     int wait_kind; char wait_id[RX_ID_MAX + 1], wait_path[RX_LOCAL_MAX + 1];   /* the one request waiting */
+    /* protocol 4: RENAME's target or NOTE's comment, and PROTECT's bits, of the request waiting and the one answered.
+       A drawer delete walks with req_path itself as its stack (plan ruling W5): del_top is the named path's length. */
+    char wait_arg[RX_LOCAL_MAX + 1], req_arg[RX_LOCAL_MAX + 1]; unsigned long wait_num, req_num;
+    unsigned del_top; int del_drawer;
     /* (the volume list a VOLS answer walks is file-static in rx_proto.c: one connection is answered at a time) */
 } rx_session;
 
