@@ -1487,7 +1487,7 @@ sharing shipped 2026-10-28; **Files SHIPPED 2026-10-29** (merge ef711fb, §4-fil
 with Transfer 2.3, README screenshots. **Phase 2 (writes)** -- spec docs/superpowers/specs/2026-10-31-net-volumes-writes-design.md:
 SHIPPED 2026-10-31 -- server/web merged 5c440cfc (migration 0054 applied to production), Transfer 2.5 merged 2341529d (driver
 disk 4b1cc536, 01485ce4), firmware 1.23.0 merged 4af240e6 and RELEASED seq 129 / fw-1.23.0; A500 bench 7/7 passed
-(§4-net-writes). Open: three UI gaps the bench found (branch fix/net-writes-ui in progress, see §4-net-writes).
+(§4-net-writes). The three bench UI gaps fixed in 5b6b7ae4 (migration 0055 applied). Open: the consistency list in §4-net-writes.
 (1b) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there. Backlog (operator 2026-10-30): clicking a pane's left edge goes up one level in that pane, as in Directory Opus; at a
 root it does nothing. Backlog (operator 2026-10-30): the disk strip's History button should read as a toggle (it opens and
 closes the History panel), e.g. with a caret.
@@ -1560,11 +1560,24 @@ WP by the board) -> "The disk is write-protected", no requester; (6) replace of 
 -> "In use on the Amiga", the old file stays, no .webadf-rx left (note: `run >file wait` does NOT hold the file -- AmigaDOS's
 own delete removes it -- and the big TDH0: partition let an open-for-write file be replaced); (7) unticking writing in the
 window reached the server in 9 s; the pane said "Writing is off in Transfer." with the write buttons grey, reading still worked.
-Seen on the bench, being fixed (branch fix/net-writes-ui): arriving rows are not shown in the destination pane during a copy
+Seen on the bench, FIXED 5b6b7ae4 (migration 0055 amiga_uploads.active_at, applied; plan ledger on the branch's commits): arriving rows are not shown in the destination pane during a copy
 (spec §4.1); a drawer delete's pending label lacks "removed N so far"; a dead Amiga->web upload (Transfer stopped) kept naming
 itself in listings' "once it has copied X" text. Bench side effects: Transfer's first positional argument is SEND (not the
 folder) -- `Transfer SYS:Downloads` uploaded all of SYS:Downloads to the operator's STASH:Downloads (about 30 files); a
 library disk (Workbench3.2 disk 10) is left in DF0; Workbench:WebTest (Keymaps with cdn/f2/d, e) is left on the A500.
+**Open after the bench (2026-11-01, operator asked for the list):** data-loss risks first -- (1) a Move deletes the source
+as it is at the end (ruling I-1): files added to it during the move are lost; fix = delete only what was copied, then
+drawers only if empty; (2) a drawer DELETE holds no locks between steps: files added meanwhile are deleted; (3) writing
+switched off mid-FILE does not stop a Replace already receiving; (4) volume-to-volume copies pass through STASH:'s root.
+Then: a drawer delete is not atomic (stops at the first refusal; count lost when ERR text has no ': '); Replace in a move
+within a volume leaves the target's .info (icon rename then fails exists); settleMoveOfGet throw marks a done get failed
+io; settleMove holds row locks while using a second pool connection (pool 5); clash decided at FILE time; RENAME into its
+own subtree relies on the filesystem; listing memory drop lowercases in JS vs SQL lower() (Latin-1 capitals stay stale
+2 min); writes refused at take time always say "Writing is off"; a web->Amiga row left 'sending' after a Ctrl-C is still
+named for up to 24 h (needs transfers.active_at); "Sending k of n" count drift. Also: Transfer's FS-UAE "busy" scenario
+holds its file with `Run Wait >file` -- on the A500 that did NOT hold a file; confirm the test really exercises busy; the
+deepest new Transfer stack path (absolute FILE making two drawers) unmeasured on the A500; dest copies capped at 32 by the
+board queue (spec 64).
 **Server/web step detail (was: branch feat/net-writes-web):**
 Spec docs/superpowers/specs/2026-10-31-net-volumes-writes-design.md, plan docs/superpowers/plans/2026-10-31-net-writes-web.md
 (rulings W1-W13 and the ledger there). **Migration 0054 (drizzle/0054_net_writes.sql) -- NOT yet applied to production:
