@@ -644,11 +644,14 @@ static bool req_line(amiga_send_t *s, uint32_t t) {
         if (r->discard) { if (end) ar_finish(r); return true; }
         if (got && r->kind == AR_GET) {
             // "GOT <rid> <tag>": the file comes up later as the upload with this tag (spec section 3, GET).
-            const char *tag = s->line + 4 + strlen(rid) + 1;
-            const size_t tn = strlen(tag);
-            bool ok = tn >= 1 && tn <= AR_TAG_MAX;
-            for (size_t i = 0; ok && i < tn; i++) ok = tag[i] >= '0' && tag[i] <= '9';
-            if (ok) ar_got_add(r, rid, tag);
+            const char *sp = s->line + 4 + strlen(rid);
+            if (*sp == ' ') {                // a rid that ends the line has no tag: never read past the NUL
+                const char *tag = sp + 1;
+                const size_t tn = strlen(tag);
+                bool ok = tn >= 1 && tn <= AR_TAG_MAX;
+                for (size_t i = 0; ok && i < tn; i++) ok = tag[i] >= '0' && tag[i] <= '9';
+                if (ok) ar_got_add(r, rid, tag);
+            }
         }
         (void)ar_body_add(r, s->line);       // req_room made room for any line before it was read
         if (end) ar_body_close(r, true);

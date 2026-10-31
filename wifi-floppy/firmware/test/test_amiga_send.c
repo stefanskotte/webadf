@@ -1465,6 +1465,20 @@ static void a_refused_piece_discards_the_rest_and_the_next_request_goes(void) {
     CHECK(strstr(F.out, "VOLS v\n") != NULL, "the next request went");
 }
 
+// Task 4 fix round 1: a GOT with no tag must not read the stale bytes after the line's NUL.
+static void a_got_without_a_tag_adds_no_entry(void) {
+    ready3(1);
+    wake(1, "DIR d 5:Work:\nGET g1 6:Work:a\n"); run(3);
+    reply("DONE d 420"); run(3);                         // leaves "420" in the line buffer where a tag would be
+    CHECK(strstr(F.out, "GET g1 6:Work:a\n") != NULL, F.out);
+    reply("GOT g1"); run(3);
+    CHECK_EQ_INT(F.req_posts, 2);
+    CHECK(strcmp(F.req_rid[1], "g1") == 0, F.req_rid[1]);
+    CHECK(strcmp(F.req_body[1], "{\"piece\":0,\"lines\":[\"GOT g1\"],\"last\":true}") == 0, F.req_body[1]);
+    CHECK(ar_got_by_rid(&RQ, "g1") == NULL, "no tag, no entry");
+    CHECK(ar_got_by_tag(&RQ, "420") == NULL, "no stale tag");
+}
+
 int main(void) {
     RUN(off_or_no_address_does_nothing);
     RUN(connects_to_6800_and_says_hello);
@@ -1571,5 +1585,6 @@ int main(void) {
     RUN(a_dropped_connection_fails_every_got_get);
     RUN(a_get_answered_err_has_no_entry);
     RUN(a_refused_piece_discards_the_rest_and_the_next_request_goes);
+    RUN(a_got_without_a_tag_adds_no_entry);
     return REPORT();
 }
