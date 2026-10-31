@@ -40,14 +40,21 @@ export function cleanAmigaPath(input: string): string | null {
   return out.length >= 1 && out.length <= 255 ? out : null;
 }
 
-export type QueueRow = { id: string; sizeBytes: number; crc32: number; protection: number; path: string; comment: string };
+export type ClashMode = 'keep' | 'replace' | 'skip';
+/**
+ * `dest`/`onClash` (NET: volumes phase 2, spec 2026-10-31 §2.2, plan W1): a copy onto a volume. Its NEXT line is the
+ * extended FILE the board relays ("FILE " + everything after "NEXT "): the absolute path, the comment, the clash mode.
+ */
+export type QueueRow = { id: string; sizeBytes: number; crc32: number; protection: number; path: string; comment: string;
+  dest?: string | null; onClash?: ClashMode | null };
 
 export function formatQueue(next: QueueRow | null, rows: QueueRow[]): string {
+  const where = (r: QueueRow) => r.dest ?? r.path;
   const head = next
     ? `NEXT ${next.id} ${next.sizeBytes} ${next.crc32.toString(16)} ${next.protection.toString(16)} ` +
-      `${latin1Len(next.path)}:${next.path} ${latin1Len(next.comment)}:${next.comment}\n`
+      `${latin1Len(where(next))}:${where(next)} ${latin1Len(next.comment)}:${next.comment}${next.dest ? ` ${next.onClash ?? 'keep'}` : ''}\n`
     : 'NEXT -\n';
-  const lines = rows.map((r) => `${r.id} ${r.sizeBytes} ${latin1Len(r.path)}:${r.path}\n`);
+  const lines = rows.map((r) => `${r.id} ${r.sizeBytes} ${latin1Len(where(r))}:${where(r)}\n`);
   for (let n = lines.length; n >= 0; n--) {
     const t = head + `LIST ${n}\n` + lines.slice(0, n).join('');
     if (latin1Len(t) <= SEND_QUEUE_BYTES) return t;

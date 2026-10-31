@@ -94,3 +94,28 @@ describe('fix round 1: name rules', () => {
     expect(parseAnswerLine('r1', 'ENT r1 f 1 0F 1.1.1 1:a 0:')).toMatchObject({ t: 'ent', e: { protection: 15 } });
   });
 });
+
+// NET: volumes phase 2 (spec 2026-10-31 §2.3): the one-line writes and their answers.
+describe('write requests', () => {
+  it('writes MKDIR, RENAME, DELETE, PROTECT and NOTE with length-prefixed Latin-1 fields', () => {
+    expect(requestLine({ id: 'r1', kind: 'mkdir', amigaPath: 'Work:New' })).toBe('MKDIR r1 8:Work:New\n');
+    expect(requestLine({ id: 'r1', kind: 'rename', amigaPath: 'Work:Würfel', target: { to: 'Work:Würfel 2' } }))
+      .toBe('RENAME r1 11:Work:Würfel 13:Work:Würfel 2\n');
+    expect(requestLine({ id: 'r1', kind: 'delete', amigaPath: 'Work:old' })).toBe('DELETE r1 8:Work:old\n');
+    expect(requestLine({ id: 'r1', kind: 'protect', amigaPath: 'Work:x', target: { protection: 0x4f } })).toBe('PROTECT r1 6:Work:x 4f\n');
+    expect(requestLine({ id: 'r1', kind: 'protect', amigaPath: 'Work:x', target: { protection: 0 } })).toBe('PROTECT r1 6:Work:x 0\n');
+    expect(requestLine({ id: 'r1', kind: 'note', amigaPath: 'Work:x', target: { comment: 'hi there' } })).toBe('NOTE r1 6:Work:x 8:hi there\n');
+    expect(requestLine({ id: 'r1', kind: 'note', amigaPath: 'Work:x', target: { comment: '' } })).toBe('NOTE r1 6:Work:x 0:\n');
+  });
+  it('reads DEL progress and the new refusal codes', () => {
+    expect(parseAnswerLine('r1', 'DEL r1 50')).toEqual({ t: 'del', count: 50 });
+    expect(parseAnswerLine('r1', 'DEL r1 x')).toBeNull();
+    expect(parseAnswerLine('r1', 'DEL r1 5 6')).toBeNull();
+    for (const code of ['readonly', 'exists', 'wprot', 'full', 'xvol']) {
+      expect(parseAnswerLine('r1', `ERR r1 ${code} 5:why!!`)).toEqual({ t: 'err', code, text: 'why!!' });
+    }
+    expect(parseAnswerLine('r1', 'ERR r1 busy 31:Libs/foo.library: object in use'))
+      .toEqual({ t: 'err', code: 'busy', text: 'Libs/foo.library: object in use' });
+    expect(parseAnswerLine('r1', 'ERR r1 skipped 0:')).toBeNull();   // a transfer's outcome, never a request's
+  });
+});

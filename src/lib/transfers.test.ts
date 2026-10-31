@@ -35,6 +35,12 @@ describe('formatQueue', () => {
     expect(t).toBe(`NEXT ${r.id} 1001 cbf43926 40 8:Café.txt 0:\nLIST 1\n${r.id} 1001 8:Café.txt\n`);
     expect(latin1Len('Café.txt')).toBe(8);
   });
+  it('writes a copy onto a volume as the extended FILE takes it: the absolute path, the comment, the clash mode (W1)', () => {
+    const r = { ...row(1, 'x.txt'), comment: 'hi', dest: 'Work:Würfel/x.txt', onClash: 'replace' as const };
+    const plain = row(2);
+    expect(formatQueue(r, [r, plain])).toBe(
+      `NEXT ${r.id} 1001 cbf43926 40 17:Work:Würfel/x.txt 2:hi replace\nLIST 2\n${r.id} 1001 17:Work:Würfel/x.txt\n${plain.id} 1002 9:File2.bin\n`);
+  });
   it('says NEXT - with an empty list', () => {
     expect(formatQueue(null, [])).toBe('NEXT -\nLIST 0\n');
   });
