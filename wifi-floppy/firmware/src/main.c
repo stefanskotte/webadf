@@ -98,6 +98,8 @@ static __uninitialized_psram("sendq") char g_send_queue_buf[AS_QUEUE_BYTES + 1];
 static __uninitialized_psram("sendc") uint8_t g_send_chunk_buf[AS_UP_RING_BYTES];
 // The upload's state, its PUT line and JSON (plan 2026-10-19 ruling P1): PSRAM, SRAM .bss +0.
 static __uninitialized_psram("sendup") as_up_t g_send_up;
+// NET: volumes' request state (fw 1.22.0): the fetched lines, the 32 KB answer piece and the GOT table. PSRAM, SRAM +0.
+static __uninitialized_psram("sendreq") as_req_t g_send_req;
 // The board key (spec 2026-10-18 §5-6): core0 loads or makes it at boot, before core1 starts; core1 only reads it.
 static __uninitialized_psram("bkey") struct { uint8_t raw[KEY_STORE_BYTES]; char hex[2 * KEY_STORE_BYTES + 1]; bool ok, unsaved; } g_board_key;
 // The key is stored by core0's deferred-write rule, which needs DF1's bookkeeping; CMake already refuses WF_PNET_L2
@@ -2253,12 +2255,18 @@ static void core1_main(void) {
             const bool psram_ok = psram_check_address(&g_send_queue_buf[sizeof g_send_queue_buf - 1]) &&
                                   psram_check_address(&g_send_chunk_buf[sizeof g_send_chunk_buf - 1]) &&
                                   psram_check_address((uint8_t *)&g_send_up + sizeof g_send_up - 1) &&
+                                  psram_check_address((uint8_t *)&g_send_req + sizeof g_send_req - 1) &&
                                   psram_check_address((uint8_t *)&g_board_key + sizeof g_board_key - 1);
             if (!psram_ok) wf_logf(WF_ERR, "send: buffers are not backed by PSRAM -- sending to the Amiga is off");
             as_init(&g_send, &g_send_ops, psram_ok ? g_send_queue_buf : NULL, psram_ok ? g_send_chunk_buf : NULL,
                     psram_ok ? &g_send_up : NULL);
             // Protocol 2 (fw 1.19.0): the key in the hello, and its 4 digits in the status report (spec §6).
-            if (psram_ok && g_board_key.ok) { as_set_key(&g_send, g_board_key.hex); dc_set_up_key(&c, g_board_key.hex); }
+            // Protocol 3 (fw 1.22.0): requests from the web app (NET: volumes) on the same connection.
+            if (psram_ok && g_board_key.ok) {
+                as_set_key(&g_send, g_board_key.hex);
+                as_set_req(&g_send, &g_send_req);
+                dc_set_up_key(&c, g_board_key.hex);
+            }
         }
 #endif
         dc_set_hold(&c, swap_holds, &up);
@@ -2469,8 +2477,11 @@ static void core1_main(void) {
                 as_set_inputs(&g_send, false, 0, c.send_version);
             }
             // Cheap, every pass (no HTTPS): connect retries, the handshake, pings, Receive's replies, pushing bytes.
+            as_set_req_version(&g_send, c.req_version);   // NET: volumes: the poll's req.v
             as_tick(&g_send);
             dc_set_send(&c, as_acked_version(&g_send), as_rx(&g_send));
+            if (as_req_capable(&g_send))
+                dc_set_req(&c, as_req_acked(&g_send), as_rx_proto(&g_send), as_browse(&g_send));
 #if WF_A2B_DISCARD
             {   // Increment 0: one line every 2 s while a copy runs, and the totals once it ends.
                 static uint32_t a2b_log_ms, a2b_logged;

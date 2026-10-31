@@ -1629,6 +1629,14 @@ row and Queue alone.
   - **Observed in FS-UAE:** every volume in VOLS gets a device (Ram Disk RAM:, Workbench3.2 DF1:, Work DH0:); RAM Disk
     shows size 0; an empty drive is not listed.
   - **Next: firmware 1.22.0 (spec §3), then the A500 bench (§7).**
+- **Firmware 1.22.0 (2026-10-31, plan `docs/superpowers/plans/2026-10-31-firmware-1-22-net-volumes.md`):** the board
+  fetches `GET /api/device/req` when the poll's `req.v` moves (acking the v seen before the fetch), relays VOLS/DIR/GET
+  to Transfer one at a time on protocol 3 (`WEBADF 3 <key>` -> `READY 3 <0|1>`), and posts answers in pieces of at most
+  32 KB / 400 lines. GOT ties the GET to its upload (`"request"` on the open); late ERRs go as piece 1. Board-made
+  errors: norx, old, timeout. State in PSRAM (`g_send_req`); SRAM +132 B (plan budget 128 B; accepted, heap floor
+  checked on the bench). Rulings F1-F13 in the plan. Fix-round behaviors: a PUT from Transfer that crosses a request
+  always gets its turn, no PING goes out while lines wait for an owed piece, a piece POST answered with a 4xx other
+  than 401/408/429 is a refusal, and a GOT without a tag adds no entry. TEST build and the A500 bench (spec §7) next.
 **Parked/deferred by the operator:** PaulaNET compression (LZSA2, pre-encode N+1); proof of possession at ingest.
 Entries below marked SHIPPED/FIXED/FOLDED are kept for their history only.
 
