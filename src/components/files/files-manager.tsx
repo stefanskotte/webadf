@@ -996,8 +996,11 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       const sides = ['left', 'right'] as const;
       // A copy onto a volume (phase 2, spec 2026-10-31 §4.1): a pane at its destination, or at a drawer above it, shows
       // its files arriving at once (A500 bench 2026-10-31: "Nothing here." until a Refresh); their marks keep it
-      // re-reading (netPollMs) until they are through.
-      if (first && !s.finished && p.direction === 'to') for (const side of sides) if (arrivesIn(cur[side].path, dest)) void refresh(side);
+      // re-reading (netPollMs) until they are through. Between boards the destination's rows appear only as each file
+      // reaches the server (review I-1): a pane there without an arriving mark yet is read again each tick.
+      if (!s.finished && p.direction === 'to') {
+        for (const side of sides) if (arrivesIn(cur[side].path, dest) && (first || netPollMs(cur[side].listing) === null)) void refresh(side);
+      }
       first = false;
       if (!s.finished) { again(); return; }
       // A job that changed the Amiga's disks (phase 2) changed drawers on both sides maybe: both read again (the

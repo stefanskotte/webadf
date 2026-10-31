@@ -199,7 +199,8 @@ async function withArriving(t: SendTarget, segs: string[], amiga: string, listed
     if (d.through === d.total) continue;   // only finished rows here: a copy sharing its job with one still moving elsewhere
     const mark = !d.sending && d.through === 0 ? 'Waiting' : `Sending ${Math.min(d.through + 1, d.total)} of ${d.total}`;
     const k = at(d.name);
-    if (k >= 0) out[k] = { ...out[k], marks: [mark] };
+    if (k >= 0 && out[k].kind === 'dir') out[k] = { ...out[k], marks: [mark] };
+    else if (k >= 0) out[k] = { ...out[k], kind: 'dir', size: null, marks: [mark] };   // a file a drawer replaces (review minor)
     else out.push({ name: d.name, kind: 'dir', path: netPath(t.id, ...segs, d.name), size: null, date: null, protection: null, comment: null, marks: [mark] });
   }
   return out;
