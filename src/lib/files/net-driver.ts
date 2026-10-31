@@ -20,7 +20,7 @@ import { SEND_FILE_MAX, SEND_QUEUE_MAX_BYTES, SEND_QUEUE_MAX_FILES } from '@/lib
 import { uploadBoards } from '@/lib/amiga-uploads';
 import { mapLimit } from '@/lib/pool';
 import { protectionString } from '@/lib/adffs/dir';
-import { copyMoving, latestFor, pendingAlive, requestListing, type RemoteRow } from '@/lib/remote-requests';
+import { copyMoving, deleteRunning, latestFor, pendingAlive, requestListing, type RemoteRow } from '@/lib/remote-requests';
 import { browseBlock, browseMark, errorWords } from '@/lib/remote-browse';
 import { amigaPathOf, volumeLabel, type EntryInfo, type VolumeInfo } from '@/lib/remote-wire';
 import { QUEUE_FOLDER } from '@/lib/remote-limits';
@@ -116,9 +116,14 @@ async function pendingOf(t: SendTarget, row: RemoteRow | null, what: string, now
   }
   const held = row?.status === 'waiting' || (row?.status === 'sent' && row.pieces === 0);   // nothing answered yet
   const copying = held ? await copyMoving(getDb(), t.id, new Date(now)) : null;
-  if (!copying) return new Pending(`Reading ${what} from ${t.name}…`);
-  return new Pending(`Reading ${what} from ${t.name} once it has copied ${copying.slice(Math.max(copying.lastIndexOf('/'), copying.indexOf(':')) + 1)}…`, true);
+  if (copying) return new Pending(`Reading ${what} from ${t.name} once it has copied ${lastName(copying)}…`, true);
+  // A drawer DELETE counting up (phase 2): Transfer answers nothing else until it is done; the label carries its count.
+  const deleting = held ? await deleteRunning(getDb(), t.id, new Date(now)) : null;
+  if (deleting) return new Pending(`Reading ${what} from ${t.name} once it has deleted ${lastName(deleting.label)}… removed ${deleting.removed} so far`, true);
+  return new Pending(`Reading ${what} from ${t.name}…`);
 }
+/** `Work:a/b.adf` → `b.adf`, `Work:a` → `a`. */
+const lastName = (amigaPath: string) => amigaPath.slice(Math.max(amigaPath.lastIndexOf('/'), amigaPath.indexOf(':')) + 1);
 
 /**
  * NET:/<board> (§5): the Amiga's volumes, in Transfer's order, then Queue. When they cannot be read (the board cannot be

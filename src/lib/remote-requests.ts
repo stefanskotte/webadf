@@ -109,6 +109,20 @@ export async function copyMoving(db: Db, deviceId: string, now = new Date()): Pr
   return u?.path ?? null;
 }
 
+/**
+ * The board's drawer DELETE whose DEL pieces are coming now (one came within ALIVE_PIECE_MS), in the pane's words, and
+ * how many entries it has removed; else null. Transfer answers nothing else meanwhile (A500 bench 2026-10-31: 597 entries
+ * in 89 s), so a listing asked for then waits for it, and the pane says so.
+ */
+export async function deleteRunning(db: Db, deviceId: string, now = new Date()): Promise<{ label: string; removed: number } | null> {
+  const [r] = await db.select({ amigaPath: remoteRequests.amigaPath, target: remoteRequests.target, answer: remoteRequests.answer })
+    .from(remoteRequests).where(and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.kind, 'delete'), eq(remoteRequests.status, 'sent'),
+      sql`${remoteRequests.pieces} > 0`, gte(remoteRequests.activeAt, ms(now, ALIVE_PIECE_MS))))
+    .orderBy(sql`${remoteRequests.activeAt} desc`).limit(1);
+  if (!r) return null;
+  return { label: (r.target as WriteTarget | null)?.label ?? r.amigaPath, removed: (r.answer as { removed?: number } | null)?.removed ?? 0 };
+}
+
 /** A listing arriving in pieces shows life only while one came within ALIVE_PIECE_MS (§4.4 minor 1). */
 export function pendingAlive(row: Pick<RemoteRow, 'pieces' | 'activeAt'>, now = new Date()): boolean {
   return row.pieces > 0 && !!row.activeAt && now.getTime() - row.activeAt.getTime() < ALIVE_PIECE_MS;

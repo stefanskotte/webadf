@@ -157,6 +157,39 @@ test('Delete asks first and cannot be undone; a big drawer counts up, then stops
   await board.stop();
 });
 
+// A500 bench 2026-10-31: Workbench:WebTest/Many (597 entries, drawers inside, its icon beside it) took 89 s; Transfer
+// said DEL every 100 and the server kept the count, yet the status row said only "Deleting … on Webfloppy1…".
+test('a big drawer with drawers inside and its icon: the status row counts what Transfer has removed', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const { deviceId, token } = await writable(page, request);
+  const fs = amiga();
+  fs['Work:'].push({ name: 'Many', dir: true }, { name: 'Many.info', data: Buffer.from('icon') });
+  fs['Work:Many'] = [{ name: 'A', dir: true }, { name: 'B', dir: true }, { name: 'top.txt', data: Buffer.from('t') }];
+  fs['Work:Many/A'] = Array.from({ length: 150 }, (_, i) => ({ name: `a${i}`, data: Buffer.from('a') }));
+  fs['Work:Many/B'] = Array.from({ length: 150 }, (_, i) => ({ name: `b${i}`, data: Buffer.from('b') }));
+  const board = serving(request, token, fs);
+  // ~8 s a hundred: the whole delete outlasts the pane's 20 s give-up.
+  Object.assign(fakeBoardTiming, { delEvery: 100, delBeforeMs: 8_000, delMs: 0 });
+  try {
+    await openFiles(page, 'STASH:', `NET:/${deviceId}/Work`, 'right');
+    await expect(rowAt(page, 'right', 'Many')).toBeVisible({ timeout: LIVE });
+    await rowAt(page, 'right', 'Many').click();
+    await page.getByTestId('files-delete').click();
+    await page.getByTestId('files-delete-confirm').click();
+    await expect(busy(page)).toContainText('Deleting Work:Many on A500…', { timeout: LIVE });
+    await expect(busy(page)).toContainText('Deleting Work:Many on A500… removed 100 so far', { timeout: LIVE });
+    // The drawer read again meanwhile waits for the delete, says how far it got, and is not given up on.
+    await page.getByTestId('files-refresh').click();
+    const pending = page.getByTestId('pane-right').getByTestId('pane-pending');
+    await expect(pending).toHaveText(/^Reading Work: from A500 once it has deleted Many… removed [12]00 so far$/, { timeout: LIVE });
+    await expect(pending).toHaveText('Reading Work: from A500 once it has deleted Many… removed 200 so far', { timeout: LIVE });
+    await expect(busy(page)).toContainText('removed 200 so far');
+    await expect(busy(page)).toContainText('Deleted Work:Many (304)', { timeout: 40_000 });
+    await expect(rowAt(page, 'right', 'Many')).toHaveCount(0, { timeout: LIVE });
+    await expect(page.getByText(/didn.t answer/)).toHaveCount(0);
+  } finally { Object.assign(fakeBoardTiming, { delEvery: 50, delBeforeMs: 0, delMs: 0 }); await board.stop(); }
+});
+
 test('Copy from STASH: onto a volume: each clash answer, and the queue line the board relays', async ({ page, request }) => {
   test.setTimeout(150_000);
   const { deviceId, token } = await writable(page, request);

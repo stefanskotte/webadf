@@ -353,6 +353,29 @@ describe('NET: volumes', () => {
     await getDb().delete(remoteRequests).where(and(eq(remoteRequests.deviceId, 'b1'), inArray(remoteRequests.amigaPath, ['Work:Later', 'Work:Big/a.adf'])));
   });
 
+  // A500 bench 2026-10-31: a drawer DELETE of 597 entries took 89 s, Transfer answering nothing else meanwhile. A listing
+  // asked for then says what it waits for and how far the delete got, and the pane does not give up while DEL comes.
+  it('a drawer asked for while a drawer delete runs says it waits for it, with the count removed so far', async () => {
+    const now = new Date();
+    await getDb().insert(remoteRequests).values({ id: 'del-bench', orgId: 'o1', deviceId: 'b1', kind: 'delete', amigaPath: 'DH0:WebTest/Many',
+      fetchId: 'jdel', status: 'sent', pieces: 3, answer: { removed: 300 }, target: { label: 'Workbench:WebTest/Many' },
+      createdAt: now, sentAt: now, activeAt: now });
+    try {
+      let thrown: unknown = null;
+      try { await netDriver.list(ctx, P('NET:/b1/Work/Later')); } catch (e) { thrown = e; }
+      expect(thrown).toBeInstanceOf(Pending);
+      expect((thrown as InstanceType<typeof Pending>).label).toBe(`Reading Work:Later from ${NAME} once it has deleted Many… removed 300 so far`);
+      expect((thrown as InstanceType<typeof Pending>).alive).toBe(true);
+      // Quiet for longer than a DEL takes: no longer named, and the pane may give up.
+      await getDb().update(remoteRequests).set({ activeAt: new Date(now.getTime() - 45_000) }).where(eq(remoteRequests.id, 'del-bench'));
+      const p = await (async () => { try { await netDriver.list(ctx, P('NET:/b1/Work/Later')); } catch (e) { return e; } return null; })();
+      expect((p as InstanceType<typeof Pending>).label).toBe(`Reading Work:Later from ${NAME}…`);
+      expect((p as InstanceType<typeof Pending>).alive).toBe(false);
+    } finally {
+      await getDb().delete(remoteRequests).where(and(eq(remoteRequests.deviceId, 'b1'), inArray(remoteRequests.amigaPath, ['Work:Later', 'DH0:WebTest/Many'])));
+    }
+  });
+
   // A500 bench 2026-10-31: a 1000-entry drawer takes ~36 s; while its pieces arrive the label counts them and the pane
   // does not give up.
   it('a drawer whose answer is arriving says how many entries so far', async () => {
