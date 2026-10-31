@@ -20,12 +20,12 @@ export function browseBlock(b: {
 
 /**
  * The NET: root row's mark (spec §5): "browsable", or the one missing thing in a few words. Null when the row already
- * says it: offline, or Transfer not running (the row then has no "Transfer running").
+ * says it: offline, or Transfer not running (`running`: the row's own "Transfer running" test, receiverRunning).
  */
-export function browseMark(b: { online: boolean; firmware: string | null; rx: string | null; rxProto: number | null; browseOn: boolean }): string | null {
+export function browseMark(b: { online: boolean; firmware: string | null; running: boolean; rxProto: number | null; browseOn: boolean }): string | null {
   if (!b.online) return null;
   if (!firmwareAtLeast(b.firmware, BROWSE_FW)) return 'needs firmware 1.22';
-  if (b.rx !== 'c') return null;
+  if (!b.running) return null;
   if (b.rxProto !== BROWSE_PROTO) return 'needs Transfer 2.3';
   if (!b.browseOn) return 'browsing off in Transfer';
   return 'browsable';

@@ -286,6 +286,24 @@ describe('the request store', () => {
     expect(again.state === 'pending' && again.row.id).not.toBe(rid);
   });
 
+  // Review of the bench fix: the board fetches whenever no file is moving -- right after GOT too -- and then holds the
+  // listing while Transfer's PUT moves the file. 'sent' with nothing answered waits for the copy the same way.
+  it('a listing the board took but holds behind a moving copy waits for it too', async () => {
+    const t = { dest: 'STASH:', rel: ['a.adf'], replace: false, library: null };
+    const [g] = await addGets(getDb(), { orgId, deviceId, fetchId: 'fe', files: [{ amigaPath: 'Work:a.adf', target: t }] }, t0);
+    await takeWaiting(getDb(), deviceId, t0);
+    await answerPiece(getDb(), deviceId, g, { piece: 0, lines: [`GOT ${g} 1`], last: true }, at(1));
+    const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:held', fresh: false }, at(2));
+    await takeWaiting(getDb(), deviceId, at(3));
+    expect((await rowOf(ridOf(p))).status).toBe('sent');
+    await touchGet(getDb(), { id: g }, at(60));
+    await touchGet(getDb(), { id: g }, at(110));
+    await expireStale(getDb(), at(150));
+    expect((await rowOf(ridOf(p))).status).toBe('sent');
+    await expireStale(getDb(), at(171));
+    expect(await rowOf(ridOf(p))).toMatchObject({ status: 'failed', errorCode: 'timeout' });
+  });
+
   it('a copy that stopped moving holds no listing back', async () => {
     const t = { dest: 'STASH:', rel: ['a.adf'], replace: false, library: null };
     const [g] = await addGets(getDb(), { orgId, deviceId, fetchId: 'fd', files: [{ amigaPath: 'Work:a.adf', target: t }] }, t0);

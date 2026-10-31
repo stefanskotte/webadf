@@ -52,8 +52,9 @@ async function queueRowOf(ctx: FsCtx, board: string, id: string): Promise<boolea
  */
 function boardMarks(t: SendTarget, waiting: number, sending: boolean, key: string | null, now: number): string[] {
   const marks = [targetState(t, now)];
-  if (receiverRunning(t, sending, now)) marks.push('Transfer running');
-  const browse = browseMark({ online: t.online, firmware: t.firmwareVersion, rx: t.rx, rxProto: t.rxProto, browseOn: t.browseOn });
+  const running = receiverRunning(t, sending, now);
+  if (running) marks.push('Transfer running');
+  const browse = browseMark({ online: t.online, firmware: t.firmwareVersion, running, rxProto: t.rxProto, browseOn: t.browseOn });
   if (browse) marks.push(browse);
   if (waiting) marks.push(`${waiting} waiting`);
   if (key) marks.push(`key ${key}`);
@@ -100,14 +101,15 @@ export const browseOf = (t: SendTarget, now: number) => browseBlock({ online: t.
 /**
  * A listing asked for and not answered yet: "Reading Work:Programs from A500…". Two show life the pane cannot see, so
  * their label says so and the pane does not give up on them (A500 bench 2026-10-31): one arriving in pieces ("… 400
- * entries so far"), and one still waiting while the board moves a copy's file (Transfer answers nothing meanwhile).
+ * entries so far"), and one not answered at all while the board moves a copy's file (Transfer answers nothing meanwhile).
  */
 async function pendingOf(t: SendTarget, row: RemoteRow | null, what: string, now: number): Promise<Pending> {
   if (row?.status === 'sent' && row.pieces > 0) {   // arriving in pieces (a 1000-entry drawer takes ~36 s)
     const a = answerOf(row);
     return new Pending(`Reading ${what} from ${t.name}… ${a.entries.length + a.volumes.length} entries so far`, true);
   }
-  const copying = row?.status === 'waiting' ? await copyMoving(getDb(), t.id, new Date(now)) : null;
+  const held = row?.status === 'waiting' || (row?.status === 'sent' && row.pieces === 0);   // nothing answered yet
+  const copying = held ? await copyMoving(getDb(), t.id, new Date(now)) : null;
   if (!copying) return new Pending(`Reading ${what} from ${t.name}…`);
   return new Pending(`Reading ${what} from ${t.name} once it has copied ${copying.slice(Math.max(copying.lastIndexOf('/'), copying.indexOf(':')) + 1)}…`, true);
 }

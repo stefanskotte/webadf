@@ -22,13 +22,16 @@ const ms = (now: Date, back: number) => new Date(now.getTime() - back);
 export async function expireStale(db: Db, now = new Date()): Promise<void> {
   const list = inArray(remoteRequests.kind, ['vols', 'dir']);
   const cutList = ms(now, LIST_TIMEOUT_MS);
-  // A waiting one behind a copy (A500 bench 2026-10-31): Transfer answers nothing while a get's file moves and the board
-  // fetches nothing meanwhile, so its 60 s run from when the board's copy last moved, not from the ask.
-  await db.update(remoteRequests).set({ status: 'failed', errorCode: 'timeout', errorText: '', answeredAt: now }).where(or(
-    and(list, eq(remoteRequests.status, 'sent'), lt(sql`coalesce(${remoteRequests.activeAt}, ${remoteRequests.sentAt})`, cutList)),
-    and(list, eq(remoteRequests.status, 'waiting'), lt(remoteRequests.createdAt, cutList), sql`not exists (select 1 from remote_requests g
+  // One behind a copy (A500 bench 2026-10-31): Transfer answers nothing while a get's file moves, so a listing still
+  // waiting, or taken by the board and held with nothing answered, has its 60 s run from when the copy last moved. A
+  // listing's pieces are signs of life too: its 60 s run from the last one.
+  const noCopy = sql`not exists (select 1 from remote_requests g
       where g.device_id = remote_requests.device_id and g.kind = 'get' and (
-        (g.status = 'fetching' and g.active_at >= ${cutList}) or (g.status = 'done' and g.answered_at >= ${cutList})))`),
+        (g.status = 'fetching' and g.active_at >= ${cutList}) or (g.status = 'done' and g.answered_at >= ${cutList})))`;
+  await db.update(remoteRequests).set({ status: 'failed', errorCode: 'timeout', errorText: '', answeredAt: now }).where(or(
+    and(list, eq(remoteRequests.status, 'sent'), lt(sql`coalesce(${remoteRequests.activeAt}, ${remoteRequests.sentAt})`, cutList),
+      or(sql`${remoteRequests.pieces} > 0`, noCopy)),
+    and(list, eq(remoteRequests.status, 'waiting'), lt(remoteRequests.createdAt, cutList), noCopy),
   ));
   // A get times out after 10 minutes with no get activity (fix round 1 ruling): its own once fetching; while only sent,
   // the board's -- Transfer works through the batch one file at a time, so one queued behind busy siblings is not lost.

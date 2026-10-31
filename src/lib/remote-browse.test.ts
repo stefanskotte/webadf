@@ -15,13 +15,14 @@ describe('browseBlock', () => {
 describe('browseMark', () => {
   // Spec §5: the NET: root row says "browsable" or the one missing thing; offline and Transfer not running are already
   // the row's own marks (no "Transfer running"), so they add nothing here.
+  const mark = { online: true, firmware: '1.22.0+gabc', running: true, rxProto: 3, browseOn: true };
   it('says browsable, or the missing thing in a few words', () => {
-    expect(browseMark(ok)).toBe('browsable');
-    expect(browseMark({ ...ok, online: false })).toBeNull();
-    expect(browseMark({ ...ok, firmware: '1.21.1+gabc' })).toBe('needs firmware 1.22');
-    expect(browseMark({ ...ok, rx: 'u' })).toBeNull();
-    expect(browseMark({ ...ok, rxProto: 2 })).toBe('needs Transfer 2.3');
-    expect(browseMark({ ...ok, browseOn: false })).toBe('browsing off in Transfer');
+    expect(browseMark(mark)).toBe('browsable');
+    expect(browseMark({ ...mark, online: false })).toBeNull();
+    expect(browseMark({ ...mark, firmware: '1.21.1+gabc' })).toBe('needs firmware 1.22');
+    expect(browseMark({ ...mark, running: false })).toBeNull();
+    expect(browseMark({ ...mark, rxProto: 2 })).toBe('needs Transfer 2.3');
+    expect(browseMark({ ...mark, browseOn: false })).toBe('browsing off in Transfer');
   });
 });
 describe('errorWords', () => {
