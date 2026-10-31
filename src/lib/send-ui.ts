@@ -34,7 +34,15 @@ const REASONS: Record<string, string> = {
   folder: 'the folder on the Amiga is missing',
   busy: 'Transfer was busy',
   size: 'too large for Transfer',
+  // NET: volumes phase 2 (spec 2026-10-31 §2.2): a copy onto one of the Amiga's volumes.
+  readonly: 'Writing is off in Transfer',
+  wprot: 'the disk is write-protected',
+  full: 'the disk is full',
+  denied: 'protected against deletion',
 };
+
+/** A copy onto a volume whose name was there, answered Skip (spec 2026-10-31 §2.2). */
+const SKIPPED = 'it is already on the Amiga';
 
 export function failureText(code: string | null, text: string | null): string {
   if (code && REASONS[code]) return REASONS[code];
@@ -53,6 +61,7 @@ export function transferState(t: TransferView): { text: string; tone: Tone } {
     case 'failed': return { text: `Failed · ${failureText(t.errorCode, t.errorText)}`, tone: 'bad' };
     case 'cancelled': return { text: 'Cancelled', tone: 'muted' };
     case 'expired': return { text: 'Expired · the Amiga did not take it within 24 h', tone: 'bad' };
+    case 'skipped': return { text: `Skipped · ${SKIPPED}`, tone: 'muted' };
   }
 }
 
@@ -80,6 +89,7 @@ export function stateChip(t: TransferView): StateChip {
     case 'failed': return { kind: 'red', label: 'Failed', note: failureText(t.errorCode, t.errorText), path: null };
     case 'cancelled': return { kind: 'neutral', label: 'Cancelled', note: null, path: null };
     case 'expired': return { kind: 'red', label: 'Expired', note: 'the Amiga did not take it within 24 h', path: null };
+    case 'skipped': return { kind: 'neutral', label: 'Skipped', note: SKIPPED, path: null };
   }
 }
 

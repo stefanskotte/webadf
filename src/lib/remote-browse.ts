@@ -1,20 +1,40 @@
-// NET: volumes (spec 2026-10-30): when a board can be browsed, and the pane's words for an error. Pure, CLIENT-SAFE.
+// NET: volumes (spec 2026-10-30): when a board can be browsed, and the pane's words for an error. Phase 2 (spec
+// 2026-10-31 §4.1-4.2): when it can be written to, and the words for each refusal of a write. Pure, CLIENT-SAFE.
 import { firmwareAtLeast } from '@/lib/firmware-version';
-import { BROWSE_FW, BROWSE_PROTO } from './remote-limits';
+import { BROWSE_FW, BROWSE_PROTO, WRITE_FW, WRITE_PROTO } from './remote-limits';
 
 const switchOn = (name: string) => `Switch on browsing in Transfer on ${name}`;
 const oldWords = (name: string) => `Transfer 2.3 or newer is needed on ${name}`;
 const notRunning = (name: string) => `Transfer is not running on ${name}`;
+/** Spec 2026-10-31 §4.2: the reason line and the greyed write buttons' tooltip. */
+export const WRITE_OFF = 'Writing is off in Transfer';
+export const WRITE_OLD_TRANSFER = 'Transfer 2.5 or newer writes to the Amiga';
+export const WRITE_OLD_FIRMWARE = 'Board firmware 1.23.0 or newer writes to the Amiga';
 
-/** Null when the board can be browsed, else the first missing thing in the pane's words. */
-export function browseBlock(b: {
+export type BrowseInput = {
   online: boolean; firmware: string | null; rx: string | null; rxProto: number | null; browseOn: boolean; name: string; offlineWords: string;
-}): string | null {
+};
+
+/** Null when the board can be browsed, else the first missing thing in the pane's words. Protocol 3 or newer browses. */
+export function browseBlock(b: BrowseInput): string | null {
   if (!b.online) return b.offlineWords;
   if (!firmwareAtLeast(b.firmware, BROWSE_FW)) return 'Firmware 1.22 or newer is needed';
   if (b.rx !== 'c') return notRunning(b.name);
-  if (b.rxProto !== BROWSE_PROTO) return oldWords(b.name);
+  if ((b.rxProto ?? 0) < BROWSE_PROTO) return oldWords(b.name);
   if (!b.browseOn) return switchOn(b.name);
+  return null;
+}
+
+/**
+ * Null when the board's Amiga can be written to now (spec 2026-10-31 §4.2), else the first missing thing: what keeps it
+ * from being read first (browseBlock), then the firmware, Transfer's protocol, and Transfer's writing switch.
+ */
+export function writeBlock(b: BrowseInput & { writeOn: boolean }): string | null {
+  const read = browseBlock(b);
+  if (read) return read;
+  if (!firmwareAtLeast(b.firmware, WRITE_FW)) return WRITE_OLD_FIRMWARE;
+  if ((b.rxProto ?? 0) < WRITE_PROTO) return WRITE_OLD_TRANSFER;
+  if (!b.writeOn) return WRITE_OFF;
   return null;
 }
 
@@ -26,7 +46,7 @@ export function browseMark(b: { online: boolean; firmware: string | null; runnin
   if (!b.online) return null;
   if (!firmwareAtLeast(b.firmware, BROWSE_FW)) return 'needs firmware 1.22';
   if (!b.running) return null;
-  if (b.rxProto !== BROWSE_PROTO) return 'needs Transfer 2.3';
+  if ((b.rxProto ?? 0) < BROWSE_PROTO) return 'needs Transfer 2.3';
   if (!b.browseOn) return 'browsing off in Transfer';
   return 'browsable';
 }
@@ -39,5 +59,19 @@ export function errorWords(code: string, text: string, board: string): string {
     case 'notfound': return 'Object not found';
     case 'timeout': return `${board} didn't answer — Refresh to try again`;
     default: return text || 'Failed';
+  }
+}
+
+/** A refused write in the pane's words (spec 2026-10-31 §4.1); the read codes as errorWords says them. */
+export function writeErrorWords(code: string, text: string, board: string): string {
+  switch (code) {
+    case 'wprot': return 'The disk is write-protected';
+    case 'full': case 'space': return 'The disk is full';
+    case 'denied': return 'Protected against deletion';
+    case 'busy': return 'In use on the Amiga';
+    case 'readonly': return WRITE_OFF;
+    case 'exists': return 'Already exists';
+    case 'xvol': return 'Rename works within one volume';
+    default: return errorWords(code, text, board);
   }
 }

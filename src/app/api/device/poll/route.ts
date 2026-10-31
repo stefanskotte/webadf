@@ -9,7 +9,7 @@ import { readNextForPoll } from '@/lib/next-disk';
 import { readDf1ForPoll } from '@/lib/df1-store';
 import { DC_TITLE_MAX } from '@/lib/device-limits';
 import { getDb } from '@/db';
-import { recordSendRx } from '@/lib/transfers';
+import { failWritesWhenOff, recordSendRx } from '@/lib/transfers';
 import { PAULANET_NEXT, driverDiskFor, netApplied, netKeepsDriverDisk } from '@/lib/paulanet-disk';
 import { parseBoot } from '@/lib/boot-disk';
 
@@ -135,12 +135,17 @@ export async function GET(request: Request) {
       ? Number(xferAckRaw)
       : 0;
   const rx = new URL(request.url).searchParams.get('rx');
-  // rxv / browse (NET: volumes): Transfer's protocol and whether it answers requests, recorded with rx.
+  // rxv / browse (NET: volumes): Transfer's protocol and whether it answers requests, recorded with rx. write (phase 2,
+  // fw 1.23, spec 2026-10-31 §3): whether Transfer 2.5 lets the web app change its disks (READY 4 <b> <w>).
   const rxv = new URL(request.url).searchParams.get('rxv');
   const browse = new URL(request.url).searchParams.get('browse');
+  const write = new URL(request.url).searchParams.get('write');
   if (xferAck !== null && rx !== null && /^[cru-]$/.test(rx)) {
-    await recordSendRx(getDb(), device.deviceId, rx as 'c' | 'r' | 'u' | '-', new Date(),
-      rxv === '2' || rxv === '3' ? { proto: Number(rxv), browse: browse === '1' } : undefined);
+    const cap = rxv === '2' || rxv === '3' || rxv === '4' ? { proto: Number(rxv), browse: browse === '1', write: write === '1' } : undefined;
+    await recordSendRx(getDb(), device.deviceId, rx as 'c' | 'r' | 'u' | '-', new Date(), cap);
+    // Transfer is there but cannot write (switched off, or too old): what waits to be written fails `readonly` now
+    // rather than hang (plan W3). Transfer merely gone (rx not c) leaves it waiting.
+    if (rx === 'c' && !(cap && cap.proto >= 4 && cap.browse && cap.write)) await failWritesWhenOff(getDb(), device.deviceId);
   }
 
   // reqAck (NET: volumes, spec 2026-10-30 §3): the cursor of the request queue the board last fetched. ABSENT means a
