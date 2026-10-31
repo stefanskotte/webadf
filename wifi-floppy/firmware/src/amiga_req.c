@@ -89,9 +89,10 @@ static const struct { const char *verb; ar_kind_t kind; } KINDS[] = {
     { "MKDIR ", AR_MKDIR }, { "RENAME ", AR_RENAME }, { "DELETE ", AR_DELETE }, { "PROTECT ", AR_PROTECT },
     { "NOTE ", AR_NOTE },
 };
-bool ar_kind_is_write(ar_kind_t k) { return k >= AR_MKDIR && k <= AR_NOTE; }
+bool ar_kind_is_write(ar_kind_t k) { return k >= AR_MKDIR && k <= AR_DELETE_ONE; }
 // The verb's length with its space, for a kind ar_take found.
 static int verb_len(ar_kind_t k) {
+    if (k == AR_DELETE_ONE) k = AR_DELETE;   // the same verb, with " one" after the path
     for (unsigned i = 0; i < sizeof KINDS / sizeof KINDS[0]; i++) if (KINDS[i].kind == k) return (int)strlen(KINDS[i].verb);
     return 0;
 }
@@ -122,7 +123,9 @@ static ar_kind_t line_at(const as_req_t *r, int at, int *n_out, int *adv_out, in
     const char *p = field(sp + 1, end, 1, 255);
     if (!p) return AR_NONE;
     switch (k) {
-    case AR_MKDIR: case AR_DELETE: return p == end ? k : AR_NONE;
+    case AR_MKDIR: return p == end ? k : AR_NONE;
+    // fw 1.23.1 (spec 2026-10-31 section 9): the literal " one" to the end of the line; any other tail is malformed.
+    case AR_DELETE: return p == end ? k : (end - p == 4 && memcmp(p, " one", 4) == 0) ? AR_DELETE_ONE : AR_NONE;
     case AR_RENAME: return field(next(p, end), end, 1, 255) == end ? k : AR_NONE;
     case AR_PROTECT: { const char *h = next(p, end); return h && hexw(h, end) ? k : AR_NONE; }
     case AR_NOTE: return field(next(p, end), end, 0, 79) == end ? k : AR_NONE;

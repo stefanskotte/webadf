@@ -269,6 +269,36 @@ static void malformed_write_lines_are_skipped(void) {
     CHECK_EQ_INT(bad, 14);
 }
 
+// fw 1.23.1 (spec 2026-10-31 section 9): "DELETE <rid> <len>:<path> one" deletes exactly that object.
+static void delete_one_is_its_own_kind(void) {
+    load("DELETE d 8:Work:old one\nDELETE e 8:Work:old\n");
+    CHECK(ar_take(&R, NULL) && R.kind == AR_DELETE_ONE, "one");
+    CHECK(strcmp(R.rid, "d") == 0, R.rid);
+    CHECK(strcmp(R.out, "DELETE d 8:Work:old one\n") == 0 && R.out_n == 24, R.out);
+    CHECK(ar_kind_is_write(R.kind), "a write");
+    ar_finish(&R);
+    CHECK(ar_take(&R, NULL) && R.kind == AR_DELETE, "without one: the drawer delete");
+    CHECK(strcmp(R.rid, "e") == 0, R.rid);
+}
+
+// Review Focus 2: the length decides where the path ends.
+static void a_path_ending_in_one_is_a_plain_delete(void) {
+    load("DELETE d 10:Work:a one\n");
+    CHECK(ar_take(&R, NULL) && R.kind == AR_DELETE, "a drawer named \"a one\"");
+    CHECK(strcmp(R.out, "DELETE d 10:Work:a one\n") == 0, R.out);
+}
+
+// Review Focus 3.
+static void malformed_delete_tails_are_skipped(void) {
+    load("DELETE a 6:Work:a ONE\nDELETE b 6:Work:a one \nDELETE c 6:Work:a onex\nDELETE d 6:Work:a one one\n"
+         "DELETE e 6:Work:a  one\nDELETE f 6:Work:a on\nDELETE g 6:Work:a \nMKDIR h 6:Work:a one\n"
+         "DELETE ok 6:Work:a one\n");
+    int bad = 0;
+    CHECK(ar_take(&R, &bad) && strcmp(R.rid, "ok") == 0, R.rid);
+    CHECK(R.kind == AR_DELETE_ONE, "the good one");
+    CHECK_EQ_INT(bad, 8);
+}
+
 static void writes_go_before_gets_in_order(void) {
     load("GET g 6:Work:a\nMKDIR m 6:Work:b\nDIR d 5:Work:\nDELETE x 6:Work:c\nGET h 6:Work:d\n");
     const char *want[] = { "m", "d", "x", "g", "h" };
@@ -317,5 +347,8 @@ int main(void) {
     RUN(writes_go_before_gets_in_order);
     RUN(del_is_an_answer_verb);
     RUN(refetch_room_takes_eight_renames);
+    RUN(delete_one_is_its_own_kind);
+    RUN(a_path_ending_in_one_is_a_plain_delete);
+    RUN(malformed_delete_tails_are_skipped);
     return REPORT();
 }

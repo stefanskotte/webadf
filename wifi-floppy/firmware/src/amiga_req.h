@@ -19,8 +19,11 @@
 #define AR_ERR_MAX 200                // "ERR <40> <code> <len>:<text>": Transfer's text is at most 79
 #define AR_LATE_BYTES 1280            // a late ERR's whole body: AR_ERR_MAX escaped (x6) plus the frame
 
-// The writes (fw 1.23.0, spec 2026-10-31 section 2.3) go to Transfer only at protocol 4 (amiga_send.c).
-typedef enum { AR_NONE = 0, AR_VOLS, AR_DIR, AR_GET, AR_MKDIR, AR_RENAME, AR_DELETE, AR_PROTECT, AR_NOTE } ar_kind_t;
+// The writes (fw 1.23.0, spec 2026-10-31 section 2.3) go to Transfer only at protocol 4 or newer (amiga_send.c).
+// AR_DELETE_ONE (fw 1.23.1, spec section 9): "DELETE <rid> <len>:<path> one" -- exactly that object, a drawer only when
+// empty; it goes to Transfer only at protocol 5.
+typedef enum { AR_NONE = 0, AR_VOLS, AR_DIR, AR_GET, AR_MKDIR, AR_RENAME, AR_DELETE, AR_PROTECT, AR_NOTE,
+               AR_DELETE_ONE } ar_kind_t;
 bool ar_kind_is_write(ar_kind_t k);
 
 // A GET Transfer answered GOT: its file comes up later as an upload with this tag. err_owed: the GET failed after its
