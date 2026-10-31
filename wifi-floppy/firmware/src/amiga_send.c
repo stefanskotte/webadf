@@ -46,6 +46,7 @@ static bool flush(amiga_send_t *s) {
 // Closes the connection and starts over: any file in flight stays queued on the server (no outcome is posted), and
 // Receive deletes its temporary file when the connection goes.
 static void drop(amiga_send_t *s, char rx, const char *why) {
+    if (s->phase != AS_IDLE) wf_logf(WF_INFO, "send: connection to Transfer dropped (%s)", why);
     if (s->req) req_on_drop(s);
     if (s->phase >= AS_FILE_SENT && s->phase <= AS_AWAIT_OK) wf_logf(WF_WARN, "send: %.8s aborted (%s)", s->id, why);
     // An upload cut off (an Amiga reset, bench B5 2026-10-21) comes back as a fresh Receive that waits 60 s for the

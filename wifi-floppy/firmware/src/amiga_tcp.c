@@ -38,7 +38,7 @@ static int ring_used(void) { return (T.head - T.tail + RING) % RING; }
 
 static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) {
     (void)arg; (void)err;
-    if (!p) { T.state = AS_SOCK_CLOSED; return ERR_OK; }   // the Amiga closed (Receive quit)
+    if (!p) { wf_logf(WF_INFO, "amiga tcp: Transfer closed the connection"); T.state = AS_SOCK_CLOSED; return ERR_OK; }
     // T.raw is read once per pbuf, here in lwIP's context; t_raw_arm and t_close change it only under
     // net_radio_lock(), which this callback runs inside, so a disarm on core1 never lands mid-feed.
     u32_t raw_n = 0;   // raw bytes are acknowledged now (the upload's credit paces them); line bytes when taken
@@ -55,7 +55,7 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
         }
         for (; i < q->len; i++) {
             // Past the window: a peer that ignores it. Give up (the ring holds a whole window, so never otherwise).
-            if (!T.ring || ring_used() == RING - 1) { T.state = AS_SOCK_CLOSED; break; }
+            if (!T.ring || ring_used() == RING - 1) { wf_logf(WF_WARN, "amiga tcp: line ring full"); T.state = AS_SOCK_CLOSED; break; }
             T.ring[T.head] = b[i];
             T.head = (T.head + 1) % RING;
         }
