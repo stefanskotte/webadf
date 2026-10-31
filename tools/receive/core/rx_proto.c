@@ -373,14 +373,51 @@ void rx_req_words(const rx_event *e, char *out, unsigned cap) {
 static void put_del(rx_session *s) { puts_(s, "DEL "); puts_(s, s->req_id); puts_(s, " "); put_dec(s, s->req_count); puts_(s, "\n"); }
 /* A drawer delete stops at the entry at (req_path, deeper than the named path when it is inside): DEL with the count so
    far (drawers only: plan ruling W6), then ERR naming the entry under the named drawer (W7). */
+/* Protocol 5 (spec §9; plan rulings X1, X2): before it is emptied, the drawer at req_path is renamed within its parent
+   to .webadf-del-<8 hex digits from the rid>, so nothing saved by its old path meanwhile is deleted with it. A taken
+   name (DOS 203) tries the next of eight; any other refusal, or a hidden path over 255 bytes, deletes in place. */
+static void del_hide(rx_session *s) {
+    static const char HEX[] = "0123456789abcdef";
+    char *p = s->req_path; const char *slash = strrchr(p, '/');
+    size_t cut = (size_t)((slash ? slash : strchr(p, ':')) - p) + 1;
+    unsigned long h = rx_crc32_update(0, (const unsigned char *)s->req_id, (unsigned long)strlen(s->req_id));
+    unsigned i, k;
+    if (cut + sizeof ".webadf-del-" - 1 + 8 > RX_LOCAL_MAX) return;
+    strcpy(s->req_arg, p);
+    for (i = 0; i < 8; i++) {
+        unsigned long v = (h + i) & 0xFFFFFFFFUL; long r;
+        strcpy(p + cut, ".webadf-del-");
+        for (k = 0; k < 8; k++) p[cut + 12 + k] = HEX[(v >> (28 - 4 * k)) & 15];
+        p[cut + 20] = 0;
+        r = s->fs->w_rename(s->fs->ctx, s->req_arg, p);
+        if (r == 0) { s->del_hidden = 1; return; }
+        if (r != 203) break;   /* DOS 203: object exists */
+    }
+    strcpy(p, s->req_arg);
+}
+/* The walk ends: req_path back to the named path, and a hidden drawer back to its name (X4). 1 when that rename failed
+   (the old name taken meanwhile): where[cap] then says where the rest is (X5). The owner hears the old name (X6). */
+static int del_unhide(rx_session *s, char *where, unsigned cap) {
+    int bad = 0;
+    s->req_path[s->del_top] = 0;
+    if (!s->del_hidden) return 0;
+    s->del_hidden = 0;
+    if (s->fs->w_rename(s->fs->ctx, s->req_path, s->req_arg) != 0) {
+        const char *slash = strrchr(s->req_path, '/');
+        where[0] = 0; cat(where, cap, "the rest is in "); cat(where, cap, slash ? slash + 1 : strchr(s->req_path, ':') + 1);
+        bad = 1;
+    }
+    strcpy(s->req_path, s->req_arg); s->del_top = (unsigned)strlen(s->req_path);
+    return bad;
+}
 static void del_stop_text(rx_session *s, const char *code, const char *why) {
-    char text[80];
+    static char text[80], where[80];   /* static: the Amiga's stack is small; one request runs at a time */
     text[0] = 0;
     if (strlen(s->req_path) > s->del_top) { cat(text, sizeof text, s->req_path + s->del_top + 1); cat(text, sizeof text, ": "); }
     cat(text, sizeof text, why);
     if (s->del_drawer) put_del(s);
-    s->req_path[s->del_top] = 0;
-    req_fail_text(s, code, text);
+    if (del_unhide(s, where, sizeof where)) { cat(where, sizeof where, ": "); cat(where, sizeof where, text); req_fail_text(s, code, where); }
+    else req_fail_text(s, code, text);
 }
 static void del_stop(rx_session *s, long err) {
     char f[80];
@@ -406,7 +443,10 @@ static void del_step(rx_session *s) {
         if (r == 0) {   /* p is empty now */
             if ((r = s->fs->w_delete(s->fs->ctx, p)) != 0) { del_stop(s, r); return; }
             s->req_count++;
-            if (n == s->del_top) { req_done(s, 0); return; }
+            if (n == s->del_top) {   /* the named drawer itself: gone; the owner hears its own name (X6) */
+                if (s->del_hidden) { strcpy(p, s->req_arg); s->del_top = (unsigned)strlen(p); s->del_hidden = 0; }
+                req_done(s, 0); return;
+            }
             *strrchr(p, '/') = 0;   /* below the named path there is always a '/' */
             break;
         }
@@ -479,7 +519,11 @@ static void write_start(rx_session *s) {
             break;
         }
         if ((e = entry_kind(s, s->req_path, &is_dir, &is_link)) == 0 && (!is_dir || is_link)) e = s->fs->w_delete(s->fs->ctx, s->req_path);
-        else if (e == 0) { s->req_count = 0; s->del_top = (unsigned)strlen(s->req_path); s->del_drawer = 1; return; }
+        else if (e == 0) {
+            s->req_count = 0;
+            if (s->peer_v >= 5) del_hide(s);   /* spec §9: hidden first; protocol 4 deletes in place as 2.5 */
+            s->del_top = (unsigned)strlen(s->req_path); s->del_drawer = 1; return;
+        }
         break;
     }
     }
@@ -489,7 +533,7 @@ static void req_start(rx_session *s) {
     s->req_kind = s->wait_kind; strcpy(s->req_id, s->wait_id); strcpy(s->req_path, s->wait_path);
     strcpy(s->req_arg, s->wait_arg); s->req_num = s->wait_num;
     s->wait_kind = RX_REQ_NONE;
-    s->req_i = 0; s->req_count = 0; s->req_open = 0; s->del_drawer = 0; s->del_top = (unsigned)strlen(s->req_path);
+    s->req_i = 0; s->req_count = 0; s->req_open = 0; s->del_drawer = 0; s->del_hidden = 0; s->del_top = (unsigned)strlen(s->req_path);
     if (is_write(s->req_kind)) { write_start(s); return; }
     /* switched off (or no longer trusted) since it was accepted: the owner's word wins (final review 2) */
     if (!rx_browse_on(s)) { req_fail_text(s, "off", "browsing is off in Transfer"); return; }
@@ -1115,7 +1159,12 @@ void rx_disconnected(rx_session *s) {
         emit(s, RX_EV_FAILED, s->cur_id, s->cur_path, s->cur_size, 0, "connection lost");
     }
     if (s->up_phase != RX_UP_IDLE) up_finish(s, RX_EV_UP_FAILED, s->up_cancel ? "cancelled" : "connection lost", "local", 0);
-    if (s->req_kind == RX_REQ_DELETE) s->req_path[s->del_top] = 0;   /* a walk mid-way: the owner hears the named path */
+    if (s->req_kind == RX_REQ_DELETE) {   /* a walk mid-way: back to its name (X4), and the owner hears the named path */
+        static char where[80];
+        if (del_unhide(s, where, sizeof where)) { cat(where, sizeof where, ": connection lost"); }
+        else strcpy(where, "connection lost");
+        emit_req(s, s->req_kind, s->req_id, s->req_path, s->req_count, 0, where); req_end(s);
+    }
     if (s->req_kind != RX_REQ_NONE) { emit_req(s, s->req_kind, s->req_id, s->req_path, s->req_count, 0, "connection lost"); req_end(s); }
     s->wait_kind = RX_REQ_NONE; s->hello_browse = 0;
     if (s->upq) {   /* a GET's file not yet gone up: after a reconnect the board no longer knows its tag (ruling T4) */

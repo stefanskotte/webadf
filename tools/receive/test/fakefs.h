@@ -33,6 +33,9 @@ typedef struct {
        the write hooks called */
     long last_err; char wprot[32]; unsigned long vol_free; long write_err; long dir_err; int dir_err_at; int writes;
     char fail_rename_to[64]; int fail_renames;   /* a rename onto that name (or, fail_renames, every rename) fails 203 */
+    /* Transfer 2.6: every w_rename fails with rename_err (0 never); after a w_rename that worked, plant is put (its drawers
+       made: something saved by the old path meanwhile); the w_renames called, and the last one's paths */
+    long rename_err; char plant[64]; int renames; char last_from[RX_LOCAL_MAX + 1], last_to[RX_LOCAL_MAX + 1];
     ff_entry e[FF_MAX];   /* last: ff_init clears only what is above it */
 } fakefs;
 static int ff_wprot(fakefs *f, const char *p) { return f->wprot[0] && strncmp(p, f->wprot, strlen(f->wprot)) == 0; }
@@ -86,6 +89,13 @@ static int ff_rename(void *c, const char *from, const char *to) {
     if (ff_wprot(f, from)) return ff_fail(f, FF_WRITE_PROTECTED_DISK);
     if (i < 0) return ff_fail(f, RX_DOS_NOT_FOUND);
     if (ff_find(f, to) >= 0 || f->fail_renames || (f->fail_rename_to[0] && strcmp(to, f->fail_rename_to) == 0)) return ff_fail(f, FF_EXISTS);
+    {   /* a drawer takes what is inside it along */
+        size_t n = strlen(from); int k;
+        for (k = 0; k < f->n; k++) if (strncmp(f->e[k].name, from, n) == 0 && f->e[k].name[n] == '/') {
+            char t[sizeof f->e[k].name];
+            snprintf(t, sizeof t, "%s%s", to, f->e[k].name + n); strcpy(f->e[k].name, t);
+        }
+    }
     strcpy(f->e[i].name, to); return 0;
 }
 static int ff_has_children(fakefs *f, const char *dir) {
@@ -225,7 +235,19 @@ static long ff_w_mkdir(void *c, const char *path) {
     if (ff_find(f, p) < 0) return RX_DOS_NOT_FOUND;   /* the parent must exist: one level */
     ff_add(f, path, 1); return 0;
 }
-static long ff_w_rename(void *c, const char *from, const char *to) { return ff_rc(c, ff_rename(c, from, to)); }
+static long ff_w_rename(void *c, const char *from, const char *to) {
+    fakefs *f = c; long r;
+    f->renames++; snprintf(f->last_from, sizeof f->last_from, "%s", from); snprintf(f->last_to, sizeof f->last_to, "%s", to);
+    if (f->rename_err) { f->writes++; return f->rename_err; }
+    r = ff_rc(f, ff_rename(c, from, to));
+    if (r == 0 && f->plant[0]) {   /* its drawers, then the file */
+        char p[64]; char *q;
+        snprintf(p, sizeof p, "%s", f->plant);
+        for (q = strchr(p, '/'); q; q = strchr(q + 1, '/')) { *q = 0; ff_add(f, p, 1); *q = '/'; }
+        ff_put(f, f->plant, "new", 3, 0, ""); f->plant[0] = 0;
+    }
+    return r;
+}
 static long ff_w_delete(void *c, const char *path) { return ff_rc(c, ff_remove(c, path)); }
 static long ff_w_protect(void *c, const char *path, unsigned long prot) {
     fakefs *f = c; int i = ff_find(f, path);

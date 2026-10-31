@@ -163,6 +163,8 @@ typedef struct rx_session { /* fields private to rx_proto.c except list/list_n *
        A drawer delete walks with req_path itself as its stack (plan ruling W5): del_top is the named path's length. */
     char wait_arg[RX_LOCAL_MAX + 1], req_arg[RX_LOCAL_MAX + 1]; unsigned long wait_num, req_num;
     unsigned del_top; int del_drawer;
+    /* protocol 5 (spec §9): 1 while the drawer being deleted is hidden: req_path is its hidden path, req_arg its own */
+    int del_hidden;
     /* (the volume list a VOLS answer walks is file-static in rx_proto.c: one connection is answered at a time) */
 } rx_session;
 
