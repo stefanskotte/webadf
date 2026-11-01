@@ -25,6 +25,9 @@ COPY tools/paulanet-disk tools/paulanet-disk
 # Transfer, was Receive (plan 2026-10-17 R14): the committed pinned build; build.sh checks it against receive.sha256.
 COPY tools/receive/dist/Transfer tools/receive/dist/Transfer
 COPY tools/receive/receive.sha256 tools/receive/receive.sha256
+# Transfer's icon (Transfer 2.7, ruling R14): build.sh regenerates it from icon/ and checks it against the committed one.
+COPY tools/receive/icon tools/receive/icon
+COPY tools/receive/dist/Transfer.info tools/receive/dist/Transfer.info
 # The PaulaNET.device variant (plan 2026-10-18): the committed pinned build; build.sh checks it against driver.sha256.
 COPY tools/paulanet-driver/dist/PaulaNET.device tools/paulanet-driver/dist/PaulaNET.device
 COPY tools/paulanet-driver/driver.sha256 tools/paulanet-driver/driver.sha256
