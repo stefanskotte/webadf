@@ -9,6 +9,7 @@ _Static_assert(AR_LINE_MAX == AS_LINE_MAX, "an answer line is a line from Transf
 #define AS_TXT_NORX "Transfer is not running on the Amiga"
 #define AS_TXT_LOST "The connection to Transfer was lost"
 #define AS_TXT_OLD "Transfer 2.3 or newer is needed"
+#define AS_TXT_OLD5 "Transfer 2.6 or newer is needed"   // DELETE ... one below protocol 5 (fw 1.23.1, ruling P1)
 #define AS_TXT_SILENT "Transfer stopped answering"
 #define AS_TXT_RO "Writing is off in Transfer"   // = Transfer 2.5's own readonly text and the web app's words (spec 4.1)
 static void req_on_drop(amiga_send_t *s);
@@ -300,10 +301,10 @@ static void start_file(amiga_send_t *s) {
     }
     int n;
     if (f.dest) {
-        if (!(s->req && s->peer_v == 4 && s->req->write)) {
+        if (!(s->req && s->peer_v >= 4 && s->req->write)) {
             // Never sent: Transfer 2.4 would put it in ReceiveDir, and 2.5 with writing off refuses it anyway.
             wf_logf(WF_INFO, "send: %.8s readonly (Transfer protocol %u%s)", s->id, (unsigned)s->peer_v,
-                    s->peer_v == 4 ? ", writing off" : "");
+                    s->peer_v >= 4 ? ", writing off" : "");
             set_failure(s, "readonly", AS_TXT_RO);
             return;
         }
@@ -711,6 +712,13 @@ static bool req_start(amiga_send_t *s, uint32_t t) {
         ar_end_err(r, "old", AS_TXT_OLD);
         return true;
     }
+    if (r->kind == AR_DELETE_ONE && s->peer_v < 5) {
+        // fw 1.23.1 (spec 2026-10-31 section 9, ruling P1): Transfer 2.4/2.5 would read "one" as part of nothing they
+        // know (2.5 refuses the line); the server sends it only at rxv=5, so the board's word is that Transfer is old.
+        wf_logf(WF_INFO, "req: %.8s old (DELETE one, Transfer protocol %u)", r->rid, (unsigned)s->peer_v);
+        ar_end_err(r, "old", AS_TXT_OLD5);
+        return true;
+    }
     if (s->peer_v == 3 && ar_kind_is_write(r->kind)) {
         // Transfer 2.3/2.4 know no writes (ruling N2): the board answers as 2.5 with writing off would. At protocol 4
         // a write goes even with writing off -- Transfer answers readonly itself, as it answers off for browsing (F11).
@@ -801,7 +809,7 @@ bool as_req_capable(const amiga_send_t *s) { return s->req != NULL; }
 uint32_t as_req_acked(const amiga_send_t *s) { return s->req ? (offline(s) ? s->req->want_v : s->req->have_v) : 0; }
 int as_rx_proto(const amiga_send_t *s) { return s->phase >= AS_READY ? s->peer_v : 0; }
 bool as_browse(const amiga_send_t *s) { return s->req && as_rx_proto(s) >= 3 && s->req->browse; }
-bool as_write(const amiga_send_t *s) { return s->req && as_rx_proto(s) == 4 && s->req->write; }
+bool as_write(const amiga_send_t *s) { return s->req && as_rx_proto(s) >= 4 && s->req->write; }
 
 // The shared engine: as_tick runs it without HTTPS, as_step with at most one request.
 static bool run(amiga_send_t *s, bool http) {
@@ -878,7 +886,7 @@ static bool run(amiga_send_t *s, bool http) {
     case AS_CONNECTING:
         if (sock == AS_SOCK_OPEN) {
             if (s->up && s->up->key[0]) {   // protocol 2 (fw 1.19.0): uploads; protocol 3 (fw 1.22.0): requests too
-                s->hello_v = s->req ? 4 : 2;   // protocol 4 (fw 1.23.0): writes too; Transfer 2.4 answers READY 3
+                s->hello_v = s->req ? 5 : 2;   // protocol 5 (fw 1.23.1): DELETE one; 2.5 answers READY 4, 2.4 READY 3
                 int n = snprintf(s->up->line, sizeof s->up->line, "WEBADF %u %s\n", (unsigned)s->hello_v, s->up->key);
                 push(s, (const uint8_t *)s->up->line, n);
             } else {
@@ -916,11 +924,13 @@ static bool run(amiga_send_t *s, bool http) {
             if (strncmp(s->line, "READY ", 6) == 0) {
                 // Receive 1 says READY 1 to anything; READY 2 counts only as the answer to a protocol 2-4 hello
                 // (Transfer 2.2 answers a protocol 3 hello READY 2), READY 3 <0|1> only as the answer to protocol 3 or 4
-                // (Transfer 2.3/2.4 answer a protocol 4 hello so: no writes), READY 4 <b> <w> only to protocol 4.
+                // (Transfer 2.3/2.4 answer a protocol 4 or 5 hello so: no writes), READY 4 <b> <w> only to protocol 4
+                // or 5 (Transfer 2.5 answers a protocol 5 hello so: no DELETE one), READY 5 <b> <w> only to protocol 5.
                 const char *v = s->line + 6;
                 const bool b01 = v[0] && v[1] == ' ' && (v[2] == '0' || v[2] == '1');
-                if (s->hello_v == 4 && v[0] == '4' && b01 && v[3] == ' ' && (v[4] == '0' || v[4] == '1') && v[5] == 0) {
-                    s->peer_v = 4;
+                const bool bw = b01 && v[3] == ' ' && (v[4] == '0' || v[4] == '1') && v[5] == 0;
+                if (bw && ((s->hello_v >= 4 && v[0] == '4') || (s->hello_v >= 5 && v[0] == '5'))) {
+                    s->peer_v = (uint8_t)(v[0] - '0');
                     s->req->browse = v[2] == '1';
                     s->req->write = s->req->browse && v[4] == '1';   // <w> is 1 only when <b> is (spec 2.1)
                 } else if (s->hello_v >= 3 && v[0] == '3' && b01 && v[3] == 0) {

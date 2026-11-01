@@ -3872,6 +3872,19 @@ static void req_poll_params_only_once_set(void) {
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
     CHECK(strstr(fake_last_request(), "&reqAck=5&rxv=3&browse=1&write=0 HTTP/1.1\r\n") != NULL, "never write=1 below 4");
+    // fw 1.23.1 (spec 2026-10-31 section 9): Transfer 2.6 is reported as rxv=5.
+    boot(); dc_set_send(&c, 4, 'c'); dc_set_req(&c, 5, 5, true, true);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&reqAck=5&rxv=5&browse=1&write=1 HTTP/1.1\r\n") != NULL, "Transfer 2.6, writing on");
+    boot(); dc_set_send(&c, 4, 'c'); dc_set_req(&c, 5, 5, true, false);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&reqAck=5&rxv=5&browse=1&write=0 HTTP/1.1\r\n") != NULL, "Transfer 2.6, writing off");
+    boot(); dc_set_send(&c, 4, 'c'); dc_set_req(&c, 5, 6, true, true);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "rxv") == NULL && strstr(fake_last_request(), "write") == NULL, "no protocol 6");
     boot(); dc_set_send(&c, 4, 'u'); dc_set_req(&c, 5, 0, false, true);
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
