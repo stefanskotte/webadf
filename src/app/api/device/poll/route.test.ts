@@ -801,7 +801,7 @@ describe('GET /api/device/poll -- req (NET: volumes, spec 2026-10-30 §3)', () =
     await GET(get('?since=1&xferAck=0&rx=u'));
     expect(failWritesWhenOff).toHaveBeenCalledTimes(2);
     await GET(get('?since=1&xferAck=0&rx=c&rxv=6&browse=1&write=1'));
-    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), undefined, { poll: true });
+    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 6, browse: true, write: true }, { poll: true });
   });
   // Spec 2026-10-31 §9: firmware 1.23.1 with Transfer 2.6 says rxv=5 (everything protocol 4 does, plus DELETE ... one).
   it('records protocol 5 with its write flag', async () => {
@@ -810,6 +810,16 @@ describe('GET /api/device/poll -- req (NET: volumes, spec 2026-10-30 §3)', () =
     failWritesWhenOff.mockClear();
     await GET(get('?since=1&xferAck=0&rx=c&rxv=5&browse=1&write=1'));
     expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 5, browse: true, write: true }, { poll: true });
+    expect(failWritesWhenOff).not.toHaveBeenCalled();
+  });
+  // Final review (plan 2026-11-01-net-consistency): a protocol newer than this server knows is still a protocol -- a
+  // missing rxv now clears both switches, so a future rxv must not read as missing.
+  it('records a newer protocol (rxv=6) as it is, and fails nothing', async () => {
+    readPollTick.mockResolvedValue(baseTick({ sendVersion: 1 }));
+    const { GET } = await import('./route');
+    failWritesWhenOff.mockClear();
+    await GET(get('?since=1&xferAck=0&rx=c&rxv=6&browse=1&write=1'));
+    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 6, browse: true, write: true }, { poll: true });
     expect(failWritesWhenOff).not.toHaveBeenCalled();
   });
 });
