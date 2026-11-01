@@ -35,6 +35,7 @@ import { refuse, skippedItem, type Clash, type CopyMove, type OpCtx, type OpItem
 import { browseOf, isNetVolumePath } from './net-driver';
 import { clashMode, joinAmiga, moveWithinVolume, mustRemoveOnVolume, placeOf, sameVolume, writableBoard } from './net-write';
 import { settleMoveOfGet, settleMoveOfTransfer, settleMovesOfJob } from './net-moves';
+import { CANCEL_KIND } from './job-view';
 import { shelfDest } from './shelf';
 import { ADDED_UNFILED } from './shelf-rules';
 import { keepBothName, sameStashName, stashFind, stashTree } from './stash-paths';
@@ -412,7 +413,9 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
     .orderBy(asc(transfers.createdAt), asc(transfers.id));
   if (reqs.length === 0 && sent.length === 0) return null;
   // The board the job is about: a copy onto a volume names the destination, a copy out the source.
-  const boardId = sent[0]?.deviceId ?? reqs.find((r) => r.kind !== 'get')?.deviceId ?? reqs[0].deviceId;
+  // A Cancel the rest marker (progress panel §6) is never the job's request: it names no board.
+  const parts = reqs.filter((r) => r.kind !== CANCEL_KIND);
+  const boardId = sent[0]?.deviceId ?? parts.find((r) => r.kind !== 'get')?.deviceId ?? (parts[0] ?? reqs[0]).deviceId;
   // Every board of the job by name: a write's words name the board it ran on (item 13: a cross-board move's removal is
   // the source board's), the files the board the job is about.
   const ids = [...new Set([boardId, ...reqs.map((r) => r.deviceId), ...sent.map((x) => x.deviceId)])];

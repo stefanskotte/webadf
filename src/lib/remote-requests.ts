@@ -1,6 +1,6 @@
 // NET: volumes (spec 2026-10-30 §4): the queue of requests from Files to a board's Amiga (list volumes, list a drawer,
 // fetch a file). Answers are remembered REMEMBER_MS, arrive in pieces, and a request nobody answers times out.
-import { and, asc, eq, gte, inArray, lt, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, lt, ne, or, sql } from 'drizzle-orm';
 import type { Db } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { remoteRequests } from '@/db/schema/remote-requests';
@@ -13,6 +13,7 @@ import {
   MOVE_PROTO, WRITE_KINDS, type WriteKind,
 } from './remote-limits';
 import { boardWriteWords, MOVE_OLD_TRANSFER, WRITE_OFF } from './remote-browse';
+import { CANCEL_KIND } from './files/job-view';
 import { newRequestId, parseAnswerLine, type EntryInfo, type VolumeInfo, type WriteArgs } from './remote-wire';
 
 export type RemoteRow = typeof remoteRequests.$inferSelect;
@@ -326,7 +327,8 @@ export async function takeWaiting(db: Db, deviceId: string, now = new Date()): P
         .where(and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.status, 'waiting'), eq(remoteRequests.kind, 'delete'),
           sql`(${remoteRequests.target}->>'one')::boolean is true`));
     }
-    const waiting = and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.status, 'waiting'));
+    // A Cancel the rest marker (progress panel §6) is the server's record, never a board's request: requestLine has no line for it.
+    const waiting = and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.status, 'waiting'), ne(remoteRequests.kind, CANCEL_KIND));
     const picked = await tx.select({ id: remoteRequests.id }).from(remoteRequests).where(waiting)
       .orderBy(listingsFirst, asc(remoteRequests.createdAt), asc(remoteRequests.id)).limit(REQ_FETCH_MAX).for('update', { skipLocked: true });
     if (picked.length === 0) return [];
