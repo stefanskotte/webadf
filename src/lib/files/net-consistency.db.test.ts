@@ -499,3 +499,27 @@ describe('item 13: a cross-board move names the source board in its removal\'s w
     expect(p.writes.map((w) => w.reason)).toEqual(['Transfer is not running on A500']);
   });
 });
+
+describe('item 14: the progress says which waiting board is offline', () => {
+  it('a copy whose board went offline: offline names it; back online: null; finished: null', async () => {
+    const r = await op({ op: 'copy', sources: [W('x')], dest: 'STASH:', onClash: 'ask' });
+    const job = (r as { fetching: { id: string } }).fetching.id;
+    await getDb().update(devices).set({ lastSeenAt: new Date(Date.now() - 4 * 3600_000) }).where(eq(devices.id, 'w1'));
+    expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ waiting: 1, offline: 'A500' });
+    await getDb().update(devices).set({ lastSeenAt: new Date() }).where(eq(devices.id, 'w1'));
+    expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ waiting: 1, offline: null });
+    const [g] = await gets();
+    await arrive(g.id, 'Work:x', bytes('xx'));
+    await getDb().update(devices).set({ lastSeenAt: new Date(Date.now() - 4 * 3600_000) }).where(eq(devices.id, 'w1'));
+    expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ waiting: 0, offline: null });
+  });
+
+  it('a copy onto another board waits on that board: offline names the destination', async () => {
+    const r = await op({ op: 'copy', sources: [W('x')], dest: 'NET:/w2/DF0', onClash: 'ask' });
+    const job = (r as { job: { id: string } }).job.id;
+    const [g] = await gets();
+    await arrive(g.id, 'Work:x', bytes('xx'));
+    await getDb().update(devices).set({ lastSeenAt: new Date(Date.now() - 4 * 3600_000) }).where(eq(devices.id, 'w2'));
+    expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ offline: 'A1200' });
+  });
+});

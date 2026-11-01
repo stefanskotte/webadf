@@ -16,6 +16,7 @@ import { amigaUploads } from '@/db/schema/amiga-uploads';
 import { remoteRequests } from '@/db/schema/remote-requests';
 import { transfers } from '@/db/schema/transfers';
 import { findSendTarget } from '@/lib/send-targets';
+import { isOnline } from '@/lib/device-state';
 import { addGets, addWrites, claimGet, dropMemory, expireStale, latestFor, settleGet, type GetTarget, type RemoteRow, type WriteReq, type WriteTarget } from '@/lib/remote-requests';
 import { amigaPathOf, newRequestId, type EntryInfo } from '@/lib/remote-wire';
 import { errorWords, KEPT_NEW, KEPT_UNKNOWN, MOVE_OLD_TRANSFER, oneOrMany, writeErrorWords } from '@/lib/remote-browse';
@@ -391,6 +392,8 @@ export type FetchProgress = {
   skipped: number; writes: JobWrite[];
   /** `to`: the files go onto the Amiga (queue rows, or relayed); `from`: a copy out of a volume. */
   direction: 'to' | 'from';
+  /** The name of a board something of the job still waits on that is offline (item 14), else null. */
+  offline: string | null;
 };
 
 /**
@@ -413,8 +416,13 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
   // Every board of the job by name: a write's words name the board it ran on (item 13: a cross-board move's removal is
   // the source board's), the files the board the job is about.
   const ids = [...new Set([boardId, ...reqs.map((r) => r.deviceId), ...sent.map((x) => x.deviceId)])];
-  const names = new Map((await db.select({ id: devices.id, name: devices.name }).from(devices).where(inArray(devices.id, ids))).map((x) => [x.id, x.name] as const));
+  const boards = await db.select({ id: devices.id, name: devices.name, lastSeenAt: devices.lastSeenAt }).from(devices).where(inArray(devices.id, ids));
+  const names = new Map(boards.map((x) => [x.id, x.name] as const));
   const nameOf = (id: string) => names.get(id) ?? 'The board';
+  // The board a part still waits on that is offline (item 14): the pane says so and asks less often until it is back.
+  const waitingOn = new Set([...reqs.filter((r) => ['waiting', 'sent', 'fetching', 'placing'].includes(r.status)).map((r) => r.deviceId),
+    ...sent.filter((x) => x.status === 'queued' || x.status === 'sending').map((x) => x.deviceId)]);
+  const offline = boards.find((x) => waitingOn.has(x.id) && !isOnline(x.lastSeenAt, now.getTime()))?.name ?? null;
   const board = nameOf(boardId);
   // A move's get is not finished until its source is deleted (net-moves.ts drops the marker after).
   const moving = (r: RemoteRow) => r.status === 'done' && !!(r.target as GetTarget | null)?.moveSource;
@@ -465,5 +473,6 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
     arrived: doneIds.flatMap((id) => (paths.has(id) ? [formatPath({ device: 'STASH', segments: paths.get(id)!.split('/') })] : [])),
     skipped: sentCounts.skipped, writes,
     direction: sent.length || reqs.some((r) => r.kind === 'get' && (r.target as GetTarget).relay) ? 'to' : 'from',
+    offline,
   };
 }

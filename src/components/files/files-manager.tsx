@@ -164,6 +164,8 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<RefusalCode>([
 ]);
 /** What Rename, Makedir and Protect say in NET:, where the rows are queue rows. */
 const NOT_IN_NET = 'Not in NET:';
+/** How often a job's progress is asked while a board it waits on is offline (item 14). */
+const OFFLINE_POLL_MS = 15_000;
 /** Enter and Space belong to a focused control; the manager must not open or pick a row as well. */
 const CONTROL = 'button, a, [role="button"], [role="checkbox"]';
 
@@ -978,9 +980,12 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    */
   function watchFetch(f: Fetching, dest: string, then?: (p: { done: number; arrived: string[] }) => void) {
     let first = true;
+    // While a board the job waits on is offline (plan 2026-11-01-net-consistency, item 14) it is asked every 15 s, not
+    // every second; once the board is back, every second again.
+    let every = 1000;
     const again = () => {
       if (!alive.current) return;
-      const t = setTimeout(() => { fetchTimers.current.delete(t); void tick(); }, 1000);
+      const t = setTimeout(() => { fetchTimers.current.delete(t); void tick(); }, every);
       fetchTimers.current.add(t);
     };
     const tick = async () => {
@@ -991,6 +996,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       const p = (await res.json().catch(() => null)) as (Parameters<typeof jobStatus>[0] & { board: string; arrived: string[] }) | null;
       if (!res.ok || !p) { if (res.status >= 500) { again(); return; } showFetchLine(f.id, refusalWords('failed'), true); return; }
       const s = jobStatus({ ...p, skipped: p.skipped ?? 0, writes: p.writes ?? [], direction: p.direction ?? 'from' }, p.board);
+      every = p.offline ? OFFLINE_POLL_MS : 1000;
       showFetchLine(f.id, s.line, s.finished);
       const { panes: cur } = latest.current;
       const sides = ['left', 'right'] as const;

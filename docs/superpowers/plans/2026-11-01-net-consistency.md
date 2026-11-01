@@ -237,3 +237,6 @@ Work: arrives with the fake board). Commit.
 - Task 12: complete (transfers 'no rxv' RED -> GREEN; poll route unit expectations carry { poll: true }; device api 192/192)
 - Task 13: Ruling: a get's failure words name the source board too (a copy between boards said the destination's name for a source timeout, the same defect) -- covered by the same nameOf; no separate RED test -- cost if wrong: words
 - Task 13: complete (item 13 RED -> GREEN; db 102/102)
+- Task 14: Ruling: the e2e for item 14 was written after its server/rule code (the RED was the db test 'item 14' 2/2 and the rule test); it passed first run (26.6 s, the 15 s back-off inside it) -- cost if wrong: none
+- Task 14: complete (item 14 db RED 2/2 + rule RED 1 -> GREEN; e2e 'goes offline' passed)
+- Task 15: e2e 'an empty STASH: file copied onto a volume' RED (no copy: left out) before the fix

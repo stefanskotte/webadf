@@ -2,7 +2,9 @@ import { test, expect, type APIRequestContext, type Page } from '@playwright/tes
 import { signUpFresh } from './helpers';
 import { cleanupSeeded, pairDevice, setBrowse } from './device-helpers';
 import { boardSays, boardServes, boardUploads, fakeBoardTiming, type BoardRequest, type FakeEntry, type VolumeNext } from './amiga-board';
+import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
+import { devices } from '@/db/schema/devices';
 import { listStash } from '@/lib/stash';
 
 /**
@@ -232,6 +234,49 @@ test('Copy from STASH: onto a volume: each clash answer, and the queue line the 
     'Work:Tools/y.txt keep delivered', 'Work:Tools/x.lha replace delivered', 'Work:Tools/x_1.lha keep delivered',
   ]);
   await board.stop();
+});
+
+// Plan 2026-11-01-net-consistency, item 14: a board the copy waits on goes offline -- the status row says so (and asks
+// every 15 s rather than every second), then finishes once the board is back.
+test('a copy onto a volume whose board goes offline says so, then finishes once it is back', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const { deviceId, token } = await writable(page, request);
+  const fs = amiga();
+  const board = serving(request, token, fs);
+  try {
+    await openFiles(page, 'STASH:', `NET:/${deviceId}/Work/Tools`, 'left');
+    await page.getByTestId('files-stash-input').setInputFiles([{ name: 'late.txt', mimeType: 'text/plain', buffer: Buffer.from('late') }]);
+    await expect(rowAt(page, 'left', 'late.txt')).toBeVisible({ timeout: LIVE });
+    await expect(rowAt(page, 'right', 'x.lha')).toBeVisible({ timeout: LIVE });
+    fakeBoardTiming.queueHeld = true;
+    await rowAt(page, 'left', 'late.txt').click();
+    await page.getByTestId('files-copy').click();
+    await expect(busy(page)).toContainText('Copying 1 of 1 to A500', { timeout: LIVE });
+    await getDb().update(devices).set({ lastSeenAt: new Date(Date.now() - 5 * 60_000) }).where(eq(devices.id, deviceId));
+    await expect(busy(page)).toContainText('Copying 1 of 1 to A500… — A500 is offline', { timeout: LIVE });
+    await setBrowse(deviceId);
+    fakeBoardTiming.queueHeld = false;
+    await expect(busy(page)).toContainText('Copied 1 to A500', { timeout: 40_000 });
+    expect(fs['Work:Tools'].some((e) => e.name === 'late.txt')).toBe(true);
+  } finally { fakeBoardTiming.queueHeld = false; await board.stop(); }
+});
+
+// Plan 2026-11-01-net-consistency, item 15: firmware and Transfer both carry a 0-byte FILE, so an empty file is copied.
+test('an empty STASH: file copied onto a volume arrives there, empty', async ({ page, request }) => {
+  test.setTimeout(90_000);
+  const { deviceId, token } = await writable(page, request);
+  const fs = amiga();
+  const board = serving(request, token, fs);
+  try {
+    await openFiles(page, 'STASH:', `NET:/${deviceId}/Work/Tools`, 'left');
+    await page.getByTestId('files-stash-input').setInputFiles([{ name: 'empty.txt', mimeType: 'text/plain', buffer: Buffer.alloc(0) }]);
+    await expect(rowAt(page, 'left', 'empty.txt')).toBeVisible({ timeout: LIVE });
+    await expect(rowAt(page, 'right', 'x.lha')).toBeVisible({ timeout: LIVE });
+    await rowAt(page, 'left', 'empty.txt').click();
+    await page.getByTestId('files-copy').click();
+    await expect(busy(page)).toContainText('Copied 1 to A500', { timeout: LIVE });
+    expect(fs['Work:Tools'].find((e) => e.name === 'empty.txt')?.data?.length).toBe(0);
+  } finally { await board.stop(); }
 });
 
 // A500 bench 2026-10-31: a STASH: drawer of 7 files copied onto Workbench:WebTest said only "Copying 3 of 7…" while the
