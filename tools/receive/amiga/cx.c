@@ -47,10 +47,26 @@ void cx_tooltypes(const struct WBArg *self, cx_opts *o, char *dir, unsigned cap)
     IconBase = NULL;
 }
 
+/* Kickstart 2.04's ParseIX knows "control" but not "ctrl" (FS-UAE 2026-11-01: "ctrl alt w" was refused there, taken
+   on 3.1 and 3.2): the word is spelled out, so the 3.x habit works everywhere. */
+static void spell_out(const char *in, char *out, unsigned cap) {
+    unsigned n = 0;
+    while (*in && n + 1 < cap) {
+        int word_start = in[0] != ' ' && (n == 0 || out[n - 1] == ' ');
+        if (word_start && (in[0] | 32) == 'c' && (in[1] | 32) == 't' && (in[2] | 32) == 'r' && (in[3] | 32) == 'l' &&
+            (in[4] == ' ' || in[4] == 0) && n + 8 < cap) {
+            memcpy(out + n, "control", 7); n += 7; in += 4;
+        } else out[n++] = *in++;
+    }
+    out[n] = 0;
+}
+
 int cx_open(const cx_opts *o) {
     struct NewBroker nb;
     LONG err = 0;
     CxObj *f;
+    char key[sizeof o->popkey + 16];
+    spell_out(o->popkey, key, sizeof key);
     if (!(CxBase = OpenLibrary((STRPTR)"commodities.library", 37))) return -1;
     if (!(cxport = CreateMsgPort())) { cx_close(); return -1; }
     memset(&nb, 0, sizeof nb);
@@ -64,7 +80,7 @@ int cx_open(const cx_opts *o) {
     nb.nb_Port = cxport;
     broker = CxBroker(&nb, &err);
     if (!broker) { cx_close(); return err == CBERR_DUP ? 1 : -1; }
-    if (o->popkey[0] && (f = CxFilter(o->popkey)) != NULL) {
+    if (key[0] && (f = CxFilter(key)) != NULL) {
         AttachCxObj(broker, f);
         AttachCxObj(f, CxSender(cxport, CX_ID_POP));
         AttachCxObj(f, CxTranslate(NULL));   /* the key goes no further */
