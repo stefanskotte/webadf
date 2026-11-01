@@ -53,8 +53,10 @@ Exchange, stops it. Disable in Exchange closes its connection
 until Enable. Starting it again only shows the window. To start
 it with Workbench, copy SYS:Tools/Transfer and its icon to
 SYS:WBStartup; set CX_POPUP=NO in the icon's tool types to start
-without the window. Tool types: CX_POPUP, CX_POPKEY (the hot
-key), CX_PRIORITY and TO (the folder, for that run).
+without the window. Install updates a Transfer it finds there,
+and its icon if the icon is from before Transfer 2.7. Tool
+types: CX_POPUP, CX_POPKEY (the hot key), CX_PRIORITY and TO
+(the folder, for that run).
 
 In a Shell:
   Transfer RECEIVE [TO <folder>] [SAVE] [GUI] [TRUST] [BROWSE]
