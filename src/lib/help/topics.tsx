@@ -112,7 +112,7 @@ export const HELP_TOPICS = {
           <strong>Progress.</strong> Copies and moves to and from the Amiga, its deletes and changes, and files sent to it
           show in the <em>Transfers</em> panel at the bottom right, on every page: a bar, the files and megabytes so far
           and, after a few seconds, the time left. <em>Cancel the rest</em> stops what has not gone yet. What has arrived
-          stays, and a move keeps its sources.
+          stays, and a move keeps the sources of what has not moved yet. A drawer being deleted finishes first.
         </p>
         <p>
           <strong>Keys.</strong> The box at the top of the tick column picks every row shown, or none. ↑ and ↓ move, Space picks, Enter opens, Backspace goes up, Tab switches pane, / filters,
