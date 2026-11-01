@@ -288,6 +288,20 @@ describe('copy onto a volume', () => {
     expect(await pack()).toMatchObject({ marks: [] });
   });
 
+  // Plan 2026-11-01-net-consistency, item 10: the drawer's count is the job's own rows by state.
+  it('a drawer\'s count: a failed file is said apart, and Clear finished keeps a running job\'s finished rows', async () => {
+    const { clearFinishedTransfers } = await import('@/lib/transfers');
+    await stash('Pack/a.txt', '1'); await stash('Pack/b.txt', '2'); await stash('Pack/c.txt', '3');
+    await op({ op: 'copy', sources: ['STASH:/Pack'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
+    const pack = async () => (await netDriver.list(ctx, parsePath('NET:/w1/Work/Tools')!))!.entries.find((e) => e.name === 'Pack');
+    const [a, b] = (await rows()).sort((x, y) => x.amigaDest!.localeCompare(y.amigaDest!));
+    await deliver(a.id, { ok: true, savedAs: 'Work:Tools/Pack/a.txt' });
+    expect(await clearFinishedTransfers(getDb(), 'o1', 'w1')).toBe(0);
+    expect(await pack()).toMatchObject({ marks: ['Sending 2 of 3'] });
+    await deliver(b.id, { ok: false, code: 'full', text: 'disk full' });
+    expect(await pack()).toMatchObject({ marks: ['Sending 3 of 3 · 1 failed'] });
+  });
+
   it('the limits: a file over 4 MB, and more than the board\'s queue holds', async () => {
     await stash('Big.bin', new Uint8Array(4 * 1024 * 1024 + 1));
     expect(await op({ op: 'copy', sources: ['STASH:/Big.bin'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' }))

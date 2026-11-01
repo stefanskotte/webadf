@@ -229,3 +229,4 @@ Work: arrives with the fake board). Commit.
 - Task 9: Ruling: a LIBRARY: source gone or made again since the copy is said "copied, but the original could not be removed — it is no longer on the disk" / "— it was made again since the copy" (net-moves strips the prefix so the job says it once) -- cost if wrong: words
 - Task 9: Ruling: a volume drawer's fresh listing counts though dropMemory marked it stale (the removal's own answers let the memory go before the progress reads it) -- cost if wrong: none
 - Task 9: complete (item 9 RED: 5 volume cases, 2 driver cases, 1 rule -> GREEN; db 130/130; lib unit green)
+- Task 10: complete (net-write 'drawer's count' + net-consistency item 10 RED -> GREEN; db 159/159)

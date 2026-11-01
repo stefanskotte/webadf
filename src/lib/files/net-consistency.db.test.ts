@@ -439,3 +439,19 @@ describe('item 9: a drawer a move off a volume kept says why', () => {
     expect(await kept(job)).toEqual([['Work:Pair', 'something not copied is in it']]);
   });
 });
+
+describe('item 10: a drawer\'s count between volumes covers the files still on their way up', () => {
+  it('two files relayed into DF0:Pair, the first through: "Sending 2 of 2", not nothing', async () => {
+    const { netDriver } = await import('./net-driver');
+    const { parsePath } = await import('./path');
+    await op({ op: 'copy', sources: [W('Pair')], dest: 'NET:/w2/DF0', onClash: 'ask' });
+    const pair = async () => (await netDriver.list(ctx, parsePath('NET:/w2/DF0')!))!.entries.find((e) => e.name === 'Pair');
+    const [ga] = await gets();
+    await arrive(ga.id, ga.amigaPath, bytes('z'));
+    expect(await pair()).toMatchObject({ marks: ['Waiting'] });
+    const [row] = await rows('w2');
+    await deliver(row.id, 'w2');
+    await remember('DF0:', [], 'w2');   // the delivery let the memory go: the Amiga is read again
+    expect(await pair()).toMatchObject({ marks: ['Sending 2 of 2'] });
+  });
+});

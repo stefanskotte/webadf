@@ -319,6 +319,14 @@ export async function listTransfers(db: Db, orgId: string, deviceId: string, lim
 }
 
 /**
+ * A finished row of a Files job still running -- another row of it waiting or moving, or a file of it still coming up
+ * from a volume -- stays for Clear (plan 2026-11-01-net-consistency R8): the drawer it went into counts it.
+ */
+const notOfRunningJob = (now: Date) => sql`not (${transfers.jobId} is not null and ${transfers.status} not in ('queued', 'sending') and (
+  exists (select 1 from transfers a where a.job_id = ${transfers.jobId} and a.status in ('queued', 'sending') and a.expires_at > ${now})
+  or exists (select 1 from remote_requests g where g.fetch_id = ${transfers.jobId} and g.kind = 'get' and g.status in ('waiting', 'sent', 'fetching', 'placing'))))`;
+
+/**
  * "Clear finished" on the Upload page: deletes this org's finished rows for the board (delivered, failed, cancelled,
  * expired) and the queued or sending rows past their expiry, which the page already shows as expired (toView's
  * "lapsed"). A live waiting or sending row is never touched. No cursor bump: sendQueueText lists only active rows not
@@ -328,7 +336,7 @@ export async function clearFinishedTransfers(db: Db, orgId: string, deviceId: st
   const del = await db.delete(transfers)
     .where(and(eq(transfers.orgId, orgId), eq(transfers.deviceId, deviceId),
       or(inArray(transfers.status, FINISHED),
-        and(inArray(transfers.status, ACTIVE), lte(transfers.expiresAt, now)))))
+        and(inArray(transfers.status, ACTIVE), lte(transfers.expiresAt, now))), notOfRunningJob(now)))
     .returning({ id: transfers.id });
   return del.length;
 }
@@ -341,7 +349,7 @@ export async function clearTransfer(db: Db, orgId: string, id: string, now = new
   const del = await db.delete(transfers)
     .where(and(eq(transfers.id, id), eq(transfers.orgId, orgId),
       or(inArray(transfers.status, FINISHED),
-        and(inArray(transfers.status, ACTIVE), lte(transfers.expiresAt, now)))))
+        and(inArray(transfers.status, ACTIVE), lte(transfers.expiresAt, now))), notOfRunningJob(now)))
     .returning({ id: transfers.id });
   return del.length > 0;
 }
