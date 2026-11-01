@@ -74,6 +74,9 @@ if [ "$mode" = send ]; then
   printf 'x' > "$work/hd/Up/Refused.bin"
   printf 'e' > "$work/hd/Up/Café.txt"
 fi
+# SYS: is Work: then the Workbench disk in flip, icon and cx: Work:WBStartup (empty, or cx's) stands in for the disk's,
+# whose AssignWedge fails on 3.2 with a requester over Workbench.
+case "$mode" in flip|icon|cx) mkdir -p "$work/hd/WBStartup";; esac
 if [ "$mode" = flip ]; then printf 'old\n' > "$work/hd/Keep.txt"; fi
 if [ "$mode" = icon ]; then
   # The icon left out on Workbench's window at a fixed place (Work:.backdrop), so poke can double-click it.
@@ -86,10 +89,14 @@ if [ "$mode" = cx ]; then
   cp "$tools_out" "$work/hd/WBStartup/Transfer"
   python3 -I "$repo/tools/receive/icon/make_transfer_icon.py" "$repo/tools/receive/icon/transfer-icon.txt" "$work/hd/WBStartup/Transfer.info" \
     --tooltypes 'DONOTWAIT|CX_POPUP=NO|CX_POPKEY=ctrl alt w'
+  exch_libs=''
   case "$ks" in   # Exchange: on the 2.04 Workbench disk; on the Extras disk for 3.1 and 3.2
     204) exch='DF1:Utilities/Exchange';;
     31) xdftool "${WEBADF_EX31:-$main/adf-archive/Workbench31 - extras31.adf}" read Tools/Commodities/Exchange "$work/hd/Exchange" >/dev/null; exch='Work:Exchange';;
-    32) xdftool "${WEBADF_EX32:-$HOME/Downloads/workbench-3.2-adf/Extras3.2.adf}" read Tools/Commodities/Exchange "$work/hd/Exchange" >/dev/null; exch='Work:Exchange';;
+    32) xdftool "${WEBADF_EX32:-$HOME/Downloads/workbench-3.2-adf/Extras3.2.adf}" read Tools/Commodities/Exchange "$work/hd/Exchange" >/dev/null; exch='Work:Exchange'
+        # 3.2's Exchange is ReAction: its gadget classes are on the Classes disk (without them it fails, #8000000B).
+        xdftool "${WEBADF_CL32:-$HOME/Downloads/workbench-3.2-adf/Classes3.2.adf}" unpack "$work/classes" >/dev/null
+        mv "$work/classes/Classes" "$work/hd/Classes"; exch_libs='Assign >NIL: LIBS: Work:Classes ADD';;
   esac
 fi
 if [ "$mode" = gui ]; then
@@ -144,10 +151,10 @@ Work:poke gadsel $W 7 >Work:f4.log
 Work:poke gadsel $W 8 >Work:f5.log
 Echo >Work:fdone2 x
 EOS
-        run_line="DF1:C/Assign >NIL: SYS: DF1:
+        run_line="DF1:C/Assign >NIL: SYS: Work: DF1:
 DF1:C/LoadWB
 Run >NIL: Work:Transfer TO Work:Out GUI BROWSE WRITE
-Run >NIL: DF1:C/Execute Work:steps
+Run >NIL: Execute Work:steps
 EndCLI >NIL:";;
   icon) cat > "$work/hd/steps" <<EOS
 FailAt 21
@@ -166,9 +173,9 @@ Work:poke list >Work:i5.log
 Work:poke win $W >Work:i6.log
 Echo >Work:i7 x
 EOS
-        run_line="DF1:C/Assign >NIL: SYS: DF1:
+        run_line="DF1:C/Assign >NIL: SYS: Work: DF1:
 DF1:C/LoadWB
-Run >NIL: DF1:C/Execute Work:steps
+Run >NIL: Execute Work:steps
 EndCLI >NIL:";;
   cx) cat > "$work/hd/steps" <<EOS
 FailAt 21
@@ -217,13 +224,14 @@ Work:poke list >Work:c11.log
 Work:poke win $W >Work:c12.log
 Run >NIL: Work:WBStartup/Transfer GUI
 Wait 8
+$exch_libs
 Run >NIL: $exch
 Wait 8
 Echo >Work:m5 x
 EOS
         run_line="DF1:C/Assign >NIL: SYS: Work: DF1:
 DF1:C/LoadWB
-Run >NIL: DF1:C/Execute Work:steps
+Run >NIL: Execute Work:steps
 EndCLI >NIL:";;
   gui) run_line="DF1:C/Assign >NIL: SYS: DF1:
 DF1:C/LoadWB
