@@ -30,9 +30,10 @@ import { useLayoutEffect, useRef, useState } from 'react';
  * every resize, so the chips would lag a frame behind the pill while a window
  * is dragged; its width changes only when its contents do.
  *
- * `pillEstimate` is the pill's width as measured on 2026-10-24 at 1280px in
- * Chromium (317px, 394px with Admin: the segmented nav in Geist 14px; it was
- * 312/386 in Space Grotesk 13px), used ONLY for the server-rendered first
+ * `pillEstimate` is the pill's width as measured on 2026-11-01 at 1280px in
+ * Chromium (387px, 463px with Admin: Library, Remote, Devices, Files, Help in
+ * Geist 14px; it was 317/394 before Remote joined the nav, 312/386 in Space
+ * Grotesk 13px), used ONLY for the server-rendered first
  * paint so the chips do not jump sideways on hydration; the ResizeObserver replaces it with the
  * real width before the first client paint (layout effect), and again
  * whenever the pill changes size (web font swap, labels). Server and client

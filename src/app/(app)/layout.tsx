@@ -62,7 +62,7 @@ export default async function AppLayout({
               between the wordmark and the pill -- see HeaderStart for the
               geometry (from xl). Below lg the lane is a plain flex row whose
               chip slot fills the middle. */}
-          <HeaderStart pillEstimate={showAdmin ? 394 : 317}>
+          <HeaderStart pillEstimate={showAdmin ? 463 : 387}>
             {/* The wordmark is the way home (operator, 2026-09-21). 44 x 44 at
                 least for a finger; the word shows from sm and is sr-only below
                 it, so the link keeps its name. */}
