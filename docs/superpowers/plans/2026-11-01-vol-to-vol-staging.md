@@ -83,3 +83,13 @@
 
 - [ ] Update the W8 comments in `net-fetch.ts` and `remote-requests.ts` (GetTarget.relay) to say staging, not STASH:.
 - [ ] One fresh opus reviewer over the branch; fix Critical/Important RED->GREEN; ledger minors here.
+
+## Final review (one fresh opus reviewer, 2026-11-01): no Critical, no Important -- minors ledgered
+
+- **m1** (also on master) A repeated close (the board's 30 s retry) racing the first close's `placeFetched` can queue the file twice; fix: claim the get atomically before `queueTransfers`.
+- **m2** (also on master) A re-run copy can resume a staging row tied to an earlier timed-out get (staging path is the basename); `placeFetched` then picks either get. Fix: resume only the row tied to this get, or detach the old get.
+- **m3** A get ended by board ERR (or a vanished board) with no close afterwards keeps its staging chunks until the sweep: up to ~48 h with the daily cron. Fix: release the get's upload when `answerPiece` fails a get. Accepted under S6 for now.
+- **m4** No per-org staging cap: one live get re-opened with other sizes makes several staging rows (authenticated board only).
+- **m5** (also on master) A throw after `queueTransfers` succeeded marks the get failed though its row delivers; covered by m1's claim.
+- **m6** (also on master) A 0-byte file cannot be copied between volumes ("it is empty"); it now leaves nothing rather than a STASH: row.
+- Test gaps: the late-close test sets the get failed directly instead of a board ERR through `answerPiece`; no test of a repeated staging close or a re-run resuming old staging.
