@@ -59,7 +59,7 @@ static void a_protocol_3_hello_answers_ready_3_with_the_switch(void) {
     setup(0); hello3(); drain(); CHECK(strcmp(ob, "READY 3 0\n") == 0, ob);
     CHECK_EQ_INT(ev[0].kind, RX_EV_HELLO); CHECK_EQ_INT(ev[1].kind, RX_EV_TRUST); CHECK(strcmp(ev_code[1], "ok") == 0, ev_code[1]);
     setup(1); hello3(); drain(); CHECK(strcmp(ob, "READY 3 1\n") == 0, ob);
-    setup(1); feed("WEBADF 7 " KEY "\n"); drain(); CHECK(strcmp(ob, "READY 4 1 0\n") == 0, "a newer board is answered as 4 (Transfer 2.5)");
+    setup(1); feed("WEBADF 7 " KEY "\n"); drain(); CHECK(strcmp(ob, "READY 5 1 0\n") == 0, "a newer board is answered as 5 (Transfer 2.6)");
     setup(1); feed("WEBADF 2 " KEY "\n"); drain(); CHECK(strcmp(ob, "READY 2\n") == 0, "protocol 2 unchanged");
     setup(1); feed("WEBADF 1\n"); drain(); CHECK(strcmp(ob, "READY 1\n") == 0, "protocol 1 unchanged");
 }

@@ -162,7 +162,7 @@ static void on_hello(rx_session *s, cur *c) {
         if (s->upq) emit_trust(s, "old");
         return;
     }
-    s->peer_v = v >= 4 ? 4 : v == 3 ? 3 : 2;
+    s->peer_v = v >= 5 ? 5 : v == 4 ? 4 : v == 3 ? 3 : 2;
     if (!tok(c, &t, &n) || !hex_key(t, n, s->peer_key)) s->peer_key[0] = 0;
     if (!s->upq) s->trust = RX_TRUST_NONE;
     else if (!s->peer_key[0]) { s->trust = RX_TRUST_OTHER; code = "other"; }
@@ -171,9 +171,10 @@ static void on_hello(rx_session *s, cur *c) {
         s->trust = RX_TRUST_OK; code = "new";
     } else if (strcmp(s->upq->trusted, s->peer_key) == 0) { s->trust = RX_TRUST_OK; code = "ok"; }
     else { s->trust = RX_TRUST_OTHER; code = "other"; }
-    if (s->peer_v == 4) {   /* spec 2026-10-31 §2.1: READY 4 <b> <w>, w only with b */
+    if (s->peer_v >= 4) {   /* spec 2026-10-31 §2.1: READY 4 <b> <w>, w only with b; §9: READY 5 alike */
         s->hello_browse = rx_browse_on(s); s->hello_write = rx_write_on(s);
-        puts_(s, s->hello_write ? "READY 4 1 1\n" : s->hello_browse ? "READY 4 1 0\n" : "READY 4 0 0\n");
+        puts_(s, s->peer_v == 5 ? "READY 5 " : "READY 4 ");
+        puts_(s, s->hello_write ? "1 1\n" : s->hello_browse ? "1 0\n" : "0 0\n");
     } else if (s->peer_v == 3) {
         s->hello_browse = rx_browse_on(s);
         puts_(s, s->hello_browse ? "READY 3 1\n" : "READY 3 0\n");
@@ -372,14 +373,53 @@ void rx_req_words(const rx_event *e, char *out, unsigned cap) {
 static void put_del(rx_session *s) { puts_(s, "DEL "); puts_(s, s->req_id); puts_(s, " "); put_dec(s, s->req_count); puts_(s, "\n"); }
 /* A drawer delete stops at the entry at (req_path, deeper than the named path when it is inside): DEL with the count so
    far (drawers only: plan ruling W6), then ERR naming the entry under the named drawer (W7). */
+static rx_dent g_entry;   /* what entry_kind matched last: its name as the disk spells it (final review 2.6, minor 3) */
+/* Protocol 5 (spec §9; plan rulings X1, X2): before it is emptied, the drawer at req_path is renamed within its parent
+   to .webadf-del-<8 hex digits from the rid>, so nothing saved by its old path meanwhile is deleted with it. A taken
+   name (DOS 203) tries the next of eight; any other refusal, or a hidden path over 255 bytes, deletes in place. */
+static void del_hide(rx_session *s) {
+    static const char HEX[] = "0123456789abcdef";
+    char *p = s->req_path; const char *slash = strrchr(p, '/');
+    size_t cut = (size_t)((slash ? slash : strchr(p, ':')) - p) + 1;
+    unsigned long h = rx_crc32_update(0, (const unsigned char *)s->req_id, (unsigned long)strlen(s->req_id));
+    unsigned i, k;
+    if (cut + sizeof ".webadf-del-" - 1 + 8 > RX_LOCAL_MAX) return;
+    strcpy(s->req_arg, p);   /* the name to go back to: as the disk spells it, not as the request did */
+    if (strlen(g_entry.name) == strlen(p) - cut) strcpy(s->req_arg + cut, g_entry.name);
+    for (i = 0; i < 8; i++) {
+        unsigned long v = (h + i) & 0xFFFFFFFFUL; long r;
+        strcpy(p + cut, ".webadf-del-");
+        for (k = 0; k < 8; k++) p[cut + 12 + k] = HEX[(v >> (28 - 4 * k)) & 15];
+        p[cut + 20] = 0;
+        r = s->fs->w_rename(s->fs->ctx, s->req_arg, p);
+        if (r == 0) { s->del_hidden = 1; return; }
+        if (r != 203) break;   /* DOS 203: object exists */
+    }
+    strcpy(p, s->req_arg);
+}
+/* The walk ends: req_path back to the named path, and a hidden drawer back to its name (X4). 1 when that rename failed
+   (the old name taken meanwhile): where[cap] then says where the rest is (X5). The owner hears the old name (X6). */
+static int del_unhide(rx_session *s, char *where, unsigned cap) {
+    int bad = 0;
+    s->req_path[s->del_top] = 0;
+    if (!s->del_hidden) return 0;
+    s->del_hidden = 0;
+    if (s->fs->w_rename(s->fs->ctx, s->req_path, s->req_arg) != 0) {
+        const char *slash = strrchr(s->req_path, '/');
+        where[0] = 0; cat(where, cap, "the rest is in "); cat(where, cap, slash ? slash + 1 : strchr(s->req_path, ':') + 1);
+        bad = 1;
+    }
+    strcpy(s->req_path, s->req_arg); s->del_top = (unsigned)strlen(s->req_path);
+    return bad;
+}
 static void del_stop_text(rx_session *s, const char *code, const char *why) {
-    char text[80];
+    static char text[80], where[80];   /* static: the Amiga's stack is small; one request runs at a time */
     text[0] = 0;
     if (strlen(s->req_path) > s->del_top) { cat(text, sizeof text, s->req_path + s->del_top + 1); cat(text, sizeof text, ": "); }
     cat(text, sizeof text, why);
     if (s->del_drawer) put_del(s);
-    s->req_path[s->del_top] = 0;
-    req_fail_text(s, code, text);
+    if (del_unhide(s, where, sizeof where)) { cat(where, sizeof where, ": "); cat(where, sizeof where, text); req_fail_text(s, code, where); }
+    else req_fail_text(s, code, text);
 }
 static void del_stop(rx_session *s, long err) {
     char f[80];
@@ -405,7 +445,10 @@ static void del_step(rx_session *s) {
         if (r == 0) {   /* p is empty now */
             if ((r = s->fs->w_delete(s->fs->ctx, p)) != 0) { del_stop(s, r); return; }
             s->req_count++;
-            if (n == s->del_top) { req_done(s, 0); return; }
+            if (n == s->del_top) {   /* the named drawer itself: gone; the owner hears its own name (X6) */
+                if (s->del_hidden) { strcpy(p, s->req_arg); s->del_top = (unsigned)strlen(p); s->del_hidden = 0; }
+                req_done(s, 0); return;
+            }
             *strrchr(p, '/') = 0;   /* below the named path there is always a '/' */
             break;
         }
@@ -432,7 +475,7 @@ static int name_eq(const char *a, const char *b) {
 /* What path names, without following it (final review C1): a Lock or Examine of a link reaches its target, so the entry
    is looked up in its drawer's listing. 0, or a DOS error (RX_DOS_NOT_FOUND when the drawer has no such name). */
 static long entry_kind(rx_session *s, const char *path, int *is_dir, int *is_link) {
-    static char parent[RX_LOCAL_MAX + 1]; static rx_dent e;   /* static: the Amiga's stack is small */
+    static char parent[RX_LOCAL_MAX + 1]; rx_dent *const e = &g_entry;   /* static: the Amiga's stack is small */
     const char *slash = strrchr(path, '/'), *name;
     long r;
     size_t n = slash ? (size_t)(slash - path) : (size_t)(strchr(path, ':') - path + 1);
@@ -440,10 +483,10 @@ static long entry_kind(rx_session *s, const char *path, int *is_dir, int *is_lin
     memcpy(parent, path, n); parent[n] = 0;
     if ((r = s->fs->dir_open(s->fs->ctx, parent)) != 0) return r == RX_DOS_WRONG_TYPE ? RX_DOS_NOT_FOUND : r;
     for (;;) {
-        memset(&e, 0, sizeof e);
-        r = s->fs->dir_next(s->fs->ctx, &e);
+        memset(e, 0, sizeof *e);
+        r = s->fs->dir_next(s->fs->ctx, e);
         if (r <= 0) break;
-        if (name_eq(e.name, name)) { *is_dir = e.is_dir; *is_link = e.is_link; break; }
+        if (name_eq(e->name, name)) { *is_dir = e->is_dir; *is_link = e->is_link; break; }
     }
     s->fs->dir_close(s->fs->ctx);
     return r < 0 ? -r : r == 0 ? RX_DOS_NOT_FOUND : 0;
@@ -469,8 +512,20 @@ static void write_start(rx_session *s) {
     case RX_REQ_NOTE: e = s->fs->w_note(s->fs->ctx, s->req_path, s->req_arg); break;
     default: {   /* DELETE: a file (or a link) at once; a drawer step by step in req_pump */
         int is_dir = 0, is_link = 0;
+        if (s->req_num) {   /* "one" (spec §9; plan ruling X3): AmigaDOS itself refuses a drawer that is not empty */
+            if ((e = s->fs->w_delete(s->fs->ctx, s->req_path)) == RX_DOS_NOT_EMPTY) {
+                static char f[80];   /* static: the Amiga's stack is small */
+                f[0] = 0; s->fs->fault(s->fs->ctx, e, f, sizeof f);
+                s->req_count = 0; req_fail_text(s, "notempty", f[0] ? f : "drawer is not empty"); return;
+            }
+            break;
+        }
         if ((e = entry_kind(s, s->req_path, &is_dir, &is_link)) == 0 && (!is_dir || is_link)) e = s->fs->w_delete(s->fs->ctx, s->req_path);
-        else if (e == 0) { s->req_count = 0; s->del_top = (unsigned)strlen(s->req_path); s->del_drawer = 1; return; }
+        else if (e == 0) {
+            s->req_count = 0;
+            if (s->peer_v >= 5) del_hide(s);   /* spec §9: hidden first; protocol 4 deletes in place as 2.5 */
+            s->del_top = (unsigned)strlen(s->req_path); s->del_drawer = 1; return;
+        }
         break;
     }
     }
@@ -480,7 +535,7 @@ static void req_start(rx_session *s) {
     s->req_kind = s->wait_kind; strcpy(s->req_id, s->wait_id); strcpy(s->req_path, s->wait_path);
     strcpy(s->req_arg, s->wait_arg); s->req_num = s->wait_num;
     s->wait_kind = RX_REQ_NONE;
-    s->req_i = 0; s->req_count = 0; s->req_open = 0; s->del_drawer = 0; s->del_top = (unsigned)strlen(s->req_path);
+    s->req_i = 0; s->req_count = 0; s->req_open = 0; s->del_drawer = 0; s->del_hidden = 0; s->del_top = (unsigned)strlen(s->req_path);
     if (is_write(s->req_kind)) { write_start(s); return; }
     /* switched off (or no longer trusted) since it was accepted: the owner's word wins (final review 2) */
     if (!rx_browse_on(s)) { req_fail_text(s, "off", "browsing is off in Transfer"); return; }
@@ -548,13 +603,15 @@ static void refuse_req(rx_session *s, int kind, const char *id, const char *path
 }
 static int no_control(const char *p) { for (; *p; p++) if ((unsigned char)*p < 0x20 || (unsigned char)*p == 0x7f) return 0; return 1; }
 /* A write request's arguments after its path (protocol 4): RENAME's target, PROTECT's bits, NOTE's comment. */
-static int write_args(cur *c, int kind, const char *path, char *arg, unsigned long *bits) {
+static int write_args(const rx_session *s, cur *c, int kind, const char *path, char *arg, unsigned long *bits) {
     const char *t; unsigned n;
     arg[0] = 0; *bits = 0;
     if (!rx_abs_path_ok(path)) return 0;   /* a volume and a name: never a volume's root (plan ruling W4) */
     if (kind == RX_REQ_RENAME) return lenstr(c, arg, RX_LOCAL_MAX + 1, 0) && rx_abs_path_ok(arg);
     if (kind == RX_REQ_PROTECT) return tok(c, &t, &n) && num(t, n, 16, bits);
     if (kind == RX_REQ_NOTE) return lenstr(c, arg, RX_COMMENT_MAX + 1, 0) && no_control(arg);
+    /* spec §9: protocol 5's "DELETE <rid> <path> one" deletes that object only; on protocol 4 the token is junk */
+    if (kind == RX_REQ_DELETE && s->peer_v >= 5 && c->p < c->end) { *bits = 1; return tok(c, &t, &n) && is(t, n, "one"); }
     return 1;
 }
 /* "VOLS <rid>", "DIR <rid> <len>:<path>", "GET <rid> <len>:<path>", and the writes (protocol 4): refused at once, or
@@ -567,7 +624,7 @@ static void on_request(rx_session *s, cur *c, int kind) {
     if (!tok(c, &t, &n) || !id_ok(t, n)) { req_err(s, "", "bad", "bad request"); return; }
     memcpy(id, t, n); id[n] = 0;
     if ((kind != RX_REQ_VOLS && (!lenstr(c, path, sizeof path, 0) || !local_path_ok(path))) ||
-        (is_write(kind) && !write_args(c, kind, path, arg, &nm)) || c->p < c->end) {
+        (is_write(kind) && !write_args(s, c, kind, path, arg, &nm)) || c->p < c->end) {
         refuse_req(s, kind, id, path, "bad", "bad request"); return;
     }
     if (is_write(kind) && !rx_write_on(s)) { refuse_req(s, kind, id, path, "readonly", "writing is off in Transfer"); return; }
@@ -1104,7 +1161,12 @@ void rx_disconnected(rx_session *s) {
         emit(s, RX_EV_FAILED, s->cur_id, s->cur_path, s->cur_size, 0, "connection lost");
     }
     if (s->up_phase != RX_UP_IDLE) up_finish(s, RX_EV_UP_FAILED, s->up_cancel ? "cancelled" : "connection lost", "local", 0);
-    if (s->req_kind == RX_REQ_DELETE) s->req_path[s->del_top] = 0;   /* a walk mid-way: the owner hears the named path */
+    if (s->req_kind == RX_REQ_DELETE) {   /* a walk mid-way: back to its name (X4), and the owner hears the named path */
+        static char where[80];
+        if (del_unhide(s, where, sizeof where)) { cat(where, sizeof where, ": connection lost"); }
+        else strcpy(where, "connection lost");
+        emit_req(s, s->req_kind, s->req_id, s->req_path, s->req_count, 0, where); req_end(s);
+    }
     if (s->req_kind != RX_REQ_NONE) { emit_req(s, s->req_kind, s->req_id, s->req_path, s->req_count, 0, "connection lost"); req_end(s); }
     s->wait_kind = RX_REQ_NONE; s->hello_browse = 0;
     if (s->upq) {   /* a GET's file not yet gone up: after a reconnect the board no longer knows its tag (ruling T4) */

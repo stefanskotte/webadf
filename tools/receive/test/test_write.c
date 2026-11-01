@@ -71,7 +71,7 @@ static void a_protocol_4_hello_answers_both_switches(void) {
     setup(0, 1); hello4(); CHECK(strcmp(ob, "READY 4 0 0\n") == 0, "writing needs browsing");
     CHECK(!rx_write_on(&S), "off without browsing");
     setup(1, 1); feed("WEBADF 4 " KEY2 "\n"); drain(); CHECK(strcmp(ob, "READY 4 0 0\n") == 0, "another key: neither");
-    setup(1, 1); feed("WEBADF 9 " KEY "\n"); drain(); CHECK(strcmp(ob, "READY 4 1 1\n") == 0, "a newer board is answered as 4");
+    setup(1, 1); feed("WEBADF 4 " KEY "\n"); drain(); CHECK(strcmp(ob, "READY 4 1 1\n") == 0, "protocol 4 as in 2.5");
 }
 static void older_hellos_are_answered_as_before(void) {
     setup(1, 1); feed("WEBADF 3 " KEY "\n"); drain(); CHECK(strcmp(ob, "READY 3 1\n") == 0, ob);
@@ -476,6 +476,221 @@ static void write_error_codes(void) {
     CHECK(strcmp(rx_err_code(226, 1), "io") == 0, "226 as before"); CHECK(strcmp(rx_err_code(216, 1), "io") == 0, "216");
 }
 
+/* --- Transfer 2.6, protocol 5 (spec §9) --- */
+static void hello5(void) { feed("WEBADF 5 " KEY "\n"); drain(); }
+static void a_protocol_5_hello(void) {
+    setup(1, 1); hello5(); CHECK(strcmp(ob, "READY 5 1 1\n") == 0, ob); CHECK(rx_write_on(&S), "writing on");
+    setup(1, 0); hello5(); CHECK(strcmp(ob, "READY 5 1 0\n") == 0, ob);
+    setup(0, 1); hello5(); CHECK(strcmp(ob, "READY 5 0 0\n") == 0, ob);
+    setup(1, 1); feed("WEBADF 5 " KEY2 "\n"); drain(); CHECK(strcmp(ob, "READY 5 0 0\n") == 0, "another key");
+    setup(1, 1); feed("WEBADF 9 " KEY "\n"); drain(); CHECK(strcmp(ob, "READY 5 1 1\n") == 0, "a newer board is answered as 5");
+    setup(1, 1); hello5(); Q.write = 0; CHECK(rx_hello_stale(&S), "the write flag is heard on 5 too");
+}
+static void delete_one_a_file(void) {
+    setup(1, 1); ff_put(&F, "Work:x", "x", 1, 0, ""); ff_put(&F, "Work:y", "y", 1, 0, ""); hello5();
+    CHECK(strcmp(req("DELETE o 6:Work:x one\n"), "DONE o 1\n") == 0, ob);
+    CHECK(!has("Work:x") && holds("Work:y", "y"), "only x");
+    { int i = last_ev(RX_EV_REQ); CHECK(i >= 0 && strcmp(ev_code[i], "delete") == 0 && ev[i].size == 1 && strcmp(ev_path[i], "Work:x") == 0, "the owner sees it"); }
+}
+static void delete_one_an_empty_drawer(void) {
+    setup(1, 1); ff_add(&F, "Work:E", 1); hello5();
+    CHECK(strcmp(req("DELETE o 6:Work:E one\n"), "DONE o 1\n") == 0, ob);
+    CHECK(!has("Work:E"), "gone");
+}
+static void delete_one_a_full_drawer_is_notempty(void) {
+    int n;
+    setup(1, 1); ff_add(&F, "Work:D", 1); ff_put(&F, "Work:D/a", "a", 1, 0, ""); ff_add(&F, "Work:D/Sub", 1);
+    ff_put(&F, "Work:D/Sub/b", "b", 1, 0, ""); ff_add(&F, "Work:D/Empty", 1); hello5(); n = F.n;
+    CHECK(strcmp(req("DELETE o 6:Work:D one\n"), "ERR o notempty 13:dos error 216\n") == 0, ob);
+    CHECK_EQ_INT(F.n, n);
+    CHECK(holds("Work:D/a", "a") && holds("Work:D/Sub/b", "b") && has("Work:D/Empty") && has("Work:D"), "nothing inside touched");
+    { int i = last_ev(RX_EV_REQ); CHECK(i >= 0 && strcmp(ev_text[i], "dos error 216") == 0 && strcmp(ev_path[i], "Work:D") == 0, "the owner is told"); }
+}
+static void delete_one_a_link(void) {
+    int i;
+    setup(1, 1); ff_add(&F, "Work:Sys", 1); ff_put(&F, "Work:Sys/x.library", "x", 1, 0, "");
+    i = ff_add(&F, "Work:Alias", 1); strcpy(F.e[i].link_to, "Work:Sys"); hello5();
+    CHECK(strcmp(req("DELETE o 10:Work:Alias one\n"), "DONE o 1\n") == 0, ob);
+    CHECK(!has("Work:Alias") && holds("Work:Sys/x.library", "x") && has("Work:Sys"), "only the link");
+}
+static void delete_one_refusals(void) {
+    int i;
+    setup(1, 1); ff_put(&F, "Work:L", "x", 1, 1, ""); hello5();
+    CHECK(strcmp(req("DELETE o 6:Work:L one\n"), "ERR o denied 13:dos error 222\n") == 0, ob); CHECK(has("Work:L"), "kept");
+    CHECK(strcmp(req("DELETE o 6:Work:N one\n"), "ERR o notfound 13:dos error 205\n") == 0, ob);
+    i = ff_put(&F, "Work:B", "x", 1, 0, ""); F.e[i].busy = 1;
+    CHECK(strcmp(req("DELETE o 6:Work:B one\n"), "ERR o busy 13:dos error 202\n") == 0, ob);
+    strcpy(F.wprot, "Floppy:"); ff_put(&F, "Floppy:f", "x", 1, 0, "");
+    CHECK(strcmp(req("DELETE o 8:Floppy:f one\n"), "ERR o wprot 13:dos error 214\n") == 0, ob);
+    CHECK(strcmp(req("DELETE o 5:Work: one\n"), "ERR o bad 11:bad request\n") == 0, "a volume root");
+    setup(1, 0); ff_put(&F, "Work:x", "x", 1, 0, ""); hello5();
+    CHECK(strcmp(req("DELETE o 6:Work:x one\n"), "ERR o readonly 26:writing is off in Transfer\n") == 0, ob);
+    CHECK(has("Work:x"), "kept");
+}
+static void one_on_protocol_4_is_bad(void) {
+    setup(1, 1); ff_put(&F, "Work:x", "x", 1, 0, ""); hello4();
+    CHECK(strcmp(req("DELETE o 6:Work:x one\n"), "ERR o bad 11:bad request\n") == 0, ob); CHECK(has("Work:x"), "kept");
+    setup(1, 1); ff_put(&F, "Work:x", "x", 1, 0, ""); hello5();
+    CHECK(strcmp(req("DELETE o 6:Work:x two\n"), "ERR o bad 11:bad request\n") == 0, "another token");
+    CHECK(strcmp(req("DELETE o 6:Work:x one one\n"), "ERR o bad 11:bad request\n") == 0, "twice");
+    CHECK(strcmp(req("MKDIR o 6:Work:y one\n"), "ERR o bad 11:bad request\n") == 0, "only DELETE takes it");
+    CHECK(has("Work:x") && !has("Work:y"), "kept");
+}
+
+/* The rename-first drawer delete (spec §9; plan rulings X1-X6). */
+static const char *hid(const char *rid, unsigned i) {   /* the hidden name for rid's i-th try */
+    static char b[40];
+    snprintf(b, sizeof b, ".webadf-del-%08lx", (rx_crc32_update(0, (const unsigned char *)rid, strlen(rid)) + i) & 0xFFFFFFFFUL);
+    return b;
+}
+static int kids(const char *pre) { int i, n = 0; for (i = 0; i < F.n; i++) if (strncmp(F.e[i].name, pre, strlen(pre)) == 0) n++; return n; }
+static int hidden_left(void) { int i; for (i = 0; i < F.n; i++) if (strstr(F.e[i].name, ".webadf-del-")) return 1; return 0; }
+static void a_drawer_delete_hides_the_drawer_first(void) {
+    char nm[40], want[64]; int i;
+    setup(1, 1); ff_add(&F, "Work:Old", 1);
+    for (i = 0; i < 300; i++) { sprintf(nm, "Work:Old/f%03d", i); ff_put(&F, nm, "", 0, 0, ""); }
+    hello5();
+    req("DELETE big 8:Work:Old\n");
+    CHECK(strcmp(ob, "DEL big 50\nDEL big 100\nDEL big 150\nDEL big 200\nDEL big 250\nDEL big 300\nDONE big 301\n") == 0, ob);
+    CHECK_EQ_INT(F.renames, 1);
+    snprintf(want, sizeof want, "Work:%s", hid("big", 0));
+    CHECK(strcmp(F.last_from, "Work:Old") == 0 && strcmp(F.last_to, want) == 0, F.last_to);
+    CHECK_EQ_INT((int)strlen(hid("big", 0)), 20);
+    CHECK_EQ_INT(F.n, 2);
+    { int k = last_ev(RX_EV_REQ); CHECK(k >= 0 && ev[k].size == 301 && !ev_has_text[k] && strcmp(ev_path[k], "Work:Old") == 0, "the owner sees the old name"); }
+}
+static void a_file_saved_by_the_old_path_survives(void) {
+    setup(1, 1); ff_add(&F, "Work:D", 1); ff_put(&F, "Work:D/a", "a", 1, 0, ""); ff_add(&F, "Work:D/S", 1);
+    ff_put(&F, "Work:D/S/b", "b", 1, 0, "");
+    strcpy(F.plant, "Work:D/new.txt"); hello5();
+    CHECK(strcmp(req("DELETE s 6:Work:D\n"), "DONE s 4\n") == 0, ob);
+    CHECK(holds("Work:D/new.txt", "new") && has("Work:D"), "saved meanwhile: kept");
+    CHECK(!has("Work:D/a") && !has("Work:D/S/b") && !hidden_left(), "the rest gone");
+}
+static void a_stop_renames_it_back(void) {
+    setup(1, 1); ff_add(&F, "Work:D", 1); ff_put(&F, "Work:D/a", "x", 1, 0, "");
+    ff_add(&F, "Work:D/Sub", 1); ff_put(&F, "Work:D/Sub/locked", "x", 1, 1, "");
+    hello5();
+    req("DELETE s 6:Work:D\n");
+    CHECK(strcmp(ob, "DEL s 1\nERR s denied 25:Sub/locked: dos error 222\n") == 0, ob);
+    CHECK(has("Work:D/Sub/locked") && has("Work:D/Sub") && !has("Work:D/a") && !hidden_left(), "back where it was");
+    CHECK_EQ_INT(F.renames, 2);
+    { int k = last_ev(RX_EV_REQ); CHECK(k >= 0 && strcmp(ev_path[k], "Work:D") == 0 && ev[k].size == 1, "the owner sees the old name"); }
+    CHECK(!F.dir_open, "no drawer left open");
+}
+static void the_old_name_taken_says_where_the_rest_is(void) {
+    char want[160], h[64];
+    setup(1, 1); ff_add(&F, "Work:D", 1); ff_put(&F, "Work:D/a", "x", 1, 0, "");
+    ff_add(&F, "Work:D/Sub", 1); ff_put(&F, "Work:D/Sub/locked", "x", 1, 1, "");
+    strcpy(F.plant, "Work:D/x"); hello5();
+    req("DELETE s 6:Work:D\n");
+    snprintf(want, sizeof want, "the rest is in %s: Sub/locked: dos error 222", hid("s", 0));
+    { char line[200]; snprintf(line, sizeof line, "DEL s 1\nERR s denied %u:%s\n", (unsigned)strlen(want), want);
+      CHECK(strcmp(ob, line) == 0, ob); }
+    snprintf(h, sizeof h, "Work:%s/Sub/locked", hid("s", 0));
+    CHECK(has(h) && holds("Work:D/x", "new"), "both kept: the new drawer and the rest");
+    { int k = last_ev(RX_EV_REQ); CHECK(k >= 0 && strcmp(ev_path[k], "Work:D") == 0 && strstr(ev_text[k], "the rest is in .webadf-del-") == ev_text[k], ev_text[k]); }
+}
+static void a_taken_hidden_name_takes_the_next(void) {
+    char h0[64], keep[80], want[64];
+    setup(1, 1);
+    snprintf(h0, sizeof h0, "Work:%s", hid("t", 0)); ff_add(&F, h0, 1);
+    snprintf(keep, sizeof keep, "%s/keep", h0); ff_put(&F, keep, "k", 1, 0, "");
+    ff_add(&F, "Work:D", 1); ff_put(&F, "Work:D/a", "a", 1, 0, ""); hello5();
+    CHECK(strcmp(req("DELETE t 6:Work:D\n"), "DONE t 2\n") == 0, ob);
+    snprintf(want, sizeof want, "Work:%s", hid("t", 1));
+    CHECK(strcmp(F.last_to, want) == 0, F.last_to);
+    CHECK(holds(keep, "k") && !has("Work:D") && !has(want), "the one there untouched; the next one used and gone");
+}
+static void the_first_rename_failing_deletes_in_place(void) {
+    char p[300]; int i;
+    setup(1, 1); ff_add(&F, "Work:T", 1); ff_add(&F, "Work:T/a", 1); ff_put(&F, "Work:T/a/f", "x", 1, 0, "");
+    F.rename_err = 223; hello5();
+    CHECK(strcmp(req("DELETE t 6:Work:T\n"), "DONE t 3\n") == 0, ob);
+    CHECK_EQ_INT(F.renames, 1); CHECK(!has("Work:T") && !has("Work:T/a/f"), "deleted in place");
+    setup(1, 1); ff_add(&F, "Work:T", 1); ff_put(&F, "Work:T/f", "x", 1, 0, "");
+    F.fail_renames = 1; hello5();
+    CHECK(strcmp(req("DELETE t 6:Work:T\n"), "DONE t 2\n") == 0, ob);
+    CHECK_EQ_INT(F.renames, 8); CHECK(!has("Work:T"), "eight names taken: in place");
+    setup(1, 1); strcpy(p, "Work:");
+    for (i = 0; i < 8; i++) { if (i) strcat(p, "/"); strcat(p, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); ff_add(&F, p, 1); }
+    strcat(p, "/x"); ff_add(&F, p, 1); hello5();
+    { char line[320]; snprintf(line, sizeof line, "DELETE l %u:%s\n", (unsigned)strlen(p), p);
+      CHECK(strcmp(req(line), "DONE l 1\n") == 0, ob); }
+    CHECK_EQ_INT(F.renames, 0); CHECK(!has(p), "a hidden name past 255 bytes: in place");
+}
+static void writing_off_mid_delete_renames_it_back(void) {
+    static char b[RX_UP_BLOCK + 1]; char nm[40]; int i;
+    setup(1, 1); ff_add(&F, "Work:D", 1);
+    for (i = 0; i < 20; i++) { sprintf(nm, "Work:D/f%02d", i); ff_put(&F, nm, "", 0, 0, ""); }
+    hello5(); feed("DELETE w 6:Work:D\n");
+    rx_take_output(&S, b, sizeof b - 1);
+    Q.write = 0;
+    drain();
+    CHECK(strcmp(ob, "DEL w 4\nERR w readonly 26:writing is off in Transfer\n") == 0, ob);
+    CHECK(has("Work:D") && kids("Work:D/") == 20 - RX_DEL_PASS && !hidden_left(), "back where it was");
+    CHECK_EQ_INT(F.n, 2 + 1 + 20 - RX_DEL_PASS);
+}
+static void a_lost_connection_renames_it_back(void) {
+    static char b[RX_UP_BLOCK + 1]; char nm[40]; int i;
+    setup(1, 1); ff_add(&F, "Work:D", 1);
+    for (i = 0; i < 20; i++) { sprintf(nm, "Work:D/f%02d", i); ff_put(&F, nm, "", 0, 0, ""); }
+    hello5(); feed("DELETE w 6:Work:D\n");
+    rx_take_output(&S, b, sizeof b - 1);
+    rx_disconnected(&S);
+    CHECK(has("Work:D") && kids("Work:D/") == 20 - RX_DEL_PASS && !hidden_left(), "back where it was");
+    { int k = last_ev(RX_EV_REQ); CHECK(k >= 0 && strcmp(ev_text[k], "connection lost") == 0 && strcmp(ev_path[k], "Work:D") == 0, "the owner is told the old name"); }
+    CHECK(!F.dir_open, "nothing open");
+}
+static void protocol_4_deletes_in_place(void) {
+    setup(1, 1); ff_add(&F, "Work:D", 1); ff_put(&F, "Work:D/a", "x", 1, 0, "");
+    ff_add(&F, "Work:D/Sub", 1); ff_put(&F, "Work:D/Sub/locked", "x", 1, 1, "");
+    hello4();
+    CHECK(strcmp(req("DELETE s 6:Work:D\n"), "DEL s 1\nERR s denied 25:Sub/locked: dos error 222\n") == 0, ob);
+    CHECK_EQ_INT(F.renames, 0);
+    setup(1, 1); ff_put(&F, "Work:x", "x", 1, 0, ""); hello5();
+    CHECK(strcmp(req("DELETE f 6:Work:x\n"), "DONE f 1\n") == 0, ob);
+    CHECK_EQ_INT(F.renames, 0);   /* a file DELETE is unchanged */
+}
+
+/* Final review (Transfer 2.6) minors 3 and 7. */
+static void a_stop_restores_the_disks_spelling(void) {
+    setup(1, 1); ff_add(&F, "Work:Old", 1); ff_put(&F, "Work:Old/locked", "x", 1, 1, ""); hello5();
+    F.nocase = 1;
+    req("DELETE s 8:Work:OLD\n");
+    CHECK(strcmp(ob, "DEL s 0\nERR s denied 21:locked: dos error 222\n") == 0, ob);
+    F.nocase = 0;
+    CHECK(has("Work:Old") && has("Work:Old/locked") && !has("Work:OLD") && !hidden_left(), "back as Old, not OLD");
+}
+static void a_stop_on_the_drawer_itself_renames_it_back(void) {
+    int i;
+    setup(1, 1); i = ff_add(&F, "Work:E", 1); F.e[i].prot = 1; ff_put(&F, "Work:E/f", "x", 1, 0, ""); hello5();
+    CHECK(strcmp(req("DELETE s 6:Work:E\n"), "DEL s 1\nERR s denied 13:dos error 222\n") == 0, ob);
+    CHECK(has("Work:E") && !has("Work:E/f") && !hidden_left(), "emptied, and back under its name");
+}
+static void a_lost_connection_says_where_the_rest_is(void) {
+    static char b[RX_UP_BLOCK + 1]; char nm[40]; int i;
+    setup(1, 1); ff_add(&F, "Work:D", 1);
+    for (i = 0; i < 20; i++) { sprintf(nm, "Work:D/f%02d", i); ff_put(&F, nm, "", 0, 0, ""); }
+    strcpy(F.plant, "Work:D/x"); hello5(); feed("DELETE w 6:Work:D\n");
+    rx_take_output(&S, b, sizeof b - 1);
+    rx_disconnected(&S);
+    { int k = last_ev(RX_EV_REQ); char want[80];
+      snprintf(want, sizeof want, "the rest is in %s: connection lost", hid("w", 0));
+      CHECK(k >= 0 && strcmp(ev_text[k], want) == 0 && strcmp(ev_path[k], "Work:D") == 0, ev_text[k]); }
+    CHECK(holds("Work:D/x", "new") && hidden_left(), "both kept");
+}
+static void the_rest_is_in_is_cut_to_79_bytes(void) {
+    const char *deep = "Work:D/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    char pre[64];
+    setup(1, 1); ff_add(&F, "Work:D", 1); ff_add(&F, "Work:D/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1); ff_put(&F, deep, "x", 1, 1, "");
+    strcpy(F.plant, "Work:D/x"); hello5();
+    req("DELETE s 6:Work:D\n");
+    snprintf(pre, sizeof pre, "DEL s 0\nERR s denied 79:the rest is in %s: aaaa", hid("s", 0));
+    CHECK(strncmp(ob, pre, strlen(pre)) == 0, ob);
+    CHECK(strlen(strchr(strstr(ob, "79:"), ':') + 1) == 79 + 1, "79 bytes and the newline");
+}
+
 int main(void) {
     RUN(a_protocol_4_hello_answers_both_switches); RUN(older_hellos_are_answered_as_before);
     RUN(a_changed_write_switch_makes_the_hello_stale);
@@ -494,6 +709,14 @@ int main(void) {
     RUN(switching_writing_off_stops_a_delete_between_steps); RUN(a_lost_connection_ends_a_delete);
     RUN(a_write_request_waits_behind_a_file); RUN(malformed_write_requests_are_bad); RUN(the_owners_words_for_writes);
     RUN(write_error_codes);
+    RUN(a_protocol_5_hello); RUN(delete_one_a_file); RUN(delete_one_an_empty_drawer);
+    RUN(delete_one_a_full_drawer_is_notempty); RUN(delete_one_a_link); RUN(delete_one_refusals); RUN(one_on_protocol_4_is_bad);
+    RUN(a_drawer_delete_hides_the_drawer_first); RUN(a_file_saved_by_the_old_path_survives); RUN(a_stop_renames_it_back);
+    RUN(the_old_name_taken_says_where_the_rest_is); RUN(a_taken_hidden_name_takes_the_next);
+    RUN(the_first_rename_failing_deletes_in_place); RUN(writing_off_mid_delete_renames_it_back);
+    RUN(a_lost_connection_renames_it_back); RUN(protocol_4_deletes_in_place);
+    RUN(a_stop_restores_the_disks_spelling); RUN(a_stop_on_the_drawer_itself_renames_it_back);
+    RUN(a_lost_connection_says_where_the_rest_is); RUN(the_rest_is_in_is_cut_to_79_bytes);
     (void)feedn; (void)lines_starting; (void)last_ev; (void)ff_put;
     return REPORT();
 }

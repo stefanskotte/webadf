@@ -15,7 +15,7 @@ with fast memory hidden (`NoFastMem`), `AddNetInterface` alone left 110 KB of ch
 TCP/IP stack had too little left to send a 1000-entry listing. Transfer waits out ENOBUFS (out of network buffers)
 instead of dropping the connection. Transfer 2.5 adds 7.4 KB of code (50,016 B) and 1,396 B of fixed buffers (BSS
 25,188 B) to 2.4's, measured from the hunks; the Shell stack stays 8 KB (a drawer delete keeps its place in one path,
-with no recursion).
+with no recursion). Transfer 2.6 adds 956 B of code (50,972 B) and 320 B of fixed buffers (BSS 25,508 B), and no stack.
 
 ## Using it
 
@@ -62,6 +62,16 @@ with no recursion).
   is for one run, `WRITE SAVE` stores it (and browsing). Unticking browsing unticks writing. Off is the default.
   Changing it closes the board's connection when idle, so the board reconnects and learns it. Needs board firmware
   1.23 or newer.
+- **Deletes take only what they mean (protocol 5, Transfer 2.6, spec 2026-10-31 §9):** a board with firmware 1.23.1
+  says `WEBADF 5` and hears `READY 5 <b> <w>` (Transfer 2.5 answers it `READY 4`, and the board uses protocol 4).
+  `DELETE <rid> <len>:<path> one` deletes exactly that object: a file, a link (never what it points to), or a drawer
+  only when it is empty (`ERR <rid> notempty`, nothing inside touched); a Move uses it so only what was copied goes.
+  A drawer DELETE without `one` first renames the drawer within its drawer to `.webadf-del-` and 8 hex digits, so a
+  file saved into it by its old name while it is being emptied is not deleted with it; on a refusal it gets its name
+  back (or, if that name was taken meanwhile, the error says where the rest is). If the rename fails it is deleted in
+  place, as 2.5 did. On protocol 4 everything is as in 2.5. Two limits: a program that already holds the drawer (a
+  Shell `CD`'d into it, an assign, an open Workbench window) still saves into it, and its file goes with it, as in 2.5;
+  and if the Amiga resets or loses power mid-delete, what is left stays as `.webadf-del-…` in that drawer's parent.
 - **The folder setting** is the file `ENVARC:webadf/ReceiveDir`, copied to `ENV:webadf/ReceiveDir`. The default is
   `RAM:`.
 - **Nothing is overwritten:** a second `Foo.lha` arrives as `Foo_2.lha`. Nothing is written outside the folder,
