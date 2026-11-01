@@ -455,3 +455,30 @@ describe('item 10: a drawer\'s count between volumes covers the files still on t
     expect(await pair()).toMatchObject({ marks: ['Sending 2 of 2'] });
   });
 });
+
+describe('item 11: a write refused when the board takes it says the real reason', () => {
+  const cases: [string, Partial<typeof devices.$inferInsert>, string][] = [
+    ['Transfer gone (recordSendRx clears both switches)', { sendRx: '-', browseOn: false, writeOn: false }, 'Transfer is not running on A500'],
+    ['Transfer 2.4', { rxProto: 3 }, 'Transfer 2.5 or newer writes to the Amiga'],
+    ['firmware 1.22 (reports protocol 3, no write)', { firmwareVersion: '1.22.0+gabc', rxProto: 3, writeOn: false }, 'Board firmware 1.23.0 or newer writes to the Amiga'],
+    ['writing off', { writeOn: false }, 'Writing is off in Transfer'],
+  ];
+  for (const [what, set, words] of cases) {
+    it(`${what}: "${words}"`, async () => {
+      const { addWrites } = await import('@/lib/remote-requests');
+      await addWrites(getDb(), { orgId: 'o1', deviceId: 'w1', jobId: 'j11', writes: [{ kind: 'mkdir', amigaPath: 'Work:New', label: 'Work:New' }] });
+      await getDb().update(devices).set(set).where(eq(devices.id, 'w1'));
+      await takeWaiting(getDb(), 'w1');
+      expect((await fetchProgress(getDb(), 'o1', 'j11', new Date()))!.writes.map((w) => w.reason)).toEqual([words]);
+    });
+  }
+
+  it('the poll that finds Transfer too old fails what waits with those words too', async () => {
+    const { addWrites } = await import('@/lib/remote-requests');
+    const { failWritesWhenOff } = await import('@/lib/transfers');
+    await addWrites(getDb(), { orgId: 'o1', deviceId: 'w1', jobId: 'j11', writes: [{ kind: 'mkdir', amigaPath: 'Work:New', label: 'Work:New' }] });
+    await getDb().update(devices).set({ rxProto: 3 }).where(eq(devices.id, 'w1'));
+    await failWritesWhenOff(getDb(), 'w1');
+    expect((await fetchProgress(getDb(), 'o1', 'j11', new Date()))!.writes.map((w) => w.reason)).toEqual(['Transfer 2.5 or newer writes to the Amiga']);
+  });
+});

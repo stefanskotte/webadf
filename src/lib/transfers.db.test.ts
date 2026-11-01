@@ -409,6 +409,9 @@ describe('transfers', () => {
       { id: `w-${d}`, orgId: 'org-a', deviceId: d, kind: 'mkdir', amigaPath: 'Work:New' },
       { id: `l-${d}`, orgId: 'org-a', deviceId: d, kind: 'dir', amigaPath: 'Work:' },
     ]);
+    // As the poll found it: Transfer 2.5 connected, writing switched off (plan 2026-11-01-net-consistency item 11: the
+    // words are the board row's reason).
+    await getDb().update(devices).set({ firmwareVersion: '1.23.1+gabc', sendRx: 'c', writeOn: false }).where(eq(devices.id, d));
     const v = await version(d);
     expect(await T.failWritesWhenOff(getDb(), d)).toEqual({ rows: 1, requests: 1 });
     expect(await row(vol)).toMatchObject({ status: 'failed', errorCode: 'readonly', errorText: 'Writing is off in Transfer' });

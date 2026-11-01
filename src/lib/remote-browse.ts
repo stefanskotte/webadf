@@ -55,6 +55,20 @@ export function writeBlock(b: BrowseInput & { writeOn: boolean }): string | null
 }
 
 /**
+ * Why a board that is talking to the server cannot write now, from its own row (plan 2026-11-01-net-consistency, item
+ * 11): what a write refused when the board takes it (or a poll fails it) says -- Transfer gone, too old, firmware too
+ * old, writing off -- never "Writing is off" for all of them.
+ */
+export function boardWriteWords(d: { firmwareVersion: string | null; sendRx: string | null; rxProto: number | null; browseOn: boolean; writeOn: boolean; name: string }): string {
+  return writeBlock({ online: true, offlineWords: '', firmware: d.firmwareVersion, rx: d.sendRx, rxProto: d.rxProto, browseOn: d.browseOn,
+    writeOn: d.writeOn, name: d.name }) ?? WRITE_OFF;
+}
+
+/** Whether `s` is one of boardWriteWords' sentences (the server's reason), not Transfer's own text for the same code. */
+const isBlockWords = (s: string) => s === WRITE_OFF || s === WRITE_OLD_TRANSFER || s === WRITE_OLD_FIRMWARE || s === 'Firmware 1.22 or newer is needed'
+  || /^(Transfer is not running on|Switch on browsing in Transfer on|Transfer 2\.3 or newer is needed on) .+$/.test(s);
+
+/**
  * The NET: root row's mark (spec §5): "browsable", or the one missing thing in a few words. Null when the row already
  * says it: offline, or Transfer not running (`running`: the row's own "Transfer running" test, receiverRunning).
  */
@@ -85,7 +99,7 @@ export function writeErrorWords(code: string, text: string, board: string): stri
     case 'full': case 'space': return 'The disk is full';
     case 'denied': return 'Protected against deletion';
     case 'busy': return 'In use on the Amiga';
-    case 'readonly': return WRITE_OFF;
+    case 'readonly': return isBlockWords(text) ? text : WRITE_OFF;   // the reason the server found (item 11); Transfer's own text is lower case
     case 'exists': return 'Already exists';
     case 'xvol': return 'Rename works within one volume';
     case 'notempty': return 'The drawer is not empty';

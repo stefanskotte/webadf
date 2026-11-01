@@ -12,7 +12,7 @@ import {
   ALIVE_PIECE_MS, FAILED_SHOWN_MS, GET_TIMEOUT_MS, LIST_TIMEOUT_MS, PANE_GIVE_UP_MS, REMEMBER_MS, REQUEST_KEEP_MS, REQ_FETCH_MAX,
   MOVE_PROTO, WRITE_KINDS, type WriteKind,
 } from './remote-limits';
-import { MOVE_OLD_TRANSFER } from './remote-browse';
+import { boardWriteWords, MOVE_OLD_TRANSFER, WRITE_OFF } from './remote-browse';
 import { newRequestId, parseAnswerLine, type EntryInfo, type VolumeInfo, type WriteArgs } from './remote-wire';
 
 export type RemoteRow = typeof remoteRequests.$inferSelect;
@@ -306,9 +306,11 @@ export async function takeWaiting(db: Db, deviceId: string, now = new Date()): P
   return db.transaction(async (tx) => {
     // A write goes only to a board that reports writing on (spec 2026-10-31 §3); one that does not fails it here, so
     // a 1.22 board never sees one and nothing waits for a switch that is off (plan W11).
-    const [d] = await tx.select({ rxProto: devices.rxProto, browseOn: devices.browseOn, writeOn: devices.writeOn }).from(devices).where(eq(devices.id, deviceId));
+    const [d] = await tx.select({ rxProto: devices.rxProto, browseOn: devices.browseOn, writeOn: devices.writeOn, firmwareVersion: devices.firmwareVersion,
+      sendRx: devices.sendRx, name: devices.name }).from(devices).where(eq(devices.id, deviceId));
     if (!d || !((d.rxProto ?? 0) >= 4 && d.browseOn && d.writeOn)) {
-      await tx.update(remoteRequests).set({ status: 'failed', errorCode: 'readonly', errorText: 'Writing is off in Transfer', answeredAt: now })
+      // With the reason the board's own row gives (item 11): Transfer gone or too old, firmware too old, or writing off.
+      await tx.update(remoteRequests).set({ status: 'failed', errorCode: 'readonly', errorText: d ? boardWriteWords(d) : WRITE_OFF, answeredAt: now })
         .where(and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.status, 'waiting'), inArray(remoteRequests.kind, WRITES)));
     }
     // DELETE … one (a move's removal, spec 2026-10-31 §9) only to Transfer 2.6: one older would delete a whole drawer.

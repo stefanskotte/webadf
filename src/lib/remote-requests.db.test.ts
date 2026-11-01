@@ -365,7 +365,8 @@ describe('the request store', () => {
 
 // NET: volumes phase 2 (spec 2026-10-31 §2.3, §4.1; plan W9-W13): the one-line writes.
 describe('write requests', () => {
-  const canWrite = (on: boolean) => getDb().update(devices).set({ rxProto: on ? 4 : 3, browseOn: true, writeOn: on }).where(eq(devices.id, deviceId));
+  // Off: Transfer 2.5 connected with its writing switch off (item 11: the take says the row's own reason).
+  const canWrite = (on: boolean) => getDb().update(devices).set({ rxProto: 4, browseOn: true, writeOn: on, firmwareVersion: '1.23.1+gabc', sendRx: 'c' }).where(eq(devices.id, deviceId));
   const answer = (rid: string, lines: string[], piece: number, last: boolean, when: Date) => answerPiece(getDb(), deviceId, rid, { piece, lines, last }, when);
   const remember = async (path: string, when: Date) => {
     const s = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: path, fresh: true }, when);

@@ -9,6 +9,7 @@ import { diskStore } from '@/lib/storage';
 import { mapLimit } from '@/lib/pool';
 import type { Db } from '@/db';
 import type { SendSummary } from '@/lib/send-ui';
+import { boardWriteWords } from '@/lib/remote-browse';
 import { XFER_FW, SEND_FILE_MAX, SEND_QUEUE_MAX_FILES, SEND_QUEUE_MAX_BYTES } from '@/lib/send-limits';
 
 export { XFER_FW, SEND_FILE_MAX, SEND_QUEUE_MAX_FILES, SEND_QUEUE_MAX_BYTES };
@@ -207,11 +208,15 @@ export async function sendQueueText(db: Db, deviceId: string, now = new Date()):
  */
 export async function failWritesWhenOff(db: Db, deviceId: string, now = new Date()): Promise<{ rows: number; requests: number }> {
   return db.transaction(async (tx) => {
-    const rows = await tx.update(transfers).set({ status: 'failed', errorCode: 'readonly', errorText: WRITING_OFF, finishedAt: now })
+    // The reason the board's row gives now (item 11): Transfer too old, browsing off, or writing off.
+    const [d] = await tx.select({ rxProto: devices.rxProto, browseOn: devices.browseOn, writeOn: devices.writeOn, firmwareVersion: devices.firmwareVersion,
+      sendRx: devices.sendRx, name: devices.name }).from(devices).where(eq(devices.id, deviceId));
+    const why = d ? boardWriteWords(d) : WRITING_OFF;
+    const rows = await tx.update(transfers).set({ status: 'failed', errorCode: 'readonly', errorText: why, finishedAt: now })
       .where(and(eq(transfers.deviceId, deviceId), inArray(transfers.status, ACTIVE), isNotNull(transfers.amigaDest)))
       .returning({ id: transfers.id });
     if (rows.length) await tx.update(devices).set({ sendVersion: sql`${devices.sendVersion} + 1` }).where(eq(devices.id, deviceId));
-    const reqs = await tx.update(remoteRequests).set({ status: 'failed', errorCode: 'readonly', errorText: WRITING_OFF, answeredAt: now })
+    const reqs = await tx.update(remoteRequests).set({ status: 'failed', errorCode: 'readonly', errorText: why, answeredAt: now })
       .where(and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.status, 'waiting'), inArray(remoteRequests.kind, [...WRITE_KINDS])))
       .returning({ id: remoteRequests.id });
     return { rows: rows.length, requests: reqs.length };

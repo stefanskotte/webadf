@@ -230,3 +230,6 @@ Work: arrives with the fake board). Commit.
 - Task 9: Ruling: a volume drawer's fresh listing counts though dropMemory marked it stale (the removal's own answers let the memory go before the progress reads it) -- cost if wrong: none
 - Task 9: complete (item 9 RED: 5 volume cases, 2 driver cases, 1 rule -> GREEN; db 130/130; lib unit green)
 - Task 10: complete (net-write 'drawer's count' + net-consistency item 10 RED -> GREEN; db 159/159)
+- Task 11: Ruling: the server's reason is told from Transfer's own `readonly` text (lower case "writing is off in Transfer") by an exact list of the server's sentences (isBlockWords); Transfer's text still reads "Writing is off in Transfer" -- cost if wrong: words
+- Task 11: Ruling: the fixtures of remote-requests 'never handed a write' and transfers 'writing switched off fails' now model a board as the poll records it (firmware 1.23.1, rx c, Transfer 2.5, write off); before, they were a firmware-less Transfer 2.4 / a still-writable row whose truthful words differ -- cost if wrong: none
+- Task 11: complete (item 11 RED 4/5 -> GREEN; db 164/164; lib unit 3341)
