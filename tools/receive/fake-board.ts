@@ -124,7 +124,7 @@ export function rawConnect(port: number, host = '127.0.0.1'): Promise<net.Socket
   });
 }
 
-export async function connect(port: number, host = '127.0.0.1', opts: { v?: 1 | 2 | 3 | 4 | 5; key?: string } = {}): Promise<Board> {
+export async function connect(port: number, host = '127.0.0.1', opts: { v?: 1 | 2 | 3 | 4 | 5 | 6; key?: string } = {}): Promise<Board> {
   const v = opts.v ?? 1;
   const sock = await rawConnect(port, host);
   const rd = byteReader(sock);
