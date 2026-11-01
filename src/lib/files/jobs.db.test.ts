@@ -131,6 +131,16 @@ describe('listJobs: Files jobs', () => {
     expect(await jobView(getDb(), 'o2', 'j7', NOW)).toBeNull();
   });
 
+  it('a job whose card cannot be worked out is left out; the others still show', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await getDb().insert(transfers).values([tr('r1', { jobId: 'j1', amigaDest: 'Work:a' })]);
+    // A get with no target: fetchProgress cannot read it (it throws).
+    await getDb().insert(remoteRequests).values([rq('g1', { fetchId: 'jbad', status: 'sent', target: null })]);
+    expect((await jobs()).map((j) => j.id)).toEqual(['j1']);
+    expect(err).toHaveBeenCalled();
+    err.mockRestore();
+  });
+
   it('a part cancelled is counted apart from the failures', async () => {
     await getDb().insert(transfers).values([
       tr('r1', { jobId: 'j1', status: 'delivered', finishedAt: ago(5_000), amigaDest: 'Work:a' }),

@@ -11,7 +11,7 @@ import { remoteRequests } from '@/db/schema/remote-requests';
 import { amigaUploads } from '@/db/schema/amiga-uploads';
 import { isOnline } from '@/lib/device-state';
 import { failureText } from '@/lib/send-ui';
-import type { GetTarget, RemoteRow } from '@/lib/remote-requests';
+import { expireStale, type GetTarget, type RemoteRow } from '@/lib/remote-requests';
 import { jobStatus } from './manager-rules';
 import { fetchProgress, type FetchProgress } from './net-fetch';
 import { CANCEL_KIND, CANCELLED, commonDrawer, JOB_SHOWN_MS, QUEUE_JOB, type JobKind, type JobView } from './job-view';
@@ -33,8 +33,15 @@ export async function listJobs(db: Db, orgId: string, now = new Date()): Promise
       or(inArray(remoteRequests.status, LIVE), gte(remoteRequests.answeredAt, since))));
   const ids = [...new Set([...a, ...b].map((r) => r.id!))];
   const out: JobView[] = [];
+  // Requests sent and not answered in time fail once here for every job, not once per job (fetchProgress would).
+  await expireStale(db, now);
   for (const id of ids) {
-    const j = await jobView(db, orgId, id, now);
+    // One job whose card cannot be worked out is left out (and logged), not the whole listing.
+    let j: JobView | null;
+    try { j = await jobView(db, orgId, id, now, undefined, { expire: false }); } catch (e) {
+      console.error(`jobs: job ${id} could not be listed`, e);
+      continue;
+    }
     if (j && (j.running || (j.finishedAt !== null && j.finishedAt >= iso(since)))) out.push(j);
   }
   out.push(...(await queueJobs(db, orgId, now)));
@@ -82,8 +89,9 @@ function bytesOf(gets: RemoteRow[], uploads: Map<string, { size: number; receive
 }
 
 /** One job as its card says it, however long ago it finished; `progress` when the caller already has it. */
-export async function jobView(db: Db, orgId: string, id: string, now: Date, progress?: FetchProgress | null): Promise<JobView | null> {
-  const p = progress === undefined ? await fetchProgress(db, orgId, id, now) : progress;
+export async function jobView(db: Db, orgId: string, id: string, now: Date, progress?: FetchProgress | null,
+  opts: { expire?: boolean } = {}): Promise<JobView | null> {
+  const p = progress === undefined ? await fetchProgress(db, orgId, id, now, opts) : progress;
   if (!p) return null;
   const reqs = await db.select().from(remoteRequests).where(and(eq(remoteRequests.fetchId, id), eq(remoteRequests.orgId, orgId)))
     .orderBy(asc(remoteRequests.createdAt), asc(remoteRequests.id));

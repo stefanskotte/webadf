@@ -409,8 +409,10 @@ export type FetchProgress = {
  * One copy's progress (§4.5), this org's only. A get the board has not fetched (offline) waits without a timeout of its
  * own; one sent and not done within 10 minutes fails "<board> stopped answering" (expireStale).
  */
-export async function fetchProgress(db: Db, orgId: string, fetchId: string, now: Date): Promise<FetchProgress | null> {
-  await expireStale(db, now);
+export async function fetchProgress(db: Db, orgId: string, fetchId: string, now: Date,
+  opts: { expire?: boolean } = {}): Promise<FetchProgress | null> {
+  // `expire: false` when the caller ran expireStale itself (listJobs: once for all its jobs, not once per job).
+  if (opts.expire !== false) await expireStale(db, now);
   // A move whose parts all ended -- however they ended -- is settled here, so the job finishes (final review C2).
   // A settle that fails is logged and tried again at the next look (R3): the progress still answers.
   await settleMovesOfJob(db, orgId, fetchId).catch((e) => console.error('net-fetch: settling the moves of a job failed', e));
