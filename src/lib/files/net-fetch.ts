@@ -26,6 +26,7 @@ import { queueTransfers, type ClashMode } from '@/lib/transfers';
 import { FETCH_MAX_BYTES, FETCH_MAX_FILES } from '@/lib/remote-limits';
 import { UPLOAD_FILE_MAX } from '@/lib/amiga-upload-limits';
 import { releaseStaging } from '@/lib/amiga-uploads';
+import { diskStore } from '@/lib/storage';
 import { libraryEligible } from '@/lib/from-amiga-ui';
 import { listStash } from '@/lib/stash';
 import { addUploadToLibrary } from '@/lib/stash-library';
@@ -306,6 +307,9 @@ async function relay(db: Db, g: RemoteRow, target: GetTarget, uploadId: string, 
   if (!u?.blobSha256 || !target.userId) return fail('io', 'it could not be placed');
   const { blobSha256, sizeBytes, protection, comment } = u;
   const userId = target.userId;
+  // The bytes are read before the get's lock is taken: up to 4 MB from the store must not hold it (queueTransfers takes
+  // them as they are). None read: queueTransfers reads (and refuses a missing blob) itself.
+  const bytes = await diskStore.read(blobSha256).catch(() => undefined);
   // The move marker as the get carries it NOW, read under the get's lock in the queue's own transaction: `target` is the
   // claim's copy, and a Cancel the rest since (which locks the same get) took the marker off -- the row then is a copy.
   const q = await db.transaction(async (tx) => {
@@ -313,7 +317,7 @@ async function relay(db: Db, g: RemoteRow, target: GetTarget, uploadId: string, 
     const moveSource = (cur?.target as GetTarget | undefined)?.relay?.moveSource;
     return queueTransfers(tx as unknown as Db, { orgId: g.orgId, deviceId: r.deviceId, userId, jobId: g.fetchId ?? undefined, now, files: [{
       path: target.rel[target.rel.length - 1], sha256: blobSha256, sizeBytes, protection: Number(protection), comment,
-      dest: r.dest, onClash: r.onClash, ...(moveSource ? { moveSource } : {}) }] });
+      dest: r.dest, onClash: r.onClash, ...(bytes ? { bytes } : {}), ...(moveSource ? { moveSource } : {}) }] });
   });
   if (!q.ok) {
     const words = q.reason === 'queue_full' ? "the board's queue is full" : q.reason === 'empty' ? 'it is empty' : 'it could not be queued';
