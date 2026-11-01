@@ -102,6 +102,11 @@ export async function expireStale(db: Db, now = new Date()): Promise<void> {
         where b.device_id = remote_requests.device_id and b.kind = 'get' and coalesce(b.active_at, b.sent_at) >= ${cutGet})`),
     ),
   ));
+  // A move's removal decided and never recorded (the process died after the claim, final review I-2): the job says the
+  // move became a copy.
+  await db.update(remoteRequests).set({ status: 'failed', errorCode: 'moved', answeredAt: now,
+    errorText: 'Copied, but the original could not be removed — Something went wrong.' })
+    .where(and(eq(remoteRequests.status, 'settling'), lt(remoteRequests.activeAt, cutGet)));
   // A placement that never ended (the process died mid-way, R1) fails as one that could not be placed: its file is not
   // coming again, so not `timeout`, which a late arrival revives.
   await db.update(remoteRequests).set({ status: 'failed', errorCode: 'io', errorText: 'it could not be placed', answeredAt: now })

@@ -19,6 +19,16 @@ vi.mock('next/server', () => ({ after: () => {} }));
 vi.mock('@/lib/tosec-sweep', () => ({ sweep: async () => {} }));
 /** Switches the tests flip: the next call of each throws once. */
 const boom = { releaseStaging: false, settleMoveOfGet: false, settleMovesOfJob: false };
+/** A move's removal off a volume (net-write.ts removeCopiedOnVolume): held until `hold` resolves, or thrown once. */
+const removal: { hold: Promise<void> | null; throws: boolean } = { hold: null, throws: false };
+vi.mock('./net-write', async (orig) => {
+  const m = await orig<typeof import('./net-write')>();
+  return { ...m, removeCopiedOnVolume: async (...a: Parameters<typeof m.removeCopiedOnVolume>) => {
+    if (removal.hold) await removal.hold;
+    if (removal.throws) { removal.throws = false; throw new Error('boom: removeCopiedOnVolume'); }
+    return m.removeCopiedOnVolume(...a);
+  } };
+});
 vi.mock('@/lib/amiga-uploads', async (orig) => {
   const m = await orig<typeof import('@/lib/amiga-uploads')>();
   return { ...m, releaseStaging: async (...a: Parameters<typeof m.releaseStaging>) => {
@@ -122,6 +132,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   Object.assign(boom, { releaseStaging: false, settleMoveOfGet: false, settleMovesOfJob: false });
+  Object.assign(removal, { hold: null, throws: false });
   const db = getDb();
   await db.delete(remoteRequests);
   await db.delete(transfers);
@@ -534,5 +545,47 @@ describe('item 15: an empty file between volumes', () => {
     expect(await getById(g.id)).toMatchObject({ status: 'done' });
     expect((await rows('w2')).map((x) => [x.amigaDest, x.sizeBytes])).toEqual([['DF0:nil', 0]]);
     expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ total: 1, waiting: 1, failed: [] });
+  });
+});
+
+const { jobStatus } = await import('./manager-rules');
+describe('final review I-1/I-2: a move being removed is never said finished, and a removal that throws is said', () => {
+  const line = async (job: string) => { const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!; return jobStatus(p, p.board); };
+
+  it('while the removal runs (after the claim) the job is not finished; once queued it waits for the DELETE', { timeout: 15_000 }, async () => {
+    const r = await op({ op: 'move', sources: [W('x')], dest: 'STASH:', onClash: 'ask' });
+    const job = (r as { fetching: { id: string } }).fetching.id;
+    const [g] = await gets();
+    await arrive(g.id, 'Work:x', bytes('xx'));
+    let release!: () => void;
+    removal.hold = new Promise((ok) => { release = ok; });
+    const settling = answerFresh();
+    await expect.poll(async () => (await getDb().select().from(remoteRequests).where(eq(remoteRequests.status, 'settling'))).length, { timeout: 5000 }).toBe(1);
+    expect((await line(job)).finished).toBe(false);
+    release();
+    await settling;
+    expect(await deletesOn('w1')).toEqual(['Work:x one']);
+    expect((await line(job)).finished).toBe(false);   // the DELETE … one waits for the board
+  });
+
+  it('a removal that throws after the claim is said in the job: copied, the original not removed', async () => {
+    const r = await op({ op: 'move', sources: [W('x')], dest: 'STASH:', onClash: 'ask' });
+    const job = (r as { fetching: { id: string } }).fetching.id;
+    const [g] = await gets();
+    await arrive(g.id, 'Work:x', bytes('xx'));
+    removal.throws = true;
+    await answerFresh().catch(() => {});
+    const s = await line(job);
+    expect(s).toMatchObject({ finished: true });
+    expect(s.line).toContain('Copied, but the original could not be removed');
+  });
+
+  it('a removal left settling by a crash fails after the get timeout', async () => {
+    const { expireStale } = await import('@/lib/remote-requests');
+    const old = new Date(Date.now() - 11 * 60_000);
+    await getDb().insert(remoteRequests).values({ id: 'st1', orgId: 'o1', deviceId: 'w1', kind: 'delete', amigaPath: 'Work:x', fetchId: 'jst',
+      status: 'settling', target: { label: 'Work:x' }, createdAt: old, activeAt: old });
+    await expireStale(getDb());
+    expect(await getById('st1')).toMatchObject({ status: 'failed', errorCode: 'moved' });
   });
 });

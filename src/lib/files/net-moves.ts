@@ -27,6 +27,8 @@ import type { EntryInfo } from '@/lib/remote-wire';
 import { refusalWords } from './words';
 
 const ACTIVE_ROWS = ['queued', 'sending'];
+/** A move's removal decided and not yet recorded (final review I-1): the job counts it as running. */
+const SETTLING = 'settling';
 
 type Part = { id: string; kind: string; status: string; amigaPath: string; target: unknown; deviceId: string };
 type Row = { blobSha256: string; sizeBytes: number; protection: number; comment: string; moveItem: string | null };
@@ -186,7 +188,12 @@ export async function settleMove(db: Db, orgId: string, jobId: string, source: s
         }
       }
     }
-    // The claim: the markers go now, in the same transaction that decided.
+    // The claim: the markers go now, in the same transaction that decided -- and, when there is a removal to do, the job
+    // gets its placeholder (`settling`, final review I-1): the job is not finished until the removal is recorded, and a
+    // crash before that is failed by expireStale, so the move never reads as done while its source stays unsaid.
+    if (decision) {
+      await tx.insert(remoteRequests).values({ ...decision.said, status: SETTLING, target: { label: decision.label }, createdAt: new Date(), activeAt: new Date() });
+    }
     if (parts.length) {
       await tx.update(remoteRequests).set({ target: sql`(${remoteRequests.target} - 'moveSource') #- '{relay,moveSource}'` })
         .where(inArray(remoteRequests.id, parts.map((g) => g.id)));
@@ -195,15 +202,27 @@ export async function settleMove(db: Db, orgId: string, jobId: string, source: s
     return decision;
   });
   if (!d) return false;
-  const out: Removal = d.refused !== undefined ? { kind: 'refused', why: d.refused }
-    : await removeSource(orgId, d.userId, source, jobId, d.parts, d.rows, d.checked);
+  let out: Removal;
+  try {
+    out = d.refused !== undefined ? { kind: 'refused', why: d.refused }
+      : await removeSource(orgId, d.userId, source, jobId, d.parts, d.rows, d.checked);
+  } catch (e) {
+    // The markers are gone: no later settle will try again, so the job says it (final review I-2).
+    console.error('net-moves: removing a moved source failed', e);
+    out = { kind: 'refused', why: refusalWords('failed') };
+  }
+  const placeholder = and(eq(remoteRequests.id, d.said.id), eq(remoteRequests.status, SETTLING));
   if (out.kind === 'refused') {
     // Said in the job, as a delete that could not be done (final review I-2): the person sees the move became a copy.
-    await db.insert(remoteRequests).values({ ...d.said, status: 'failed', errorCode: 'moved', answeredAt: new Date(),
-      errorText: `Copied, but the original could not be removed — ${out.why}`, target: { label: d.label } });
+    await db.update(remoteRequests).set({ status: 'failed', errorCode: 'moved', answeredAt: new Date(),
+      errorText: `Copied, but the original could not be removed — ${out.why}`, target: { label: d.label } }).where(placeholder);
   } else if (out.kind === 'kept') {
-    // What the move left because something new is in it (spec §9): said in the job, not a failure.
-    await db.insert(remoteRequests).values({ ...d.said, status: 'done', answeredAt: new Date(), answer: { removed: 0, kept: true }, target: { label: out.label, kept: true, keptWhy: out.why } });
+    // What the move left, and why (spec §9; item 9): said in the job, not a failure.
+    await db.update(remoteRequests).set({ status: 'done', answeredAt: new Date(), answer: { removed: 0, kept: true },
+      target: { label: out.label, kept: true, keptWhy: out.why } }).where(placeholder);
+  } else {
+    // Removed, or its DELETEs queued (they are the job's from here): the placeholder has said all it had to.
+    await db.delete(remoteRequests).where(placeholder);
   }
   return out.kind === 'removed';
 }

@@ -430,7 +430,7 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
   const rows = reqs.filter((r) => r.kind === 'get' && !((r.target as GetTarget).relay && r.status === 'done'));
   const writes: JobWrite[] = reqs.filter((r) => (WRITE_KINDS as readonly string[]).includes(r.kind)).map((r) => {
     const t = (r.target ?? {}) as WriteTarget;
-    const status = r.status === 'waiting' ? 'waiting' : r.status === 'sent' ? 'running' : r.status === 'done' ? 'done' : 'failed';
+    const status = r.status === 'waiting' ? 'waiting' : r.status === 'sent' || r.status === 'settling' ? 'running' : r.status === 'done' ? 'done' : 'failed';
     // Transfer 2.6: a stopped drawer delete that could not rename the drawer back says where the rest is first.
     const rest = r.kind === 'delete' ? /^the rest is in (\S+): ([\s\S]*)$/.exec(r.errorText ?? '') : null;
     const text = rest ? rest[2] : r.errorText ?? '';
