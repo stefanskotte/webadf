@@ -213,3 +213,7 @@ Work: arrives with the fake board). Commit.
 ## Ledger
 - Task 1: Ruling: a repeated close of staging already handed on (status deleted, CRC and blob kept) answers ok with the name, not gone -- the RED test showed the board's retry heard `gone` for a file that was delivered -- cost if wrong: none (same CRC, same bytes)
 - Task 1: complete (net-consistency item 1 RED 3/4 -> GREEN; net-consistency + vol-staging + net-fetch + remote-requests + amiga-uploads db 102/102)
+- Task 2: complete (net-consistency item 2 RED 2/2 -> GREEN; db 106/106)
+- Task 3: complete (net-consistency item 3 RED 1/2 -> GREEN; the STASH: copy case passed before, as it should)
+- Task 4: Ruling: the get-stays-done half of item 4 was already fixed by Task 1's conditional settle (onlyFrom placing), so its test passed on first run; the RED half was fetchProgress throwing when settleMovesOfJob throws -- cost if wrong: none
+- Task 4: complete (net-consistency item 4 RED 1/2 -> GREEN 10/10)

@@ -258,3 +258,26 @@ describe('item 3: staging released when its get ends by an error (m3)', () => {
     expect((await uploads()).find((u) => u.id === id)).toMatchObject({ status: 'receiving' });
   });
 });
+
+describe('item 4: a settle failure leaves the get as it ended', () => {
+  it('settleMoveOfGet throws after a move\'s file is stored: the get is done, and the job settles the move later', async () => {
+    const r = await op({ op: 'move', sources: [W('x')], dest: 'STASH:', onClash: 'ask' });
+    const job = (r as { fetching: { id: string } }).fetching.id;
+    const [g] = await gets();
+    boom.settleMoveOfGet = true;
+    await arrive(g.id, 'Work:x', bytes('xx'));
+    expect(await getById(g.id)).toMatchObject({ status: 'done' });
+    expect((await getById(g.id)).target).toMatchObject({ moveSource: W('x') });
+    // The job's progress settles what the throw left: it asks the fresh listing, then removes the copied file.
+    await fetchProgress(getDb(), 'o1', job, new Date());
+    await answerFresh();
+    expect(await deletesOn('w1')).toEqual(['Work:x one']);
+  });
+
+  it('the progress still answers when settling the job\'s moves throws', async () => {
+    const r = await op({ op: 'move', sources: [W('x')], dest: 'STASH:', onClash: 'ask' });
+    const job = (r as { fetching: { id: string } }).fetching.id;
+    boom.settleMovesOfJob = true;
+    expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ total: 1, waiting: 1 });
+  });
+});

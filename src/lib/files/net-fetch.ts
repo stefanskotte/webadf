@@ -281,8 +281,10 @@ async function place(db: Db, g: RemoteRow, uploadId: string, now: Date): Promise
     }
   }
   await settleGet(db, g.id, { ok: true }, now, PLACING);
-  // A move out of a volume: its source goes once every file of it is stored (plan W7).
-  if (target.moveSource) await settleMoveOfGet(db, g.id);
+  // A move out of a volume: its source goes once every file of it is stored (plan W7). The get is done whatever the
+  // settle meets (plan 2026-11-01-net-consistency R3): a failure is logged, and its markers stay for the job's progress
+  // to settle again.
+  if (target.moveSource) await settleMoveOfGet(db, g.id).catch((e) => console.error('net-fetch: settling a move failed', e));
 }
 
 /**
@@ -364,7 +366,8 @@ export type FetchProgress = {
 export async function fetchProgress(db: Db, orgId: string, fetchId: string, now: Date): Promise<FetchProgress | null> {
   await expireStale(db, now);
   // A move whose parts all ended -- however they ended -- is settled here, so the job finishes (final review C2).
-  await settleMovesOfJob(db, orgId, fetchId);
+  // A settle that fails is logged and tried again at the next look (R3): the progress still answers.
+  await settleMovesOfJob(db, orgId, fetchId).catch((e) => console.error('net-fetch: settling the moves of a job failed', e));
   const reqs = await db.select().from(remoteRequests)
     .where(and(eq(remoteRequests.fetchId, fetchId), eq(remoteRequests.orgId, orgId)))
     .orderBy(asc(remoteRequests.createdAt), asc(remoteRequests.id));
