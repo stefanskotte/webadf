@@ -195,10 +195,12 @@ async function boardWrites(request: APIRequestContext, token: string, fs: Record
  * it leaves its queue alone for now (a test watching a copy arrive holds it, then lets it go).
  */
 export const fakeBoardTiming: { delMs: number; delBeforeMs: number; delEvery: number; queueHeld: boolean;
+  /** The board takes queue files only while it has taken fewer than this in the current boardServes run. */
+  queueLimit: number;
   /** Called before the fake Transfer answers each request: a test changes the Amiga mid-operation (spec §9). */
   onRequest: ((r: BoardRequest) => void) | null;
   /** Awaited between a GET's last chunk and its close: a test holds a file on its way up. */
-  beforeClose: ((r: BoardRequest) => Promise<void>) | null } = { delMs: 0, delBeforeMs: 0, delEvery: 50, queueHeld: false, onRequest: null, beforeClose: null };
+  beforeClose: ((r: BoardRequest) => Promise<void>) | null } = { delMs: 0, delBeforeMs: 0, delEvery: 50, queueHeld: false, queueLimit: Infinity, onRequest: null, beforeClose: null };
 
 /** Words and <len>:<text> fields of one protocol line, from `at`. */
 function cursor(line: string, at: number) {
@@ -309,7 +311,10 @@ export async function boardServes(request: APIRequestContext, token: string, fs:
   let ack: number | null = null;
   while (!until() && Date.now() < end) {
     // Phase 2: with `queue`, the board also takes its queue's files, as firmware 1.23 relays them (one per pass).
-    if (opts.queue && !fakeBoardTiming.queueHeld) { const t = await boardTakesVolumeNext(request, token, fs); if (t) opts.queue.push(t); }
+    if (opts.queue && !fakeBoardTiming.queueHeld && opts.queue.length < fakeBoardTiming.queueLimit) {
+      const t = await boardTakesVolumeNext(request, token, fs);
+      if (t) opts.queue.push(t);
+    }
     const v = await reqVersionOf(token);
     if (v !== ack) {
       ack = v;

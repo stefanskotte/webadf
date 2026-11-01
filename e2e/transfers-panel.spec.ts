@@ -1,7 +1,7 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import { signUpFresh } from './helpers';
 import { cleanupSeeded, pairDevice, setBrowse } from './device-helpers';
-import { boardSays, boardServes, fakeBoardTiming, type BoardRequest, type FakeEntry, type VolumeNext } from './amiga-board';
+import { boardQueue, boardSays, boardServes, fakeBoardTiming, type BoardRequest, type FakeEntry, type VolumeNext } from './amiga-board';
 
 /**
  * The progress panel (spec 2026-11-01-progress-panel): a Files job against a fake board that answers as firmware 1.23
@@ -93,4 +93,60 @@ test('a copy onto a volume shows in the panel, on the Library page too; collapse
     await expect(panel.getByTestId('transfers-card-result').first()).toHaveText('Copied 2 to A500', { timeout: 30_000 });
     await expect.poll(() => (fs['Work:Tools/Pack'] ?? []).map((e) => e.name).sort(), { timeout: LIVE }).toEqual(['one.txt', 'two.txt']);
   } finally { fakeBoardTiming.queueHeld = false; await board.stop(); }
+});
+
+test('on Files a card fills, finishes and fades; the status row does not say it', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const { deviceId, token } = await writable(page, request);
+  const fs = amiga();
+  const board = serving(request, token, fs);
+  try {
+    await openFiles(page, 'STASH:', `NET:/${deviceId}/Work/Tools`, 'left');
+    await expect(rowAt(page, 'right', 'x.lha')).toBeVisible({ timeout: LIVE });
+    await stashPack(page, ['one.txt', 'two.txt']);
+    fakeBoardTiming.queueLimit = 1;
+    await rowAt(page, 'left', 'Pack').click();
+    await page.getByTestId('files-copy').click();
+    const card = page.getByTestId('transfers-card').first();
+    await expect(card.getByTestId('transfers-card-line')).toContainText('1 of 2 files', { timeout: LIVE });
+    expect(Number(await card.getByRole('progressbar').getAttribute('aria-valuenow'))).toBeGreaterThan(0);
+    await expect(page.getByTestId('files-busy')).toHaveText('');
+    fakeBoardTiming.queueLimit = Infinity;
+    await expect(card.getByTestId('transfers-card-result')).toHaveText('Copied 2 to A500', { timeout: 30_000 });
+    await expect(page.getByTestId('transfers-announce')).toHaveText('Copied 2 to A500');
+    // A clean finish fades after 6 s.
+    await expect(page.getByTestId('transfers-card')).toHaveCount(0, { timeout: 12_000 });
+  } finally { fakeBoardTiming.queueLimit = Infinity; await board.stop(); }
+});
+
+test('Cancel the rest asks first; what arrived stays, the rest never goes, and the card stays', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const { deviceId, token } = await writable(page, request);
+  const fs = amiga();
+  const board = serving(request, token, fs);
+  try {
+    await openFiles(page, 'STASH:', `NET:/${deviceId}/Work/Tools`, 'left');
+    await expect(rowAt(page, 'right', 'x.lha')).toBeVisible({ timeout: LIVE });
+    await stashPack(page, ['one.txt', 'two.txt', 'three.txt']);
+    fakeBoardTiming.queueLimit = 1;
+    await rowAt(page, 'left', 'Pack').click();
+    await page.getByTestId('files-copy').click();
+    const card = page.getByTestId('transfers-card').first();
+    await expect(card.getByTestId('transfers-card-line')).toContainText('1 of 3 files', { timeout: LIVE });
+
+    await card.getByTestId('transfers-cancel').click();
+    await expect(page.getByTestId('transfers-cancel-text')).toHaveText('Cancel the rest of this copy? What has arrived stays.');
+    await page.getByTestId('transfers-cancel-yes').click();
+    await expect(page.getByTestId('transfers-cancel-dialog')).toBeHidden({ timeout: LIVE });
+    await expect(card.getByTestId('transfers-card-result')).toHaveText('Cancelled: 1 of 3 copied', { timeout: LIVE });
+    await expect(card).toHaveAttribute('data-state', 'kept');
+
+    // Nothing more goes, even with the board free to take it.
+    fakeBoardTiming.queueLimit = Infinity;
+    expect(await boardQueue(request, token)).toMatch(/^NEXT -/);
+    expect((fs['Work:Tools/Pack'] ?? []).filter((e) => !e.dir)).toHaveLength(1);
+    // A cancelled card stays until closed.
+    await card.getByTestId('transfers-close').click();
+    await expect(page.getByTestId('transfers-card')).toHaveCount(0);
+  } finally { fakeBoardTiming.queueLimit = Infinity; await board.stop(); }
 });
