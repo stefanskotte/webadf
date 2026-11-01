@@ -256,13 +256,9 @@ export async function copyOntoVolume(ctx: OpCtx, dir: FsPath, tops: IncomingTop[
   if (clashes.length) return { kind: 'clashes', clashes };
 
   const sizeOf = (i: IncomingTop['items'][number]) => i.bytes?.length ?? i.size;
-  // An empty file is left out (the board's queue carries no 0-byte file; final review I-3): a picked one is refused as
-  // its own item, one inside a drawer is skipped and the rest of the drawer goes.
-  for (const g of [...going]) {
-    const only = g.top.items.length === 1 && g.top.items[0].kind === 'file' && sizeOf(g.top.items[0]) === 0;
-    if (only) { results.set(g.top.source, { source: g.top.source, ok: false, refusal: { code: 'unsupported', detail: `${g.name} is empty` } }); going.splice(going.indexOf(g), 1); }
-  }
-  const files = going.flatMap((g) => g.top.items.filter((i) => i.kind === 'file' && sizeOf(i) !== 0).map((i) => ({ g, i, rel: [g.name, ...i.rel.slice(1)] })));
+  // An empty file goes too (plan 2026-11-01-net-consistency R10; was left out, final review I-3): the board sends no chunk
+  // for size 0 and Transfer finishes such a FILE at once.
+  const files = going.flatMap((g) => g.top.items.filter((i) => i.kind === 'file').map((i) => ({ g, i, rel: [g.name, ...i.rel.slice(1)] })));
   for (const { i, rel } of files) {
     const size = sizeOf(i);
     if (size === undefined || (!i.bytes && !i.sha256)) refuse('failed', 500, `${rel.join('/')} came without its bytes`);

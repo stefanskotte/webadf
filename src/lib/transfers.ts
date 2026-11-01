@@ -159,7 +159,9 @@ export async function queueTransfers(db: Db, a: { orgId: string; deviceId: strin
     const st = stats[k];
     if (!st) return { ok: false, reason: 'no_blob', path: f.path };
     if (st.sizeBytes > SEND_FILE_MAX) return { ok: false, reason: 'too_large', path: f.path };
-    if (st.sizeBytes === 0) return { ok: false, reason: 'empty', path: f.path };
+    // A copy onto a volume takes an empty file (plan 2026-11-01-net-consistency R10: firmware sends no chunk for size 0,
+    // Transfer finishes a 0-byte FILE at GO); the ordinary queue into ReceiveDir keeps its refusal (P7).
+    if (st.sizeBytes === 0 && f.dest === undefined) return { ok: false, reason: 'empty', path: f.path };
     checked.push({ path: paths[k]!, size: st.sizeBytes, f });
   }
   // Read before the transaction: up to 16 MB of store reads must not hold it open.

@@ -240,3 +240,5 @@ Work: arrives with the fake board). Commit.
 - Task 14: Ruling: the e2e for item 14 was written after its server/rule code (the RED was the db test 'item 14' 2/2 and the rule test); it passed first run (26.6 s, the 15 s back-off inside it) -- cost if wrong: none
 - Task 14: complete (item 14 db RED 2/2 + rule RED 1 -> GREEN; e2e 'goes offline' passed)
 - Task 15: e2e 'an empty STASH: file copied onto a volume' RED (no copy: left out) before the fix
+- Task 15: Ruling (R10 as planned): both sides carry a 0-byte FILE (amiga_send.c GO -> AS_AWAIT_OK when size is 0; rx_proto.c on_file calls finish_file at once for size 0; the upload side arms no raw section for total 0), so copies onto a volume and between volumes take empty files; the ordinary Queue (ReceiveDir) keeps P7 -- cost if wrong: an empty file fails on the bench with Transfer's words, nothing lost; one A500 bench check owed
+- Task 15: complete (net-write 'empty file is copied' + net-consistency item 15 RED -> GREEN; e2e 'empty STASH: file' RED -> GREEN; db 143/143)

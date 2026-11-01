@@ -523,3 +523,16 @@ describe('item 14: the progress says which waiting board is offline', () => {
     expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ offline: 'A1200' });
   });
 });
+
+describe('item 15: an empty file between volumes', () => {
+  it('a 0-byte file copied from one volume to another is queued there, size 0', async () => {
+    await remember('Work:', [ent('x', 2), ent('nil', 0)]);
+    const r = await op({ op: 'copy', sources: [W('nil')], dest: 'NET:/w2/DF0', onClash: 'ask' });
+    const job = (r as { job: { id: string } }).job.id;
+    const [g] = await gets();
+    await arrive(g.id, 'Work:nil', new Uint8Array(0));
+    expect(await getById(g.id)).toMatchObject({ status: 'done' });
+    expect((await rows('w2')).map((x) => [x.amigaDest, x.sizeBytes])).toEqual([['DF0:nil', 0]]);
+    expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ total: 1, waiting: 1, failed: [] });
+  });
+});

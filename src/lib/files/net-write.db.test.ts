@@ -637,12 +637,15 @@ describe('safe moves off a volume (protocol 5)', () => {
 describe('final review fixes: copies onto a volume', () => {
   beforeEach(async () => { await remember('Work:Tools', []); });
 
-  it('I-3: an empty file inside a drawer is left out, the rest is copied', async () => {
+  // Plan 2026-11-01-net-consistency, item 15 (was I-3: left out): the board and Transfer both carry a 0-byte FILE.
+  it('an empty file is copied onto a volume, in a drawer or picked on its own', async () => {
     await stash('Box/full.txt', 'full');
     await stash('Box/empty.txt', '');
-    const r = await op({ op: 'copy', sources: ['STASH:/Box'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
-    expect(r).toMatchObject({ kind: 'done', items: [{ source: 'STASH:/Box', ok: true }], job: { files: 1 } });
-    expect((await rows()).map((x) => x.amigaDest)).toEqual(['Work:Tools/Box/full.txt']);
+    await stash('alone.txt', '');
+    const r = await op({ op: 'copy', sources: ['STASH:/Box', 'STASH:/alone.txt'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
+    expect(r).toMatchObject({ kind: 'done', items: [{ source: 'STASH:/Box', ok: true }, { source: 'STASH:/alone.txt', ok: true }], job: { files: 3 } });
+    expect((await rows()).map((x) => [x.amigaDest, x.sizeBytes]).sort()).toEqual([['Work:Tools/Box/empty.txt', 0], ['Work:Tools/Box/full.txt', 4], ['Work:Tools/alone.txt', 0]]);
+    expect(await sendQueueText(getDb(), 'w1')).toMatch(/\n\S+ 0 20:Work:Tools\/alone\.txt\n/);   // in the board's list, size 0
   });
 
   it('I-4: a copy the queue refuses makes no drawers on the Amiga', async () => {
