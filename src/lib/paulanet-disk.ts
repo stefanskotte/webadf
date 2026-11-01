@@ -6,15 +6,16 @@
  * (tools/paulanet-driver/, plan 2026-10-18) and its PaulaNET Config is his, unmodified: both used by his permission
  * under his terms (third-party/paulanet/); they are not MIT.
  */
-export const PAULANET_DISK_SHA256 = 'e427a3d780b4aaf80b1fe5baf307bbb30608c53c0d7b5ffd1d83e1b2c4d30865';
+export const PAULANET_DISK_SHA256 = '4ad243e909b3df3b5ccde80e345ec3537871bb091c5f55a4dbd65b7e303a6c7e';
 export const PAULANET_DISK_BYTES = 901_120;
 /**
- * The driver disk before Transfer 2.9 (2026-11-01: Makedir's drawer icon, a chosen folder saved at once): Transfer 2.8,
- * with the Install that updates SYS:WBStartup.
+ * The driver disk before Transfer 2.10 (2026-11-01: About, the version in the screen title, NewLook menus): Transfer 2.9
+ * (Makedir's drawer icon, a chosen folder saved at once).
  */
-export const PAULANET_DISK_PREVIOUS = 'd480590e6ed2b791be3ad9ef9f7c3972c72321cd2035a1ef18d38f78e3adb2cb';
+export const PAULANET_DISK_PREVIOUS = 'e427a3d780b4aaf80b1fe5baf307bbb30608c53c0d7b5ffd1d83e1b2c4d30865';
 /**
- * Every older driver disk, newest first: PAULANET_DISK_PREVIOUS, then the disk before Install updated SYS:WBStartup
+ * Every older driver disk, newest first: PAULANET_DISK_PREVIOUS, then the disk before Transfer 2.9 (Transfer 2.8), then
+ * the disk before Install updated SYS:WBStartup
  * (Transfer 2.8), then the disk before Transfer 2.8 (Transfer 2.7), then the disk before Transfer 2.7 (Transfer 2.6), then the disk before Transfer 2.6 (Transfer 2.5), then the disk before Transfer 2.5 (Transfer 2.4), then the disk before Transfer 2.4 (Transfer 2.3), then the disk before Transfer 2.3 (Transfer 2.2), then the disk before Transfer 2.2 (Transfer 2.1), then the disk before Transfer 2.1 (the LZ4 driver and
  * Receive 2), then the disk before Receive 2 (the LZ4 driver and Receive 1), then the disk before the LZ4 driver (Receive 1), then the disk before Receive (Phase 3). Each is still
  * valid: a board whose Amiga is online keeps it until the Amiga is off (driverDiskFor, R16), so it is served
@@ -22,7 +23,7 @@ export const PAULANET_DISK_PREVIOUS = 'd480590e6ed2b791be3ad9ef9f7c3972c72321cd2
  * (ALWAYS_REFERENCED_BLOBS) and named on the card (driverDiskLine).
  */
 export const PAULANET_DISK_OLDER: readonly string[] = [
-  PAULANET_DISK_PREVIOUS, '184ca84b8fb9b158e84ae0199ee658a2d2946a8b48800a7a4b91f21763a50306', '026ed784c18d9709ab52cdfa0f25b30f9b21198ce82fa00794f5196aa7c17698', '3c8c037d471cebfff2078b7952d400b46fb3a0ab69b57518ca62aa0916264a98',
+  PAULANET_DISK_PREVIOUS, 'd480590e6ed2b791be3ad9ef9f7c3972c72321cd2035a1ef18d38f78e3adb2cb', '184ca84b8fb9b158e84ae0199ee658a2d2946a8b48800a7a4b91f21763a50306', '026ed784c18d9709ab52cdfa0f25b30f9b21198ce82fa00794f5196aa7c17698', '3c8c037d471cebfff2078b7952d400b46fb3a0ab69b57518ca62aa0916264a98',
   '4b1cc536e5ca9347c322eccbc191f3af14d295195c3210ec04735d922a5159da',
   '7b0c7ed5557f72d84e21f03fd7c54eccc773fd1d3dc4d749e60eede081b4fc12', '05a898caa137cb2e24f1aa0f30784126a3e88276aaf80387af446d1e204bbb45', '9f58337d1a8bde3da2cce4fc26e97eed9ca77f9c16b12c58fea0373e898699fa',
   '36bce70c114ad2eff6cdbb720ffaeabdbf79856592211080b437f7ac3110f796',

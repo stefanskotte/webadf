@@ -49,8 +49,9 @@ server for 24 hours.
 Transfer is a commodity: closing its window only hides it, and
 it keeps working. Ctrl Alt W, or Show in Exchange, brings the
 window back; Quit in its Project menu (Amiga-Q), or Kill in
-Exchange, stops it. Disable in Exchange closes its connection
-until Enable. Starting it again only shows the window. To start
+Exchange, stops it; About in the same menu shows its version.
+Disable in Exchange closes its connection until Enable.
+Starting it again only shows the window. To start
 it with Workbench, copy SYS:Tools/Transfer and its icon to
 SYS:WBStartup; set CX_POPUP=NO in the icon's tool types to start
 without the window. Install updates a Transfer it finds there,

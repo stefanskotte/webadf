@@ -27,6 +27,7 @@
 #include "ipc.h"
 #include "net.h"
 #include "ui.h"
+#include "version.h"
 
 /* Defined (= NULL), not tentative: a tentative base lets libstubs' own definition in, and libnix then opens that library
    at startup in every mode -- asl.library from disk, ~30 KB, which a 512 KB Amiga running the Shell form does not have
@@ -338,12 +339,27 @@ static ULONG gui_sigs(gui *G) {
 static void sync_sigs(gui *G) { if (G->ui) G->ui->extra_sigs = gui_sigs(G); }
 static int show(gui *G);
 static void hide(gui *G);
-/* Project: Hide (Amiga-H, only with a broker: without one nothing could show the window again), Quit (Amiga-Q). */
+/* Project: About..., Hide (Amiga-H, only with a broker: without one nothing could show the window again), Quit
+   (Amiga-Q). Item numbers count the bar after About. */
+enum { MI_ABOUT = 0, MI_HIDE = 2, MI_QUIT = 3 };
+static void about(gui *G) {
+    struct EasyStruct es;
+    es.es_StructSize = sizeof es; es.es_Flags = 0;
+    es.es_Title = (UBYTE *)"About Transfer";
+    es.es_TextFormat = (UBYTE *)"Transfer " TRANSFER_VERSION " (" TRANSFER_DATE ")\n\n"
+        "Moves files between this Amiga and the\n"
+        "WebFloppy web app, through the board.\n\n"
+        "From webadf by Stefan Skotte\n"
+        "github.com/stefanskotte/webadf";
+    es.es_GadgetFormat = (UBYTE *)"OK";
+    EasyRequestArgs(G->win, &es, NULL, NULL);
+}
 static void menu_pick(gui *G, UWORD code) {
     while (code != MENUNULL) {
         struct MenuItem *it = ItemAddress(G->menu, code);
-        if (MENUNUM(code) == 0 && ITEMNUM(code) == 0 && G->has_cx) G->want_hide = 1;
-        else if (MENUNUM(code) == 0 && ITEMNUM(code) == 1) G->quit = 1;
+        if (MENUNUM(code) == 0 && ITEMNUM(code) == MI_ABOUT) about(G);
+        else if (MENUNUM(code) == 0 && ITEMNUM(code) == MI_HIDE && G->has_cx) G->want_hide = 1;
+        else if (MENUNUM(code) == 0 && ITEMNUM(code) == MI_QUIT) G->quit = 1;
         if (!it) break;
         code = it->NextSelect;
     }
@@ -387,6 +403,8 @@ static UWORD text_w(struct RastPort *rp, const char *s) { return (UWORD)(TextLen
 
 static struct NewMenu menus[] = {
     { NM_TITLE, (STRPTR)"Project", NULL, 0, 0, NULL },
+    { NM_ITEM, (STRPTR)"About...", NULL, 0, 0, NULL },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, (STRPTR)"Hide", (STRPTR)"H", 0, 0, NULL },
     { NM_ITEM, (STRPTR)"Quit", (STRPTR)"Q", 0, 0, NULL },
     { NM_END, NULL, NULL, 0, 0, NULL }
@@ -396,8 +414,35 @@ static struct NewMenu menus[] = {
    "Save files to:" and "Web App:" end in one column, where the folder field and the Read box start. */
 #define CB_W 26    /* a V37 checkbox is 26 x 11 whatever the font */
 #define CB_H 11
+/* NewLook (V39) menus, or the classic ones -- as hdpart (github.com/stefanskotte/hdpart, src/gui.c) decides it: only
+   with gadtools V39+ (Kickstart 3.0; 2.04 never sees the tag), on a screen opened with NewLook pens (DrawInfo version 2+
+   with the bar pens), and only when the menu's text actually reads over its fill on this palette (an OS 3.2 tester's
+   palette once had black on dark blue). */
+static int luma4(ULONG rgb4) { return (int)((((rgb4 >> 8) & 0xF) * 77 + ((rgb4 >> 4) & 0xF) * 151 + (rgb4 & 0xF) * 28) >> 8); }
+static int pen_luma(struct Screen *scr, int pen) {
+    struct ColorMap *cm = scr->ViewPort.ColorMap;
+    if (pen >= 0xFEFC) return -2;   /* a V39 "magic" pen: the complement of colours 0-3, contrasting by construction */
+    if (!cm || pen < 0 || pen >= (int)cm->Count) return -1;
+    return luma4(GetRGB4(cm, pen));
+}
+static int pens_readable(struct Screen *scr, int fg, int bg) {
+    int lf = pen_luma(scr, fg), lb = pen_luma(scr, bg), d;
+    if (lf == -2 || lb == -2) return 1;
+    if (lf < 0 || lb < 0) return 0;
+    d = lf - lb; if (d < 0) d = -d;
+    return d >= 4;   /* of 15 */
+}
+static int menus_newlook(struct Screen *scr) {
+    struct DrawInfo *dri; int ok = 0;
+    if (!GadToolsBase || GadToolsBase->lib_Version < 39 || !(dri = GetScreenDrawInfo(scr))) return 0;
+    if ((dri->dri_Flags & DRIF_NEWLOOK) && dri->dri_Version >= 2 && dri->dri_Pens && dri->dri_NumPens > BARBLOCKPEN)
+        ok = pens_readable(scr, (int)dri->dri_Pens[BARDETAILPEN], (int)dri->dri_Pens[BARBLOCKPEN]) &&
+             pens_readable(scr, (int)dri->dri_Pens[FILLTEXTPEN], (int)dri->dri_Pens[FILLPEN]);
+    FreeScreenDrawInfo(scr, dri);
+    return ok;
+}
 static int build(gui *G) {
-    struct NewGadget ng; struct Gadget *gl = NULL, *g;
+    struct NewGadget ng; struct Gadget *gl = NULL, *g; int newlook;
     struct TextAttr *ta = G->scr->Font;
     struct TextFont *tf = OpenFont(ta);
     struct RastPort rp;
@@ -462,11 +507,17 @@ static int build(gui *G) {
     G->g[G_LIST] = g = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&G->list, GTLV_ReadOnly, TRUE, TAG_END);
     G->gl = gl;
     if (!g) return -1;
-    menus[1].nm_Flags = G->has_cx ? 0 : NM_ITEMDISABLED;
-    G->menu = CreateMenus(menus, TAG_END);
-    if (G->menu && !LayoutMenus(G->menu, G->vi, TAG_END)) { FreeMenus(G->menu); G->menu = NULL; }
+    menus[1 + MI_HIDE].nm_Flags = G->has_cx ? 0 : NM_ITEMDISABLED;
+    newlook = menus_newlook(G->scr);
+    /* NewLook takes all three or none (hdpart's finding): CreateMenus, LayoutMenus and the window's WA_NewLookMenus. A
+       V37 GadTools never sees the V39 tag. */
+    G->menu = newlook ? CreateMenus(menus, GTMN_NewLookMenus, TRUE, TAG_END) : CreateMenus(menus, TAG_END);
+    if (G->menu && !(newlook ? LayoutMenus(G->menu, G->vi, GTMN_NewLookMenus, TRUE, TAG_END) : LayoutMenus(G->menu, G->vi, TAG_END))) {
+        FreeMenus(G->menu); G->menu = NULL;
+    }
     G->win = OpenWindowTags(NULL,
-        WA_Title, (ULONG)"WebFloppy - Receive & Send", WA_PubScreen, (ULONG)G->scr, WA_Gadgets, (ULONG)gl,
+        WA_Title, (ULONG)"WebFloppy - Receive & Send", WA_ScreenTitle, (ULONG)"Transfer " TRANSFER_VERSION " - WebFloppy",
+        WA_NewLookMenus, (ULONG)(newlook ? TRUE : FALSE), WA_PubScreen, (ULONG)G->scr, WA_Gadgets, (ULONG)gl,
         WA_InnerWidth, iw, WA_InnerHeight, (ULONG)(y + lh + 6 - top),
         WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
         WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_MENUPICK | BUTTONIDCMP | STRINGIDCMP | LISTVIEWIDCMP, TAG_END);

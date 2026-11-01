@@ -12,10 +12,11 @@
 #include <workbench/startup.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
+#include "version.h"
 #include "config.h"
 #include "ui.h"
 
-static const char version[] = "$VER: Transfer 2.9 (01.11.2026) webadf";
+static const char version[] = "$VER: Transfer " TRANSFER_VERSION " (" TRANSFER_DATE ") webadf";
 
 /* Shell and Workbench starts often give 4 KB of stack; the window, asl and dos calls nest deeper than that. Below the
    mode's size, run on a stack of our own (exec StackSwap, V37). Everything used across the swap is file-static. The
