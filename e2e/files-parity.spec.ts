@@ -72,7 +72,7 @@ test('Undo in the toast after a delete puts the file back', async ({ page }) => 
   await expect(rightRow(page, 'ReadMe')).toHaveCount(1);
   // On the stored bytes, not just the pane: the restore is the newest version, the file is back.
   expect((await storedRoot(diskId)).root.map((e) => e.name)).toContain('ReadMe');
-  await expect(page.getByTestId('disk-strip-history-toggle')).toHaveText('History · v2');
+  await expect(page.getByTestId('disk-strip-history-toggle')).toHaveText('History · v2 ▾');
 });
 
 test('a disk recognised by TOSEC asks before its first edit, once', async ({ page }) => {

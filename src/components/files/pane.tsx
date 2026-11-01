@@ -244,6 +244,13 @@ export function Pane({ filterRef, ...p }: PaneProps) {
         <p data-testid={tid('loading')} className="px-3.5 py-3 text-[13px]" style={{ color: 'var(--muted)' }}>Loading…</p>
       )}
       {listing && (
+        <div className="relative flex min-h-0 flex-1 flex-col">
+        {/* The left edge goes up one level, as Directory Opus's does (backlog 2026-10-30); at a root it goes nowhere.
+            The mouse's shortcut only: ↑ in the title bar is the way for the keyboard and a screen reader, and below lg
+            a finger at the edge is a scroll. */}
+        <div aria-hidden="true" data-testid={tid('edge')} data-up={parent ? 'true' : 'false'}
+             title={parent ? 'Up one level' : undefined} onClick={() => parent && p.onNavigate(parent.path)}
+             className={`absolute inset-y-0 left-0 z-10 w-2 max-lg:hidden ${parent ? 'cursor-pointer hover:bg-(--track)' : ''}`} />
         <div className={`min-h-0 flex-1 lg:overflow-auto ${pending ? 'opacity-50' : ''}`} aria-busy={p.loading || undefined}>
           <table role="grid" aria-multiselectable="true" aria-label={`${side === 'left' ? 'Left' : 'Right'} pane files`}
                  className="w-full border-collapse text-[13px] max-lg:table-fixed">
@@ -385,6 +392,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
                 : `No names match “${view.filter.trim()}”.`}
             </p>
           )}
+        </div>
         </div>
       )}
 

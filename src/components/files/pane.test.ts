@@ -138,6 +138,20 @@ describe('Pane (Files increment 1, Task 7)', () => {
     expect(tagOf(root, 'pane-left-crumb-1')).toBeUndefined();
   });
 
+  it('the left edge goes up one level, as in Directory Opus; at a root it is there but goes nowhere (backlog 2026-10-30)', () => {
+    const edge = tagOf(render(), 'pane-left-edge')!;
+    expect(edge).toBeDefined();
+    // The ↑ button is the way in for the keyboard and a screen reader; the edge is the mouse's shortcut.
+    expect(attr(edge, 'aria-hidden')).toBe('true');
+    expect(attr(edge, 'title')).toBe('Up one level');
+    expect(attr(edge, 'data-up')).toBe('true');
+    expect(attr(edge, 'class')).toMatch(/\bmax-lg:hidden\b/);   // a finger on a phone's edge is a scroll, not a click
+    const root = tagOf(render({ listing: rootListing }), 'pane-left-edge')!;
+    expect(attr(root, 'data-up')).toBe('false');
+    expect(attr(root, 'title')).toBeUndefined();
+    expect(tagOf(render({ side: 'right', active: false }), 'pane-right-edge')).toBeDefined();
+  });
+
   it('the STASH:, LIBRARY: and NET: device chips, the one shown pressed, below lg only (increment 2 R1, Files 2 R12)', () => {
     const html = render();
     const devs = [...html.matchAll(/data-testid="pane-left-dev-([^"]+)"/g)].map((m) => m[1]);

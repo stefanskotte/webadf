@@ -89,10 +89,16 @@ describe('DiskStrip', () => {
 
   it('History names the current version, and the panel is closed until asked', () => {
     const html = render();
-    expect(textOf(html, 'disk-strip-history-toggle')).toBe('History · v2');
+    expect(textOf(html, 'disk-strip-history-toggle')).toBe('History · v2 ▾');
     expect(tagOf(html, 'disk-strip-history')).toBeUndefined();
     // A disk never edited has no version yet: plain "History".
-    expect(textOf(render({}, { headSeq: null }), 'disk-strip-history-toggle')).toBe('History');
+    expect(textOf(render({}, { headSeq: null }), 'disk-strip-history-toggle')).toBe('History ▾');
+  });
+
+  it('History reads as a toggle: a caret, hidden from a screen reader, which hears aria-expanded (backlog 2026-10-30)', () => {
+    const html = render();
+    expect(tagOf(html, 'disk-strip-history-toggle')).toContain('aria-expanded="false"');
+    expect(html).toMatch(/data-testid="disk-strip-history-toggle"[^>]*>History · v2<span aria-hidden="true"[^>]*> ▾<\/span>/);
   });
 
   it("an own copy of a shared library's disk says whose it was (Task 9b); any other disk says nothing", () => {
