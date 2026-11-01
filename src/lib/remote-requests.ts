@@ -17,7 +17,7 @@ export type RemoteRow = typeof remoteRequests.$inferSelect;
 /**
  * Where a get's file goes. `moveSource` (phase 2, plan W7): the Files path a move removes once every get of its job
  * naming it is done. `relay` (plan W8): a copy onto another volume -- on arrival the file is handed to that board's queue
- * with the absolute path and clash mode, and its STASH: row goes.
+ * with the absolute path and clash mode, held meanwhile as internal staging (never a STASH: row).
  */
 export type GetTarget = { dest: string; rel: string[]; replace: boolean; library: { collectionId: string | null } | null;
   moveSource?: string; relay?: { deviceId: string; dest: string; onClash: 'keep' | 'replace' | 'skip'; moveSource?: string };

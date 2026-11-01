@@ -24,10 +24,20 @@ export class StashBusy extends Error {
 
 type Reader = Pick<Db, 'select'>;
 
+/**
+ * A file on its way from one NET: volume to another (plan 2026-11-01-vol-to-vol-staging, superseding W8's pass through
+ * the STASH: root): an amiga_uploads row the board's open/chunk/close need, that STASH: never lists, counts or names.
+ * Released (deleted) once handed to the destination board's queue -- whose transfers row then keeps the blob -- or once
+ * its get ends any other way; one left older than a day is swept by the daily cron (expireUploads).
+ */
+export const STAGING = 'staging';
+/** Not internal staging: every STASH: read and count adds this. */
+export const notStaging = () => ne(amigaUploads.source, STAGING);
+
 /** Live rows, oldest first (R5): stored and not past 30 days, receiving within 24 h, failed. */
 export async function listStash(db: Reader, orgId: string, now = new Date()): Promise<StashRow[]> {
   const rows = await db.select().from(amigaUploads)
-    .where(and(eq(amigaUploads.orgId, orgId), ne(amigaUploads.status, 'deleted'),
+    .where(and(eq(amigaUploads.orgId, orgId), ne(amigaUploads.status, 'deleted'), notStaging(),
       or(and(inArray(amigaUploads.status, ['stored', 'receiving']), gt(amigaUploads.expiresAt, now)), eq(amigaUploads.status, 'failed'))))
     .orderBy(asc(amigaUploads.createdAt), asc(amigaUploads.id));
   return rows.map((r) => ({
@@ -65,7 +75,7 @@ export async function insertStash(db: Db, orgId: string, source: 'browser' | 'co
     await lockOrg(tx, orgId);
     const [load] = await tx.select({ n: sql<number>`count(*)::int`, b: sql<string>`coalesce(sum(${amigaUploads.sizeBytes}),0)::bigint` })
       .from(amigaUploads)
-      .where(and(eq(amigaUploads.orgId, orgId), inArray(amigaUploads.status, ['receiving', 'stored']), gt(amigaUploads.expiresAt, now),
+      .where(and(eq(amigaUploads.orgId, orgId), inArray(amigaUploads.status, ['receiving', 'stored']), gt(amigaUploads.expiresAt, now), notStaging(),
         replace.length ? sql`${amigaUploads.id} not in (${sql.join(replace.map((i) => sql`${i}`), sql`, `)})` : undefined));
     const bytes = entries.reduce((a, e) => a + e.sizeBytes, 0);
     if (load.n + entries.length > UPLOAD_AREA_MAX_FILES || Number(load.b) + bytes > UPLOAD_AREA_MAX_BYTES) return { ok: false as const, code: 'stash_full' as const };
