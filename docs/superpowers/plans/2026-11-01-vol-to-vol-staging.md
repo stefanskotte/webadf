@@ -75,7 +75,7 @@
 - Modify: `e2e/files-net-writes.spec.ts` (new test)
 
 - [ ] Step 1: test -- board with volumes Work and Data, a user file `keep.txt` in STASH: (a Receive upload); a second page shows STASH:; copy `c.txt` Work -> Data; `beforeClose` holds the upload: the STASH: page (reloaded) shows only `keep.txt`, `listStash` has only `keep.txt`; release; job says copied; `fs['Data:']` has `c.txt`; STASH: still only `keep.txt`.
-- [ ] Step 2: run on the old code (stash the fix by checking out the parent commit's two files into a scratch copy is not needed: run the test before Task 1/2 code is committed is impractical, so the RED is shown by the db tests; the e2e is run GREEN and its hold point is checked to be reached).
+- [ ] Step 2: run it before Tasks 1-2's code, expect FAIL: `c.txt` is in STASH: while the file is held before its close.
 - [ ] Step 3: run `files-net-writes`, `files-net-volumes`, `files-net`, `files-stash` each via `PORT=3100 scripts/e2e-local.sh <spec>` (< 9 min each, one at a time).
 - [ ] Step 4: commit.
 
