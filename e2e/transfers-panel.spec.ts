@@ -141,10 +141,13 @@ test('Cancel the rest asks first; what arrived stays, the rest never goes, and t
     await expect(card.getByTestId('transfers-card-result')).toHaveText('Cancelled: 1 of 3 copied', { timeout: LIVE });
     await expect(card).toHaveAttribute('data-state', 'kept');
 
-    // Nothing more goes, even with the board free to take it.
+    // Nothing more goes, even with the board free to take it: asked again and again for a second, it stays so.
     fakeBoardTiming.queueLimit = Infinity;
-    expect(await boardQueue(request, token)).toMatch(/^NEXT -/);
-    expect((fs['Work:Tools/Pack'] ?? []).filter((e) => !e.dir)).toHaveLength(1);
+    for (let k = 0; k < 5; k++) {
+      expect(await boardQueue(request, token)).toMatch(/^NEXT -/);
+      expect((fs['Work:Tools/Pack'] ?? []).filter((e) => !e.dir)).toHaveLength(1);
+      await new Promise((r) => setTimeout(r, 250));
+    }
     // A cancelled card stays until closed.
     await card.getByTestId('transfers-close').click();
     await expect(page.getByTestId('transfers-card')).toHaveCount(0);
