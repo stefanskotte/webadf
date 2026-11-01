@@ -516,7 +516,7 @@ static void the_hello_is_protocol_3_with_requests(void) {
     fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
     snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
     as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
-    char want[64]; snprintf(want, sizeof want, "WEBADF 5 %s\n", KEY);
+    char want[64]; snprintf(want, sizeof want, "WEBADF 6 %s\n", KEY);
     CHECK(strcmp(F.out, want) == 0, F.out);
     CHECK_EQ_INT(as_rx_proto(&S), 0);
     reply("READY 3 1"); run(2);
@@ -1606,7 +1606,7 @@ static void the_hello_is_protocol_4_with_requests(void) {
     fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
     snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
     as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
-    char want[64]; snprintf(want, sizeof want, "WEBADF 5 %s\n", KEY);
+    char want[64]; snprintf(want, sizeof want, "WEBADF 6 %s\n", KEY);
     CHECK(strcmp(F.out, want) == 0, F.out);
     reply("READY 4 1 1"); run(2);
     CHECK_EQ_INT(as_rx_proto(&S), 4); CHECK(as_browse(&S), "browsing on"); CHECK(as_write(&S), "writing on");
@@ -1852,7 +1852,7 @@ static void the_hello_is_protocol_5_with_requests(void) {
     fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
     snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
     as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
-    char want[64]; snprintf(want, sizeof want, "WEBADF 5 %s\n", KEY);
+    char want[64]; snprintf(want, sizeof want, "WEBADF 6 %s\n", KEY);
     CHECK(strcmp(F.out, want) == 0, F.out);
     reply("READY 5 1 1"); run(2);
     CHECK_EQ_INT(as_rx_proto(&S), 5); CHECK(as_browse(&S), "browsing on"); CHECK(as_write(&S), "writing on");
@@ -1866,7 +1866,7 @@ static void the_hello_is_protocol_5_with_requests(void) {
 
 // Review Focus 4.
 static void a_malformed_ready_5_counts_as_1(void) {
-    static const char *const bad[] = { "READY 5 1", "READY 5 1 1 x", "READY 5 2 1", "READY 6 1 1", "READY 51 1 1" };
+    static const char *const bad[] = { "READY 5 1", "READY 5 1 1 x", "READY 5 2 1", "READY 7 1 1", "READY 51 1 1", "READY 6 1" };
     for (unsigned i = 0; i < sizeof bad / sizeof bad[0]; i++) {
         fresh(); as_set_key(&S, KEY); as_set_req(&S, &RQ);
         snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
@@ -1882,6 +1882,43 @@ static void a_ready_5_to_a_protocol_2_hello_counts_as_1(void) {
     as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
     reply("READY 5 1 1"); run(2);
     CHECK_EQ_INT(as_rx_proto(&S), 1); CHECK(!as_write(&S), "no write");
+}
+
+// --- Protocol 6 (fw 1.24.0): "MKDIR <rid> <path> icon" -- Transfer 2.9 gives the new drawer the default drawer icon ---
+static void ready6(int browse, int write) {
+    fresh();
+    as_set_key(&S, KEY);
+    as_set_req(&S, &RQ);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1);
+    run(2); F.sock = AS_SOCK_OPEN; run(1);
+    char r[16]; snprintf(r, sizeof r, "READY 6 %d %d", browse, write); reply(r); run(2);
+    clear_out();
+}
+static void a_ready_6_is_protocol_6(void) {
+    ready6(1, 1);
+    CHECK_EQ_INT(as_rx_proto(&S), 6); CHECK(as_browse(&S) && as_write(&S), "browsing and writing on");
+    ready6(1, 0);
+    CHECK_EQ_INT(as_rx_proto(&S), 6); CHECK(as_browse(&S) && !as_write(&S), "writing off");
+}
+static void mkdir_icon_is_relayed_at_protocol_6(void) {
+    ready6(1, 1);
+    wake(1, "MKDIR m 8:Work:New icon\n"); run(3);
+    CHECK(strcmp(F.out, "MKDIR m 8:Work:New icon\n") == 0, F.out);
+}
+// Transfer 2.6-2.8 (protocol 5) or 2.5 (4) would refuse the token: the drawer is still made, just without its icon.
+static void mkdir_icon_loses_the_icon_below_protocol_6(void) {
+    ready5(1, 1);
+    wake(1, "MKDIR m 8:Work:New icon\n"); run(3);
+    CHECK(strcmp(F.out, "MKDIR m 8:Work:New\n") == 0, F.out);
+    ready4(1, 1);
+    wake(1, "MKDIR m 8:Work:New icon\n"); run(3);
+    CHECK(strcmp(F.out, "MKDIR m 8:Work:New\n") == 0, F.out);
+}
+static void delete_one_is_still_relayed_at_protocol_6(void) {
+    ready6(1, 1);
+    wake(1, "DELETE o 8:Work:old one\n"); run(3);
+    CHECK(strcmp(F.out, "DELETE o 8:Work:old one\n") == 0, F.out);
 }
 
 // Review Focus 1: Transfer 2.5 answers WEBADF 5 with READY 4 (tools/receive/core/rx_proto.c on_hello).
@@ -2092,6 +2129,8 @@ int main(void) {
     RUN(an_unknown_mode_fails_the_row_name);
     RUN(a_relative_row_is_unchanged_at_protocol_4);
     RUN(the_hello_is_protocol_5_with_requests);
+    RUN(a_ready_6_is_protocol_6); RUN(mkdir_icon_is_relayed_at_protocol_6); RUN(mkdir_icon_loses_the_icon_below_protocol_6);
+    RUN(delete_one_is_still_relayed_at_protocol_6);
     RUN(a_malformed_ready_5_counts_as_1);
     RUN(a_ready_5_to_a_protocol_2_hello_counts_as_1);
     RUN(transfer_2_5_answers_ready_4_to_a_protocol_5_hello);

@@ -22,9 +22,11 @@
 // The writes (fw 1.23.0, spec 2026-10-31 section 2.3) go to Transfer only at protocol 4 or newer (amiga_send.c).
 // AR_DELETE_ONE (fw 1.23.1, spec section 9): "DELETE <rid> <len>:<path> one" -- exactly that object, a drawer only when
 // empty; it goes to Transfer only at protocol 5.
+// AR_MKDIR_ICON (fw 1.24.0, protocol 6): "MKDIR <rid> <len>:<path> icon" -- the drawer and the Amiga's default drawer
+// icon; below protocol 6 the board sends it as a plain MKDIR (the drawer without its icon).
 typedef enum { AR_NONE = 0, AR_VOLS, AR_DIR, AR_GET, AR_MKDIR, AR_RENAME, AR_DELETE, AR_PROTECT, AR_NOTE,
-               AR_DELETE_ONE } ar_kind_t;   // RULE: the writes run AR_MKDIR..AR_DELETE_ONE (ar_kind_is_write); a new kind goes before AR_DELETE_ONE or the range grows
-_Static_assert(AR_DELETE_ONE == AR_NOTE + 1, "ar_kind_is_write counts AR_MKDIR..AR_DELETE_ONE as writes");
+               AR_DELETE_ONE, AR_MKDIR_ICON } ar_kind_t;   // RULE: the writes run AR_MKDIR..AR_MKDIR_ICON (ar_kind_is_write); a new write kind goes at the end and the range grows
+_Static_assert(AR_MKDIR_ICON == AR_NOTE + 2, "ar_kind_is_write counts AR_MKDIR..AR_MKDIR_ICON as writes");
 bool ar_kind_is_write(ar_kind_t k);
 
 // A GET Transfer answered GOT: its file comes up later as an upload with this tag. err_owed: the GET failed after its

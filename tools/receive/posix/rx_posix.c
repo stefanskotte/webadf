@@ -359,7 +359,8 @@ int main(int argc, char **argv) {
     rx_fs fs = { &ctx, p_folder_ok, p_free, p_exists, p_make_dir, p_open_w, p_write, p_close_w, p_rename, p_remove, p_set_meta,
                  p_is_dir, p_list, p_open_r, p_read, p_close_r,
                  p_vols, p_dir_open, p_dir_next, p_dir_close, p_stat, p_fault,   /* protocol 3, used only while Q.browse */
-                 p_err, p_free_at, p_w_mkdir, p_w_rename, p_w_delete, p_w_protect, p_w_note };   /* protocol 4 */
+                 p_err, p_free_at, p_w_mkdir, p_w_rename, p_w_delete, p_w_protect, p_w_note,   /* protocol 4 */
+                 NULL };   /* protocol 6: no icon.library on a host, so no drawer icons */
     struct sockaddr_in a;
     socklen_t al = sizeof a;
     int one = 1, ls, cl = -1, stdin_open = 1;

@@ -12,7 +12,7 @@ import { mapLimit } from '@/lib/pool';
 import { MOVE_OLD_TRANSFER, writeBlock } from '@/lib/remote-browse';
 import { addWrites, latestFor, type WriteReq } from '@/lib/remote-requests';
 import { amigaPathOf, newRequestId, type EntryInfo } from '@/lib/remote-wire';
-import { FETCH_MAX_BYTES, FETCH_MAX_FILES, MOVE_PROTO, QUEUE_FOLDER } from '@/lib/remote-limits';
+import { DRAWER_ICON_PROTO, FETCH_MAX_BYTES, FETCH_MAX_FILES, MOVE_PROTO, QUEUE_FOLDER } from '@/lib/remote-limits';
 import { SEND_FILE_MAX, queueTransfers, type ClashMode, type QueueFile } from '@/lib/transfers';
 import { formatPath, parsePath, type FsPath } from './path';
 import {
@@ -106,7 +106,10 @@ export async function makedirOnVolume(ctx: OpCtx, dir: FsPath, name: string): Pr
   if (has(await rememberedEntries(t.id, at.amiga), name)) refuse('name_exists', 409);
   const job = newRequestId();
   await addWrites(getDb(), { orgId: ctx.orgId, deviceId: t.id, jobId: job,
-    writes: [{ kind: 'mkdir', amigaPath: joinAmiga(at.amiga, name), label: joinAmiga(at.shown, name) }] });
+    writes: [{ kind: 'mkdir', amigaPath: joinAmiga(at.amiga, name), label: joinAmiga(at.shown, name),
+      // Workbench shows a drawer without an icon only under Show All Files: from protocol 6 Transfer gives it the
+      // Amiga's own default drawer icon (a copy's drawers bring their own .info, so only a Makedir asks).
+      ...((t.rxProto ?? 0) >= DRAWER_ICON_PROTO ? { args: { drawerIcon: true } } : {}) }] });
   return done([{ source: netPath(at.board, ...at.segs, name), ok: true }], job, 1);
 }
 

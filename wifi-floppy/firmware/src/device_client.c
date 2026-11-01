@@ -1249,9 +1249,9 @@ void dc_set_send(device_client_t *c, uint32_t acked_version, char rx) {
 void dc_set_req(device_client_t *c, uint32_t acked_version, int proto, bool browse, bool write) {
     c->_req_on = true;
     c->_req_ack = acked_version;
-    c->_req_proto = (proto >= 2 && proto <= 5) ? (uint8_t)proto : 0;   // 5: Transfer 2.6 (fw 1.23.1)
+    c->_req_proto = (proto >= 2 && proto <= 6) ? (uint8_t)proto : 0;   // 5: Transfer 2.6 (fw 1.23.1); 6: 2.9 (fw 1.24.0)
     c->_req_browse = browse;
-    c->_req_write = write && (proto == 4 || proto == 5);
+    c->_req_write = write && proto >= 4 && proto <= 6;
 }
 
 bool dc_drive_take(device_client_t *c, uint32_t *seq, df1_mode_t *mode) {
@@ -2188,7 +2188,7 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     if (c->_send_on && plen > 0 && plen < (int)sizeof path)
         snprintf(path + plen, sizeof path - (size_t)plen, "&xferAck=%lu&rx=%c",
                  (unsigned long)c->_send_ack, c->_send_rx);
-    // NET: volumes (fw 1.22.0): reqAck after rx; rxv and browse only while Transfer is connected at protocol 2-5, and
+    // NET: volumes (fw 1.22.0): reqAck after rx; rxv and browse only while Transfer is connected at protocol 2-6, and
     // write beside them (fw 1.23.0, ruling N3: 0 below protocol 4, so the server is told when a 2.5 gives way to a 2.4).
     plen = (int)strnlen(path, sizeof path);
     if (c->_req_on && plen > 0 && plen < (int)sizeof path) {

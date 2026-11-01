@@ -3881,10 +3881,15 @@ static void req_poll_params_only_once_set(void) {
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
     CHECK(strstr(fake_last_request(), "&reqAck=5&rxv=5&browse=1&write=0 HTTP/1.1\r\n") != NULL, "Transfer 2.6, writing off");
+    // fw 1.24.0: Transfer 2.9 is reported as rxv=6 (MKDIR icon); nothing above 6 exists yet.
     boot(); dc_set_send(&c, 4, 'c'); dc_set_req(&c, 5, 6, true, true);
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
-    CHECK(strstr(fake_last_request(), "rxv") == NULL && strstr(fake_last_request(), "write") == NULL, "no protocol 6");
+    CHECK(strstr(fake_last_request(), "&reqAck=5&rxv=6&browse=1&write=1 HTTP/1.1\r\n") != NULL, "Transfer 2.9, writing on");
+    boot(); dc_set_send(&c, 4, 'c'); dc_set_req(&c, 5, 7, true, true);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "rxv") == NULL && strstr(fake_last_request(), "write") == NULL, "no protocol 7");
     boot(); dc_set_send(&c, 4, 'u'); dc_set_req(&c, 5, 0, false, true);
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);

@@ -132,6 +132,13 @@ describe('one-line writes on a volume', () => {
     expect(await op({ op: 'makedir', dest: 'NET:/w1/Work', name: 'sub' })).toMatchObject({ kind: 'refused', refusal: { code: 'name_exists' } });
     expect(await op({ op: 'makedir', dest: 'NET:/w1/Work', name: 'a:b' })).toMatchObject({ kind: 'refused', refusal: { code: 'bad_name' } });
   });
+  it('Makedir asks for the default drawer icon only from protocol 6 (fw 1.24.0, Transfer 2.9)', async () => {
+    await getDb().update(devices).set({ rxProto: 6 }).where(eq(devices.id, 'w1'));
+    await op({ op: 'makedir', dest: 'NET:/w1/Work', name: 'New' });
+    expect(await lines()).toEqual([['mkdir', 'Work:New', { label: 'Work:New', drawerIcon: true }]]);
+    await op({ op: 'makedir', dest: 'NET:/w2/Work', name: 'New' });   // w2: protocol 5
+    expect(await lines('w2')).toEqual([['mkdir', 'Work:New', { label: 'Work:New' }]]);
+  });
 
   it('Rename is a RENAME, its icon along; with nothing remembered the icon goes as a maybe', async () => {
     expect(await op({ op: 'rename', source: W('a.txt'), name: 'b.txt' })).toMatchObject({ kind: 'done', job: { writes: 2 } });

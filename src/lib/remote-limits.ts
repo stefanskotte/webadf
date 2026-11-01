@@ -18,6 +18,8 @@ export const WRITE_FW = '1.23.0';
 export const WRITE_PROTO = 4;
 /** Spec 2026-10-31 §9: Transfer 2.6 (protocol 5) deletes exactly one object (`DELETE … one`); a move that copies needs it. */
 export const MOVE_PROTO = 5;
+/** Protocol 6 (fw 1.24.0, Transfer 2.9): a Makedir also gives the drawer the Amiga's default drawer icon (`MKDIR … icon`). */
+export const DRAWER_ICON_PROTO = 6;
 export const ALIVE_PIECE_MS = 30_000;        // a listing arriving in pieces is alive while one came this recently (§4.4)
 export const WRITE_KINDS = ['mkdir', 'rename', 'delete', 'protect', 'note'] as const;
 export type WriteKind = (typeof WRITE_KINDS)[number];

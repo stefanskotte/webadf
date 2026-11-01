@@ -483,7 +483,7 @@ static void a_protocol_5_hello(void) {
     setup(1, 0); hello5(); CHECK(strcmp(ob, "READY 5 1 0\n") == 0, ob);
     setup(0, 1); hello5(); CHECK(strcmp(ob, "READY 5 0 0\n") == 0, ob);
     setup(1, 1); feed("WEBADF 5 " KEY2 "\n"); drain(); CHECK(strcmp(ob, "READY 5 0 0\n") == 0, "another key");
-    setup(1, 1); feed("WEBADF 9 " KEY "\n"); drain(); CHECK(strcmp(ob, "READY 5 1 1\n") == 0, "a newer board is answered as 5");
+    setup(1, 1); feed("WEBADF 9 " KEY "\n"); drain(); CHECK(strcmp(ob, "READY 6 1 1\n") == 0, "a newer board is answered as 6");
     setup(1, 1); hello5(); Q.write = 0; CHECK(rx_hello_stale(&S), "the write flag is heard on 5 too");
 }
 static void delete_one_a_file(void) {
@@ -774,6 +774,51 @@ static void a_lost_connection_during_the_drain(void) {
     rx_switch_changed(&S); CHECK(!rx_busy(&S), "a no-op when idle");
 }
 
+/* --- Transfer 2.9, protocol 6: "MKDIR <rid> <path> icon" also gives the drawer the Amiga's default drawer icon --- */
+static void hello6(void) { feed("WEBADF 6 " KEY "\n"); drain(); }
+static void a_protocol_6_hello(void) {
+    setup(1, 1); hello6(); CHECK(strcmp(ob, "READY 6 1 1\n") == 0, ob);
+    setup(1, 0); hello6(); CHECK(strcmp(ob, "READY 6 1 0\n") == 0, ob);
+    setup(1, 1); hello5(); CHECK(strcmp(ob, "READY 5 1 1\n") == 0, "a protocol 5 board still hears 5");
+}
+static void mkdir_icon_makes_the_drawer_and_its_icon(void) {
+    setup(1, 1); hello6();
+    CHECK(strcmp(req("MKDIR m1 8:Work:New icon\n"), "DONE m1 1\n") == 0, ob);
+    CHECK(has("Work:New") && F.e[ff_find(&F, "Work:New")].is_dir, "the drawer");
+    CHECK(has("Work:New.info") && !F.e[ff_find(&F, "Work:New.info")].is_dir, "its icon");
+    CHECK(F.icons == 1, "one icon written");
+}
+static void mkdir_without_icon_makes_no_icon(void) {
+    setup(1, 1); hello6();
+    CHECK(strcmp(req("MKDIR m1 8:Work:New\n"), "DONE m1 1\n") == 0, ob);
+    CHECK(has("Work:New") && !has("Work:New.info") && F.icons == 0, "no icon");
+}
+static void an_existing_icon_is_kept(void) {
+    setup(1, 1); ff_put(&F, "Work:New.info", "mine", 4, 0, ""); hello6();
+    CHECK(strcmp(req("MKDIR m1 8:Work:New icon\n"), "DONE m1 1\n") == 0, ob);
+    CHECK(holds("Work:New.info", "mine") && F.icons == 0, "the owner's icon untouched");
+}
+static void a_failed_icon_still_makes_the_drawer(void) {
+    setup(1, 1); F.icon_fail = 221; hello6();
+    CHECK(strcmp(req("MKDIR m1 8:Work:New icon\n"), "DONE m1 1\n") == 0, ob);
+    CHECK(has("Work:New") && !has("Work:New.info"), "the drawer, without its icon");
+}
+static void a_failed_mkdir_writes_no_icon(void) {
+    setup(1, 1); ff_put(&F, "Work:New", "x", 1, 0, ""); hello6();
+    CHECK(strcmp(req("MKDIR m1 8:Work:New icon\n"), "ERR m1 exists 13:dos error 203\n") == 0, ob);
+    CHECK(!has("Work:New.info") && F.icons == 0, "no icon for a drawer not made");
+}
+static void icon_on_protocol_5_or_another_verb_is_bad(void) {
+    setup(1, 1); hello5();
+    CHECK(strcmp(req("MKDIR o 8:Work:New icon\n"), "ERR o bad 11:bad request\n") == 0, ob); CHECK(!has("Work:New"), "not made");
+    setup(1, 1); hello6();
+    CHECK(strcmp(req("MKDIR o 8:Work:New icons\n"), "ERR o bad 11:bad request\n") == 0, "another token");
+    CHECK(strcmp(req("MKDIR o 8:Work:New icon icon\n"), "ERR o bad 11:bad request\n") == 0, "twice");
+    ff_put(&F, "Work:x", "x", 1, 0, "");
+    CHECK(strcmp(req("DELETE o 6:Work:x icon\n"), "ERR o bad 11:bad request\n") == 0, "only MKDIR takes it");
+    CHECK(strcmp(req("DELETE o 6:Work:x one\n"), "DONE o 1\n") == 0, "protocol 6 keeps DELETE one");
+}
+
 int main(void) {
     RUN(a_protocol_4_hello_answers_both_switches); RUN(older_hellos_are_answered_as_before);
     RUN(a_changed_write_switch_makes_the_hello_stale);
@@ -803,6 +848,9 @@ int main(void) {
     RUN(a_lost_connection_renames_it_back); RUN(protocol_4_deletes_in_place);
     RUN(a_stop_restores_the_disks_spelling); RUN(a_stop_on_the_drawer_itself_renames_it_back);
     RUN(a_lost_connection_says_where_the_rest_is); RUN(the_rest_is_in_is_cut_to_79_bytes);
+    RUN(a_protocol_6_hello); RUN(mkdir_icon_makes_the_drawer_and_its_icon); RUN(mkdir_without_icon_makes_no_icon);
+    RUN(an_existing_icon_is_kept); RUN(a_failed_icon_still_makes_the_drawer); RUN(a_failed_mkdir_writes_no_icon);
+    RUN(icon_on_protocol_5_or_another_verb_is_bad);
     (void)feedn; (void)lines_starting; (void)last_ev; (void)ff_put;
     return REPORT();
 }

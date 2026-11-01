@@ -90,7 +90,7 @@ describe('Receive (POSIX build) against the fake board', () => {
     try {
       const res = await runWriteScenarios(port, { work: path.join(root, 'Work'), write: (on) => proc.stdin!.write(`WRITE ${on ? 1 : 0}\n`) });
       expect(res.filter((r) => !r.ok)).toEqual([]);
-      expect(res).toHaveLength(25);
+      expect(res).toHaveLength(28);
       expect(lines).toContain('REQ delete Work:Old 301 ok');
       expect(lines).toContain('REQ delete Work:Old5 61 ok');   // the owner hears the drawer's own name (Transfer 2.6)
       expect(lines).toContain(`REQ rename Work:a.txt Work:Tools/a.txt 1 ok`);

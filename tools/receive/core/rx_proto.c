@@ -162,7 +162,7 @@ static void on_hello(rx_session *s, cur *c) {
         if (s->upq) emit_trust(s, "old");
         return;
     }
-    s->peer_v = v >= 5 ? 5 : v == 4 ? 4 : v == 3 ? 3 : 2;
+    s->peer_v = v >= 6 ? 6 : v == 5 ? 5 : v == 4 ? 4 : v == 3 ? 3 : 2;
     if (!tok(c, &t, &n) || !hex_key(t, n, s->peer_key)) s->peer_key[0] = 0;
     if (!s->upq) s->trust = RX_TRUST_NONE;
     else if (!s->peer_key[0]) { s->trust = RX_TRUST_OTHER; code = "other"; }
@@ -171,9 +171,9 @@ static void on_hello(rx_session *s, cur *c) {
         s->trust = RX_TRUST_OK; code = "new";
     } else if (strcmp(s->upq->trusted, s->peer_key) == 0) { s->trust = RX_TRUST_OK; code = "ok"; }
     else { s->trust = RX_TRUST_OTHER; code = "other"; }
-    if (s->peer_v >= 4) {   /* spec 2026-10-31 §2.1: READY 4 <b> <w>, w only with b; §9: READY 5 alike */
+    if (s->peer_v >= 4) {   /* spec 2026-10-31 §2.1: READY 4 <b> <w>, w only with b; §9: READY 5 alike; 6 (drawer icons) too */
         s->hello_browse = rx_browse_on(s); s->hello_write = rx_write_on(s);
-        puts_(s, s->peer_v == 5 ? "READY 5 " : "READY 4 ");
+        puts_(s, s->peer_v == 6 ? "READY 6 " : s->peer_v == 5 ? "READY 5 " : "READY 4 ");
         puts_(s, s->hello_write ? "1 1\n" : s->hello_browse ? "1 0\n" : "0 0\n");
     } else if (s->peer_v == 3) {
         s->hello_browse = rx_browse_on(s);
@@ -500,7 +500,11 @@ static void write_start(rx_session *s) {
     if ((i = vol_find(s->req_path, k)) < 0) { req_fail(s, RX_DOS_NOT_FOUND, 1); return; }
     s->req_count = 1;
     switch (s->req_kind) {
-    case RX_REQ_MKDIR: e = s->fs->w_mkdir(s->fs->ctx, s->req_path); break;
+    case RX_REQ_MKDIR:
+        e = s->fs->w_mkdir(s->fs->ctx, s->req_path);
+        /* protocol 6: the drawer is made; a missing icon only means Workbench shows it under Show All Files */
+        if (!e && s->req_num && s->fs->w_icon) (void)s->fs->w_icon(s->fs->ctx, s->req_path);
+        break;
     case RX_REQ_RENAME:
         if ((j = vol_find(s->req_arg, k)) < 0) { req_fail(s, RX_DOS_NOT_FOUND, 1); return; }
         /* W10: two volumes are two devices; a volume and its own device name are one */
@@ -612,6 +616,8 @@ static int write_args(const rx_session *s, cur *c, int kind, const char *path, c
     if (kind == RX_REQ_NOTE) return lenstr(c, arg, RX_COMMENT_MAX + 1, 0) && no_control(arg);
     /* spec §9: protocol 5's "DELETE <rid> <path> one" deletes that object only; on protocol 4 the token is junk */
     if (kind == RX_REQ_DELETE && s->peer_v >= 5 && c->p < c->end) { *bits = 1; return tok(c, &t, &n) && is(t, n, "one"); }
+    /* protocol 6: "MKDIR <rid> <path> icon" also gives the new drawer the default drawer icon; on 5 the token is junk */
+    if (kind == RX_REQ_MKDIR && s->peer_v >= 6 && c->p < c->end) { *bits = 1; return tok(c, &t, &n) && is(t, n, "icon"); }
     return 1;
 }
 /* "VOLS <rid>", "DIR <rid> <len>:<path>", "GET <rid> <len>:<path>", and the writes (protocol 4): refused at once, or

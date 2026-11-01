@@ -288,13 +288,18 @@ static int gui_pass(void *u, rx_session *s, int connected) {
     return 0;
 }
 static const char *dir_text(gui *G) { return (const char *)((struct StringInfo *)G->g[G_DIR]->SpecialInfo)->Buffer; }
+static void save(gui *G);
+/* Transfer 2.9 (field report, 2026-11-01): a folder chosen, or typed and confirmed with Return, is saved at once --
+   before, it took effect only after Save, and files kept going to the old folder. */
 static void choose(gui *G) {
     struct FileRequester *fr = AllocAslRequestTags(ASL_FileRequest,
         ASLFR_Window, (ULONG)G->win, ASLFR_TitleText, (ULONG)"Save files to",
         ASLFR_InitialDrawer, (ULONG)dir_text(G), ASLFR_DrawersOnly, TRUE, TAG_END);
     if (!fr) return;
-    if (AslRequest(fr, NULL))
+    if (AslRequest(fr, NULL)) {
         GT_SetGadgetAttrs(G->g[G_DIR], G->win, NULL, GTST_String, (ULONG)fr->fr_Drawer, TAG_END);
+        save(G);
+    }
     FreeAslRequest(fr);
 }
 static void save(gui *G) {
@@ -353,7 +358,7 @@ static int on_signal(void *u, ULONG sigs) {
         else if (cls == IDCMP_MENUPICK) menu_pick(G, code);
         else if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(G->win); GT_EndRefresh(G->win, TRUE); }
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_CHOOSE) choose(G);
-        else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_SAVE) save(G);
+        else if (cls == IDCMP_GADGETUP && (gad->GadgetID == G_SAVE || gad->GadgetID == G_DIR)) save(G);
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_BROWSE) set_browse(G, (gad->Flags & GFLG_SELECTED) != 0);
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_WRITE) set_write(G, (gad->Flags & GFLG_SELECTED) != 0);
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_SEND) send_files(G);

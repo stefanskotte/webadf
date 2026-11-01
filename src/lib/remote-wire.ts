@@ -7,7 +7,9 @@ export type RemoteKind = 'vols' | 'dir' | 'get' | WriteKind;
 /** A write request's arguments (spec 2026-10-31 §2.3), kept in remote_requests.target: RENAME's target, PROTECT's bits, NOTE's comment. */
 export type WriteArgs = { to?: string; protection?: number; comment?: string;
   /** DELETE exactly this object, a drawer only when empty (protocol 5, spec 2026-10-31 §9): the line ends ` one`. */
-  one?: boolean };
+  one?: boolean;
+  /** MKDIR: the new drawer also gets the Amiga's default drawer icon (protocol 6): the line ends ` icon`. */
+  drawerIcon?: boolean };
 export type VolumeInfo = { name: string; device: string; size: number; free: number; date: string };
 export type EntryInfo = { name: string; dir: boolean; size: number; protection: number; date: string; comment: string };
 export type AnswerLine =
@@ -24,7 +26,7 @@ export function requestLine(r: { id: string; kind: RemoteKind; amigaPath: string
     case 'vols': return `VOLS ${r.id}\n`;
     case 'dir': return `DIR ${r.id} ${lp(r.amigaPath)}\n`;
     case 'get': return `GET ${r.id} ${lp(r.amigaPath)}\n`;
-    case 'mkdir': return `MKDIR ${r.id} ${lp(r.amigaPath)}\n`;
+    case 'mkdir': return `MKDIR ${r.id} ${lp(r.amigaPath)}${a.drawerIcon ? ' icon' : ''}\n`;
     case 'delete': return `DELETE ${r.id} ${lp(r.amigaPath)}${a.one ? ' one' : ''}\n`;
     case 'rename': return `RENAME ${r.id} ${lp(r.amigaPath)} ${lp(a.to ?? '')}\n`;
     case 'protect': return `PROTECT ${r.id} ${lp(r.amigaPath)} ${((a.protection ?? 0) >>> 0).toString(16)}\n`;

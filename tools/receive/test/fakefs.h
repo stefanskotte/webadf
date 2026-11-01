@@ -33,6 +33,7 @@ typedef struct {
        the error a failing write gives; dir_open fails with dir_err from the dir_err_at-th open on (0 never); a count of
        the write hooks called */
     long last_err; char wprot[32]; unsigned long vol_free; long write_err; long dir_err; int dir_err_at; int writes;
+    int icons; long icon_fail;   /* protocol 6: drawer icons written; a DOS error w_icon fails with */
     char fail_rename_to[64]; int fail_renames;   /* a rename onto that name (or, fail_renames, every rename) fails 203 */
     /* Transfer 2.6: every w_rename fails with rename_err (0 never); after a w_rename that worked, plant is put (its drawers
        made: something saved by the old path meanwhile); the w_renames called, and the last one's paths */
@@ -236,6 +237,13 @@ static long ff_w_mkdir(void *c, const char *path) {
     if (ff_find(f, p) < 0) return RX_DOS_NOT_FOUND;   /* the parent must exist: one level */
     ff_add(f, path, 1); return 0;
 }
+static long ff_w_icon(void *c, const char *path) {
+    fakefs *f = c; char p[RX_LOCAL_MAX + 6]; int i;
+    snprintf(p, sizeof p, "%s.info", path);
+    if (ff_find(f, p) >= 0) return 0;   /* an icon already there is kept */
+    if (f->icon_fail) return f->icon_fail;
+    i = ff_add(f, p, 0); f->e[i].len = 0; f->icons++; return 0;
+}
 static long ff_w_rename(void *c, const char *from, const char *to) {
     fakefs *f = c; long r;
     f->renames++; snprintf(f->last_from, sizeof f->last_from, "%s", from); snprintf(f->last_to, sizeof f->last_to, "%s", to);
@@ -278,7 +286,7 @@ static void ff_init(fakefs *f, rx_fs *fs) {
     fs->vols = ff_vols; fs->dir_open = ff_dir_open; fs->dir_next = ff_dir_next; fs->dir_close = ff_dir_close;
     fs->stat = ff_stat; fs->fault = ff_fault;
     fs->err = ff_err; fs->free_at = ff_free_at;
-    fs->w_mkdir = ff_w_mkdir; fs->w_rename = ff_w_rename; fs->w_delete = ff_w_delete; fs->w_protect = ff_w_protect;
+    fs->w_mkdir = ff_w_mkdir; fs->w_icon = ff_w_icon; fs->w_rename = ff_w_rename; fs->w_delete = ff_w_delete; fs->w_protect = ff_w_protect;
     fs->w_note = ff_w_note;
 
 }

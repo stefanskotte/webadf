@@ -281,6 +281,29 @@ static void delete_one_is_its_own_kind(void) {
     CHECK(strcmp(R.rid, "e") == 0, R.rid);
 }
 
+// fw 1.24.0 (protocol 6): "MKDIR <rid> <len>:<path> icon" -- the drawer and its default drawer icon.
+static void mkdir_icon_is_its_own_kind(void) {
+    load("MKDIR m 8:Work:New icon\nMKDIR n 8:Work:New\n");
+    CHECK(ar_take(&R, NULL) && R.kind == AR_MKDIR_ICON, "icon");
+    CHECK(strcmp(R.rid, "m") == 0, R.rid);
+    CHECK(strcmp(R.out, "MKDIR m 8:Work:New icon\n") == 0 && R.out_n == 24, R.out);
+    CHECK(ar_kind_is_write(R.kind), "a write");
+    ar_finish(&R);
+    CHECK(ar_take(&R, NULL) && R.kind == AR_MKDIR, "without icon: a plain Makedir");
+}
+static void a_path_ending_in_icon_is_a_plain_mkdir(void) {
+    load("MKDIR m 11:Work:a icon\n");
+    CHECK(ar_take(&R, NULL) && R.kind == AR_MKDIR, "a drawer named \"a icon\"");
+}
+static void malformed_mkdir_tails_are_skipped(void) {
+    load("MKDIR a 6:Work:a ICON\nMKDIR b 6:Work:a icon \nMKDIR c 6:Work:a icons\nMKDIR d 6:Work:a icon icon\n"
+         "MKDIR e 6:Work:a  icon\nDELETE f 6:Work:a icon\nMKDIR g 6:Work:a one\nMKDIR ok 6:Work:a icon\n");
+    int bad = 0;
+    CHECK(ar_take(&R, &bad) && strcmp(R.rid, "ok") == 0, R.rid);
+    CHECK(R.kind == AR_MKDIR_ICON, "the good one");
+    CHECK_EQ_INT(bad, 7);
+}
+
 // Review Focus 2: the length decides where the path ends.
 static void a_path_ending_in_one_is_a_plain_delete(void) {
     load("DELETE d 10:Work:a one\n");
@@ -348,6 +371,7 @@ int main(void) {
     RUN(del_is_an_answer_verb);
     RUN(refetch_room_takes_eight_renames);
     RUN(delete_one_is_its_own_kind);
+    RUN(mkdir_icon_is_its_own_kind); RUN(a_path_ending_in_icon_is_a_plain_mkdir); RUN(malformed_mkdir_tails_are_skipped);
     RUN(a_path_ending_in_one_is_a_plain_delete);
     RUN(malformed_delete_tails_are_skipped);
     return REPORT();

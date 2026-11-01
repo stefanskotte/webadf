@@ -99,6 +99,7 @@ describe('fix round 1: name rules', () => {
 describe('write requests', () => {
   it('writes MKDIR, RENAME, DELETE, PROTECT and NOTE with length-prefixed Latin-1 fields', () => {
     expect(requestLine({ id: 'r1', kind: 'mkdir', amigaPath: 'Work:New' })).toBe('MKDIR r1 8:Work:New\n');
+    expect(requestLine({ id: 'r1', kind: 'mkdir', amigaPath: 'Work:New', target: { drawerIcon: true } })).toBe('MKDIR r1 8:Work:New icon\n');
     expect(requestLine({ id: 'r1', kind: 'rename', amigaPath: 'Work:Würfel', target: { to: 'Work:Würfel 2' } }))
       .toBe('RENAME r1 11:Work:Würfel 13:Work:Würfel 2\n');
     expect(requestLine({ id: 'r1', kind: 'delete', amigaPath: 'Work:old' })).toBe('DELETE r1 8:Work:old\n');

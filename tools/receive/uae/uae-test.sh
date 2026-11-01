@@ -126,6 +126,7 @@ if [ "$mode" = write ]; then
   for i in $(seq -w 0 299); do : > "$work/hd/Old/f$i"; done
   # protocol 5 (spec §9): One5.txt, Empty5/, Full5/f, Old5/ with 60 files
   mkdir -p "$work/hd/Empty5" "$work/hd/Full5" "$work/hd/Old5"; printf '1' > "$work/hd/One5.txt"; printf 'f' > "$work/hd/Full5/f"
+  printf 'mine' > "$work/hd/Kept6.info"   # protocol 6: an icon already there stays (w6-icon-kept)
   for i in $(seq -w 0 59); do : > "$work/hd/Old5/f$i"; done
   printf 'x' > "$work/x1"; head -c 700000 /dev/zero > "$work/big"
   xdftool "$work/prot.adf" create + format Prot ofs >/dev/null
