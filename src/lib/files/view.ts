@@ -79,6 +79,8 @@ export function paneDefaults(p: UserPrefs['files']['panes']): { left: string; ri
 
 /** R9: the "?" in a pane's header. */
 export function paneHelpTopic(path: string): HelpTopicId {
-  const d = parsePath(path)?.device;
-  return d === 'STASH' || d === 'NET' ? 'stash-net' : 'files';
+  const p = parsePath(path);
+  // NET:/<board>/<volume>/… is the Amiga's own disks; NET:, a board and its Queue are what waits to be sent.
+  if (p?.device === 'NET' && p.segments.length >= 2 && p.segments[1] !== 'Queue') return 'amiga-disks';
+  return p?.device === 'STASH' || p?.device === 'NET' ? 'stash-net' : 'files';
 }
