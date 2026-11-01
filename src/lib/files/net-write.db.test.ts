@@ -48,8 +48,11 @@ const gets = async () => getDb().select().from(remoteRequests).where(eq(remoteRe
 const op = (o: Parameters<typeof runOp>[1]) => runOp(ctx, o);
 
 let n = 0;
+/** What each drawer on the Amiga holds now (as last remembered): what a fresh listing answers (answerFresh). */
+const amigaNow = new Map<string, ReturnType<typeof ent>[]>();
 /** A remembered (answered just now) listing of `amigaPath` on a board. */
 async function remember(amigaPath: string, entries: ReturnType<typeof ent>[], deviceId = 'w1') {
+  amigaNow.set(`${deviceId} ${amigaPath.toLowerCase()}`, entries);
   const now = new Date();
   await getDb().insert(remoteRequests).values({ id: `dir-${deviceId}-${++n}`, orgId: 'o1', deviceId, kind: 'dir', amigaPath,
     status: 'done', answer: { volumes: [], entries }, createdAt: now, sentAt: now, answeredAt: now });
@@ -75,6 +78,22 @@ async function arrive(rid: string, amigaPath: string, bytes: Uint8Array, deviceI
   expect((await closeUpload(getDb(), deviceId, o.id, crc32(bytes) >>> 0)).ok).toBe(true);
   await placeFetched(getDb(), o.id);
   return o.id;
+}
+/**
+ * The fresh listings a move off a volume asks before it removes anything (final review I-1), answered as the Amiga holds
+ * them now (`changed` overrides a drawer), each answer then handed on as the req route does.
+ */
+async function answerFresh(deviceId = 'w1', changed: Record<string, ReturnType<typeof ent>[]> = {}) {
+  const { afterRequestAnswered } = await import('./net-moves');
+  const day = (iso: string) => `${Math.round((Date.parse(iso) - Date.UTC(1978, 0, 1)) / 86_400_000)}.0.0`;
+  const asked = (await takeWaiting(getDb(), deviceId)).filter((r) => r.kind === 'dir');
+  for (const r of asked) {
+    const es = changed[r.amigaPath] ?? amigaNow.get(`${deviceId} ${r.amigaPath.toLowerCase()}`) ?? [];
+    const lines = [...es.map((e) => `ENT ${r.id} ${e.dir ? 'd' : 'f'} ${e.size} 0 ${day(e.date)} ${e.name.length}:${e.name} 0:`), `DONE ${r.id} ${es.length}`];
+    expect(await answerPiece(getDb(), deviceId, r.id, { piece: 0, lines, last: true })).toEqual({ ok: true });
+    await afterRequestAnswered(getDb(), deviceId, r.id);
+  }
+  return asked.map((r) => r.amigaPath);
 }
 /** The board takes its queue's NEXT row and reports how it went (as the done route would, then its settling). */
 async function deliver(id: string, outcome: Parameters<typeof finishTransfer>[3], deviceId = 'w1') {
@@ -355,6 +374,8 @@ describe('moves', () => {
     expect(r).toMatchObject({ kind: 'done', fetching: { files: 1 } });
     const [g] = await gets();
     await arrive(g.id, 'Work:x', new TextEncoder().encode('xx'));
+    expect(await writes()).toEqual([]);   // first the drawer is read afresh: is Work:x still the file copied?
+    expect(await answerFresh()).toEqual(['Work:']);
     expect((await writes()).map((w) => [w.kind, w.amigaPath, w.target])).toEqual([['delete', 'Work:x', { label: 'Work:x', one: true }]]);
     // What arrived moves on again, onto a drawer of the volume.
     const back = await op({ op: 'move', sources: ['STASH:/x'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
@@ -378,6 +399,7 @@ describe('moves', () => {
     expect(await listStash(getDb(), 'o1')).toEqual([]);
     expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ total: 1, done: 0, waiting: 1, direction: 'to' });
     await deliver(row.id, { ok: true, savedAs: 'DF0:x' }, 'w2');
+    await answerFresh();
     expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ total: 1, done: 1, waiting: 0 });
     expect((await writes()).map((w) => `${w.kind} ${w.amigaPath}`)).toEqual(['delete Work:x']);
   });
@@ -397,6 +419,7 @@ describe('moves', () => {
     await arrive(gb.id, 'Work:Pair/b', new TextEncoder().encode('b'));
     const rb = (await rows('w2')).find((x) => x.id !== ra.id)!;
     await deliver(rb.id, { ok: true, savedAs: 'DF0:Pair/b' }, 'w2');
+    await answerFresh();
     // Spec §9: what was copied, one object at a time, the drawer last (never the drawer as it is at the end).
     expect((await writes()).map((w) => `${w.kind} ${w.amigaPath} ${(w.target as { one?: boolean }).one}`))
       .toEqual(['delete Work:Pair/a true', 'delete Work:Pair/b true', 'delete Work:Pair true']);
@@ -465,7 +488,7 @@ describe('safe moves off a volume (protocol 5)', () => {
     await remember('Work:Pair', [ent('a', 1), ent('E', 0, true), ent('b', 1)]);
     await remember('Work:Pair/E', []);
   });
-  const oneLines = async (deviceId = 'w1') => (await writes(deviceId)).map((w) => `${w.kind} ${w.amigaPath}${(w.target as { one?: boolean }).one ? ' one' : ''}`);
+  const oneLines = async (deviceId = 'w1') => (await writes(deviceId)).filter((w) => w.status !== 'failed').map((w) => `${w.kind} ${w.amigaPath}${(w.target as { one?: boolean }).one ? ' one' : ''}`);
   const answerAll = async (deviceId: string, answer: (rid: string, path: string) => string) => {
     for (const r of await takeWaiting(getDb(), deviceId)) {
       expect(await answerPiece(getDb(), deviceId, r.id, { piece: 0, lines: [answer(r.id, r.amigaPath)], last: true })).toEqual({ ok: true });
@@ -480,8 +503,9 @@ describe('safe moves off a volume (protocol 5)', () => {
     await arrive(ga.id, 'Work:Pair/a', new TextEncoder().encode('a'));
     expect(await oneLines()).toEqual([]);   // b has not arrived: nothing goes
     await arrive(gb.id, 'Work:Pair/b', new TextEncoder().encode('b'));
-    // Never the drawer whole, never its icon (not copied): exactly what the walk found.
-    expect(await oneLines()).toEqual(['delete Work:Pair/a one', 'delete Work:Pair/b one', 'delete Work:Pair/E one', 'delete Work:Pair one']);
+    expect(await answerFresh()).toEqual(['Work:Pair']);
+    // Never the drawer whole, never its icon (not copied), never the empty drawer STASH: did not get: what was copied.
+    expect(await oneLines()).toEqual(['delete Work:Pair/a one', 'delete Work:Pair/b one', 'delete Work:Pair one']);
     // On the Amiga a file was saved into Work:Pair during the move: Transfer keeps the drawer (notempty).
     await answerAll('w1', (rid, path) => (path === 'Work:Pair' ? `ERR ${rid} notempty 19:Directory not empty` : `DONE ${rid} 1`));
     const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!;
@@ -498,6 +522,7 @@ describe('safe moves off a volume (protocol 5)', () => {
     expect(r).toMatchObject({ kind: 'done', fetching: { files: 1 } });
     const [g] = await gets();
     await arrive(g.id, 'DF1:y', new TextEncoder().encode('y'));
+    await answerFresh();
     expect((await writes()).map((w) => [w.amigaPath, (w.target as { label: string }).label])).toEqual([['DF1:y', 'Empty (DF1:):y']]);
   });
 
@@ -508,6 +533,7 @@ describe('safe moves off a volume (protocol 5)', () => {
     expect(r).toMatchObject({ kind: 'done', fetching: { files: 1 } });
     const [g] = await gets();
     await arrive(g.id, 'Work:g.adf', adf);
+    await answerFresh();
     expect(await oneLines()).toEqual(['delete Work:g.adf one']);
   });
 
@@ -523,6 +549,7 @@ describe('safe moves off a volume (protocol 5)', () => {
     expect(await oneLines()).toEqual([]);
     await answerAll('w2', (rid) => `DONE ${rid} 1`);
     await fetchProgress(getDb(), 'o1', job, new Date());
+    await answerFresh();
     expect(await oneLines()).toEqual(['delete Work:Pair/a one', 'delete Work:Pair/b one', 'delete Work:Pair/E one', 'delete Work:Pair one']);
   });
 
@@ -537,6 +564,33 @@ describe('safe moves off a volume (protocol 5)', () => {
     expect(await op({ op: 'copy', sources: [W('x')], dest: 'STASH:', onClash: 'ask' })).toMatchObject({ kind: 'done', fetching: { files: 1 } });
     await remember('Work:Sub', []);
     expect(await op({ op: 'move', sources: [W('x')], dest: 'NET:/w1/Work/Sub', onClash: 'ask' })).toMatchObject({ kind: 'done', job: { writes: 1 } });
+  });
+
+  // Final review I-1: a file saved again on the Amiga after it was fetched is not the one copied: it stays.
+  it('a file changed on the Amiga after it was copied stays, and the job says so; the rest goes', async () => {
+    const r = await op({ op: 'move', sources: [W('Pair')], dest: 'STASH:', onClash: 'ask' });
+    const job = (r as { fetching: { id: string } }).fetching.id;
+    for (const g of await gets()) await arrive(g.id, g.amigaPath, new TextEncoder().encode('z'));
+    expect(await oneLines()).toEqual([]);
+    await answerFresh('w1', { 'Work:Pair': [ent('a', 9), ent('E', 0, true), ent('b', 1)] });
+    expect(await oneLines()).toEqual(['delete Work:Pair/b one', 'delete Work:Pair one']);
+    const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!;
+    expect(p.writes.find((w) => w.label === 'Work:Pair/a')).toMatchObject({ status: 'failed',
+      reason: 'Copied, but the original could not be removed — it changed on the Amiga' });
+  });
+
+  // Final review I-2: a move's last part answered with no pane watching still settles (the req route hands it on).
+  it('a STASH: drawer of empty drawers moved onto a volume is removed once its Makedirs are answered', async () => {
+    await remember('Work:Tools', []);
+    await stash('Hollow/E', '', 'dir');
+    const r = await op({ op: 'move', sources: ['STASH:/Hollow'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
+    expect(r).toMatchObject({ kind: 'done', job: { files: 0 } });
+    const { afterRequestAnswered } = await import('./net-moves');
+    for (const m of await takeWaiting(getDb(), 'w1')) {
+      await answerPiece(getDb(), 'w1', m.id, { piece: 0, lines: [`DONE ${m.id} 1`], last: true });
+      await afterRequestAnswered(getDb(), 'w1', m.id);
+    }
+    expect(await listStash(getDb(), 'o1')).toEqual([]);
   });
 
   it('Transfer went back to 2.5 before the move finished: nothing is sent, the job says why', async () => {

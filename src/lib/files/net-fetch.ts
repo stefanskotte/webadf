@@ -38,7 +38,7 @@ import { keepBothName, sameStashName, stashFind, stashTree } from './stash-paths
 const RELIST = 'List the drawer again and retry';
 const MB = 1024 * 1024;
 
-type File = { amigaPath: string; rel: string[]; size: number };
+type File = { amigaPath: string; rel: string[]; size: number; date: string };
 /** `drawers`: every drawer of a drawer top as the walk found it, the top included (Amiga paths): what a move removes. */
 type Top = { source: string; dir: boolean; files: File[]; drawers: string[] };
 
@@ -60,7 +60,7 @@ async function expand(deviceId: string, source: string, segs: string[], now: Dat
   const e = (await remembered(deviceId, segs.slice(0, -1), now)).find((x) => x.name.toLowerCase() === name.toLowerCase());
   if (!e) refuse('conflict', 409, RELIST);
   const pathOf = (s: string[]) => amigaPathOf(s)!.amigaPath;
-  if (!e.dir) return { source, dir: false, files: [{ amigaPath: pathOf(segs), rel: [e.name], size: e.size }], drawers: [] };
+  if (!e.dir) return { source, dir: false, files: [{ amigaPath: pathOf(segs), rel: [e.name], size: e.size, date: e.date }], drawers: [] };
   const files: File[] = [];
   const drawers: string[] = [];
   if (!walkDrawers) return { source, dir: true, files, drawers };
@@ -68,7 +68,7 @@ async function expand(deviceId: string, source: string, segs: string[], now: Dat
     drawers.push(pathOf(at));
     for (const c of await remembered(deviceId, at, now)) {
       if (c.dir) await walk([...at, c.name], [...rel, c.name]);
-      else files.push({ amigaPath: pathOf([...at, c.name]), rel: [...rel, c.name], size: c.size });
+      else files.push({ amigaPath: pathOf([...at, c.name]), rel: [...rel, c.name], size: c.size, date: c.date });
     }
   };
   await walk(segs, [e.name]);
@@ -137,10 +137,13 @@ export async function startFetch(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
     }
   }
   const fetchId = newRequestId();
-  const move = req.op === 'move' ? (top: Top) => ({ moveSource: top.source, ...(top.drawers.length ? { moveDrawers: top.drawers } : {}),
-    ...(ctx.userId ? { userId: ctx.userId } : {}) }) : () => ({});
+  // A move removes only drawers that were copied (final review I-3): into STASH: a drawer arrives only by the files in
+  // it, so one holding none (an empty drawer, however deep) stays on the Amiga.
+  const holding = (top: Top) => top.drawers.filter((d) => top.files.some((f) => f.amigaPath.toLowerCase().startsWith(`${d.toLowerCase()}/`)));
+  const move = req.op === 'move' ? (top: Top, f: File) => ({ moveSource: top.source, ...(holding(top).length ? { moveDrawers: holding(top) } : {}),
+    moveSeen: { size: f.size, date: f.date }, ...(ctx.userId ? { userId: ctx.userId } : {}) }) : () => ({});
   const files = tops.flatMap((top) => top.files.map((f) => ({ amigaPath: f.amigaPath,
-    target: { dest: formatPath(dest), rel: f.rel, replace: replace.has(top), library, ...move(top) } satisfies GetTarget })));
+    target: { dest: formatPath(dest), rel: f.rel, replace: replace.has(top), library, ...move(top, f) } satisfies GetTarget })));
   await addGets(getDb(), { orgId: ctx.orgId, deviceId: t.id, fetchId, files }, now);
   for (const top of tops) if (!results.has(top.source)) results.set(top.source, { source: top.source, ok: true });
   return { kind: 'done', items: req.sources.map((s) => results.get(s)!), ...(files.length ? { fetching: { id: fetchId, files: files.length } } : {}) };
@@ -199,6 +202,7 @@ export async function volumeToVolume(ctx: OpCtx, req: CopyMove): Promise<Outcome
     return { amigaPath: f.amigaPath, target: { dest: 'STASH:', rel: [rel[rel.length - 1]], replace: false, library: null,
       relay: { deviceId: dt.id, dest: joinAmiga(to.amiga, ...rel), onClash: top.mode, ...(req.op === 'move' ? { moveSource: top.source } : {}) },
       ...(req.op === 'move' && top.drawers.length ? { moveDrawers: top.drawers } : {}),
+      ...(req.op === 'move' ? { moveSeen: { size: f.size, date: f.date } } : {}),
       ...(ctx.userId ? { userId: ctx.userId } : {}) } satisfies GetTarget };
   }));
   // Drawers holding no file arrive by a Makedir each on the destination (parents first; one there already is as good).

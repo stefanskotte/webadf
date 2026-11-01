@@ -23,6 +23,10 @@ export type GetTarget = { dest: string; rel: string[]; replace: boolean; library
   moveSource?: string; relay?: { deviceId: string; dest: string; onClash: 'keep' | 'replace' | 'skip'; moveSource?: string };
   /** A moved drawer's drawers as the copy walked them, itself included (Amiga paths): removed after its files (§9). */
   moveDrawers?: string[];
+  /** The file as the copy's walk saw it (final review I-1): removed only while a fresh listing still shows it so. */
+  moveSeen?: { size: number; date: string };
+  /** The fresh listings a settling move asked for (their request ids) before it removes anything off a volume. */
+  moveVerify?: string[];
   /** Who made the copy (a move's removal and a relay's queue row are theirs). */
   userId?: string };
 /** A write request (spec 2026-10-31 §2.3): `label` the object in the pane's words, `icon` a `.info` taken along (W9). */
@@ -209,6 +213,22 @@ export async function addGets(
     await tx.update(devices).set({ reqVersion: sql`${devices.reqVersion} + 1` }).where(eq(devices.id, a.deviceId));
     return rows.map((r) => r.id);
   });
+}
+
+/**
+ * Fresh listings a move asks for itself (final review I-1): before it removes anything off a volume it reads each drawer
+ * it copied files out of again, under its job id, so the req route hands the answers back to it (afterRequestAnswered).
+ * They are ordinary listings once answered. Takes the caller's transaction.
+ */
+export async function addListings(
+  db: Pick<Db, 'insert' | 'update'>, a: { orgId: string; deviceId: string; jobId: string; paths: string[] }, now = new Date(),
+): Promise<string[]> {
+  if (a.paths.length === 0) return [];
+  const rows = await db.insert(remoteRequests).values(a.paths.map((amigaPath) => ({
+    id: newRequestId(), orgId: a.orgId, deviceId: a.deviceId, kind: 'dir', amigaPath, fetchId: a.jobId, createdAt: now,
+  }))).returning({ id: remoteRequests.id });
+  await db.update(devices).set({ reqVersion: sql`${devices.reqVersion} + 1` }).where(eq(devices.id, a.deviceId));
+  return rows.map((r) => r.id);
 }
 
 /**

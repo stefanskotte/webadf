@@ -179,17 +179,24 @@ export async function removeOnVolume(ctx: OpCtx, sources: string[], opts: { jobI
  * board writable and on Transfer 2.6; refuses (Refused) otherwise, and nothing is sent.
  */
 export async function removeCopiedOnVolume(ctx: OpCtx, source: string, files: string[], drawers: string[], jobId: string): Promise<void> {
-  const at = placeOfRaw(source);
-  if (!at || at.segs.length < 2) refuse('not_found', 404);
-  const t = await writableBoard(ctx, at.board);
-  if ((t.rxProto ?? 0) < MOVE_PROTO) refuse('unsupported', 409, MOVE_OLD_TRANSFER);
-  // The pane's words for an Amiga path under the source (a labelled volume's device path shown by its label).
-  const shown = (p: string) => (p.toLowerCase().startsWith(at.amiga.toLowerCase()) ? at.shown + p.slice(at.amiga.length) : p);
+  const { t, shown } = await volumeMoveBoard(ctx, source);
   const depth = (p: string) => p.slice(p.indexOf(':') + 1).split('/').filter(Boolean).length;
   const once = (xs: string[]) => xs.filter((x, k) => xs.findIndex((y) => y.toLowerCase() === x.toLowerCase()) === k);
   const reqs: WriteReq[] = [...once(files), ...once(drawers).sort((a, b) => depth(b) - depth(a))]
     .map((p) => ({ kind: 'delete', amigaPath: p, one: true, label: shown(p) }));
   await addWrites(getDb(), { orgId: ctx.orgId, deviceId: t.id, jobId, writes: reqs });
+}
+
+/**
+ * The board a move off a volume removes its copied source on, refused (Refused) unless it can write now and runs
+ * Transfer 2.6; and the pane's words for an Amiga path under the source (a labelled volume's device path by its label).
+ */
+export async function volumeMoveBoard(ctx: FsCtx, source: string): Promise<{ t: SendTarget; shown: (p: string) => string }> {
+  const at = placeOfRaw(source);
+  if (!at || at.segs.length < 2) refuse('not_found', 404);
+  const t = await writableBoard(ctx, at.board);
+  if ((t.rxProto ?? 0) < MOVE_PROTO) refuse('unsupported', 409, MOVE_OLD_TRANSFER);
+  return { t, shown: (p: string) => (p.toLowerCase().startsWith(at.amiga.toLowerCase()) ? at.shown + p.slice(at.amiga.length) : p) };
 }
 
 /** Protect (PROTECT, the bits as AmigaDOS stores them) or a comment (NOTE) on volume entries. */

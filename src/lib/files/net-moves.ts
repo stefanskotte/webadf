@@ -21,7 +21,9 @@ import { parsePath } from './path';
 import { driverFor } from './drivers';
 import { Refused, REMOVE_FAILED, type IncomingItem, type OpCtx } from './driver';
 import { isKeptWords } from '@/lib/remote-browse';
-import { isNetVolumePath, placeOf, removeCopiedOnVolume } from './net-write';
+import { amigaParent, isNetVolumePath, placeOf, removeCopiedOnVolume, volumeMoveBoard } from './net-write';
+import { addListings, type GetTarget } from '@/lib/remote-requests';
+import type { EntryInfo } from '@/lib/remote-wire';
 import { refusalWords } from './words';
 
 const ACTIVE_ROWS = ['queued', 'sending'];
@@ -57,7 +59,7 @@ function copiedOf(rows: Row[], mkdirs: Part[]): IncomingItem[] | null {
 }
 
 /** Remove what a move of one source copied, as the person who moved it: removed (or sent), kept in part, or refused. */
-async function removeSource(orgId: string, userId: string | null, source: string, jobId: string, parts: Part[], rows: Row[]): Promise<Removal> {
+async function removeSource(orgId: string, userId: string | null, source: string, jobId: string, parts: Part[], rows: Row[], checked: string[] = []): Promise<Removal> {
   const p = parsePath(source);
   const ctx: OpCtx = { orgId, userId, versions: [] };
   try {
@@ -65,7 +67,7 @@ async function removeSource(orgId: string, userId: string | null, source: string
       // Off a volume: the copied files are the gets' paths, the drawers the walk's (spec §9).
       const gets = parts.filter((g) => g.kind === 'get');
       const drawers = gets.flatMap((g) => (g.target as { moveDrawers?: string[] }).moveDrawers ?? []);
-      const files = gets.map((g) => g.amigaPath).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+      const files = [...checked].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
       await removeCopiedOnVolume(ctx, source, files, drawers, jobId);
       return { kind: 'removed' };
     }
@@ -82,6 +84,47 @@ async function removeSource(orgId: string, userId: string | null, source: string
     if (e instanceof Refused) return { kind: 'refused', why: e.refusal.detail ?? refusalWords(e.refusal.code) };
     throw e;
   }
+}
+
+type Checked = { kind: 'waiting' } | { kind: 'refused'; why: string } | { kind: 'checked'; files: string[]; changed: { path: string; why: string }[] };
+
+/**
+ * Before a move off a volume removes anything (final review I-1): each drawer it copied files out of is read afresh,
+ * and a file goes only while the Amiga still shows it as the copy's walk saw it (size and date). One saved again since
+ * is not the one copied: it stays, and the job says so. The first call asks (the listings carry the job id, so their
+ * answers settle the move again: afterRequestAnswered); later calls wait for the answers, then say what may go.
+ */
+async function checkOffVolume(tx: Pick<Db, 'select' | 'insert' | 'update'>, ctx: OpCtx, source: string, jobId: string, gets: Part[]): Promise<Checked> {
+  const asked = (gets[0]?.target as GetTarget | undefined)?.moveVerify;
+  if (!asked) {
+    try { await volumeMoveBoard(ctx, source); } catch (e) {
+      if (e instanceof Refused) return { kind: 'refused', why: e.refusal.detail ?? refusalWords(e.refusal.code) };
+      throw e;
+    }
+    const drawers = gets.map((g) => amigaParent(g.amigaPath)).filter((x, k, all) => all.findIndex((y) => y.toLowerCase() === x.toLowerCase()) === k);
+    const ids = await addListings(tx, { orgId: ctx.orgId, deviceId: gets[0].deviceId, jobId, paths: drawers });
+    await tx.update(remoteRequests).set({ target: sql`jsonb_set(${remoteRequests.target}, '{moveVerify}', ${JSON.stringify(ids)}::jsonb)` })
+      .where(inArray(remoteRequests.id, gets.map((g) => g.id)));
+    return { kind: 'waiting' };
+  }
+  const answers = asked.length ? await tx.select({ status: remoteRequests.status, amigaPath: remoteRequests.amigaPath, answer: remoteRequests.answer })
+    .from(remoteRequests).where(inArray(remoteRequests.id, asked)) : [];
+  if (answers.some((a) => a.status !== 'done' && a.status !== 'failed')) return { kind: 'waiting' };
+  const listed = new Map(answers.filter((a) => a.status === 'done')
+    .map((a) => [a.amigaPath.toLowerCase(), ((a.answer ?? { entries: [] }) as { entries: EntryInfo[] }).entries] as const));
+  const files: string[] = [];
+  const changed: { path: string; why: string }[] = [];
+  for (const g of gets) {
+    const entries = listed.get(amigaParent(g.amigaPath).toLowerCase());
+    if (!entries) { changed.push({ path: g.amigaPath, why: 'the Amiga did not list it again' }); continue; }
+    const name = g.amigaPath.slice(Math.max(g.amigaPath.lastIndexOf('/'), g.amigaPath.indexOf(':')) + 1).toLowerCase();
+    const now = entries.find((e) => e.name.toLowerCase() === name);
+    if (!now) continue;   // gone from the Amiga already
+    const seen = (g.target as GetTarget).moveSeen;
+    if (!seen || now.dir || now.size !== seen.size || now.date !== seen.date) changed.push({ path: g.amigaPath, why: 'it changed on the Amiga' });
+    else files.push(g.amigaPath);
+  }
+  return { kind: 'checked', files, changed };
 }
 
 const getMarked = (jobId: string, source: string) => and(eq(remoteRequests.fetchId, jobId), inArray(remoteRequests.kind, ['get', 'mkdir']),
@@ -112,11 +155,26 @@ export async function settleMove(db: Db, orgId: string, jobId: string, source: s
     let removed = false;
     if (arrived) {
       const userId = (gets[0]?.target as { userId?: string } | undefined)?.userId ?? rows[0]?.userId ?? null;
-      const out = await removeSource(orgId, userId, source, jobId, parts, rows);
-      removed = out.kind === 'removed';
       const at = placeOf(parsePath(source));
       const said = { id: newRequestId(), orgId, deviceId: gets[0]?.deviceId ?? rows[0]?.deviceId ?? parts[0].deviceId, kind: 'delete',
         amigaPath: at?.amiga ?? source, fetchId: jobId, answeredAt: new Date() };
+      const p = parsePath(source);
+      let out: Removal;
+      if (p && isNetVolumePath(p)) {
+        // Off a volume: first what the Amiga holds now (final review I-1); the markers stay while that is asked.
+        const c = await checkOffVolume(tx, { orgId, userId, versions: [] }, source, jobId, gets);
+        if (c.kind === 'waiting') return false;
+        if (c.kind === 'refused') out = c;
+        else {
+          for (const x of c.changed) {
+            const label = at ? at.shown + x.path.slice(at.amiga.length) : x.path;
+            await tx.insert(remoteRequests).values({ ...said, id: newRequestId(), amigaPath: x.path, status: 'failed', errorCode: 'moved',
+              errorText: `Copied, but the original could not be removed — ${x.why}`, target: { label } });
+          }
+          out = await removeSource(orgId, userId, source, jobId, parts, rows, c.files);
+        }
+      } else out = await removeSource(orgId, userId, source, jobId, parts, rows);
+      removed = out.kind === 'removed';
       if (out.kind === 'refused') {
         // Said in the job, as a delete that could not be done (final review I-2): the person sees the move became a copy.
         await tx.insert(remoteRequests).values({ ...said, status: 'failed', errorCode: 'moved',
@@ -133,6 +191,16 @@ export async function settleMove(db: Db, orgId: string, jobId: string, source: s
     if (rows.length) await tx.update(transfers).set({ moveSource: null }).where(inArray(transfers.id, rows.map((r) => r.id)));
     return removed;
   });
+}
+
+/**
+ * After the board answered a request (the req route, final review I-2): a request of a job -- a move's Makedir, the
+ * fresh listing a move asked before removing -- settles that job's moves, whether or not a pane is watching.
+ */
+export async function afterRequestAnswered(db: Db, deviceId: string, rid: string): Promise<void> {
+  const [r] = await db.select({ fetchId: remoteRequests.fetchId, orgId: remoteRequests.orgId, status: remoteRequests.status, kind: remoteRequests.kind })
+    .from(remoteRequests).where(and(eq(remoteRequests.id, rid), eq(remoteRequests.deviceId, deviceId)));
+  if (r?.fetchId && r.kind !== 'get' && (r.status === 'done' || r.status === 'failed')) await settleMovesOfJob(db, r.orgId, r.fetchId);
 }
 
 /** After a queue row finished (the done route): its move, if it was one. */
