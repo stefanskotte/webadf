@@ -13,6 +13,15 @@ process.env.BLOB_READ_WRITE_TOKEN = '';
 async function admin(stmt: string) { const c = new Client({ connectionString: base }); await c.connect(); try { await c.query(stmt); } finally { await c.end(); } }
 vi.mock('next/server', () => ({ after: () => {} }));
 vi.mock('@/lib/tosec-sweep', () => ({ sweep: async () => {} }));
+// Fix round 1: Cancel landing between a get's claim (or its open's look-up) and what follows, run where the race is.
+const hooks = vi.hoisted(() => ({ afterClaim: null as null | (() => Promise<void>), afterLookup: null as null | (() => Promise<void>) }));
+vi.mock('@/lib/remote-requests', async (orig) => {
+  const m = await orig<typeof import('@/lib/remote-requests')>();
+  const once = async (k: 'afterClaim' | 'afterLookup') => { const h = hooks[k]; hooks[k] = null; if (h) await h(); };
+  return { ...m,
+    claimGet: async (...a: Parameters<typeof m.claimGet>) => { const g = await m.claimGet(...a); await once('afterClaim'); return g; },
+    getForUpload: async (...a: Parameters<typeof m.getForUpload>) => { const g = await m.getForUpload(...a); await once('afterLookup'); return g; } };
+});
 
 const { getDb, closeDb } = await import('@/db');
 const { migrate } = await import('drizzle-orm/node-postgres/migrator');
@@ -30,6 +39,10 @@ const { cancelJob } = await import('./job-cancel');
 const { fetchProgress } = await import('./net-fetch');
 const { takeWaiting } = await import('@/lib/remote-requests');
 const { CANCEL_KIND, JOB_SHOWN_MS } = await import('./job-view');
+const { placeFetched, afterTransferDone } = await import('./net-fetch');
+const { settleMove } = await import('./net-moves');
+const { diskStore } = await import('@/lib/storage');
+const { createHash } = await import('node:crypto');
 
 const NOW = new Date();
 const ago = (ms: number) => new Date(NOW.getTime() - ms);
@@ -217,5 +230,47 @@ describe('cancelJob', () => {
     expect(await jobOf('j1')).toMatchObject({ running: false, total: 1, cancelled: 1 });
     const gone = new Date(NOW.getTime() + JOB_SHOWN_MS + 1_000);
     expect((await listJobs(getDb(), 'o1', gone)).find((j) => j.id === 'j1')).toBeUndefined();
+  });
+
+  // Fix round 1 (review Important): a vol-to-vol move's get already claimed for placing when Cancel hits.
+  it('a relayed move placed after Cancel queues its file without the move marker, and nothing is removed', async () => {
+    const data = new TextEncoder().encode('hello relay');
+    const sha = createHash('sha256').update(data).digest('hex');
+    await diskStore.put(sha, data, { overwrite: true });
+    await getDb().insert(amigaUploads).values([{ id: 'u8', orgId: 'o1', deviceId: 'b1', path: 'a', sizeBytes: data.length, receivedBytes: data.length,
+      amigaDate: '1.2.3', status: 'stored', source: 'staging', blobSha256: sha, expiresAt: later }]);
+    const relay = { deviceId: 'b2', dest: 'Work:T/a', onClash: 'keep' as const, moveSource: 'NET:/b1/Work/Pack' };
+    await getDb().insert(remoteRequests).values([
+      rq('g8', { fetchId: 'j8', status: 'fetching', uploadId: 'u8', amigaPath: 'Work:Pack/a', activeAt: ago(500),
+        target: target({ rel: ['Pack', 'a'], userId: 'u1', relay, moveSeen: { size: data.length, date: 'd' } }) }),
+      rq('g9', { fetchId: 'j8', amigaPath: 'Work:Pack/b', target: target({ rel: ['Pack', 'b'], userId: 'u1', relay, moveSeen: { size: 1, date: 'd' } }) }),
+    ]);
+    let cancelled: unknown = null;
+    hooks.afterClaim = async () => { cancelled = await cancelJob(getDb(), 'o1', 'j8', NOW); };
+    await placeFetched(getDb(), 'u8', NOW);
+    expect(cancelled).toEqual({ ok: true, cancelled: 1 });
+    expect((await reqOf('g8')).status).toBe('done');
+    const [row] = await getDb().select().from(transfers).where(eq(transfers.jobId, 'j8'));
+    expect(row).toMatchObject({ deviceId: 'b2', amigaDest: 'Work:T/a', status: 'queued', moveSource: null });
+    await getDb().update(transfers).set({ status: 'delivered', finishedAt: NOW }).where(eq(transfers.id, row.id));
+    await expect(afterTransferDone(getDb(), row.id)).resolves.toBeUndefined();
+    expect(await getDb().select().from(remoteRequests).where(and(eq(remoteRequests.fetchId, 'j8'), eq(remoteRequests.kind, 'delete')))).toEqual([]);
+    expect(await getDb().select().from(remoteRequests).where(and(eq(remoteRequests.fetchId, 'j8'), eq(remoteRequests.kind, 'dir')))).toEqual([]);
+  });
+  it('settleMove decides no removal for a job Cancel the rest marked', async () => {
+    await getDb().insert(transfers).values([tr('m1', { jobId: 'j9', status: 'delivered', finishedAt: ago(1_000), amigaDest: 'Work:T/Pack/a', moveSource: 'STASH:/Pack', moveItem: 'Pack/a' })]);
+    await getDb().insert(remoteRequests).values([rq('c9', { fetchId: 'j9', kind: CANCEL_KIND, amigaPath: '', status: 'done', answeredAt: NOW, target: { move: true, source: 'STASH:' } })]);
+    expect(await settleMove(getDb(), 'o1', 'j9', 'STASH:/Pack')).toBe(false);
+    expect((await getDb().select().from(remoteRequests).where(eq(remoteRequests.fetchId, 'j9'))).map((r) => r.id)).toEqual(['c9']);
+    expect((await getDb().select({ s: transfers.moveSource }).from(transfers).where(eq(transfers.id, 'm1')))[0].s).toBeNull();
+  });
+  // Fix round 1 (Minor): a file opened just after Cancel withdrew its get is refused, and the get keeps saying cancelled.
+  it('an open racing Cancel is refused and stores nothing', async () => {
+    await getDb().insert(remoteRequests).values([rq('g5', { fetchId: 'j5', status: 'sent', sentAt: ago(1_000), target: target() })]);
+    hooks.afterLookup = async () => { await cancelJob(getDb(), 'o1', 'j5', NOW); };
+    expect(await openUpload(getDb(), { deviceId: 'b1', orgId: 'o1' }, { size: 10, date: '1.2.3', protection: 0, path: 'x', comment: '', request: 'g5' }))
+      .toEqual({ ok: false, code: 'name' });
+    expect(await reqOf('g5')).toMatchObject({ status: 'failed', errorCode: 'cancelled', uploadId: null });
+    expect(await getDb().select().from(amigaUploads)).toEqual([]);
   });
 });

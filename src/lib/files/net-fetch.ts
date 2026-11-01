@@ -304,9 +304,17 @@ async function relay(db: Db, g: RemoteRow, target: GetTarget, uploadId: string, 
   const [u] = await db.select().from(amigaUploads).where(eq(amigaUploads.id, uploadId));
   const fail = async (code: string, text: string) => { await releaseStaging(db, uploadId); await settleGet(db, g.id, { ok: false, code, text }, now, PLACING); };
   if (!u?.blobSha256 || !target.userId) return fail('io', 'it could not be placed');
-  const q = await queueTransfers(db, { orgId: g.orgId, deviceId: r.deviceId, userId: target.userId, jobId: g.fetchId ?? undefined, now, files: [{
-    path: target.rel[target.rel.length - 1], sha256: u.blobSha256, sizeBytes: u.sizeBytes, protection: Number(u.protection), comment: u.comment,
-    dest: r.dest, onClash: r.onClash, ...(r.moveSource ? { moveSource: r.moveSource } : {}) }] });
+  const { blobSha256, sizeBytes, protection, comment } = u;
+  const userId = target.userId;
+  // The move marker as the get carries it NOW, read under the get's lock in the queue's own transaction: `target` is the
+  // claim's copy, and a Cancel the rest since (which locks the same get) took the marker off -- the row then is a copy.
+  const q = await db.transaction(async (tx) => {
+    const [cur] = await tx.select({ target: remoteRequests.target }).from(remoteRequests).where(eq(remoteRequests.id, g.id)).for('update');
+    const moveSource = (cur?.target as GetTarget | undefined)?.relay?.moveSource;
+    return queueTransfers(tx as unknown as Db, { orgId: g.orgId, deviceId: r.deviceId, userId, jobId: g.fetchId ?? undefined, now, files: [{
+      path: target.rel[target.rel.length - 1], sha256: blobSha256, sizeBytes, protection: Number(protection), comment,
+      dest: r.dest, onClash: r.onClash, ...(moveSource ? { moveSource } : {}) }] });
+  });
   if (!q.ok) {
     const words = q.reason === 'queue_full' ? "the board's queue is full" : q.reason === 'empty' ? 'it is empty' : 'it could not be queued';
     return fail(q.reason, words);

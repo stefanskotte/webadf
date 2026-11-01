@@ -25,6 +25,7 @@ import { amigaParent, isNetVolumePath, placeOf, removeCopiedOnVolume, volumeMove
 import { addListings, type GetTarget } from '@/lib/remote-requests';
 import type { EntryInfo } from '@/lib/remote-wire';
 import { refusalWords } from './words';
+import { CANCEL_KIND } from './job-view';
 
 const ACTIVE_ROWS = ['queued', 'sending'];
 /** A move's removal decided and not yet recorded (final review I-1): the job counts it as running. */
@@ -159,6 +160,18 @@ export async function settleMove(db: Db, orgId: string, jobId: string, source: s
       blobSha256: transfers.blobSha256, sizeBytes: transfers.sizeBytes, protection: transfers.protection, comment: transfers.comment, moveItem: transfers.moveItem })
       .from(transfers).where(rowMarked(jobId, source)).for('update');
     if (parts.length === 0 && rows.length === 0) return null;
+    // Cancel the rest (progress panel §6) turned the job's move into a copy: whatever marker is still about (one a
+    // placement read before the cancel, say) goes, and no removal is decided -- never a source half of which stayed.
+    const [stopped] = await tx.select({ id: remoteRequests.id }).from(remoteRequests)
+      .where(and(eq(remoteRequests.fetchId, jobId), eq(remoteRequests.orgId, orgId), eq(remoteRequests.kind, CANCEL_KIND))).limit(1);
+    if (stopped) {
+      if (parts.length) {
+        await tx.update(remoteRequests).set({ target: sql`(${remoteRequests.target} - 'moveSource') #- '{relay,moveSource}'` })
+          .where(inArray(remoteRequests.id, parts.map((g) => g.id)));
+      }
+      if (rows.length) await tx.update(transfers).set({ moveSource: null }).where(inArray(transfers.id, rows.map((r) => r.id)));
+      return null;
+    }
     // Still on its way: a get not settled, a Makedir not answered, or a queue row waiting or moving.
     if (gets.some((g) => g.status !== 'done' && g.status !== 'failed') || mkdirs.some((m) => m.status !== 'done' && m.status !== 'failed')
       || rows.some((r) => ACTIVE_ROWS.includes(r.status))) return null;

@@ -47,17 +47,25 @@ export async function openUpload(db: Db, dev: { deviceId: string; orgId: string 
   if (!path) return refused('name', { code: 'bad', text: 'the name could not be used' });
   const comment = a.comment.replace(/[^\x20-\x7e\xa0-\xff]/g, '').slice(0, 79);
   const r = await openRow(db, dev, a, path, comment, get?.id ?? null, !!target?.relay, now);
+  // The get ended since it was looked up (Cancel the rest, say): refused, and its own words stay.
+  if (!r.ok && 'gone' in r) return { ok: false, code: 'name' };
   if (!r.ok) return refused(r.code, r.code === 'full' ? { code: 'full', text: 'STASH: is full' } : { code: 'bad', text: 'it could not be stored' });
   return r;
 }
 
 async function openRow(db: Db, dev: { deviceId: string; orgId: string }, a: OpenInput, path: string, comment: string, rid: string | null,
-  staging: boolean, now: Date): Promise<OpenResult> {
+  staging: boolean, now: Date): Promise<OpenResult | { ok: false; code: 'name'; gone: true }> {
   // A fetched file is a Files copy (P6): source copy, no board name, as every copy row -- or staging, between volumes.
   const source = !rid ? 'amiga' : staging ? STAGING : 'copy';
   return db.transaction(async (tx) => {
     // The count and the insert under one lock per org: READ COMMITTED alone lets two opens count the same rows (ruling P8).
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`amiga_uploads:${dev.orgId}`}))`);
+    // The get still live, under its lock (Cancel the rest locks it too): one withdrawn meanwhile gets no file.
+    if (rid) {
+      const [live] = await tx.select({ id: remoteRequests.id }).from(remoteRequests)
+        .where(and(eq(remoteRequests.id, rid), eq(remoteRequests.kind, 'get'), liveGet())).for('update');
+      if (!live) return { ok: false as const, code: 'name' as const, gone: true as const };
+    }
     const [same] = await tx.select({ id: amigaUploads.id, received: amigaUploads.receivedBytes }).from(amigaUploads)
       .where(and(eq(amigaUploads.orgId, dev.orgId), eq(amigaUploads.deviceId, dev.deviceId), eq(amigaUploads.status, 'receiving'), eq(amigaUploads.path, path),
         eq(amigaUploads.sizeBytes, a.size), eq(amigaUploads.amigaDate, a.date), gt(amigaUploads.expiresAt, now),
