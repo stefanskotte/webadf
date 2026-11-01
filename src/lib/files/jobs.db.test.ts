@@ -22,7 +22,7 @@ const { devices } = await import('@/db/schema/devices');
 const { transfers } = await import('@/db/schema/transfers');
 const { remoteRequests } = await import('@/db/schema/remote-requests');
 const { amigaUploads } = await import('@/db/schema/amiga-uploads');
-const { listJobs } = await import('./jobs');
+const { jobView, listJobs } = await import('./jobs');
 
 const NOW = new Date();
 const ago = (ms: number) => new Date(NOW.getTime() - ms);
@@ -119,6 +119,16 @@ describe('listJobs: Files jobs', () => {
     const list = await jobs();
     expect(list.map((j) => j.id)).toEqual(['j5']);
     expect(list[0]).toMatchObject({ running: false, done: 1, finishedAt: ago(90_000).toISOString(), current: null });
+  });
+
+  it('jobView: a copy off a volume finished long ago, which the list let go, with what arrived', async () => {
+    await getDb().insert(amigaUploads).values([up('u1', 500, 500, 'stored')]);
+    await getDb().insert(remoteRequests).values([
+      rq('g1', { fetchId: 'j7', status: 'done', uploadId: 'u1', answeredAt: ago(600_000), createdAt: ago(610_000), target: target({ rel: ['a'], size: 500 }) }),
+    ]);
+    expect((await jobs()).map((j) => j.id)).toEqual([]);
+    expect(await jobView(getDb(), 'o1', 'j7', NOW)).toMatchObject({ id: 'j7', running: false, done: 1, direction: 'from', arrived: ['STASH:/u1'] });
+    expect(await jobView(getDb(), 'o2', 'j7', NOW)).toBeNull();
   });
 
   it('a part cancelled is counted apart from the failures', async () => {

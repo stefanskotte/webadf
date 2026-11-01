@@ -3,6 +3,7 @@
 // GET /api/files/jobs as jobs-client.ts decides. The panel reads it; Files tells it about the jobs it starts.
 import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react';
 import { createJobsStore, type JobsAnswer, type JobsState, type JobsStore } from '@/lib/files/jobs-client';
+import type { JobView } from '@/lib/files/job-view';
 import { isSignedOutAnswer } from '@/lib/signed-out';
 
 const JobsContext = createContext<JobsStore | null>(null);
@@ -15,9 +16,19 @@ async function loadJobs(): Promise<JobsAnswer | 'signed-out' | null> {
   return (await res.json().catch(() => null)) as JobsAnswer | null;
 }
 
+/** One job on its own, as the listing says it: null when there is none or no answer (the store forgets it then). */
+async function loadOneJob(id: string): Promise<JobView | null> {
+  let res: Response;
+  try { res = await fetch(`/api/files/net/fetch/${encodeURIComponent(id)}`, { cache: 'no-store' }); } catch { return null; }
+  if (!res.ok) return null;
+  const body = (await res.json().catch(() => null)) as { job?: JobView | null } | null;
+  return body?.job ?? null;
+}
+
 export function JobsProvider({ children }: { children: React.ReactNode }) {
   const [store] = useState(() => createJobsStore({
     load: loadJobs,
+    loadOne: loadOneJob,
     now: () => Date.now(),
     setTimer: (fn, ms) => window.setTimeout(fn, ms),
     clearTimer: (t) => window.clearTimeout(t as number),

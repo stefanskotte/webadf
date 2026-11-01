@@ -11,17 +11,18 @@ const job = (o: Partial<JobView> = {}): JobView => ({
 const finished = (o: Partial<JobView> = {}) => job({ running: false, waiting: 0, done: 2, finishedAt: '2026-11-01T10:00:05.000Z', ...o });
 type Answer = JobView[] | 'signed-out' | null;
 
-function harness(answers: Answer[], o: Partial<Pick<JobsDeps, 'visible' | 'storage'>> = {}) {
+function harness(answers: Answer[], o: Partial<Pick<JobsDeps, 'visible' | 'storage' | 'loadOne'>> = {}) {
   let k = 0;
+  const loadOne = vi.fn(o.loadOne ?? (async () => null));
   const load = vi.fn(async () => {
     const a = answers[Math.min(k++, answers.length - 1)];
     return a === null || a === 'signed-out' ? a : { jobs: a };
   });
   const store = createJobsStore({
-    load, now: () => Date.now(), setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
+    load, loadOne, now: () => Date.now(), setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
     visible: o.visible ?? (() => true), storage: o.storage ?? (() => null),
   });
-  return { store, load };
+  return { store, load, loadOne };
 }
 const flush = () => vi.advanceTimersByTimeAsync(0);
 
@@ -113,7 +114,7 @@ describe('createJobsStore polling', () => {
   it('a load that rejects is tried again after 15 s, with no unhandled rejection', async () => {
     let k = 0;
     const load = vi.fn(async () => { if (k++ === 0) throw new Error('network'); return { jobs: [job()] }; });
-    const store = createJobsStore({ load, now: () => Date.now(), setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: (t) => clearTimeout(t as ReturnType<typeof setTimeout>), visible: () => true, storage: () => null });
+    const store = createJobsStore({ load, loadOne: async () => null, now: () => Date.now(), setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: (t) => clearTimeout(t as ReturnType<typeof setTimeout>), visible: () => true, storage: () => null });
     store.start();
     await flush();
     await vi.advanceTimersByTimeAsync(OFFLINE_POLL_MS - 1_000);
@@ -133,6 +134,44 @@ describe('createJobsStore polling', () => {
 });
 
 describe('createJobsStore state', () => {
+  it('a watched job that finished and left the list while the tab was hidden is fetched once and handed over', async () => {
+    let shown = true;
+    const done = finished({ arrived: ['STASH:/In/a', 'STASH:/In/b'] });
+    const { store, loadOne } = harness([[job()], []], { visible: () => shown, loadOne: async () => done });
+    const heard: JobView[] = [];
+    store.watch('j1', (j) => heard.push(j));
+    store.start();
+    await flush();
+    shown = false;
+    store.onVisibility();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    shown = true;
+    store.onVisibility();
+    await flush();
+    expect(loadOne).toHaveBeenCalledTimes(1);
+    expect(loadOne).toHaveBeenCalledWith('j1');
+    expect(heard.map((j) => j.running)).toEqual([true, false]);
+    expect(heard[1]).toMatchObject({ done: 2, arrived: ['STASH:/In/a', 'STASH:/In/b'] });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(loadOne).toHaveBeenCalledTimes(1);
+  });
+  it('a watched job never listed within TRACK_MS is fetched once', async () => {
+    const { store, loadOne } = harness([[]], { loadOne: async () => finished({ id: 'j9' }) });
+    const heard: boolean[] = [];
+    store.watch('j9', (j) => heard.push(j.running));
+    store.track('j9');
+    store.start();
+    await vi.advanceTimersByTimeAsync(TRACK_MS + 5_000);
+    expect(loadOne).toHaveBeenCalledTimes(1);
+    expect(heard).toEqual([false]);
+  });
+  it('a watched job still listed is never fetched on its own', async () => {
+    const { store, loadOne } = harness([[job()], [job()], [finished()]]);
+    store.watch('j1', () => {});
+    store.start();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(loadOne).not.toHaveBeenCalled();
+  });
   it('watch hears each answer with its job; unwatched, nothing more', async () => {
     const { store } = harness([[job()], [job({ done: 1, waiting: 1 })], [finished()]]);
     const heard: number[] = [];

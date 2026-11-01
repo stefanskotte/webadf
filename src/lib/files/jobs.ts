@@ -13,7 +13,7 @@ import { isOnline } from '@/lib/device-state';
 import { failureText } from '@/lib/send-ui';
 import type { GetTarget, RemoteRow } from '@/lib/remote-requests';
 import { jobStatus } from './manager-rules';
-import { fetchProgress } from './net-fetch';
+import { fetchProgress, type FetchProgress } from './net-fetch';
 import { CANCEL_KIND, CANCELLED, commonDrawer, JOB_SHOWN_MS, QUEUE_JOB, type JobKind, type JobView } from './job-view';
 
 type TransferRow = typeof transfers.$inferSelect;
@@ -34,7 +34,7 @@ export async function listJobs(db: Db, orgId: string, now = new Date()): Promise
   const ids = [...new Set([...a, ...b].map((r) => r.id!))];
   const out: JobView[] = [];
   for (const id of ids) {
-    const j = await jobOf(db, orgId, id, now);
+    const j = await jobView(db, orgId, id, now);
     if (j && (j.running || (j.finishedAt !== null && j.finishedAt >= iso(since)))) out.push(j);
   }
   out.push(...(await queueJobs(db, orgId, now)));
@@ -81,8 +81,9 @@ function bytesOf(gets: RemoteRow[], uploads: Map<string, { size: number; receive
   return { total, done: Math.min(done, total) };
 }
 
-async function jobOf(db: Db, orgId: string, id: string, now: Date): Promise<JobView | null> {
-  const p = await fetchProgress(db, orgId, id, now);
+/** One job as its card says it, however long ago it finished; `progress` when the caller already has it. */
+export async function jobView(db: Db, orgId: string, id: string, now: Date, progress?: FetchProgress | null): Promise<JobView | null> {
+  const p = progress === undefined ? await fetchProgress(db, orgId, id, now) : progress;
   if (!p) return null;
   const reqs = await db.select().from(remoteRequests).where(and(eq(remoteRequests.fetchId, id), eq(remoteRequests.orgId, orgId)))
     .orderBy(asc(remoteRequests.createdAt), asc(remoteRequests.id));

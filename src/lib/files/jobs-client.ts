@@ -19,6 +19,11 @@ export type JobsAnswer = { jobs: JobView[] };
 export type JobsDeps = {
   /** One answer; 'signed-out' when the session is gone; null when there was none (network, 5xx). */
   load(): Promise<JobsAnswer | 'signed-out' | null>;
+  /**
+   * One job on its own (GET /api/files/net/fetch/<id>), null when there is none: asked once for a watched job the list
+   * no longer holds (it finished more than 2 minutes ago, while the tab was hidden) or never held within TRACK_MS.
+   */
+  loadOne(id: string): Promise<JobView | null>;
   now(): number;
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(t: unknown): void;
@@ -64,6 +69,9 @@ export function createJobsStore(deps: JobsDeps) {
   const listeners = new Set<() => void>();
   const watchers = new Map<string, Set<(j: JobView) => void>>();
   const tracked = new Map<string, number>();
+  /** Each watched job: when it was first watched, and whether an answer has held it. */
+  const watched = new Map<string, { since: number; listed: boolean }>();
+  const fetching = new Set<string>();
   let timer: unknown = null;
   let inFlight = false;
   let again = false;
@@ -99,6 +107,24 @@ export function createJobsStore(deps: JobsDeps) {
     }
     set({ jobs, samples, finishedSeenAt, announce, signedOut: false });
     for (const j of jobs) for (const w of [...(watchers.get(j.id) ?? [])]) w(j);
+    // A watched job the list let go unseen (it finished while the tab was hidden, more than 2 minutes ago) or never
+    // held: asked for on its own, once, so its watchers still hear how it ended (a Download, the panes read again).
+    for (const [id, w] of watched) {
+      if (jobs.some((j) => j.id === id)) { w.listed = true; continue; }
+      if ((w.listed || now - w.since >= TRACK_MS) && !fetching.has(id)) void fetchOne(id);
+    }
+  }
+
+  async function fetchOne(id: string) {
+    fetching.add(id);
+    let j: JobView | null = null;
+    try { j = await deps.loadOne(id); } catch { j = null; }
+    fetching.delete(id);
+    if (stopped) return;
+    if (j) for (const w of [...(watchers.get(id) ?? [])]) w(j);
+    // Still running (a list that missed it): watched as if just begun. Else it is forgotten: nothing more will come.
+    const w = watched.get(id);
+    if (j?.running && w) { w.since = deps.now(); w.listed = false; } else { watched.delete(id); watchers.delete(id); }
   }
 
   async function tick() {
@@ -146,7 +172,8 @@ export function createJobsStore(deps: JobsDeps) {
       const list = watchers.get(id) ?? new Set<(j: JobView) => void>();
       list.add(fn);
       watchers.set(id, list);
-      return () => { list.delete(fn); if (list.size === 0) watchers.delete(id); };
+      if (!watched.has(id)) watched.set(id, { since: deps.now(), listed: false });
+      return () => { list.delete(fn); if (list.size === 0 && watchers.get(id) === list) { watchers.delete(id); watched.delete(id); } };
     },
     setOpen(open: boolean) { save(storage(), OPEN_KEY, open ? '1' : '0'); set({ open }); },
     dismiss,
