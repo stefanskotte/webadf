@@ -357,10 +357,11 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
   await shoot(page, 'disk-files', { tall: true });
 
   // NET: volumes (spec 2026-10-30 §6 step 5): the board's own Amiga, browsed. A fake board answers through the device
-  // routes as firmware 1.22.0 with Transfer running protocol 3 and browsing on would; the board is in Network mode, as
-  // browsing needs (the Devices pictures after it report DF1 off again).
+  // routes as the released firmware with Transfer 2.8 (protocol 5) and Read and Write ticked would, so the volume is
+  // writable as on a real Amiga today; the board is in Network mode, as browsing needs (the Devices pictures after it
+  // report DF1 off again).
   await report('net');
-  await setBrowse(deviceId, { firmware, rx: 'c', rxProto: 3, browseOn: true });
+  await setBrowse(deviceId, { firmware, rx: 'c', rxProto: 5, browseOn: true, writeOn: true });
   let netDone = false;
   const net = boardServes(request, token, NET_FS, () => netDone, [], 60_000);
   await page.goto(`/files?${new URLSearchParams({ left: 'STASH:', right: `NET:/${deviceId}`, active: 'right' })}`);

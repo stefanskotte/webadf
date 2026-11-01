@@ -115,10 +115,10 @@ protection, step to the next disk or eject.*
 *Files: two panes in the Directory Opus style over STASH:, NET: and LIBRARY: (collections are folders there). The pane
 you last clicked is the source; the buttons under the panes act on it. Each edit to a disk is a new version in its History.*
 
-![The Files page with STASH: on the left and, on the right, the A500 board's Amiga open at Work:Projects: a drawer and five files with their sizes, protection bits, dates and a comment, 41.0 MB free, Read-only for now, and the Send panel saying Transfer is running on the Amiga](docs/screenshots/net-volume.png)
+![The Files page with STASH: on the left and, on the right, the A500 board's Amiga open at Work:Projects: a drawer and five files with their sizes, protection bits, dates and a comment, 41.0 MB free, and the Send panel saying Transfer is running on the Amiga](docs/screenshots/net-volume.png)
 
-*NET: also lists the Amiga's own volumes when Transfer runs there with browsing ticked: open a drawer on the hard disk
-and copy files to STASH: or LIBRARY:. Read-only for now.*
+*NET: also lists the Amiga's own volumes when Transfer runs there with Read ticked: open a drawer on the hard disk
+and copy files to STASH: or LIBRARY:. With Write ticked too, copy and move onto it, rename and delete.*
 
 ![The Devices page: the A500 board online and up to date, its drive drawing with the OLED showing 9 Fingers, the disk in the drive, and the Second drive (DF1) choices](docs/screenshots/devices.png)
 
@@ -175,7 +175,7 @@ what each one did.*
 
 - The Files page: two panes over three places. LIBRARY: holds your titles and their disks; STASH: keeps loose
   files for 30 days (what you drop there, and what your Amiga sends); NET: holds what waits to go to each board's
-  Amiga. Copy and move between the panes, or drag.
+  Amiga, and the Amiga's own volumes. Copy and move between the panes, or drag.
 - Browse the AmigaDOS filesystem in the browser: files, folders, free space.
 - Add, rename, move and delete files and folders; drop a folder from your computer
   onto a disk; drag entries between folders.
@@ -215,6 +215,12 @@ what each one did.*
   comes from the board itself.
 - Send files from your computer, or from a disk in your library, to a folder on the Amiga: on the Files page,
   drop them on Send files to the Amiga, or copy them into a board under NET:. Files the Amiga sends back land in STASH:.
+- Transfer, the Amiga program on the driver disk, saves what arrives and sends files up. It runs from Workbench,
+  from a Shell, or hidden from WBStartup as a commodity (Ctrl-Alt-W shows it).
+- With Transfer's Read ticked, the Files page browses the Amiga's own volumes; with Write ticked too, it copies and
+  moves onto them, makes drawers, renames and deletes. Both are off until the Amiga's owner ticks them.
+- Setting it up, Transfer, the limits and what to do when something fails:
+  [docs/amiga-networking.md](docs/amiga-networking.md).
 
 ### NFC tags
 
