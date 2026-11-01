@@ -42,8 +42,8 @@ Receiving: files you send from the web app -- from the Upload
 page (Send to Amiga), from a disk's Browse page, or a whole disk
 as an .adf file -- are saved into a folder you choose. Start it
 by hand: double-click its icon, or type Transfer in a Shell. In
-the window, choose the folder and press Save. The default folder
-is RAM:. Files sent while Transfer is not running wait on the
+the window, press Choose... and pick the folder (or type it and
+press Return): it is saved at once. The default folder is RAM:. Files sent while Transfer is not running wait on the
 server for 24 hours.
 
 Transfer is a commodity: closing its window only hides it, and
@@ -87,7 +87,8 @@ and start Transfer again without BROWSE.
 Writing (board firmware 1.23 or newer): also tick Write, or use
 WRITE (it switches browsing on too), and Files can copy onto
 your disks, make drawers, rename, delete, protect and comment
-there. Nothing is forced: a write-protected or full disk, or a
+there. With Transfer 2.9 and board firmware 1.24, a drawer made
+from Files gets your default drawer icon, so Workbench shows it. Nothing is forced: a write-protected or full disk, or a
 protected or open file, is reported, never asked about on the
 Amiga. WRITE SAVE keeps it on; unticking Read or Write switches
 it off, and a file being copied onto your disks then stops at

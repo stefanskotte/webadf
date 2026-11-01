@@ -20,6 +20,7 @@ with it. The same text, shorter, is in the web app's help (the **?** beside each
 | The web app reads the Amiga's volumes (Read) | 1.22.0 | 2.3 |
 | The web app changes them (Write) | 1.23.0 | 2.5 |
 | A Move off a volume removes only what it copied | 1.23.1 | 2.6 |
+| A drawer made from Files gets the default drawer icon | 1.24.0 | 2.9 |
 
 ## Setting up the network
 
@@ -42,7 +43,8 @@ driver.
 Transfer is the Amiga program that saves files the web app sends, sends files up to it, and, when you allow it, lets the
 web app read and change your disks. Its window, *WebFloppy - Receive & Send*, has:
 
-- **Save files to:** the folder files sent to the Amiga go into (**Choose…**, then **Save**). The default is `RAM:`.
+- **Save files to:** the folder files sent to the Amiga go into. **Choose…** a folder, or type one and press Return:
+  Transfer 2.9 saves it at once (older ones need **Save** too). The default is `RAM:`.
 - **Send…**, **Retry failed**, and **Trust this board**.
 - **Web App: Read Write**: two switches, both off until you tick them. *Read* lets the web app list the Amiga's volumes
   and copy files off them. *Write* also lets it change them. Write needs Read. Transfer remembers both.
@@ -103,6 +105,8 @@ once and says when it was read, and **Refresh** (Ctrl-R) reads it again.
 With **Write** ticked too, the web app can copy and move files onto a volume, make drawers, rename, set protection bits
 and comments, and delete:
 
+- **Makedir** also writes the drawer's icon (`<name>.info`), Workbench's own default drawer icon, so the drawer shows
+  on Workbench without *Show All Files*. An icon already there is kept. Needs firmware 1.24.0 and Transfer 2.9.
 - **Delete** always asks, and cannot be undone; the `.info` goes along.
 - A **Move** removes only what it copied: a file saved into the source meanwhile is kept, and the Move says so.
 - Nothing is forced. A write-protected or full disk, a file protected from deletion, or one in use is said in words,

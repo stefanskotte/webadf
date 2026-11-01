@@ -591,7 +591,7 @@ export const HELP_TOPICS = {
           <em>Read</em> lets the web app list the Amiga&apos;s volumes and copy files off them (firmware 1.22 and
           Transfer 2.3 or newer). <em>Write</em> also lets it change them (Firmware 1.23 and Transfer 2.5): Copy and Move
           onto a volume, Makedir, Rename, Protect, comments and Delete. Both stay off until you tick them; Transfer
-          remembers them.
+          remembers them. Makedir also adds the default drawer icon (firmware 1.24, Transfer 2.9).
         </p>
         <p>
           <strong>Browsing.</strong> Inside a board, NET: lists its volumes, then its <em>Queue</em>. Each drawer takes a
@@ -632,7 +632,8 @@ export const HELP_TOPICS = {
         <p>
           Your board must be in <em>Network (PaulaNET)</em> mode, on firmware 1.15.0 or newer. On the Amiga, run{' '}
           <em>Install</em> from the driver disk once: it copies <em>Transfer</em> to SYS:Tools and C:. Start it from its icon,
-          from SYS:WBStartup, or in a Shell (<em>Transfer RECEIVE</em>), choose a folder and press Save. The default folder is RAM:.
+          from SYS:WBStartup, or in a Shell (<em>Transfer RECEIVE</em>), and choose a folder (before Transfer 2.9, press Save too).
+          The default is RAM:.
         </p>
         <p>
           <strong>Three ways to send.</strong> On the Files page, drop files or a folder on <em>Send files to the
