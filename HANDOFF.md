@@ -1489,7 +1489,7 @@ SHIPPED 2026-10-31 -- server/web merged 5c440cfc (migration 0054 applied to prod
 disk 4b1cc536, 01485ce4), firmware 1.23.0 merged 4af240e6 and RELEASED seq 129 / fw-1.23.0; A500 bench 7/7 passed
 (§4-net-writes). The three bench UI gaps fixed in 5b6b7ae4 (migration 0055 applied). The consistency list in §4-net-writes
 is DONE 2026-11-01 (night run: staging ce5fa134, Transfer 2.7 + disk 026ed784, consistency 16a699ca with migration 0057,
-help topic aa7090f2); open there: the two board send stalls found on the bench (see "Night run 2026-11-01").
+help topic aa7090f2, send stalls + Transfer 2.8 + disk 184ca84b). Nothing open on the list but deferred minors.
 (1b) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there. Backlog (operator 2026-10-30): clicking a pane's left edge goes up one level in that pane, as in Directory Opus; at a
 root it does nothing. Backlog (operator 2026-10-30): the disk strip's History button should read as a toggle (it opens and
 closes the History panel), e.g. with a caret.
@@ -1613,11 +1613,20 @@ board queue (spec 64).
   `AddNetInterface eth0` runs; close gadget hides, Ctrl-Alt-W shows; a 391 KB Replace onto Ram Disk:Keep.txt, Write
   unticked at 16 % -> failed "writing is off in Transfer", Keep.txt still 24 B, no temp left; a 0-byte file arrives.
   Exchange and the CX_POPUP=NO hidden start were checked in FS-UAE only (2.04/3.1/3.2).
-- FOUND on the bench (board side, investigation branch fix/fw-send-stalls): (A) a file queued while the Amiga's network
-  was down is not offered after Transfer reconnects until the queue changes again (a send_version bump released it);
-  (B) a lost delivery acknowledgement made the board send the same transfer again -> a duplicate Transfer27_2.
-- A500 state left: SYS:WBStartup/Transfer(+.info) (2.7, starts with Workbench -- remove if unwanted), SYS:Downloads/
-  Transfer(+.info), Ram Disk:Keep.txt and Empty.txt; Transfer 2.6 no longer running.
+- FOUND on the bench and FIXED (merge of fix/fw-send-stalls, no firmware change; board stays on 1.23.1):
+  (A) a copy onto a volume queued while the Amiga's network was down was hidden from the queue text (writeOn false) and
+  nothing moved send_version when Transfer reconnected with writing on -- recordSendRx now bumps send_version when the
+  ability to write flips while an amiga_dest row waits. (B) the board dropped in AWAIT_OK (75 s from the last byte
+  queued, cause of the drop unproven -- the board's `aborted (<why>)` + `amiga tcp: lost` lines would prove it), Transfer
+  had saved the file and the re-offer of the same id saved Transfer27_2 -- Transfer 2.8 remembers the last file (id,
+  size, CRC, name) and answers a repeat GO ... OK <first name> without saving (pin 2f7e5178, 60,336 B). Driver disk
+  184ca84b (PREVIOUS 026ed784), uploaded. A500: re-offering a delivered Dup.txt id -> delivered as Dup.txt, no Dup_2.txt.
+  Agent rulings: bump on any flip; one file remembered; a repeat answers OK even if the re-sent bytes fail CRC.
+  Deferred: Transfer forgets across a restart; skipping the re-send needs a protocol bump; the 75 s deadline could wait
+  on unacknowledged bytes (needs an amiga_tcp.c socket query).
+- A500 state left: SYS:WBStartup/Transfer(+.info) is 2.7 (starts with Workbench -- copy 2.8 over it, or remove if
+  unwanted); Transfer 2.8 running from SYS:Downloads/Transfer28 (run from a NewShell); SYS:Downloads/Transfer(+.info)
+  (2.7), Dup.txt; Ram Disk:Keep.txt and Empty.txt.
 **Server/web step detail (was: branch feat/net-writes-web):**
 Spec docs/superpowers/specs/2026-10-31-net-volumes-writes-design.md, plan docs/superpowers/plans/2026-10-31-net-writes-web.md
 (rulings W1-W13 and the ledger there). **Migration 0054 (drizzle/0054_net_writes.sql) -- NOT yet applied to production:
