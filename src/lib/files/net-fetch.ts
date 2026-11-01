@@ -36,7 +36,7 @@ import { refuse, skippedItem, type Clash, type CopyMove, type OpCtx, type OpItem
 import { browseOf, isNetVolumePath } from './net-driver';
 import { clashMode, joinAmiga, moveWithinVolume, mustRemoveOnVolume, placeOf, sameVolume, writableBoard } from './net-write';
 import { settleMoveOfGet, settleMoveOfTransfer, settleMovesOfJob } from './net-moves';
-import { CANCEL_KIND } from './job-view';
+import { CANCEL_KIND, CANCELLED } from './job-view';
 import { shelfDest } from './shelf';
 import { ADDED_UNFILED } from './shelf-rules';
 import { keepBothName, sameStashName, stashFind, stashTree } from './stash-paths';
@@ -312,13 +312,21 @@ async function relay(db: Db, g: RemoteRow, target: GetTarget, uploadId: string, 
   const bytes = await diskStore.read(blobSha256).catch(() => undefined);
   // The move marker as the get carries it NOW, read under the get's lock in the queue's own transaction: `target` is the
   // claim's copy, and a Cancel the rest since (which locks the same get) took the marker off -- the row then is a copy.
+  // A Cancel the rest that landed while the file was being placed (its marker, under the same lock) queues nothing more:
+  // the get says cancelled, as the parts Cancel withdrew do (final review M4).
   const q = await db.transaction(async (tx) => {
     const [cur] = await tx.select({ target: remoteRequests.target }).from(remoteRequests).where(eq(remoteRequests.id, g.id)).for('update');
+    if (g.fetchId) {
+      const [marker] = await tx.select({ id: remoteRequests.id }).from(remoteRequests)
+        .where(and(eq(remoteRequests.fetchId, g.fetchId), eq(remoteRequests.orgId, g.orgId), eq(remoteRequests.kind, CANCEL_KIND))).limit(1);
+      if (marker) return { ok: false as const, reason: CANCELLED };
+    }
     const moveSource = (cur?.target as GetTarget | undefined)?.relay?.moveSource;
     return queueTransfers(tx as unknown as Db, { orgId: g.orgId, deviceId: r.deviceId, userId, jobId: g.fetchId ?? undefined, now, files: [{
       path: target.rel[target.rel.length - 1], sha256: blobSha256, sizeBytes, protection: Number(protection), comment,
       dest: r.dest, onClash: r.onClash, ...(bytes ? { bytes } : {}), ...(moveSource ? { moveSource } : {}) }] });
   });
+  if (!q.ok && q.reason === CANCELLED) return fail(CANCELLED, CANCELLED);
   if (!q.ok) {
     const words = q.reason === 'queue_full' ? "the board's queue is full" : q.reason === 'empty' ? 'it is empty' : 'it could not be queued';
     return fail(q.reason, words);
