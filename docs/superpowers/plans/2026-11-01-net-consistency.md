@@ -219,3 +219,4 @@ Work: arrives with the fake board). Commit.
 - Task 4: complete (net-consistency item 4 RED 1/2 -> GREEN 10/10)
 - Task 5: Ruling: the board check a settle makes before asking the fresh listings (volumeMoveBoard) reads through the settle's own transaction (a `db` parameter on writableBoard/volumeMoveBoard), so no second connection is used while the locks are held -- cost if wrong: none
 - Task 5: complete (item 5 RED: the aged move hung 8 s on its own locks; GREEN; db 119/119; tsc clean)
+- Task 6: complete (net-write 'target's own icon' RED -> GREEN; net-write db 36/36)

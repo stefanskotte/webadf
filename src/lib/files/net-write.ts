@@ -336,16 +336,23 @@ export async function moveWithinVolume(ctx: OpCtx, sources: string[], dest: stri
     if (to.amiga.toLowerCase() === lower || to.amiga.toLowerCase().startsWith(`${lower}/`)) refuse('cycle', 409);
     if (amigaParent(at.amiga).toLowerCase() === to.amiga.toLowerCase()) refuse('name_exists', 409, 'same file');
     let target = name;
+    const parent = amigaParent(at.amiga);
+    const icon = iconOf(await rememberedEntries(t.id, parent), name, (n) => picked.has(joinAmiga(parent, n).toLowerCase()));
     if (has(entries, name) || going.some((g) => sameStashName(g, name))) {
       if (onClash === 'ask') { clashes.push({ source: raw, name, dest }); continue; }
       if (onClash === 'skip') { items.push(skippedItem(raw)); continue; }
-      if (onClash === 'replace') writes.push({ kind: 'delete', amigaPath: joinAmiga(to.amiga, name), label: joinAmiga(to.shown, name) });
-      else target = keepBothName(name, (n) => has(entries, n) || going.some((g) => sameStashName(g, n)));
+      if (onClash === 'replace') {
+        writes.push({ kind: 'delete', amigaPath: joinAmiga(to.amiga, name), label: joinAmiga(to.shown, name) });
+        // The replaced object's own icon goes too when the moved one brings its own (plan 2026-11-01-net-consistency,
+        // item 6): else the icon's RENAME meets it and fails `exists`. Without a moved icon the target's stays.
+        const old = entries.find((e) => sameStashName(e.name, `${name}${INFO}`));
+        if (icon?.known && old && !isInfo(name)) {
+          writes.push({ kind: 'delete', amigaPath: joinAmiga(to.amiga, old.name), icon: true, label: joinAmiga(to.shown, old.name) });
+        }
+      } else target = keepBothName(name, (n) => has(entries, n) || going.some((g) => sameStashName(g, n)));
     }
     going.push(target);
     writes.push({ kind: 'rename', amigaPath: at.amiga, args: { to: joinAmiga(to.amiga, target) }, label: at.shown });
-    const parent = amigaParent(at.amiga);
-    const icon = iconOf(await rememberedEntries(t.id, parent), name, (n) => picked.has(joinAmiga(parent, n).toLowerCase()));
     if (icon && !isInfo(target)) {
       writes.push({ kind: 'rename', amigaPath: joinAmiga(parent, icon.name), args: { to: joinAmiga(to.amiga, `${target}${INFO}`) },
         icon: !icon.known, label: joinAmiga(amigaParent(at.shown), icon.name) });

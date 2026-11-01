@@ -369,6 +369,18 @@ describe('moves', () => {
     expect(await op({ op: 'move', sources: [W('Sub')], dest: 'NET:/w1/Work/Sub', onClash: 'ask' })).toMatchObject({ kind: 'refused', refusal: { code: 'cycle' } });
   });
 
+  it('within one volume, Replace: the target\'s own icon goes before the moved icon takes its name; without a moved icon it stays', async () => {
+    await remember('Work:Sub', [ent('a.txt', 1), ent('a.txt.info', 5), ent('x', 1), ent('x.info', 5)]);
+    await op({ op: 'move', sources: [W('a.txt')], dest: 'NET:/w1/Work/Sub', onClash: 'replace' });
+    expect((await lines()).map(([k, p, t]) => `${k} ${p} ${(t as { to?: string }).to ?? ''}${(t as { icon?: boolean }).icon ? ' icon' : ''}`)).toEqual([
+      'delete Work:Sub/a.txt ', 'delete Work:Sub/a.txt.info  icon', 'rename Work:a.txt Work:Sub/a.txt', 'rename Work:a.txt.info Work:Sub/a.txt.info',
+    ]);
+    await getDb().delete(remoteRequests).where(eq(remoteRequests.fetchId, (await writes())[0].fetchId!));
+    // Work:x has no icon of its own (the remembered Work: lists none): Sub/x.info is left alone.
+    await op({ op: 'move', sources: [W('x')], dest: 'NET:/w1/Work/Sub', onClash: 'replace' });
+    expect((await lines()).map(([k, p]) => `${k} ${p}`)).toEqual(['delete Work:Sub/x', 'rename Work:x']);
+  });
+
   it('out of a volume into STASH:: the source is deleted on the Amiga once its file is stored', async () => {
     const r = await op({ op: 'move', sources: [W('x')], dest: 'STASH:', onClash: 'keep-both' });
     expect(r).toMatchObject({ kind: 'done', fetching: { files: 1 } });
