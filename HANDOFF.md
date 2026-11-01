@@ -1490,13 +1490,24 @@ disk 4b1cc536, 01485ce4), firmware 1.23.0 merged 4af240e6 and RELEASED seq 129 /
 (§4-net-writes). The three bench UI gaps fixed in 5b6b7ae4 (migration 0055 applied). The consistency list in §4-net-writes
 is DONE 2026-11-01 (night run: staging ce5fa134, Transfer 2.7 + disk 026ed784, consistency 16a699ca with migration 0057,
 help topic aa7090f2, send stalls + Transfer 2.8 + disk 184ca84b). Nothing open on the list but deferred minors.
-(1b) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there. Backlog (operator 2026-10-30): clicking a pane's left edge goes up one level in that pane, as in Directory Opus; at a
-root it does nothing. Backlog (operator 2026-10-30): the disk strip's History button should read as a toggle (it opens and
-closes the History panel), e.g. with a caret.
-(2) **Sharing follow-ups:** A500 bench of the first-write rule; Send to Amiga from a remote disk end to end; the one-off
-local remote-mount 404; OMV back to `latest` after the next web-* release; the sharing deferred minors.
-(3) **Web app, smaller:** "Put on a disk" from From the Amiga; .lzh dropped onto a disk in Browse; documentation for
-file transfer (Send to Amiga / Transfer 2.1).
+(1b) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there. The two
+operator backlog items are SHIPPED 2026-11-01 (fc3aa195): a click on a pane's left edge goes up one level (Directory Opus;
+at a root nothing; lg and up only, the mouse's shortcut beside ↑), and History wears a caret (▾ closed, ▴ open).
+(2) **Sharing follow-ups:** A500 bench of the first-write rule and Send to Amiga from a remote disk end to end -- BLOCKED
+on the operator: adding a remote library to the operator's org was refused by the permission layer (2026-11-01); a
+throwaway owner (t-1793535884887-727850@example.test, title "Share Bench", one ShareBench FFS disk, share "A500 bench",
+everything) is waiting on production for it, set up by an untracked .bench/ (no teardown); remove both afterwards. The
+one-off local remote-mount 404: NOT reproduced (6 local runs of sharing + sharing-owner, all green); its three 404 sources
+are the library, the board's team, and the owner's not_shared; the spec prints the body when it recurs. OMV back to
+`latest`: waits on the next web-* release (none since web-1.1.0, 2026-10-16). The sharing deferred minors: NOT
+recoverable -- the ledger was deleted and no transcript on this machine holds that session's final message.
+(3) **Web app, smaller:** DONE 2026-11-01. "Put on a disk" from From the Amiga is what Files does (Create ADF… on
+LIBRARY:, then copy from STASH:); .lzh dropped onto a disk has unpacked since 3ae (e2e archive-drop*.spec.ts, the
+operator's -lh1- archive since 2026-10-18); documentation for file transfer: docs/amiga-networking.md, linked from the
+README, screenshots retaken with a writable volume (067cc1ef). Found on the way: Install never updated a Transfer in
+SYS:WBStartup -- the A500 kept 2.6 and an icon without DONOTWAIT there, so Workbench asked "has not yet returned".
+Install now updates it (and the icon when it lacks DONOTWAIT); FS-UAE `install` mode 6/6 on 2.04/3.1/3.2; driver disk
+d480590e (184ca84b previous), uploaded and read back (3a23f4ad).
 (4) **Hardware:** NFC detects rarely since rev B (measure first); rev C
 (own RP2350 + antenna port, LWB+ breadboard test when the Mouser parts arrive, keyed I2C + display FFC connectors,
 next-disk button, activity LED, DF0 passthrough).
