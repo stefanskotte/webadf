@@ -317,7 +317,7 @@ describe('NET: volumes in the pane (spec 2026-10-30 §5)', () => {
   const boardRoot: Listing = {
     path: 'NET:/b', crumbs: [{ label: 'NET:', path: 'NET:' }, { label: 'A500', path: 'NET:/b' }],
     entries: [entry('Queue', 'dir', { path: 'NET:/b/Queue' })], writable: false, readOnlyReason: 'Open a volume or Queue', disk: null,
-    meta: 'Switch on browsing in Transfer on A500', net: { ...net, volume: null, amigaPath: null, readAt: null, browse: 'Switch on browsing in Transfer on A500' },
+    meta: 'Tick Read in Transfer on A500', net: { ...net, volume: null, amigaPath: null, readAt: null, browse: 'Tick Read in Transfer on A500' },
   };
   it('a volume\'s title bar names the board and the Amiga path; its rows drag; its read-only line says so', () => {
     const html = render({ listing: volume });
@@ -342,7 +342,7 @@ describe('NET: volumes in the pane (spec 2026-10-30 §5)', () => {
   });
   it('a board whose volumes cannot be read says why in one row above Queue', () => {
     const html = render({ listing: boardRoot });
-    expect(html).toMatch(/data-testid="net-browse-reason".*Switch on browsing in Transfer on A500[^]*data-name="Queue"/);
+    expect(html).toMatch(/data-testid="net-browse-reason".*Tick Read in Transfer on A500[^]*data-name="Queue"/);
   });
   it('a cut listing ends with a row saying so', () => {
     expect(render({ listing: { ...volume, net: { ...net, cut: true } } })).toMatch(/data-name="a.lha"[^]*data-testid="net-cut"[^]*Only the first 1000 entries are shown/);

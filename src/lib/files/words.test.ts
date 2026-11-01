@@ -92,7 +92,7 @@ describe('refusalWords for writes to the Amiga', () => {
     expect(refusalWords('read_only', 'Writing is off in Transfer')).toBe('Writing is off in Transfer.');
     expect(refusalWords('read_only', 'Transfer 2.5 or newer writes to the Amiga')).toBe('Transfer 2.5 or newer writes to the Amiga.');
     expect(refusalWords('read_only', 'Board firmware 1.23.0 or newer writes to the Amiga')).toBe('Board firmware 1.23.0 or newer writes to the Amiga.');
-    expect(refusalWords('read_only', 'Switch on browsing in Transfer on A500')).toBe('Switch on browsing in Transfer on A500.');
+    expect(refusalWords('read_only', 'Tick Read in Transfer on A500')).toBe('Tick Read in Transfer on A500.');
     expect(refusalWords('read_only', 'Transfer is not running on A500')).toBe('Transfer is not running on A500.');
     expect(refusalWords('conflict', 'List the drawer again and retry')).toBe('List the drawer again and retry.');
     expect(refusalWords('unsupported', 'Move within one volume')).toBe('Move within one volume.');

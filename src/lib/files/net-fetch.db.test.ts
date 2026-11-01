@@ -153,7 +153,7 @@ describe('startFetch: one get per file', () => {
 
   it('a board that cannot be browsed refuses read_only with the pane\'s words', async () => {
     const r = await copy(['NET:/b2/Work/a.lha'], 'STASH:');
-    expect(r).toMatchObject({ kind: 'refused', refusal: { code: 'read_only', detail: 'Switch on browsing in Transfer on A1200' } });
+    expect(r).toMatchObject({ kind: 'refused', refusal: { code: 'read_only', detail: 'Tick Read in Transfer on A1200' } });
   });
 
   it('onto LIBRARY: a disk image is fetched into the STASH: root for the library; anything else is refused per item', async () => {

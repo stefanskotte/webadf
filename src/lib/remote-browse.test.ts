@@ -9,7 +9,7 @@ describe('browseBlock', () => {
     expect(browseBlock({ ...ok, firmware: '1.21.1+gabc' })).toBe('Firmware 1.22 or newer is needed');
     expect(browseBlock({ ...ok, rx: 'u' })).toBe('Transfer is not running on A500');
     expect(browseBlock({ ...ok, rxProto: 2 })).toBe('Transfer 2.3 or newer is needed on A500');
-    expect(browseBlock({ ...ok, browseOn: false })).toBe('Switch on browsing in Transfer on A500');
+    expect(browseBlock({ ...ok, browseOn: false })).toBe('Tick Read in Transfer on A500');
   });
 });
 describe('browseMark', () => {
@@ -22,12 +22,12 @@ describe('browseMark', () => {
     expect(browseMark({ ...mark, firmware: '1.21.1+gabc' })).toBe('needs firmware 1.22');
     expect(browseMark({ ...mark, running: false })).toBeNull();
     expect(browseMark({ ...mark, rxProto: 2 })).toBe('needs Transfer 2.3');
-    expect(browseMark({ ...mark, browseOn: false })).toBe('browsing off in Transfer');
+    expect(browseMark({ ...mark, browseOn: false })).toBe('Read is off in Transfer');
   });
 });
 describe('errorWords', () => {
   it('maps codes to the pane words', () => {
-    expect(errorWords('off', '', 'A500')).toBe('Switch on browsing in Transfer on A500');
+    expect(errorWords('off', '', 'A500')).toBe('Tick Read in Transfer on A500');
     expect(errorWords('notfound', 'object not found', 'A500')).toBe('Object not found');
     expect(errorWords('timeout', '', 'A500')).toBe("A500 didn't answer — Refresh to try again");
     expect(errorWords('busy', 'object in use', 'A500')).toBe('object in use');
@@ -44,7 +44,7 @@ describe('writing', () => {
   });
   it('writeBlock is null when the board can write, else the missing thing', () => {
     expect(writeBlock(w)).toBeNull();
-    expect(writeBlock({ ...w, browseOn: false })).toBe('Switch on browsing in Transfer on A500');
+    expect(writeBlock({ ...w, browseOn: false })).toBe('Tick Read in Transfer on A500');
     expect(writeBlock({ ...w, online: false })).toBe('offline 3 h');
     expect(writeBlock({ ...w, firmware: '1.22.0+gabc' })).toBe('Board firmware 1.23.0 or newer writes to the Amiga');
     expect(writeBlock({ ...w, rxProto: 3 })).toBe('Transfer 2.5 or newer writes to the Amiga');

@@ -189,7 +189,7 @@ test('browsing off: the board says why in place of its volumes, and Queue still 
   const { deviceId, token } = await browsable(page, request);
   await setBrowse(deviceId, { browseOn: false });
   await openFiles(page, 'STASH:', `NET:/${deviceId}`, 'right');
-  await expect(page.getByTestId('net-browse-reason')).toHaveText('Switch on browsing in Transfer on A500');
+  await expect(page.getByTestId('net-browse-reason')).toHaveText('Tick Read in Transfer on A500');
   await expect(page.getByTestId('pane-pending')).toHaveCount(0);
   const rows = page.getByTestId('pane-right').getByTestId('pane-row');
   await expect(rows).toHaveCount(1);

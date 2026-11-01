@@ -9,8 +9,8 @@ describe('firstFromThrown', () => {
       .toEqual({ listing: null, pending: 'Reading Work:Programs from A500…' });
   });
   it('a NET: refusal opens with its words, else the refusal\'s own words', () => {
-    expect(firstFromThrown(new Refused({ code: 'read_only', detail: 'Switch on browsing in Transfer on A500' }, 409), 'NET'))
-      .toEqual({ listing: null, error: 'Switch on browsing in Transfer on A500' });
+    expect(firstFromThrown(new Refused({ code: 'read_only', detail: 'Tick Read in Transfer on A500' }, 409), 'NET'))
+      .toEqual({ listing: null, error: 'Tick Read in Transfer on A500' });
     expect(firstFromThrown(new Refused({ code: 'not_found', detail: 'Object not found' }, 404), 'NET'))
       .toEqual({ listing: null, error: 'Object not found' });
     expect(firstFromThrown(new Refused({ code: 'failed' }, 504), 'NET')!.error).toEqual(expect.any(String));

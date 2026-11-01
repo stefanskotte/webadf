@@ -125,7 +125,7 @@ describe('listingRefusal', () => {
     expect(listingRefusal('LIBRARY:/g1', 404, undefined)).toEqual({ gone: true });
   });
   it('other refusals: a NET: detail is the whole sentence; elsewhere the code\'s words decide (null)', () => {
-    expect(listingRefusal('NET:/b1/Work', 409, 'Switch on browsing in Transfer on A500')).toEqual({ words: 'Switch on browsing in Transfer on A500' });
+    expect(listingRefusal('NET:/b1/Work', 409, 'Tick Read in Transfer on A500')).toEqual({ words: 'Tick Read in Transfer on A500' });
     expect(listingRefusal('STASH:/x', 409, 'whatever')).toEqual({ words: null });
     expect(listingRefusal('NET:/b1/Work', 504, undefined)).toEqual({ words: null });
   });

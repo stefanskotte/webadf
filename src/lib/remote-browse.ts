@@ -3,7 +3,7 @@
 import { firmwareAtLeast } from '@/lib/firmware-version';
 import { BROWSE_FW, BROWSE_PROTO, WRITE_FW, WRITE_PROTO } from './remote-limits';
 
-const switchOn = (name: string) => `Switch on browsing in Transfer on ${name}`;
+const switchOn = (name: string) => `Tick Read in Transfer on ${name}`;
 const oldWords = (name: string) => `Transfer 2.3 or newer is needed on ${name}`;
 const notRunning = (name: string) => `Transfer is not running on ${name}`;
 /** Spec 2026-10-31 §4.2: the reason line and the greyed write buttons' tooltip. */
@@ -66,7 +66,7 @@ export function boardWriteWords(d: { firmwareVersion: string | null; sendRx: str
 
 /** Whether `s` is one of boardWriteWords' sentences (the server's reason), not Transfer's own text for the same code. */
 const isBlockWords = (s: string) => s === WRITE_OFF || s === WRITE_OLD_TRANSFER || s === WRITE_OLD_FIRMWARE || s === 'Firmware 1.22 or newer is needed'
-  || /^(Transfer is not running on|Switch on browsing in Transfer on|Transfer 2\.3 or newer is needed on) .+$/.test(s);
+  || /^(Transfer is not running on|Tick Read in Transfer on|Switch on browsing in Transfer on|Transfer 2\.3 or newer is needed on) .+$/.test(s);
 
 /**
  * The NET: root row's mark (spec §5): "browsable", or the one missing thing in a few words. Null when the row already
@@ -77,7 +77,7 @@ export function browseMark(b: { online: boolean; firmware: string | null; runnin
   if (!firmwareAtLeast(b.firmware, BROWSE_FW)) return 'needs firmware 1.22';
   if (!b.running) return null;
   if ((b.rxProto ?? 0) < BROWSE_PROTO) return 'needs Transfer 2.3';
-  if (!b.browseOn) return 'browsing off in Transfer';
+  if (!b.browseOn) return 'Read is off in Transfer';
   return 'browsable';
 }
 

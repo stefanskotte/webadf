@@ -397,10 +397,10 @@ describe('NET: volumes', () => {
       const before = (await getDb().select().from(remoteRequests)).length;
       const l = (await netDriver.list(ctx, P('NET:/b1')))!;
       expect(l.entries.map((e) => e.name)).toEqual(['Queue']);
-      expect(l.net!.browse).toBe(`Switch on browsing in Transfer on ${NAME}`);
-      expect(l.meta).toBe(`Switch on browsing in Transfer on ${NAME}`);
+      expect(l.net!.browse).toBe(`Tick Read in Transfer on ${NAME}`);
+      expect(l.meta).toBe(`Tick Read in Transfer on ${NAME}`);
       expect((await getDb().select().from(remoteRequests)).length).toBe(before);
-      expect(await refusalOf('NET:/b1/Work')).toEqual({ code: 'read_only', detail: `Switch on browsing in Transfer on ${NAME}`, status: 409 });
+      expect(await refusalOf('NET:/b1/Work')).toEqual({ code: 'read_only', detail: `Tick Read in Transfer on ${NAME}`, status: 409 });
     } finally { await getDb().update(devices).set({ browseOn: true }).where(eq(devices.id, 'b1')); }
   });
 
@@ -444,7 +444,7 @@ describe('NET: volumes', () => {
     expect(await refusalOf('NET:/b1/Work/Gone')).toEqual({ code: 'not_found', detail: 'Object not found', status: 404 });
     await pendingOf('NET:/b1/Work/Off');
     await answer((rid) => [`ERR ${rid} off 0:`]);
-    expect(await refusalOf('NET:/b1/Work/Off')).toEqual({ code: 'read_only', detail: `Switch on browsing in Transfer on ${NAME}`, status: 409 });
+    expect(await refusalOf('NET:/b1/Work/Off')).toEqual({ code: 'read_only', detail: `Tick Read in Transfer on ${NAME}`, status: 409 });
   });
 
   it('Refresh (fresh) asks again though the listing is remembered', async () => {
