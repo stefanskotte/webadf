@@ -1498,7 +1498,7 @@ file transfer (Send to Amiga / Transfer 2.1).
 (4) **Hardware:** NFC detects rarely since rev B (measure first); rev C
 (own RP2350 + antenna port, LWB+ breadboard test when the Mouser parts arrive, keyed I2C + display FFC connectors,
 next-disk button, activity LED, DF0 passthrough).
-(5) **Firmware state:** the bench board is on TEST seq 123 (1.21.1+gc324fbd); leaving TEST needs a release above 123.
+(5) **Firmware state:** the bench board runs the released 1.23.1 (seq 130, 2026-11-01); no TEST build is installed.
 (6) **Open, not scheduled:** HD bench leftovers (rev B WDATA retest, steps
 4-7); layered disks (never designed).
 **Closed 2026-10-28 (operator):** B10 -- the board works on the A4000D too; the 128x64 setup screen was confirmed
