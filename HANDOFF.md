@@ -1490,6 +1490,20 @@ disk 4b1cc536, 01485ce4), firmware 1.23.0 merged 4af240e6 and RELEASED seq 129 /
 (§4-net-writes). The three bench UI gaps fixed in 5b6b7ae4 (migration 0055 applied). The consistency list in §4-net-writes
 is DONE 2026-11-01 (night run: staging ce5fa134, Transfer 2.7 + disk 026ed784, consistency 16a699ca with migration 0057,
 help topic aa7090f2, send stalls + Transfer 2.8 + disk 184ca84b). Nothing open on the list but deferred minors.
+(1c) **SHIPPED 2026-11-01 night (operator + Pillock asks):** NET: Makedir gives the drawer the Amiga's default drawer
+icon -- protocol 6: Transfer 2.9 (`MKDIR <rid> <path> icon` -> CreateDir, then GetDefDiskObject(WBDRAWER) +
+PutDiskObject unless <name>.info exists; a failed icon still answers DONE), fw **1.24.0 RELEASED seq 131 / fw-1.24.0**
+(WEBADF 6 / READY 6, rxv=6, AR_MKDIR_ICON; below protocol 6 the board strips " icon" and sends a plain MKDIR),
+server adds `drawerIcon` only at rxv>=6 (7c7dcb98; a first deploy failed on a scenarios.ts type, fixed 0b003a42).
+Transfer 2.9 also saves a chosen/typed folder at once (Pillock's "files went to RAM:"). Transfer 2.10 (7ce1193b):
+Project/About with the version (amiga/version.h feeds $VER too), the version in the screen title, NewLook menus
+decided as hdpart does (gadtools V39+, DRIF_NEWLOOK pens, palette contrast). Driver disks: e427a3d7 (2.9) then
+**4ad243e9 (2.10, current)**, e427a3d7 previous. Bench: FS-UAE write 33/33 and cx 18/18 on 2.04/3.1/3.2 (one 2.04
+cx run failed its two first checks, the re-run passed: boot timing); A500: Makedir from Files -> IconTest.info
+628 B, shown on Workbench (operator); About + NewLook confirmed by the operator. The A500 runs Transfer 2.10 from
+SYS:Downloads/Transfer_3 (WBStartup has 2.9, updated by the operator). Next: the progress panel (spec
+docs/superpowers/specs/2026-11-01-progress-panel-design.md, APPROVED by the operator); the header select-all
+checkbox (Pillock; awaiting go).
 (1b) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there. The two
 operator backlog items are SHIPPED 2026-11-01 (fc3aa195): a click on a pane's left edge goes up one level (Directory Opus;
 at a root nothing; lg and up only, the mouse's shortcut beside ↑), and History wears a caret (▾ closed, ▴ open).
@@ -1555,7 +1569,8 @@ copy into Monkey1-4 drawers on the Amiga; "Save files to" set to an HD partition
 file landed in RAM: -- confirmed: he used Choose… and did not press Save. FIXED in Transfer 2.9 (a chosen or typed
 folder is saved at once; driver disk e427a3d7, 2026-11-01). His Makedir drawer-icon ask is SHIPPED the same night
 (fw 1.24.0 seq 131 RELEASED / fw-1.24.0, Transfer 2.9, protocol 6; A500 bench: icon written, shows on Workbench).
-(5) **Firmware state:** the bench board runs the released 1.23.1 (seq 130, 2026-11-01); no TEST build is installed.
+(5) **Firmware state:** the bench board runs the released 1.24.0 (seq 131, 2026-11-01); no TEST build is installed. It was
+re-flashed over USB with the 1.23.1 install UF2 earlier that night (a stray a500_pikvm_hid image sat in partition B).
 (6) **Open, not scheduled:** HD bench leftovers (rev B WDATA retest, steps
 4-7); layered disks (never designed).
 (7) **Any network card, not just PaulaNET (operator, 2026-11-01; PARKED by the operator the same day, not designed).** Transfer on an Amiga with its own
