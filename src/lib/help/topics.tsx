@@ -115,7 +115,7 @@ export const HELP_TOPICS = {
           stays, and a move keeps its sources.
         </p>
         <p>
-          <strong>Keys.</strong> ↑ and ↓ move, Space picks, Enter opens, Backspace goes up, Tab switches pane, / filters,
+          <strong>Keys.</strong> The box at the top of the tick column picks every row shown, or none. ↑ and ↓ move, Space picks, Enter opens, Backspace goes up, Tab switches pane, / filters,
           F5 copies, F6 moves, F7 makes a folder, F2 renames, Delete deletes. A click on a pane&apos;s left edge goes up
           one level too, as in Directory Opus.
         </p>

@@ -1644,6 +1644,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
               help={paneHelpTopic(p.listing?.path ?? p.path)}
               onActivate={() => activate(side)} onNavigate={(path) => navigate(side, path)}
               onSort={(key) => changeSort(side, key)} onSetSort={(next) => applySort(side, next)}
+              onPickAll={(all) => setSelection(side, () => (all ? selectAll(rowsOf(side).length) : EMPTY_SELECTION))}
               onRowClick={(i, mods) => rowClick(side, i, mods)}
               onRowOpen={(i, how) => openRow(side, i, how)}
               onDragStartRows={(ix, e) => dragStart(side, ix, e)} onDropRows={(e) => drop(side, e)}
