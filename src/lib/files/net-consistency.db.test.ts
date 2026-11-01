@@ -355,3 +355,30 @@ describe('item 7: one Amiga fold for remembered listings (Latin-1 capitals, C co
     expect(await status('Ö:')).toBe('stale');
   });
 });
+
+describe('item 8: a sending row moves only while its chunks come (transfers.active_at)', () => {
+  const later = new Date(Date.now() + 3600_000);
+  const sending = (activeAt: Date | null) => getDb().insert(transfers).values({ id: 's1', orgId: 'o1', deviceId: 'w1', createdByUserId: 'u1',
+    path: 'big.lha', sizeBytes: 40_000, crc32: 0, blobSha256: 'a'.repeat(64), expiresAt: later, status: 'sending', bytesSent: 16_384, activeAt });
+
+  it('a row left sending (Transfer stopped) is not named, and a listing behind it times out', async () => {
+    const { copyMoving, expireStale } = await import('@/lib/remote-requests');
+    await sending(new Date(Date.now() - 120_000));
+    // The board still polls: its receiver report is fresh.
+    await getDb().update(devices).set({ sendRxAt: new Date() }).where(eq(devices.id, 'w1'));
+    expect(await copyMoving(getDb(), 'w1')).toBeNull();
+    const old = new Date(Date.now() - 61_000);
+    await getDb().insert(remoteRequests).values({ id: 'l1', orgId: 'o1', deviceId: 'w1', kind: 'dir', amigaPath: 'Work:Slow', createdAt: old });
+    await expireStale(getDb());
+    expect(await getById('l1')).toMatchObject({ status: 'failed', errorCode: 'timeout' });
+  });
+
+  it('a chunk fetch stamps the row, and then it is named', async () => {
+    const { copyMoving } = await import('@/lib/remote-requests');
+    const { recordChunk } = await import('@/lib/transfers');
+    await sending(null);
+    expect((await recordChunk(getDb(), 'w1', 's1', 16_384)).ok).toBe(true);
+    expect((await getDb().select().from(transfers).where(eq(transfers.id, 's1')))[0].activeAt).not.toBeNull();
+    expect(await copyMoving(getDb(), 'w1')).toBe('big.lha');
+  });
+});

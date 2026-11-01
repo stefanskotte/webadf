@@ -222,7 +222,7 @@ export async function recordChunk(db: Db, deviceId: string, id: string, offset: 
   Promise<{ ok: true; sha256: string; sizeBytes: number } | { ok: false; status: 400 | 404 | 409 }> {
   // One conditional update, never a read then a write: a cancel that lands between the two must not be turned back
   // into 'sending' (review finding). The offset is checked in the same statement, before the row is marked.
-  const [u] = await db.update(transfers).set({ status: 'sending', bytesSent: offset })
+  const [u] = await db.update(transfers).set({ status: 'sending', bytesSent: offset, activeAt: new Date() })
     .where(and(eq(transfers.id, id), eq(transfers.deviceId, deviceId), inArray(transfers.status, ACTIVE),
       gt(transfers.sizeBytes, offset)))
     .returning({ sha: transfers.blobSha256, size: transfers.sizeBytes });

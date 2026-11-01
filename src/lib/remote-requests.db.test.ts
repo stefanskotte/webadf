@@ -522,7 +522,7 @@ describe('write requests', () => {
     await getDb().delete(transfers);
     await getDb().update(devices).set({ sendRxAt: at(0) }).where(eq(devices.id, deviceId));
     await getDb().insert(transfers).values({ id: 'ts1', orgId, deviceId, createdByUserId: 'u', path: 'x', amigaDest: 'Work:Tools/big.lha',
-      sizeBytes: 10, crc32: 0, blobSha256: 's', status: 'sending', expiresAt: at(9999) });
+      sizeBytes: 10, crc32: 0, blobSha256: 's', status: 'sending', expiresAt: at(9999), activeAt: at(0) });   // its last chunk fetched at 0
     expect(await copyMoving(getDb(), deviceId, at(30))).toBe('Work:Tools/big.lha');
     const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:', fresh: false }, at(1));
     await expireStale(getDb(), at(59));

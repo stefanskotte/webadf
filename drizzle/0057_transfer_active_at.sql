@@ -1,0 +1,1 @@
+ALTER TABLE "transfers" ADD COLUMN "active_at" timestamp with time zone;

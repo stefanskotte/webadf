@@ -70,7 +70,7 @@ function boardMoving(cut: Date) {
     or exists (select 1 from remote_requests w where w.device_id = remote_requests.device_id and w.id <> remote_requests.id
       and w.status = 'sent' and w.pieces > 0 and w.active_at >= ${cut})
     or exists (select 1 from devices d where d.id = remote_requests.device_id and d.send_rx_at >= ${cut} and (
-      exists (select 1 from transfers t where t.device_id = d.id and t.status = 'sending')
+      exists (select 1 from transfers t where t.device_id = d.id and t.status = 'sending' and t.active_at >= ${cut})
       or exists (select 1 from amiga_uploads u where u.device_id = d.id and u.status = 'receiving' and u.source = 'amiga'
         and u.active_at >= ${cut}))))`;
 }
@@ -122,7 +122,9 @@ export async function copyMoving(db: Db, deviceId: string, now = new Date()): Pr
   const [d] = await db.select({ at: devices.sendRxAt }).from(devices).where(eq(devices.id, deviceId));
   if (!d?.at || d.at < cut) return null;
   const [t] = await db.select({ path: sql<string>`coalesce(${transfers.amigaDest}, ${transfers.path})` }).from(transfers)
-    .where(and(eq(transfers.deviceId, deviceId), eq(transfers.status, 'sending'))).limit(1);
+    // A row left sending when Transfer stopped mid-file is not moving (plan 2026-11-01-net-consistency, item 8): only
+    // one whose chunks came lately.
+    .where(and(eq(transfers.deviceId, deviceId), eq(transfers.status, 'sending'), gte(transfers.activeAt, cut))).limit(1);
   if (t) return t.path;
   const [u] = await db.select({ path: amigaUploads.path }).from(amigaUploads)
     .where(and(eq(amigaUploads.deviceId, deviceId), eq(amigaUploads.status, 'receiving'), eq(amigaUploads.source, 'amiga'),

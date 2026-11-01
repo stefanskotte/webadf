@@ -222,3 +222,6 @@ Work: arrives with the fake board). Commit.
 - Task 6: complete (net-write 'target's own icon' RED -> GREEN; net-write db 36/36)
 - Task 7: Ruling: item 6's new test remembered Work:Sub twice in one millisecond (newest a coin toss once the fold changed the plan); it now replaces the listing -- cost if wrong: none
 - Task 7: complete (item 7 RED 4/4 incl. the afterTransferDone drop after the last row -> GREEN; net db 156/156)
+- Task 8: Migration 0057_transfer_active_at.sql (ALTER TABLE transfers ADD COLUMN active_at timestamptz) -- NOT applied to production; test DBs migrate themselves
+- Task 8: Ruling: remote-requests' 'a listing waits behind a queue file the board is sending' fixture gains activeAt at(0) (a sending row with a chunk just fetched, as the board makes it) -- cost if wrong: none
+- Task 8: complete (item 8 RED 1/2 -> GREEN)
