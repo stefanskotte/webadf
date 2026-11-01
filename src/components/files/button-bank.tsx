@@ -19,7 +19,7 @@ export function ButtonBank(p: {
   onDevice(d: Device): void; onCommand(c: BankCommand): void;
 }) {
   return (
-    <div data-testid="files-bank" className="grid grid-cols-[120px_minmax(0,1fr)] border-t max-lg:hidden"
+    <div data-testid="files-bank" data-transfers-anchor="" className="grid grid-cols-[120px_minmax(0,1fr)] border-t max-lg:hidden"
          style={{ borderColor: 'var(--line)', background: 'var(--surface-2)' }}>
       <div role="group" aria-label="Devices" data-testid="files-devices" className="flex flex-col gap-1 border-r p-1.5" style={{ borderColor: 'var(--line)' }}>
         {PANE_DEVICES.map((d) => (

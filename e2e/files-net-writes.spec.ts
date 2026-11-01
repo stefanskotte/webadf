@@ -20,7 +20,8 @@ const LIVE = 15_000;
 const FW = '1.23.0+gabc1234';
 const rowAt = (page: Page, side: 'left' | 'right', name: string) =>
   page.getByTestId(`pane-${side}`).locator(`[data-testid="pane-row"][data-name="${name}"]`);
-const busy = (page: Page) => page.getByTestId('files-busy');
+/** The newest card of the progress panel (spec 2026-11-01-progress-panel): where a job's progress and result are said. */
+const busy = (page: Page) => page.getByTestId('transfers-card').first();
 
 /** A fresh Amiga for each test (the fake board changes it). */
 function amiga(): Record<string, FakeEntry[]> {
@@ -237,8 +238,8 @@ test('Copy from STASH: onto a volume: each clash answer, and the queue line the 
   await board.stop();
 });
 
-// Plan 2026-11-01-net-consistency, item 14: a board the copy waits on goes offline -- the status row says so (and asks
-// every 15 s rather than every second), then finishes once the board is back.
+// Plan 2026-11-01-net-consistency, item 14: a board the copy waits on goes offline -- the panel's card says so (and the panel asks
+// every 15 s rather than every 2 s), then finishes once the board is back.
 test('a copy onto a volume whose board goes offline says so, then finishes once it is back', async ({ page, request }) => {
   test.setTimeout(120_000);
   const { deviceId, token } = await writable(page, request);
@@ -252,9 +253,9 @@ test('a copy onto a volume whose board goes offline says so, then finishes once 
     fakeBoardTiming.queueHeld = true;
     await rowAt(page, 'left', 'late.txt').click();
     await page.getByTestId('files-copy').click();
-    await expect(busy(page)).toContainText('Copying 1 of 1 to A500', { timeout: LIVE });
+    await expect(busy(page)).toContainText('0 of 1 file', { timeout: LIVE });
     await getDb().update(devices).set({ lastSeenAt: new Date(Date.now() - 5 * 60_000) }).where(eq(devices.id, deviceId));
-    await expect(busy(page)).toContainText('Copying 1 of 1 to A500… — A500 is offline', { timeout: LIVE });
+    await expect(busy(page)).toContainText('Waiting for A500 (offline)', { timeout: LIVE });
     await setBrowse(deviceId);
     fakeBoardTiming.queueHeld = false;
     await expect(busy(page)).toContainText('Copied 1 to A500', { timeout: 40_000 });
@@ -306,7 +307,7 @@ test('a STASH: drawer copied onto a drawer arrives there as a row with its progr
     fakeBoardTiming.queueHeld = true;
     await rowAt(page, 'left', 'Pack').click();
     await page.getByTestId('files-copy').click();
-    await expect(busy(page)).toContainText('Copying 1 of 2 to A500', { timeout: LIVE });
+    await expect(busy(page)).toContainText('0 of 2 files', { timeout: LIVE });
     // No Refresh: the destination shows the drawer on its way.
     await expect(rowAt(page, 'right', 'Pack')).toContainText('Waiting', { timeout: LIVE });
     fakeBoardTiming.queueHeld = false;
@@ -459,7 +460,7 @@ test.describe('safe moves (protocol 5)', () => {
       fakeBoardTiming.queueHeld = true;
       await rowAt(page, 'left', 'Pack').click();
       await page.getByTestId('files-move').click();
-      await expect(busy(page)).toContainText('Copying 1 of 2 to A500', { timeout: LIVE });
+      await expect(busy(page)).toContainText('0 of 2 files', { timeout: LIVE });
       // Meanwhile a file goes into the drawer being moved.
       await page.getByTestId('files-stash-input').setInputFiles([{ name: 'new.txt', mimeType: 'text/plain', buffer: Buffer.from('new') }]);
       await expect.poll(async () => (await listStash(getDb(), orgId)).some((r) => r.path === 'new.txt'), { timeout: LIVE }).toBe(true);

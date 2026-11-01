@@ -78,7 +78,13 @@ test('at 390: Copy to… takes a file out of a volume into STASH:', async ({ pag
   await expect(picker.getByTestId('files-copy-to-here')).toHaveText('Copy here');
   await picker.getByTestId('files-copy-to-here').tap();
   await expect(picker).toBeHidden({ timeout: LIVE });
-  await expect(page.getByTestId('files-busy')).toContainText('Copied 1', { timeout: 30_000 });
+  await expect(page.getByTestId('transfers-card').first()).toContainText('Copied 1', { timeout: 30_000 });
+  // At 390 the panel is a strip above the Files bar, never over it (spec §3).
+  await expect.poll(async () => {
+    const p = await page.getByTestId('transfers-panel').boundingBox();
+    const bar = await page.locator('.files-bar').boundingBox();
+    return !!p && !!bar && p.y + p.height <= bar.y + 1;
+  }, { timeout: 5_000 }).toBe(true);
   await page.getByTestId('files-side-left').tap();
   await expect(row(page, 'left', 'a.lha')).toBeVisible({ timeout: LIVE });
   expect((await board.stop()).map((r) => r.kind)).toContain('GET');

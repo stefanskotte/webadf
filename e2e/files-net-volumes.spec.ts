@@ -7,6 +7,9 @@ import { signUpFresh } from './helpers';
 import { cleanupSeeded, pairDevice, setBrowse } from './device-helpers';
 import { boardSays, boardServes, boardServesOne, boardTakesRequests, type BoardRequest, type FakeEntry } from './amiga-board';
 
+/** The newest card of the progress panel (spec 2026-11-01-progress-panel). */
+const card = (page: Page) => page.getByTestId('transfers-card').first();
+
 /**
  * NET: volumes (spec 2026-10-30 §4-§5, plan Task 9): Files browsing a board's Amiga against a fake board that answers
  * through the device routes as firmware 1.22.0 with Transfer 2.3 would -- the volumes, a drawer, the 2-minute memory and
@@ -137,14 +140,14 @@ test('Copy to STASH: a file, a drawer walked whole, a file after the memory ran 
   // One file: the status row follows the board, then STASH: lists it.
   await rowAt(page, 'right', 'a.lha').click();
   await page.getByTestId('files-copy').click();
-  await expect(page.getByTestId('files-busy')).toContainText('Copied 1', { timeout: LIVE });
+  await expect(card(page)).toContainText('Copied 1', { timeout: LIVE });
   await expect(rowAt(page, 'left', 'a.lha')).toBeVisible({ timeout: LIVE });
 
   // A drawer: Programs and the drawer in it are read (fresh) before the copy is posted; its files keep their places.
   await rowAt(page, 'right', 'Programs').click();
   await page.getByTestId('files-copy').click();
-  await expect(page.getByTestId('files-busy')).toContainText(/Copying \d of 2 from A500|Copied 2/, { timeout: LIVE });
-  await expect(page.getByTestId('files-busy')).toContainText('Copied 2', { timeout: LIVE });
+  await expect(card(page)).toContainText(/\d of 2 files|Copied 2/, { timeout: LIVE });
+  await expect(card(page)).toContainText('Copied 2', { timeout: LIVE });
   await rowAt(page, 'left', 'Programs').dblclick({ timeout: LIVE });
   await expect(rowAt(page, 'left', 'Tool')).toBeVisible({ timeout: LIVE });
   await rowAt(page, 'left', 'Sub').dblclick();
@@ -157,7 +160,7 @@ test('Copy to STASH: a file, a drawer walked whole, a file after the memory ran 
   await age(deviceId, 'dir', 'Work:', 150_000);
   await rowAt(page, 'right', 'b.txt').click();
   await page.getByTestId('files-copy').click();
-  await expect(page.getByTestId('files-busy')).toContainText('Copied 1', { timeout: LIVE });
+  await expect(card(page)).toContainText('Copied 1', { timeout: LIVE });
   await expect(rowAt(page, 'left', 'b.txt')).toBeVisible({ timeout: LIVE });
   expect(board.served.slice(before).map((r) => `${r.kind} ${r.path}`)).toEqual(['DIR Work:', 'GET Work:b.txt']);
 
@@ -180,7 +183,7 @@ test('Copy a disk image from a volume to LIBRARY: makes a title', async ({ page,
   await expect(titles).toHaveCount(0);
   await rowAt(page, 'right', 'Blank.adf').click();
   await page.getByTestId('files-copy').click();
-  await expect(page.getByTestId('files-busy')).toContainText('Copied 1', { timeout: 30_000 });
+  await expect(card(page)).toContainText('Copied 1', { timeout: 30_000 });
   await expect(titles).toHaveCount(1, { timeout: LIVE });
   expect((await board.stop()).map((r) => r.kind)).toContain('GET');
 });
