@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signUpFresh } from './helpers';
-import { pairDevice, authHeader, cleanupSeeded } from './device-helpers';
+import { pairDevice, authHeader, cleanupSeeded, hydrated } from './device-helpers';
 
 // Context help (spec docs/superpowers/specs/2026-10-05-context-help-design.md).
 
@@ -34,6 +34,7 @@ test('keyboard: Enter opens the "?", Esc closes it and returns focus', async ({ 
   await signUpFresh(page);
   await pairDevice(page, request);
   await page.goto('/devices');
+  await hydrated(page, 'help-tip-boards');   // Enter on an unhydrated button opens nothing
   const tip = page.getByTestId('help-tip-boards').first();
   await tip.focus();
   await page.keyboard.press('Enter');
