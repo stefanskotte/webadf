@@ -311,3 +311,47 @@ describe('item 5: settleMove decides under its locks, then removes (pool 5)', ()
     expect(await deletesOn('w1')).toEqual(['Work:Pair one', 'Work:Pair/a one', 'Work:Pair/b one']);
   });
 });
+
+describe('item 7: one Amiga fold for remembered listings (Latin-1 capitals, C collation)', () => {
+  const status = async (amigaPath: string) => (await getDb().select().from(remoteRequests).where(eq(remoteRequests.amigaPath, amigaPath)))[0]?.status;
+
+  it('a listing of Work:Äpfel is let go by Work:ÄPFEL and by work:äpfel', async () => {
+    const { dropMemory } = await import('@/lib/remote-requests');
+    await remember('Work:Äpfel', []);
+    await dropMemory(getDb(), 'w1', ['Work:ÄPFEL']);
+    expect(await status('Work:Äpfel')).toBe('stale');
+    await getDb().delete(remoteRequests).where(eq(remoteRequests.amigaPath, 'Work:Äpfel'));
+    await remember('Work:Äpfel', []);
+    await dropMemory(getDb(), 'w1', ['work:äpfel']);
+    expect(await status('Work:Äpfel')).toBe('stale');
+  });
+
+  it('a drawer under Ü:Sub is let go by ü:Sub, and Å/Ö names alike', async () => {
+    const { dropMemory } = await import('@/lib/remote-requests');
+    await remember('Ü:Sub/Deep', []);
+    await remember('Work:Åsa/Öl', []);
+    await dropMemory(getDb(), 'w1', [], ['ü:sub', 'work:åsa']);
+    expect(await status('Ü:Sub/Deep')).toBe('stale');
+    expect(await status('Work:Åsa/Öl')).toBe('stale');
+  });
+
+  it('latestFor finds Work:été asked as Work:ÉTÉ', async () => {
+    const { latestFor } = await import('@/lib/remote-requests');
+    await remember('Work:été', [ent('f', 1)]);
+    expect((await latestFor(getDb(), 'w1', 'dir', 'Work:ÉTÉ')).state).toBe('ready');
+  });
+
+  it('a copy still going onto Ö: keeps the memory of a drawer there when another row of it is done', async () => {
+    const later = new Date(Date.now() + 3600_000);
+    const row = (id: string, dest: string, status: string) => ({ id, orgId: 'o1', deviceId: 'w1', createdByUserId: 'u1', path: dest.slice(3),
+      sizeBytes: 1, crc32: 0, blobSha256: 'a'.repeat(64), expiresAt: later, amigaDest: dest, onClash: 'keep', status });
+    await getDb().insert(transfers).values([row('t1', 'Ö:a', 'queued'), row('t2', 'ö:b', 'delivered')]);
+    await remember('Ö:', []);
+    await afterTransferDone(getDb(), 't2');
+    expect(await status('Ö:')).toBe('done');
+    // Once the last is through, the drawer is read afresh.
+    await getDb().update(transfers).set({ status: 'delivered' }).where(eq(transfers.id, 't1'));
+    await afterTransferDone(getDb(), 't1');
+    expect(await status('Ö:')).toBe('stale');
+  });
+});

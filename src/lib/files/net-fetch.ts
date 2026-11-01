@@ -10,6 +10,7 @@
 // SERVER ONLY.
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb, type Db } from '@/db';
+import { amigaFoldSql } from '@/lib/amiga-fold';
 import { devices } from '@/db/schema/devices';
 import { amigaUploads } from '@/db/schema/amiga-uploads';
 import { remoteRequests } from '@/db/schema/remote-requests';
@@ -318,9 +319,10 @@ export async function afterTransferDone(db: Db, transferId: string): Promise<voi
   const [row] = await db.select({ deviceId: transfers.deviceId, dest: transfers.amigaDest, jobId: transfers.jobId }).from(transfers)
     .where(eq(transfers.id, transferId));
   if (!row?.dest) return;
-  const volume = row.dest.slice(0, row.dest.indexOf(':') + 1).toLowerCase();
+  const volume = row.dest.slice(0, row.dest.indexOf(':') + 1);
   const [busy] = await db.select({ id: transfers.id }).from(transfers).where(and(eq(transfers.deviceId, row.deviceId),
-    inArray(transfers.status, ['queued', 'sending']), sql`lower(${transfers.amigaDest}) like ${`${volume.replace(/[\\%_]/g, (c) => `\\${c}`)}%`}`)).limit(1);
+    inArray(transfers.status, ['queued', 'sending']),
+    sql`${amigaFoldSql(transfers.amigaDest)} like ${amigaFoldSql(`${volume.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)}`)).limit(1);
   if (busy) return;
   const dests = row.jobId
     ? (await db.select({ dest: transfers.amigaDest }).from(transfers).where(eq(transfers.jobId, row.jobId))).map((x) => x.dest).filter((x): x is string => !!x)

@@ -7,6 +7,7 @@ import { remoteRequests } from '@/db/schema/remote-requests';
 import { transfers } from '@/db/schema/transfers';
 import { amigaUploads, amigaUploadChunks } from '@/db/schema/amiga-uploads';
 import { STAGING } from '@/lib/stash';
+import { amigaFoldSql } from '@/lib/amiga-fold';
 import {
   ALIVE_PIECE_MS, FAILED_SHOWN_MS, GET_TIMEOUT_MS, LIST_TIMEOUT_MS, PANE_GIVE_UP_MS, REMEMBER_MS, REQUEST_KEEP_MS, REQ_FETCH_MAX,
   MOVE_PROTO, WRITE_KINDS, type WriteKind,
@@ -166,7 +167,7 @@ export async function latestFor(db: Db, deviceId: string, kind: 'vols' | 'dir', 
   await expireStale(db, now);
   const [row] = await db.select().from(remoteRequests).where(and(
     eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.kind, kind),
-    sql`lower(${remoteRequests.amigaPath}) = lower(${amigaPath})`,
+    sql`${amigaFoldSql(remoteRequests.amigaPath)} = ${amigaFoldSql(amigaPath)}`,
   )).orderBy(sql`${remoteRequests.createdAt} desc`).limit(1);
   if (!row) return { state: 'none' };
   if (row.status === 'waiting' || row.status === 'sent') return { state: 'pending', row };
@@ -278,10 +279,11 @@ function writeTouches(r: RemoteRow): { paths: string[]; under: string[] } {
  */
 export async function dropMemory(db: Pick<Db, 'update'>, deviceId: string, paths: string[], under: string[] = []): Promise<void> {
   if (paths.length === 0 && under.length === 0) return;
-  const lowered = paths.map((x) => x.toLowerCase());
+  // Both sides folded by the one Amiga fold, in SQL (plan 2026-11-01-net-consistency, item 7).
+  const at = amigaFoldSql(remoteRequests.amigaPath);
   const conds = [
-    ...(lowered.length ? [sql`lower(${remoteRequests.amigaPath}) in (${sql.join(lowered.map((x) => sql`${x}`), sql`, `)})`] : []),
-    ...under.map((u) => sql`lower(${remoteRequests.amigaPath}) like ${`${u.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}/%`}`),
+    ...(paths.length ? [sql`${at} in (${sql.join(paths.map((x) => amigaFoldSql(x)), sql`, `)})`] : []),
+    ...under.map((u) => sql`${at} like ${amigaFoldSql(`${u.replace(/[\\%_]/g, (c) => `\\${c}`)}/%`)}`),
   ];
   await db.update(remoteRequests).set({ status: 'stale' }).where(and(
     eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.kind, 'dir'), eq(remoteRequests.status, 'done'), or(...conds),

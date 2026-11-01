@@ -370,6 +370,8 @@ describe('moves', () => {
   });
 
   it('within one volume, Replace: the target\'s own icon goes before the moved icon takes its name; without a moved icon it stays', async () => {
+    // In place of the beforeEach's listing (the same millisecond: the newest of two would be a coin toss).
+    await getDb().delete(remoteRequests).where(eq(remoteRequests.amigaPath, 'Work:Sub'));
     await remember('Work:Sub', [ent('a.txt', 1), ent('a.txt.info', 5), ent('x', 1), ent('x.info', 5)]);
     await op({ op: 'move', sources: [W('a.txt')], dest: 'NET:/w1/Work/Sub', onClash: 'replace' });
     expect((await lines()).map(([k, p, t]) => `${k} ${p} ${(t as { to?: string }).to ?? ''}${(t as { icon?: boolean }).icon ? ' icon' : ''}`)).toEqual([
