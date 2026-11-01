@@ -31,7 +31,11 @@ cp "$repo/tools/paulanet-driver/dist/PaulaNET.device" "$tmp/PaulaNET.device"
 xdftool "$tmp/disk.adf" read "PaulaNET Config.info" "$tmp/tool.info"
 python3 -I "$here/make_icon.py" "$tmp/tool.info" "C:IconX" "$tmp/Install.info"
 python3 -I "$here/make_icon.py" "$tmp/tool.info" "SYS:Utilities/MultiView" "$tmp/ReadMe.info"
-python3 -I "$here/make_icon.py" "$tmp/tool.info" --tool "$tmp/Transfer.info"
+# Transfer's own icon (Transfer 2.7, plan 2026-11-01 ruling R14): made from its source in tools/receive/icon/, and the
+# committed tools/receive/dist/Transfer.info must be that same file.
+python3 -I "$repo/tools/receive/icon/make_transfer_icon.py" "$repo/tools/receive/icon/transfer-icon.txt" "$tmp/Transfer.info"
+cmp -s "$tmp/Transfer.info" "$repo/tools/receive/dist/Transfer.info" \
+  || { echo "FAIL: tools/receive/dist/Transfer.info is not what tools/receive/icon/ makes -- regenerate it"; exit 1; }
 cp "$here/Install" "$here/ReadMe" "$tmp/"
 ( cd "$tmp" && xdf disk.adf delete PaulaNET.device + write PaulaNET.device + write Install + write Install.info + write ReadMe + write ReadMe.info \
                 + write Transfer + write Transfer.info + protect Install srwed + protect Transfer rwed )

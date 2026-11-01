@@ -4,7 +4,8 @@
    Started from Workbench it opens the window, with any shift-clicked project icons queued to send; GUI with SEND does
    the same from a Shell. BROWSE lets the web app browse the Amiga's disks, read-only, for this run; with SAVE it is
    stored too (spec 2026-10-30 §2.3). WRITE also lets it change them (spec 2026-10-31 §2.4); it implies BROWSE (plan
-   ruling W11), and with SAVE both are stored. */
+   ruling W11), and with SAVE both are stored. A window start is a commodity (cx.c, Transfer 2.7); from Workbench its
+   icon's tool types CX_POPUP, CX_POPKEY, CX_PRIORITY and TO apply (Read and Write never come from tool types). */
 #include <string.h>
 #include <exec/memory.h>
 #include <exec/tasks.h>
