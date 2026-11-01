@@ -49,7 +49,7 @@ n = struct.unpack('>I', d[p:p + 4])[0] // 4 - 1; p += 4
 got = []
 for _ in range(n):
     k = struct.unpack('>I', d[p:p + 4])[0]; got.append(d[p + 4:p + 4 + k - 1].decode('latin-1')); p += 4 + k
-check(tts != 0 and got == ['CX_POPUP=YES', 'CX_POPKEY=ctrl alt w', '(CX_POPUP=NO)', '(CX_PRIORITY=0)', '(TO=SYS:Downloads)'],
+check(tts != 0 and got == ['DONOTWAIT', 'CX_POPUP=YES', 'CX_POPKEY=ctrl alt w', '(CX_POPUP=NO)', '(CX_PRIORITY=0)', '(TO=SYS:Downloads)'],
       'tool types %s' % got)
 check(p == len(d), 'nothing after the tool types (%d bytes)' % len(d))
 sys.exit(1 if fails else 0)

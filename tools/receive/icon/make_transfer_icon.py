@@ -6,7 +6,7 @@ The output is a classic OS 2 DiskObject (icon.library V37 reads it): WBTOOL, two
 selected), no default tool, the tool types below. Deterministic: the same source gives the same bytes."""
 import struct, sys
 
-TOOLTYPES = ['CX_POPUP=YES', 'CX_POPKEY=ctrl alt w', '(CX_POPUP=NO)', '(CX_PRIORITY=0)', '(TO=SYS:Downloads)']
+TOOLTYPES = ['DONOTWAIT', 'CX_POPUP=YES', 'CX_POPKEY=ctrl alt w', '(CX_POPUP=NO)', '(CX_PRIORITY=0)', '(TO=SYS:Downloads)']
 PENS = {'.': 0, '#': 1, 'o': 2, '*': 3}   # grey, black, white, blue: the Workbench 2/3 palette
 STACK = 32768                              # the window's stack (main.c RX_STACK_GUI): no StackSwap needed
 NO_ICON_POSITION = 0x80000000

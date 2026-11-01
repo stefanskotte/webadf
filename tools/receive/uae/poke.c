@@ -16,6 +16,8 @@
 #include <exec/memory.h>
 #include <exec/lists.h>
 #include <devices/inputevent.h>
+#include <devices/input.h>
+#include <exec/io.h>
 #include <intuition/intuition.h>
 #include <intuition/intuitionbase.h>
 #include <libraries/commodities.h>
@@ -66,11 +68,16 @@ static struct Gadget *find_gad(struct Window *w, long id) {
                    : g->GadgetID == id && !(g->GadgetType & GTYP_SYSGADGET)) return g;
     return NULL;
 }
+/* Through input.device (IND_WRITEEVENT), as a real mouse or keyboard: AddIEvents reaches nothing while no broker
+   exists (commodities installs its handler with the first one; measured: the pointer never moved). */
+static struct MsgPort *inport;
+static struct IOStdReq *inreq;
 static void event(UWORD cls, UWORD code, UWORD qual, WORD x, WORD y) {
     struct InputEvent ie;
     memset(&ie, 0, sizeof ie);
     ie.ie_Class = (UBYTE)cls; ie.ie_Code = code; ie.ie_Qualifier = qual; ie.ie_X = x; ie.ie_Y = y;
-    AddIEvents(&ie);
+    inreq->io_Command = IND_WRITEEVENT; inreq->io_Data = (APTR)&ie; inreq->io_Length = sizeof ie;
+    DoIO((struct IORequest *)inreq);
 }
 /* Closed loop on the screen's own idea of the pointer: mouse ticks, acceleration and resolution do not matter. */
 static int move_to(struct Screen *sc, WORD x, WORD y) {
@@ -86,7 +93,11 @@ static int move_to(struct Screen *sc, WORD x, WORD y) {
 }
 static int click_at(struct Screen *sc, WORD x, WORD y, int n) {
     int i;
-    if (move_to(sc, x, y) != 0) { say("could not place the pointer"); return 10; }
+    if (move_to(sc, x, y) != 0) {
+        LONG v[4]; v[0] = x; v[1] = y; v[2] = sc->MouseX; v[3] = sc->MouseY;
+        VPrintf((STRPTR)"could not place the pointer at %ld,%ld: it is at %ld,%ld\n", v);
+        return 10;
+    }
     for (i = 0; i < n; i++) {
         event(IECLASS_RAWMOUSE, IECODE_LBUTTON, IEQUALIFIER_RELATIVEMOUSE | IEQUALIFIER_LEFTBUTTON, 0, 0); Delay(2);
         event(IECLASS_RAWMOUSE, IECODE_LBUTTON | IECODE_UP_PREFIX, IEQUALIFIER_RELATIVEMOUSE, 0, 0); Delay(5);
@@ -100,6 +111,8 @@ int main(int argc, char **argv) {
     IntuitionBase = (struct IntuitionBase *)OpenLibrary((STRPTR)"intuition.library", 37);
     CxBase = OpenLibrary((STRPTR)"commodities.library", 37);
     if (!IntuitionBase || !CxBase) { say("no intuition or commodities"); return 20; }
+    if (!(inport = CreateMsgPort()) || !(inreq = (struct IOStdReq *)CreateIORequest(inport, sizeof *inreq)) ||
+        OpenDevice((STRPTR)"input.device", 0, (struct IORequest *)inreq, 0) != 0) { say("no input.device"); return 20; }
     if (!strcmp(argv[1], "list")) {
         struct List l; struct Node *n;
         l.lh_Head = (struct Node *)&l.lh_Tail; l.lh_Tail = NULL; l.lh_TailPred = (struct Node *)&l.lh_Head;
@@ -138,6 +151,7 @@ int main(int argc, char **argv) {
         while (t-- > 0 && !(l = Lock((STRPTR)argv[2], ACCESS_READ))) Delay(5);
         if (l) UnLock(l); else rc = 5;
     } else rc = 20;
+    CloseDevice((struct IORequest *)inreq); DeleteIORequest((struct IORequest *)inreq); DeleteMsgPort(inport);
     CloseLibrary(CxBase); CloseLibrary((struct Library *)IntuitionBase);
     return rc;
 }

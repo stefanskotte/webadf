@@ -54,7 +54,7 @@ case "$mode" in flip|icon|cx)
   wid() { swift "$here/window-id.swift" FS-UAE; }
   shot() { sleep 2; screencapture -x -o -l"$(wid)" "$shots/transfer-2.7-$ks-$1.png" && echo "  screenshot $shots/transfer-2.7-$ks-$1.png"; }
   waitf() { for _ in $(seq 1 "${2:-120}"); do [ -e "$work/hd/$1" ] && return 0; sleep 1; done; echo "FAIL: no Work:$1"; return 1; }
-  say() { tr -d '\r' < "$work/hd/$1" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//'; }
+  say() { [ -e "$work/hd/$1" ] || { echo "(no $1)"; return 0; }; tr -d '\r' < "$work/hd/$1" | tr '\n' ' ' | sed 's/ *$//'; }
   expect() { local got; got="$(say "$1")"; if [ "$got" = "$2" ]; then echo "PASS $3 ($got)"; else echo "FAIL $3: got '$got', want '$2'"; rc=1; fi; }
   ;;
 esac
@@ -85,7 +85,7 @@ if [ "$mode" = cx ]; then
   mkdir -p "$work/hd/WBStartup"
   cp "$tools_out" "$work/hd/WBStartup/Transfer"
   python3 -I "$repo/tools/receive/icon/make_transfer_icon.py" "$repo/tools/receive/icon/transfer-icon.txt" "$work/hd/WBStartup/Transfer.info" \
-    --tooltypes 'CX_POPUP=NO|CX_POPKEY=ctrl alt w'
+    --tooltypes 'DONOTWAIT|CX_POPUP=NO|CX_POPKEY=ctrl alt w'
   case "$ks" in   # Exchange: on the 2.04 Workbench disk; on the Extras disk for 3.1 and 3.2
     204) exch='DF1:Utilities/Exchange';;
     31) xdftool "${WEBADF_EX31:-$main/adf-archive/Workbench31 - extras31.adf}" read Tools/Commodities/Exchange "$work/hd/Exchange" >/dev/null; exch='Work:Exchange';;
@@ -132,6 +132,7 @@ case "$mode" in
   shell|space|ram) run_line="Work:Transfer RECEIVE TO $target SAVE >Work:receive.log";;
   # The steps run detached (Run ... Execute), so the boot Shell's window can close and show Workbench.
   flip) cat > "$work/hd/steps" <<EOS
+FailAt 21
 Work:poke waitfile Work:go 600
 Work:poke gadget $W 8 >Work:f1.log
 Work:poke gadsel $W 8 >Work:f2.log
@@ -149,6 +150,7 @@ Run >NIL: Work:Transfer TO Work:Out GUI BROWSE WRITE
 Run >NIL: DF1:C/Execute Work:steps
 EndCLI >NIL:";;
   icon) cat > "$work/hd/steps" <<EOS
+FailAt 21
 Wait 6
 Echo >Work:i0 x
 Work:poke waitfile Work:a1 300
@@ -169,6 +171,7 @@ DF1:C/LoadWB
 Run >NIL: DF1:C/Execute Work:steps
 EndCLI >NIL:";;
   cx) cat > "$work/hd/steps" <<EOS
+FailAt 21
 Wait 10
 Work:poke win $W >Work:c01.log
 Work:poke list >Work:c02.log
@@ -319,6 +322,7 @@ case "$mode" in
         echo "--- poke: $(say f1.log) / $(say f3.log)";;
   icon) waitf i0 180 || rc=1; sleep 4; shot icon; touch "$work/hd/a1"
         waitf i4 120 || rc=1
+        echo "--- poke wbclick: $(say i1.log)"
         expect i2.log open "a double-click on the icon starts Transfer with its window"
         expect i3.log Transfer "Exchange's list has Transfer"
         listens && echo "PASS it listens on 6800" || { echo "FAIL it does not listen"; rc=1; }
