@@ -421,6 +421,39 @@ describe('transfers', () => {
     expect(now).toContain(`${vol} 11 10:Work:x.txt\n`);
   });
 
+  // A500 bench 2026-11-01: a copy queued while the Amiga's network was down (rx 'u': no writes) was hidden from the
+  // queue; Transfer then connected with writing on, the queue now offered it, but nothing moved the cursor -- the board
+  // had already fetched at that version and sat in READY until an unrelated bump.
+  it('moves the cursor when the board starts or stops being able to write while a copy onto a volume waits', async () => {
+    const d = await device(); const t0 = new Date('2026-11-01T20:00:00Z');
+    await T.recordSendRx(getDb(), d, 'u', t0);
+    await T.queueTransfers(getDb(), { orgId: 'org-a', deviceId: d, userId: 'u1', files: [
+      { ...(await file('x', 'cursor-vol')), dest: 'Work:x.txt', onClash: 'keep' }] });
+    expect(await T.sendQueueText(getDb(), d)).toMatch(/^NEXT -/);
+    const v = await version(d);
+    await T.recordSendRx(getDb(), d, 'c', new Date(t0.getTime() + 60_000), { proto: 5, browse: true, write: true });
+    expect(await T.sendQueueText(getDb(), d)).toMatch(/^NEXT [0-9a-f-]+ /);
+    expect(await version(d)).toBe(v + 1);
+    // Unchanged ability, no move; a report 30 s on rewrites the row, still no move.
+    await T.recordSendRx(getDb(), d, 'c', new Date(t0.getTime() + 61_000), { proto: 5, browse: true, write: true });
+    await T.recordSendRx(getDb(), d, 'c', new Date(t0.getTime() + 95_000), { proto: 5, browse: true, write: true });
+    expect(await version(d)).toBe(v + 1);
+    // Transfer gone again: the copy leaves the queue text, and the cursor says so.
+    await T.recordSendRx(getDb(), d, 'u', new Date(t0.getTime() + 96_000));
+    expect(await T.sendQueueText(getDb(), d)).toMatch(/^NEXT -/);
+    expect(await version(d)).toBe(v + 2);
+  });
+
+  it('leaves the cursor alone when the ability to write changes and no copy onto a volume waits', async () => {
+    const d = await device(); const t0 = new Date('2026-11-01T21:00:00Z');
+    await T.recordSendRx(getDb(), d, 'u', t0);
+    await q(d, await blob(new TextEncoder().encode('cursor-plain')), { path: 'p.txt' });
+    const v = await version(d);
+    await T.recordSendRx(getDb(), d, 'c', new Date(t0.getTime() + 1000), { proto: 5, browse: true, write: true });
+    await T.recordSendRx(getDb(), d, 'u', new Date(t0.getTime() + 2000));
+    expect(await version(d)).toBe(v);
+  });
+
   it('writing switched off fails what waits to be written (readonly); an ordinary send and Transfer merely gone wait', async () => {
     const { remoteRequests } = await import('@/db/schema/remote-requests');
     const d = await device();

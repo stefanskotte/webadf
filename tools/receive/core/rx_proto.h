@@ -118,6 +118,11 @@ typedef void (*rx_event_fn)(void *uctx, const rx_event *ev);
 
 typedef struct rx_item { char id[RX_ID_MAX + 1]; unsigned long size; char path[RX_PATH_MAX + 1]; } rx_item;
 
+/* The file this Transfer saved last, remembered across connections (Transfer 2.8): the board may not have had the OK --
+   the connection went between the last byte and the OK (A500 bench 2026-11-01) -- and then sends the same id again.
+   One is enough: the server keeps a file whose outcome it lacks first in the queue, so it is the next FILE. */
+typedef struct rx_done { char id[RX_ID_MAX + 1]; unsigned long size, crc; char saved[RX_PATH_MAX + 1]; } rx_done;
+
 typedef struct rx_up_item {
     unsigned tag; char local[RX_LOCAL_MAX + 1]; char name[RX_PATH_MAX + 1];
     char rid[RX_ID_MAX + 1];   /* a GET's request id (spec 2026-10-30 §2.2), "" for the owner's own files */
@@ -132,6 +137,7 @@ typedef struct rx_upq {
     int write;                      /* 1: ... and change the disks (ENVARC:webadf/Write; spec 2026-10-31 §2.4); needs browse */
     int why;                        /* why the last add failed: RX_ADD_* (spec 2026-10-31 §2.5) */
     unsigned lost;                  /* files the last rx_up_add_tree could not queue for want of memory */
+    rx_done done;                   /* the file saved last; id "" before the first */
 } rx_upq;
 enum { RX_ADD_OK, RX_ADD_FULL, RX_ADD_NOMEM, RX_ADD_NAME };
 enum { RX_TRUST_NONE, RX_TRUST_OK, RX_TRUST_OTHER, RX_TRUST_OLD };
@@ -149,6 +155,7 @@ typedef struct rx_session { /* fields private to rx_proto.c except list/list_n *
     int cur_open, cur_write_failed;
     int cur_mode; long cur_err;   /* protocol 4: RX_MODE_* (an absolute path), and the DOS error of a failed write */
     int cur_off;   /* Transfer 2.7: writing went off mid absolute FILE: the temp is gone, the rest is read and dropped */
+    int cur_dup;   /* Transfer 2.8: this FILE repeats upq->done: nothing is written, and OK names that copy */
     char out[RX_OUT_MAX]; unsigned out_n;
     /* protocol 2 */
     rx_upq *upq; int peer_v, trust, proto_err; char peer_key[RX_KEY_HEX + 1];
