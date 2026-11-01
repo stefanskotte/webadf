@@ -73,7 +73,9 @@ export async function boardTakesNext(request: APIRequestContext, token: string,
 
 /** Phase 2 (spec 2026-10-31 §2.3): the one-line writes, with RENAME's `to`, PROTECT's bits and NOTE's comment. */
 export type BoardRequest = { id: string; kind: 'VOLS' | 'DIR' | 'GET' | 'MKDIR' | 'RENAME' | 'DELETE' | 'PROTECT' | 'NOTE'; path: string;
-  to?: string; protection?: number; comment?: string };
+  to?: string; protection?: number; comment?: string;
+  /** `DELETE <rid> <len>:<path> one` (protocol 5, spec 2026-10-31 §9): exactly that object, a drawer only when empty. */
+  one?: boolean };
 /**
  * What Transfer has: `fs['']` the volumes (each with its `device`), `fs['Work:']`, `fs['Work:Programs']` … a drawer's
  * entries by its Amiga path (looked up ignoring case, as AmigaDOS does). A file's bytes are `data`.
@@ -99,6 +101,7 @@ export async function boardTakesRequests(request: APIRequestContext, token: stri
     if (kind === 'RENAME') return { id, kind, path, to: c.field() };
     if (kind === 'PROTECT') return { id, kind, path, protection: parseInt(c.word(), 16) };
     if (kind === 'NOTE') return { id, kind, path, comment: c.field() };
+    if (kind === 'DELETE' && c.more()) { const w = c.word(); expect(w, line).toBe('one'); return { id, kind, path, one: true }; }
     return { id, kind, path };
   });
 }
@@ -153,6 +156,15 @@ async function boardWrites(request: APIRequestContext, token: string, fs: Record
     }
     return boardAnswers(request, token, r.id, [`DONE ${r.id} 1`]);
   }
+  // DELETE … one (Transfer 2.6): exactly this object; a drawer something is in is kept, answered notempty.
+  if (r.one) {
+    const key = e.dir ? keyOf(fs, r.path) : undefined;
+    if (key && (fs[key] ?? []).length) return err('notempty', 'Directory not empty');
+    if (e.busy) return err('busy', 'object in use');
+    list.splice(list.indexOf(e), 1);
+    if (key) delete fs[key];
+    return boardAnswers(request, token, r.id, [`DONE ${r.id} 1`]);
+  }
   // DELETE: depth-first; every 50 removed a DEL piece; an entry in use stops it with the count so far.
   let removed = 0; let piece = 0; let stop: string | null = null;
   const drop = async (at: string, rel: string): Promise<void> => {
@@ -182,7 +194,9 @@ async function boardWrites(request: APIRequestContext, token: string, fs: Record
  * How long the fake Transfer pauses after each DEL piece (a test watching a big delete count up sets it), and whether
  * it leaves its queue alone for now (a test watching a copy arrive holds it, then lets it go).
  */
-export const fakeBoardTiming = { delMs: 0, delBeforeMs: 0, delEvery: 50, queueHeld: false };
+export const fakeBoardTiming: { delMs: number; delBeforeMs: number; delEvery: number; queueHeld: boolean;
+  /** Called before the fake Transfer answers each request: a test changes the Amiga mid-operation (spec §9). */
+  onRequest: ((r: BoardRequest) => void) | null } = { delMs: 0, delBeforeMs: 0, delEvery: 50, queueHeld: false, onRequest: null };
 
 /** Words and <len>:<text> fields of one protocol line, from `at`. */
 function cursor(line: string, at: number) {
@@ -294,6 +308,7 @@ export async function boardServes(request: APIRequestContext, token: string, fs:
     if (v !== ack) {
       ack = v;
       for (const r of await boardTakesRequests(request, token)) {
+        fakeBoardTiming.onRequest?.(r);
         await boardServesOne(request, token, fs, r);
         served.push(r);
       }

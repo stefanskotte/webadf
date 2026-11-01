@@ -16,8 +16,8 @@ import { transfers } from '@/db/schema/transfers';
 import { findSendTarget } from '@/lib/send-targets';
 import { addGets, addWrites, dropMemory, expireStale, latestFor, liveGet, settleGet, type GetTarget, type RemoteRow, type WriteReq, type WriteTarget } from '@/lib/remote-requests';
 import { amigaPathOf, newRequestId, type EntryInfo } from '@/lib/remote-wire';
-import { errorWords, writeErrorWords } from '@/lib/remote-browse';
-import { WRITE_KINDS } from '@/lib/remote-limits';
+import { errorWords, MOVE_OLD_TRANSFER, writeErrorWords } from '@/lib/remote-browse';
+import { MOVE_PROTO, WRITE_KINDS } from '@/lib/remote-limits';
 import { failureText } from '@/lib/send-ui';
 import { queueTransfers, type ClashMode } from '@/lib/transfers';
 import { FETCH_MAX_BYTES, FETCH_MAX_FILES } from '@/lib/remote-limits';
@@ -38,8 +38,9 @@ import { keepBothName, sameStashName, stashFind, stashTree } from './stash-paths
 const RELIST = 'List the drawer again and retry';
 const MB = 1024 * 1024;
 
-type File = { amigaPath: string; rel: string[]; size: number };
-type Top = { source: string; dir: boolean; files: File[] };
+type File = { amigaPath: string; rel: string[]; size: number; date: string };
+/** `drawers`: every drawer of a drawer top as the walk found it, the top included (Amiga paths): what a move removes. */
+type Top = { source: string; dir: boolean; files: File[]; drawers: string[] };
 
 /** The remembered entries of `segs` (volume first) on the board, or the op refused: P3 never asks the Amiga here. */
 async function remembered(deviceId: string, segs: string[], now: Date): Promise<EntryInfo[]> {
@@ -59,17 +60,19 @@ async function expand(deviceId: string, source: string, segs: string[], now: Dat
   const e = (await remembered(deviceId, segs.slice(0, -1), now)).find((x) => x.name.toLowerCase() === name.toLowerCase());
   if (!e) refuse('conflict', 409, RELIST);
   const pathOf = (s: string[]) => amigaPathOf(s)!.amigaPath;
-  if (!e.dir) return { source, dir: false, files: [{ amigaPath: pathOf(segs), rel: [e.name], size: e.size }] };
+  if (!e.dir) return { source, dir: false, files: [{ amigaPath: pathOf(segs), rel: [e.name], size: e.size, date: e.date }], drawers: [] };
   const files: File[] = [];
-  if (!walkDrawers) return { source, dir: true, files };
+  const drawers: string[] = [];
+  if (!walkDrawers) return { source, dir: true, files, drawers };
   const walk = async (at: string[], rel: string[]) => {
+    drawers.push(pathOf(at));
     for (const c of await remembered(deviceId, at, now)) {
       if (c.dir) await walk([...at, c.name], [...rel, c.name]);
-      else files.push({ amigaPath: pathOf([...at, c.name]), rel: [...rel, c.name], size: c.size });
+      else files.push({ amigaPath: pathOf([...at, c.name]), rel: [...rel, c.name], size: c.size, date: c.date });
     }
   };
   await walk(segs, [e.name]);
-  return { source, dir: true, files };
+  return { source, dir: true, files, drawers };
 }
 
 /** Where the copy goes: a STASH: folder, or the library (its root or a collection) by way of the STASH: root (P5). */
@@ -95,6 +98,8 @@ export async function startFetch(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
   if (!t) refuse('not_found', 404);
   const block = browseOf(t, now.getTime());
   if (block !== null) refuse('read_only', 409, block);
+  // A move removes only what it copied, one object at a time (spec 2026-10-31 §9): Transfer 2.6, or Copy.
+  if (req.op === 'move') mustMoveOff(t);
   const { dest, library } = await destOf(ctx, req.dest);
 
   const results = new Map<string, OpItem>();
@@ -132,9 +137,13 @@ export async function startFetch(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
     }
   }
   const fetchId = newRequestId();
-  const move = req.op === 'move' ? (top: Top) => ({ moveSource: top.source, ...(ctx.userId ? { userId: ctx.userId } : {}) }) : () => ({});
+  // A move removes only drawers that were copied (final review I-3): into STASH: a drawer arrives only by the files in
+  // it, so one holding none (an empty drawer, however deep) stays on the Amiga.
+  const holding = (top: Top) => top.drawers.filter((d) => top.files.some((f) => f.amigaPath.toLowerCase().startsWith(`${d.toLowerCase()}/`)));
+  const move = req.op === 'move' ? (top: Top, f: File) => ({ moveSource: top.source, ...(holding(top).length ? { moveDrawers: holding(top) } : {}),
+    moveSeen: { size: f.size, date: f.date }, ...(ctx.userId ? { userId: ctx.userId } : {}) }) : () => ({});
   const files = tops.flatMap((top) => top.files.map((f) => ({ amigaPath: f.amigaPath,
-    target: { dest: formatPath(dest), rel: f.rel, replace: replace.has(top), library, ...move(top) } satisfies GetTarget })));
+    target: { dest: formatPath(dest), rel: f.rel, replace: replace.has(top), library, ...move(top, f) } satisfies GetTarget })));
   await addGets(getDb(), { orgId: ctx.orgId, deviceId: t.id, fetchId, files }, now);
   for (const top of tops) if (!results.has(top.source)) results.set(top.source, { source: top.source, ok: true });
   return { kind: 'done', items: req.sources.map((s) => results.get(s)!), ...(files.length ? { fetching: { id: fetchId, files: files.length } } : {}) };
@@ -161,7 +170,7 @@ export async function volumeToVolume(ctx: OpCtx, req: CopyMove): Promise<Outcome
   const block = browseOf(t, now.getTime());
   if (block !== null) refuse('read_only', 409, block);
   const dt = await writableBoard(ctx, to.board, now.getTime());
-  if (req.op === 'move') await mustRemoveOnVolume(ctx, req.sources);
+  if (req.op === 'move') { await mustRemoveOnVolume(ctx, req.sources); mustMoveOff(t); }
   const there = (await latestFor(getDb(), dt.id, 'dir', to.amiga, now));
   if (there.state !== 'ready') refuse('conflict', 409, RELIST);
   const entries = ((there.row.answer ?? { entries: [] }) as { entries: EntryInfo[] }).entries;
@@ -192,19 +201,28 @@ export async function volumeToVolume(ctx: OpCtx, req: CopyMove): Promise<Outcome
     const rel = [top.name, ...f.rel.slice(1)];
     return { amigaPath: f.amigaPath, target: { dest: 'STASH:', rel: [rel[rel.length - 1]], replace: false, library: null,
       relay: { deviceId: dt.id, dest: joinAmiga(to.amiga, ...rel), onClash: top.mode, ...(req.op === 'move' ? { moveSource: top.source } : {}) },
+      ...(req.op === 'move' && top.drawers.length ? { moveDrawers: top.drawers } : {}),
+      ...(req.op === 'move' ? { moveSeen: { size: f.size, date: f.date } } : {}),
       ...(ctx.userId ? { userId: ctx.userId } : {}) } satisfies GetTarget };
   }));
   // Drawers holding no file arrive by a Makedir each on the destination (parents first; one there already is as good).
   const holds = (rel: string[]) => tops.some((x) => x.files.some((f) => { const r = [x.name, ...f.rel.slice(1)]; return r.length > rel.length && rel.every((s, k) => sameStashName(s, r[k])); }));
+  // A move's Makedirs are parts of it (spec §9): its source goes only once they are made too.
   const mk: WriteReq[] = tops.flatMap((top) => top.dirs.map((d) => [top.name, ...d]).filter((rel) => !holds(rel))
-    .flatMap((rel) => rel.map((_, k) => rel.slice(0, k + 1))))
-    .filter((rel, k, list) => list.findIndex((x) => x.join('/').toLowerCase() === rel.join('/').toLowerCase()) === k)
-    .map((rel) => ({ kind: 'mkdir', amigaPath: joinAmiga(to.amiga, ...rel), ensure: true, label: joinAmiga(to.shown, ...rel) }));
+    .flatMap((rel) => rel.map((_, k) => ({ rel: rel.slice(0, k + 1), source: top.source }))))
+    .filter((x, k, list) => list.findIndex((y) => y.rel.join('/').toLowerCase() === x.rel.join('/').toLowerCase()) === k)
+    .map(({ rel, source }) => ({ kind: 'mkdir', amigaPath: joinAmiga(to.amiga, ...rel), ensure: true, label: joinAmiga(to.shown, ...rel),
+      ...(req.op === 'move' ? { move: { source } } : {}) }));
   if (mk.length) await addWrites(getDb(), { orgId: ctx.orgId, deviceId: dt.id, jobId: job, writes: mk }, now);
   await addGets(getDb(), { orgId: ctx.orgId, deviceId: t.id, fetchId: job, files: gets }, now);
   for (const top of tops) results.set(top.source, { source: top.source, ok: true });
   return { kind: 'done', items: req.sources.map((s) => results.get(s)!),
     ...(gets.length + mk.length ? { job: { id: job, files: gets.length, writes: mk.length } } : {}) };
+}
+
+/** A Move that copies off a volume removes only what it copied, by DELETE … one: Transfer 2.6 (spec 2026-10-31 §9). */
+function mustMoveOff(t: { rxProto: number | null }) {
+  if ((t.rxProto ?? 0) < MOVE_PROTO) refuse('unsupported', 409, MOVE_OLD_TRANSFER);
 }
 
 /** Every drawer below a remembered drawer, as paths relative to it (for the Makedirs of empty ones). */
@@ -303,7 +321,11 @@ const amigaParentOf = (path: string) => {
 export type JobWrite = { kind: string; label: string; to: string | null; status: 'waiting' | 'running' | 'done' | 'failed'; removed: number;
   reason: string | null; entry: string | null;
   /** An icon taken along or a drawer a copy needed: said only when it failed. */
-  quiet: boolean };
+  quiet: boolean;
+  /** A move's removal that kept a drawer because something new is in it (spec 2026-10-31 §9): said, not a failure. */
+  kept: boolean;
+  /** Transfer 2.6: where a stopped drawer delete left the rest when it could not rename the drawer back. */
+  restIn: string | null };
 /**
  * A job's progress. `total`/`done`/`failed`/`waiting`: its files -- gets (a copy out) and queue rows (a copy onto a
  * volume; a relayed file once handed over); `skipped`: queue rows Transfer skipped; `writes`: its one-line writes.
@@ -340,10 +362,13 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
   const writes: JobWrite[] = reqs.filter((r) => (WRITE_KINDS as readonly string[]).includes(r.kind)).map((r) => {
     const t = (r.target ?? {}) as WriteTarget;
     const status = r.status === 'waiting' ? 'waiting' : r.status === 'sent' ? 'running' : r.status === 'done' ? 'done' : 'failed';
-    const text = r.errorText ?? '';
+    // Transfer 2.6: a stopped drawer delete that could not rename the drawer back says where the rest is first.
+    const rest = r.kind === 'delete' ? /^the rest is in (\S+): ([\s\S]*)$/.exec(r.errorText ?? '') : null;
+    const text = rest ? rest[2] : r.errorText ?? '';
     const entry = r.kind === 'delete' && status === 'failed' && text.includes(': ') ? text.slice(0, text.indexOf(': ')) : null;
     return { kind: r.kind, label: t.label ?? r.amigaPath, to: t.to ?? null, status, removed: (r.answer as { removed?: number } | null)?.removed ?? 0,
-      reason: status === 'failed' ? writeErrorWords(r.errorCode ?? '', text, board) : null, entry, quiet: !!(t.icon || t.ensure) };
+      reason: status === 'failed' ? writeErrorWords(r.errorCode ?? '', text, board) : null, entry, quiet: !!(t.icon || t.ensure),
+      kept: status === 'done' && !!((r.answer as { kept?: boolean } | null)?.kept || t.kept), restIn: status === 'failed' && rest ? rest[1] : null };
   });
   const sentFailed = sent.filter((x) => x.status === 'failed' || x.status === 'expired' || x.status === 'cancelled').map((x) => ({
     name: x.path, reason: x.status === 'expired' ? `${board} did not take it within 24 h` : x.status === 'cancelled' ? 'cancelled'

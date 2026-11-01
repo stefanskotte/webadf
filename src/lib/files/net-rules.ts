@@ -30,8 +30,15 @@ export const NET_DROP_TO_STASH = 'Drop files into STASH: first, then copy them o
  * cannot be browsed or written to, and phase 2's own refusals (spec 2026-10-31 §4.1-4.2).
  */
 export function isNetWords(detail: string): boolean {
-  return /^(Switch on browsing in Transfer on |Transfer is not running on |Transfer 2\.3 or newer is needed on |Firmware 1\.22 or newer is needed$|Writing is off in Transfer$|Transfer 2\.5 or newer writes to the Amiga$|Board firmware 1\.23\.0 or newer writes to the Amiga$|List the drawer again and retry$|Move within one volume$|Rename a volume on the Amiga$|offline |never seen$)/.test(detail);
+  return /^(Switch on browsing in Transfer on |Transfer is not running on |Transfer 2\.3 or newer is needed on |Firmware 1\.22 or newer is needed$|Writing is off in Transfer$|Transfer 2\.5 or newer writes to the Amiga$|Board firmware 1\.23\.0 or newer writes to the Amiga$|List the drawer again and retry$|Move within one volume$|Rename a volume on the Amiga$|Move needs Transfer 2\.6 — use Copy$|offline |never seen$)/.test(detail);
 }
+
+/**
+ * Transfer 2.6 renames a drawer it deletes to `.webadf-del-<8 hex>` first (spec 2026-10-31 §9); an Amiga reset mid-delete
+ * leaves it. It is the owner's data: listed as it is, with this mark, so it can be deleted or renamed back.
+ */
+export const DELETE_LEFTOVER = 'Left by an interrupted delete';
+export const isDeleteLeftover = (name: string) => /^\.webadf-del-[0-9a-f]{8}$/i.test(name);
 
 /** The crumbs of a NET: path a pane has no listing for (a pending or failed one, §4.4 minor 3): NET: › board › Volume: › drawers. */
 export function netCrumbs(path: string, boardName: string): { label: string; path: string }[] {

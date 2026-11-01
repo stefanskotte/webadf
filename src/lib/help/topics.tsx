@@ -112,7 +112,8 @@ export const HELP_TOPICS = {
         <p>
           <strong>Changing the Amiga&apos;s disks.</strong> Firmware 1.23, Transfer 2.5 and{' '}
           <em>Let the web app change my disks</em> make volumes writable: Copy, Move, Makedir, Rename, Protect, comments,
-          Delete (it cannot be undone; the .info goes along). A write-protected disk is said in words.
+          Delete (it cannot be undone; the .info goes along). A write-protected disk is said in words. A Move removes
+          only what it copied; off a volume it needs Transfer 2.6.
         </p>
         <p>
           <strong>Keys.</strong> ↑ and ↓ move, Space picks, Enter opens, Backspace goes up, Tab switches pane, / filters,

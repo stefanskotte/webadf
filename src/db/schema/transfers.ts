@@ -40,4 +40,9 @@ export const transfers = pgTable('transfers', {
   onClash: text('on_clash'),
   jobId: text('job_id'),
   moveSource: text('move_source'),
+  /**
+   * Spec 2026-10-31 §9: the entry of `move_source` this row copies, as its path from the moved entry (`Pack/sub/x`, the
+   * first part the moved entry's own name as it was collected), so the move removes exactly what was copied.
+   */
+  moveItem: text('move_item'),
 }, (t) => [index('transfers_device_idx').on(t.deviceId, t.status, t.createdAt), index('transfers_job_idx').on(t.jobId)]);

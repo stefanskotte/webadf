@@ -422,6 +422,16 @@ describe('NET: volumes', () => {
     expect((await netDriver.list(ctx, P('NET:/b1/Work/Programs')))!.meta).toBe('');
   });
 
+  // Transfer 2.6 (spec 2026-10-31 §9): a drawer delete first renames the drawer to .webadf-del-<8 hex>; an Amiga reset
+  // mid-delete leaves it. It is the owner's data: listed as it is, with a mark that says what it is.
+  it('a drawer left by an interrupted delete is listed with its name and a mark', async () => {
+    expect(await pendingOf('NET:/b1/Work/Left')).not.toBeNull();
+    await answer((rid) => [`ENT ${rid} d 0 0 9100.0.0 20:.webadf-del-0a1b2c3d 0:`, `ENT ${rid} d 0 0 9100.0.0 12:.webadf-delx 0:`, `DONE ${rid} 2`]);
+    const l = (await netDriver.list(ctx, P('NET:/b1/Work/Left')))!;
+    expect(l.entries.find((e) => e.name === '.webadf-del-0a1b2c3d')).toMatchObject({ kind: 'dir', marks: ['Left by an interrupted delete'] });
+    expect(l.entries.find((e) => e.name === '.webadf-delx')!.marks).toEqual([]);
+  });
+
   it('a cut answer says so', async () => {
     expect(await pendingOf('NET:/b1/Work/Big')).not.toBeNull();
     await answer((rid) => [`ENT ${rid} f 1 0 9100.0.0 1:a 0:`, `DONE ${rid} 1000 cut`]);

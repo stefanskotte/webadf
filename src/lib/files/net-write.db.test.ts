@@ -48,8 +48,11 @@ const gets = async () => getDb().select().from(remoteRequests).where(eq(remoteRe
 const op = (o: Parameters<typeof runOp>[1]) => runOp(ctx, o);
 
 let n = 0;
+/** What each drawer on the Amiga holds now (as last remembered): what a fresh listing answers (answerFresh). */
+const amigaNow = new Map<string, ReturnType<typeof ent>[]>();
 /** A remembered (answered just now) listing of `amigaPath` on a board. */
 async function remember(amigaPath: string, entries: ReturnType<typeof ent>[], deviceId = 'w1') {
+  amigaNow.set(`${deviceId} ${amigaPath.toLowerCase()}`, entries);
   const now = new Date();
   await getDb().insert(remoteRequests).values({ id: `dir-${deviceId}-${++n}`, orgId: 'o1', deviceId, kind: 'dir', amigaPath,
     status: 'done', answer: { volumes: [], entries }, createdAt: now, sentAt: now, answeredAt: now });
@@ -69,10 +72,28 @@ async function arrive(rid: string, amigaPath: string, bytes: Uint8Array, deviceI
   expect(await answerPiece(getDb(), deviceId, rid, { piece: 0, lines: [`GOT ${rid} 7`], last: true })).toEqual({ ok: true });
   const o = await openUpload(getDb(), { deviceId, orgId: 'o1' }, { size: bytes.length, date: '1.2.3', protection: 0, path: amigaPath, comment: '', request: rid });
   if (!o.ok) throw new Error(o.code);
-  expect((await storeChunk(getDb(), deviceId, o.id, 0, bytes)).ok).toBe(true);
+  for (let at = 0; at < bytes.length; at += 16_384) {
+    expect((await storeChunk(getDb(), deviceId, o.id, at, bytes.subarray(at, at + 16_384))).ok).toBe(true);
+  }
   expect((await closeUpload(getDb(), deviceId, o.id, crc32(bytes) >>> 0)).ok).toBe(true);
   await placeFetched(getDb(), o.id);
   return o.id;
+}
+/**
+ * The fresh listings a move off a volume asks before it removes anything (final review I-1), answered as the Amiga holds
+ * them now (`changed` overrides a drawer), each answer then handed on as the req route does.
+ */
+async function answerFresh(deviceId = 'w1', changed: Record<string, ReturnType<typeof ent>[]> = {}) {
+  const { afterRequestAnswered } = await import('./net-moves');
+  const day = (iso: string) => `${Math.round((Date.parse(iso) - Date.UTC(1978, 0, 1)) / 86_400_000)}.0.0`;
+  const asked = (await takeWaiting(getDb(), deviceId)).filter((r) => r.kind === 'dir');
+  for (const r of asked) {
+    const es = changed[r.amigaPath] ?? amigaNow.get(`${deviceId} ${r.amigaPath.toLowerCase()}`) ?? [];
+    const lines = [...es.map((e) => `ENT ${r.id} ${e.dir ? 'd' : 'f'} ${e.size} 0 ${day(e.date)} ${e.name.length}:${e.name} 0:`), `DONE ${r.id} ${es.length}`];
+    expect(await answerPiece(getDb(), deviceId, r.id, { piece: 0, lines, last: true })).toEqual({ ok: true });
+    await afterRequestAnswered(getDb(), deviceId, r.id);
+  }
+  return asked.map((r) => r.amigaPath);
 }
 /** The board takes its queue's NEXT row and reports how it went (as the done route would, then its settling). */
 async function deliver(id: string, outcome: Parameters<typeof finishTransfer>[3], deviceId = 'w1') {
@@ -93,7 +114,7 @@ beforeEach(async () => {
   await db.delete(amigaUploads);
   await db.delete(devices);
   const now = new Date();
-  const can = { firmwareVersion: '1.23.0+gabc', lastSeenAt: now, sendRx: 'c', sendRxAt: now, rxProto: 4, browseOn: true, writeOn: true };
+  const can = { firmwareVersion: '1.23.0+gabc', lastSeenAt: now, sendRx: 'c', sendRxAt: now, rxProto: 5, browseOn: true, writeOn: true };
   await db.insert(devices).values([
     { id: 'w1', orgId: 'o1', name: 'A500', tokenHash: 'h1', ...can },
     { id: 'w2', orgId: 'o1', name: 'A1200', tokenHash: 'h2', ...can },
@@ -190,8 +211,8 @@ describe('one-line writes on a volume', () => {
     await answerPiece(getDb(), 'w1', icon.id, { piece: 0, lines: [`DONE ${icon.id} 1`], last: true });
     const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!;
     expect(p.writes).toEqual([
-      { kind: 'delete', label: 'Work:old', to: null, status: 'failed', removed: 37, reason: 'In use on the Amiga', entry: 'Libs/foo.library', quiet: false },
-      { kind: 'delete', label: 'Work:old.info', to: null, status: 'done', removed: 1, reason: null, entry: null, quiet: false },
+      { kind: 'delete', label: 'Work:old', to: null, status: 'failed', removed: 37, reason: 'In use on the Amiga', entry: 'Libs/foo.library', quiet: false, kept: false, restIn: null },
+      { kind: 'delete', label: 'Work:old.info', to: null, status: 'done', removed: 1, reason: null, entry: null, quiet: false, kept: false, restIn: null },
     ]);
     expect(p).toMatchObject({ total: 0, board: 'A500', direction: 'from' });
   });
@@ -312,6 +333,29 @@ describe('moves', () => {
     expect(await names()).toEqual(['In/k.txt']);
   });
 
+  // Spec 2026-10-31 §9 (web ruling I-1 fixed): only what was copied leaves STASH:; the move says what it kept.
+  it('§9: a STASH: drawer moved onto a volume leaves a file put into it meanwhile, and an empty drawer goes once made there', async () => {
+    await stash('Pack/one.txt', '1'); await stash('Pack/In/two.txt', '2'); await stash('Pack/E', '', 'dir');
+    const r = await op({ op: 'move', sources: ['STASH:/Pack'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
+    const job = (r as { job: { id: string } }).job.id;
+    const queued = await rows();
+    expect(queued.map((x) => [x.amigaDest, x.moveSource, x.moveItem])).toEqual([
+      ['Work:Tools/Pack/one.txt', 'STASH:/Pack', 'Pack/one.txt'], ['Work:Tools/Pack/In/two.txt', 'STASH:/Pack', 'Pack/In/two.txt']]);
+    const mks = await writes();
+    expect(mks.map((m) => [m.kind, m.amigaPath, (m.target as { moveItem?: string }).moveItem])).toEqual([
+      ['mkdir', 'Work:Tools/Pack', 'Pack'], ['mkdir', 'Work:Tools/Pack/E', 'Pack/E']]);
+    await stash('Pack/In/new.txt', 'new');   // saved into the drawer while the move runs
+    for (const x of queued) await deliver(x.id, { ok: true, savedAs: x.amigaDest! });
+    const names = async () => (await listStash(getDb(), 'o1')).map((x) => x.path).sort();
+    expect(await names()).toEqual(['Pack/E', 'Pack/In/new.txt', 'Pack/In/two.txt', 'Pack/one.txt']);   // the Makedir is not made yet
+    await takeWaiting(getDb(), 'w1');
+    for (const mk of mks) await answerPiece(getDb(), 'w1', mk.id, { piece: 0, lines: [`DONE ${mk.id} 1`], last: true });
+    const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!;
+    expect(await names()).toEqual(['Pack/In/new.txt']);
+    expect(p).toMatchObject({ waiting: 0, failed: [] });
+    expect(p.writes.filter((w) => w.kept).map((w) => w.label)).toEqual(['STASH:/Pack']);
+  });
+
   it('within one volume: a RENAME into the drawer; Replace deletes what is there first; a drawer never into itself', async () => {
     expect(await op({ op: 'move', sources: [W('x')], dest: 'NET:/w1/Work/Sub', onClash: 'ask' })).toMatchObject({ kind: 'done' });
     expect(await lines()).toEqual([['rename', 'Work:x', { to: 'Work:Sub/x', label: 'Work:x' }]]);
@@ -330,7 +374,9 @@ describe('moves', () => {
     expect(r).toMatchObject({ kind: 'done', fetching: { files: 1 } });
     const [g] = await gets();
     await arrive(g.id, 'Work:x', new TextEncoder().encode('xx'));
-    expect((await writes()).map((w) => `${w.kind} ${w.amigaPath}`)).toEqual(['delete Work:x']);
+    expect(await writes()).toEqual([]);   // first the drawer is read afresh: is Work:x still the file copied?
+    expect(await answerFresh()).toEqual(['Work:']);
+    expect((await writes()).map((w) => [w.kind, w.amigaPath, w.target])).toEqual([['delete', 'Work:x', { label: 'Work:x', one: true }]]);
     // What arrived moves on again, onto a drawer of the volume.
     const back = await op({ op: 'move', sources: ['STASH:/x'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
     expect(back).toMatchObject({ kind: 'done', items: [{ source: 'STASH:/x', ok: true }], job: { files: 1 } });
@@ -353,6 +399,7 @@ describe('moves', () => {
     expect(await listStash(getDb(), 'o1')).toEqual([]);
     expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ total: 1, done: 0, waiting: 1, direction: 'to' });
     await deliver(row.id, { ok: true, savedAs: 'DF0:x' }, 'w2');
+    await answerFresh();
     expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ total: 1, done: 1, waiting: 0 });
     expect((await writes()).map((w) => `${w.kind} ${w.amigaPath}`)).toEqual(['delete Work:x']);
   });
@@ -372,7 +419,10 @@ describe('moves', () => {
     await arrive(gb.id, 'Work:Pair/b', new TextEncoder().encode('b'));
     const rb = (await rows('w2')).find((x) => x.id !== ra.id)!;
     await deliver(rb.id, { ok: true, savedAs: 'DF0:Pair/b' }, 'w2');
-    expect((await writes()).map((w) => `${w.kind} ${w.amigaPath}`)).toEqual(['delete Work:Pair']);
+    await answerFresh();
+    // Spec §9: what was copied, one object at a time, the drawer last (never the drawer as it is at the end).
+    expect((await writes()).map((w) => `${w.kind} ${w.amigaPath} ${(w.target as { one?: boolean }).one}`))
+      .toEqual(['delete Work:Pair/a true', 'delete Work:Pair/b true', 'delete Work:Pair true']);
     expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ total: 2, done: 2, waiting: 0 });
   });
 
@@ -414,6 +464,145 @@ describe('moves', () => {
     expect(p).toMatchObject({ done: 1, waiting: 0 });
     expect(p.writes).toEqual([expect.objectContaining({ kind: 'delete', label: 'Work:x', status: 'failed',
       reason: 'Copied, but the original could not be removed — Writing is off in Transfer' })]);
+  });
+});
+
+// Spec 2026-10-31 §9: a move removes only what it copied; a Move that copies off a volume needs Transfer 2.6.
+describe('Transfer 2.6 delete words', () => {
+  it('a drawer delete that stopped and could not rename the drawer back keeps where the rest is', async () => {
+    const r = await op({ op: 'delete', sources: [W('old')] });
+    const job = (r as { job: { id: string } }).job.id;
+    const [d] = (await writes()).filter((x) => x.amigaPath === 'Work:old');
+    await takeWaiting(getDb(), 'w1');
+    const text = 'the rest is in .webadf-del-0a1b2c3d: Libs/foo.library: object in use';
+    await answerPiece(getDb(), 'w1', d.id, { piece: 0, lines: [`DEL ${d.id} 37`, `ERR ${d.id} busy ${text.length}:${text}`], last: true });
+    const w = (await fetchProgress(getDb(), 'o1', job, new Date()))!.writes.find((x) => x.label === 'Work:old')!;
+    expect(w).toMatchObject({ status: 'failed', removed: 37, entry: 'Libs/foo.library', reason: 'In use on the Amiga', restIn: '.webadf-del-0a1b2c3d' });
+  });
+});
+
+describe('safe moves off a volume (protocol 5)', () => {
+  beforeEach(async () => {
+    await getDb().delete(remoteRequests);
+    await remember('Work:', [ent('Pair', 0, true), ent('Pair.info', 5), ent('x', 2), ent('g.adf', 901120)]);
+    await remember('Work:Pair', [ent('a', 1), ent('E', 0, true), ent('b', 1)]);
+    await remember('Work:Pair/E', []);
+  });
+  const oneLines = async (deviceId = 'w1') => (await writes(deviceId)).filter((w) => w.status !== 'failed').map((w) => `${w.kind} ${w.amigaPath}${(w.target as { one?: boolean }).one ? ' one' : ''}`);
+  const answerAll = async (deviceId: string, answer: (rid: string, path: string) => string) => {
+    for (const r of await takeWaiting(getDb(), deviceId)) {
+      expect(await answerPiece(getDb(), deviceId, r.id, { piece: 0, lines: [answer(r.id, r.amigaPath)], last: true })).toEqual({ ok: true });
+    }
+  };
+
+  it('into STASH:: one DELETE … one per copied file, then each drawer deepest first; a file added meanwhile keeps its drawer', async () => {
+    const r = await op({ op: 'move', sources: [W('Pair')], dest: 'STASH:', onClash: 'ask' });
+    const job = (r as { fetching: { id: string } }).fetching.id;
+    expect(await oneLines()).toEqual([]);
+    const [ga, gb] = (await gets()).sort((x, y) => x.amigaPath.localeCompare(y.amigaPath));
+    await arrive(ga.id, 'Work:Pair/a', new TextEncoder().encode('a'));
+    expect(await oneLines()).toEqual([]);   // b has not arrived: nothing goes
+    await arrive(gb.id, 'Work:Pair/b', new TextEncoder().encode('b'));
+    expect(await answerFresh()).toEqual(['Work:Pair']);
+    // Never the drawer whole, never its icon (not copied), never the empty drawer STASH: did not get: what was copied.
+    expect(await oneLines()).toEqual(['delete Work:Pair/a one', 'delete Work:Pair/b one', 'delete Work:Pair one']);
+    // On the Amiga a file was saved into Work:Pair during the move: Transfer keeps the drawer (notempty).
+    await answerAll('w1', (rid, path) => (path === 'Work:Pair' ? `ERR ${rid} notempty 19:Directory not empty` : `DONE ${rid} 1`));
+    const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!;
+    expect(p).toMatchObject({ total: 2, done: 2, waiting: 0, failed: [] });
+    expect(p.writes.find((w) => w.label === 'Work:Pair')).toMatchObject({ status: 'done', kept: true, reason: null });
+    expect(p.writes.filter((w) => w.kept).length).toBe(1);
+  });
+
+  it('a labelled volume: DELETE names the device\'s path, the job the pane\'s words', async () => {
+    await remember('Work:', [], 'w2');
+    await remember('DF1:', [ent('y', 1)]);
+    const src = 'NET:/w1/Empty (DF1:)/y';
+    const r = await op({ op: 'move', sources: [src], dest: 'STASH:', onClash: 'ask' });
+    expect(r).toMatchObject({ kind: 'done', fetching: { files: 1 } });
+    const [g] = await gets();
+    await arrive(g.id, 'DF1:y', new TextEncoder().encode('y'));
+    await answerFresh();
+    expect((await writes()).map((w) => [w.amigaPath, (w.target as { label: string }).label])).toEqual([['DF1:y', 'Empty (DF1:):y']]);
+  });
+
+  it('into LIBRARY:: a disk image moved is removed by one DELETE … one once the library has it', async () => {
+    const { formatVolume } = await import('@/lib/adffs/format');
+    const adf = formatVolume({ filesystem: 'OFS', volumeName: 'Moved' });
+    const r = await op({ op: 'move', sources: [W('g.adf')], dest: 'LIBRARY:', onClash: 'ask' });
+    expect(r).toMatchObject({ kind: 'done', fetching: { files: 1 } });
+    const [g] = await gets();
+    await arrive(g.id, 'Work:g.adf', adf);
+    await answerFresh();
+    expect(await oneLines()).toEqual(['delete Work:g.adf one']);
+  });
+
+  it('between volumes: the copied files, then the drawers; a drawer kept is said in the job', async () => {
+    await remember('DF0:', [], 'w2');
+    const r = await op({ op: 'move', sources: [W('Pair')], dest: 'NET:/w2/DF0', onClash: 'ask' });
+    const job = (r as { job: { id: string } }).job.id;
+    for (const g of (await gets()).sort((x, y) => x.amigaPath.localeCompare(y.amigaPath))) {
+      await arrive(g.id, g.amigaPath, new TextEncoder().encode('z'));
+    }
+    // The empty drawer is made on the destination as a part of the move: until it is, nothing is removed.
+    for (const row of await rows('w2')) await deliver(row.id, { ok: true, savedAs: row.amigaDest! }, 'w2');
+    expect(await oneLines()).toEqual([]);
+    await answerAll('w2', (rid) => `DONE ${rid} 1`);
+    await fetchProgress(getDb(), 'o1', job, new Date());
+    await answerFresh();
+    expect(await oneLines()).toEqual(['delete Work:Pair/a one', 'delete Work:Pair/b one', 'delete Work:Pair/E one', 'delete Work:Pair one']);
+  });
+
+  it('protocol 4 (Transfer 2.5): a Move that copies off a volume is refused before anything is asked; Copy and a move within the volume work', async () => {
+    await getDb().update(devices).set({ rxProto: 4 }).where(eq(devices.id, 'w1'));
+    await remember('DF0:', [], 'w2');
+    for (const dest of ['STASH:', 'NET:/w2/DF0', 'LIBRARY:']) {
+      expect(await op({ op: 'move', sources: [W('x')], dest, onClash: 'ask' }), dest)
+        .toMatchObject({ kind: 'refused', refusal: { code: 'unsupported', detail: 'Move needs Transfer 2.6 — use Copy' } });
+    }
+    expect(await gets()).toEqual([]);
+    expect(await op({ op: 'copy', sources: [W('x')], dest: 'STASH:', onClash: 'ask' })).toMatchObject({ kind: 'done', fetching: { files: 1 } });
+    await remember('Work:Sub', []);
+    expect(await op({ op: 'move', sources: [W('x')], dest: 'NET:/w1/Work/Sub', onClash: 'ask' })).toMatchObject({ kind: 'done', job: { writes: 1 } });
+  });
+
+  // Final review I-1: a file saved again on the Amiga after it was fetched is not the one copied: it stays.
+  it('a file changed on the Amiga after it was copied stays, and the job says so; the rest goes', async () => {
+    const r = await op({ op: 'move', sources: [W('Pair')], dest: 'STASH:', onClash: 'ask' });
+    const job = (r as { fetching: { id: string } }).fetching.id;
+    for (const g of await gets()) await arrive(g.id, g.amigaPath, new TextEncoder().encode('z'));
+    expect(await oneLines()).toEqual([]);
+    await answerFresh('w1', { 'Work:Pair': [ent('a', 9), ent('E', 0, true), ent('b', 1)] });
+    expect(await oneLines()).toEqual(['delete Work:Pair/b one', 'delete Work:Pair one']);
+    const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!;
+    expect(p.writes.find((w) => w.label === 'Work:Pair/a')).toMatchObject({ status: 'failed',
+      reason: 'Copied, but the original could not be removed — it changed on the Amiga' });
+  });
+
+  // Final review I-2: a move's last part answered with no pane watching still settles (the req route hands it on).
+  it('a STASH: drawer of empty drawers moved onto a volume is removed once its Makedirs are answered', async () => {
+    await remember('Work:Tools', []);
+    await stash('Hollow/E', '', 'dir');
+    const r = await op({ op: 'move', sources: ['STASH:/Hollow'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
+    expect(r).toMatchObject({ kind: 'done', job: { files: 0 } });
+    const { afterRequestAnswered } = await import('./net-moves');
+    for (const m of await takeWaiting(getDb(), 'w1')) {
+      await answerPiece(getDb(), 'w1', m.id, { piece: 0, lines: [`DONE ${m.id} 1`], last: true });
+      await afterRequestAnswered(getDb(), 'w1', m.id);
+    }
+    expect(await listStash(getDb(), 'o1')).toEqual([]);
+  });
+
+  it('Transfer went back to 2.5 before the move finished: nothing is sent, the job says why', async () => {
+    const r = await op({ op: 'move', sources: [W('x')], dest: 'STASH:', onClash: 'ask' });
+    const job = (r as { fetching: { id: string } }).fetching.id;
+    const [g] = await gets();
+    await getDb().update(devices).set({ rxProto: 4 }).where(eq(devices.id, 'w1'));
+    await arrive(g.id, 'Work:x', new TextEncoder().encode('xx'));
+    expect((await writes()).filter((w) => w.status === 'waiting')).toEqual([]);
+    const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!;
+    expect(p.writes).toEqual([expect.objectContaining({ kind: 'delete', status: 'failed',
+      reason: 'Copied, but the original could not be removed — Move needs Transfer 2.6 — use Copy' })]);
   });
 });
 

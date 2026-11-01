@@ -2,6 +2,8 @@ import { test, expect, type APIRequestContext, type Page } from '@playwright/tes
 import { signUpFresh } from './helpers';
 import { cleanupSeeded, pairDevice, setBrowse } from './device-helpers';
 import { boardSays, boardServes, fakeBoardTiming, type BoardRequest, type FakeEntry, type VolumeNext } from './amiga-board';
+import { getDb } from '@/db';
+import { listStash } from '@/lib/stash';
 
 /**
  * NET: volumes phase 2 (spec 2026-10-31 §4, plan Task 9): Files changing the Amiga's own disks against a fake board that
@@ -34,12 +36,12 @@ function amiga(): Record<string, FakeEntry[]> {
   };
 }
 
-/** A fresh org with one board that can write: firmware 1.23.0, Transfer on protocol 4 with browsing and writing on. */
+/** A fresh org with one board that can write: firmware 1.23.0, Transfer on protocol 5 (2.6) with browsing and writing on. */
 async function writable(page: Page, request: APIRequestContext) {
   const { orgId } = await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request, 'A500');
   await boardSays(request, token, FW);
-  await setBrowse(deviceId, { firmware: FW, rx: 'c', rxProto: 4, browseOn: true, writeOn: true });
+  await setBrowse(deviceId, { firmware: FW, rx: 'c', rxProto: 5, browseOn: true, writeOn: true });
   return { orgId, deviceId, token };
 }
 
@@ -292,4 +294,112 @@ test('Move a volume\'s file into STASH: (deleted on the Amiga once stored), and 
   await expect(rowAt(page, 'left', 'c.txt')).toHaveCount(0, { timeout: LIVE });
   expect(fs['Work:Tools'].some((e) => e.name === 'c.txt')).toBe(true);
   await board.stop();
+});
+
+// Spec 2026-10-31 §9 (protocol 5): a Move removes only what it copied. A file saved into the source drawer while the
+// move runs survives -- on the Amiga (DELETE … one per copied file, the drawer last: Transfer answers notempty) and in
+// STASH: -- and the status row says what was kept. On Transfer 2.5 a Move off a volume is refused before anything moves.
+test.describe('safe moves (protocol 5)', () => {
+  test.afterEach(() => { fakeBoardTiming.onRequest = null; fakeBoardTiming.queueHeld = false; });
+  const pack = (fs: Record<string, FakeEntry[]>, vol = 'Work') => {
+    fs[`${vol}:`].push({ name: 'Pack', dir: true });
+    fs[`${vol}:Pack`] = [{ name: 'one.txt', data: Buffer.from('one') }, { name: 'two.txt', data: Buffer.from('two') }];
+  };
+  /** On the first GET the fake Transfer serves, someone saves new.txt into Work:Pack on the Amiga. */
+  const saveIntoPackMidMove = (fs: Record<string, FakeEntry[]>) => {
+    fakeBoardTiming.onRequest = (r) => {
+      if (r.kind === 'GET' && !fs['Work:Pack'].some((e) => e.name === 'new.txt')) fs['Work:Pack'].push({ name: 'new.txt', data: Buffer.from('new') });
+    };
+  };
+  const deletes = (served: BoardRequest[]) => served.filter((r) => r.kind === 'DELETE').map((r) => `${r.path}${r.one ? ' one' : ''}`);
+
+  test('a drawer moved from a volume into STASH:: a file saved into it meanwhile stays on the Amiga, and the row says so', async ({ page, request }) => {
+    test.setTimeout(150_000);
+    const { orgId, deviceId, token } = await writable(page, request);
+    const fs = amiga(); pack(fs);
+    const board = serving(request, token, fs);
+    try {
+      await openFiles(page, 'STASH:', `NET:/${deviceId}/Work`, 'right');
+      await expect(rowAt(page, 'right', 'Pack')).toBeVisible({ timeout: LIVE });
+      saveIntoPackMidMove(fs);
+      await rowAt(page, 'right', 'Pack').click();
+      await page.getByTestId('files-move').click();
+      await expect(busy(page)).toContainText('Kept Work:Pack: something new is in it', { timeout: 60_000 });
+      expect(fs['Work:Pack'].map((e) => e.name)).toEqual(['new.txt']);
+      expect((await listStash(getDb(), orgId)).map((r) => r.path).sort()).toEqual(['Pack/one.txt', 'Pack/two.txt']);
+      expect(deletes(board.served)).toEqual(['Work:Pack/one.txt one', 'Work:Pack/two.txt one', 'Work:Pack one']);
+      expect(fs['Work:'].some((e) => e.name === 'a.lha.info')).toBe(true);
+    } finally { await board.stop(); }
+  });
+
+  test('a drawer moved between two volumes: a file saved into it meanwhile stays where it was', async ({ page, request }) => {
+    test.setTimeout(150_000);
+    const { deviceId, token } = await writable(page, request);
+    const fs = amiga(); pack(fs);
+    fs[''].push({ name: 'Data', device: 'DH2:' });
+    fs['Data:'] = [];
+    const board = serving(request, token, fs);
+    try {
+      await openFiles(page, `NET:/${deviceId}/Data`, `NET:/${deviceId}/Work`, 'right');
+      await expect(rowAt(page, 'right', 'Pack')).toBeVisible({ timeout: LIVE });
+      saveIntoPackMidMove(fs);
+      await rowAt(page, 'right', 'Pack').click();
+      await page.getByTestId('files-move').click();
+      await expect(busy(page)).toContainText('Kept Work:Pack: something new is in it', { timeout: 90_000 });
+      expect((fs['Data:Pack'] ?? []).map((e) => e.name).sort()).toEqual(['one.txt', 'two.txt']);
+      expect(fs['Work:Pack'].map((e) => e.name)).toEqual(['new.txt']);
+    } finally { await board.stop(); }
+  });
+
+  test('a STASH: drawer moved onto a volume: a file put into it meanwhile stays in STASH:, and the row says so', async ({ page, request }) => {
+    test.setTimeout(150_000);
+    const { orgId, deviceId, token } = await writable(page, request);
+    const fs = amiga();
+    const board = serving(request, token, fs);
+    try {
+      await openFiles(page, 'STASH:', `NET:/${deviceId}/Work/Tools`, 'left');
+      await expect(rowAt(page, 'right', 'x.lha')).toBeVisible({ timeout: LIVE });
+      await page.getByTestId('files-stash-input').setInputFiles([
+        { name: 'one.txt', mimeType: 'text/plain', buffer: Buffer.from('one') },
+        { name: 'two.txt', mimeType: 'text/plain', buffer: Buffer.from('two') },
+      ]);
+      await expect(rowAt(page, 'left', 'two.txt')).toBeVisible({ timeout: LIVE });
+      expect((await page.request.post('/api/files/ops', { data: { op: 'makedir', dest: 'STASH:', name: 'Pack' } })).ok()).toBe(true);
+      expect((await page.request.post('/api/files/ops', { data: { op: 'move', sources: ['STASH:/one.txt', 'STASH:/two.txt'], dest: 'STASH:/Pack', onClash: 'ask' } })).ok()).toBe(true);
+      await page.getByTestId('files-refresh').click();
+      await expect(rowAt(page, 'left', 'Pack')).toBeVisible({ timeout: LIVE });
+      fakeBoardTiming.queueHeld = true;
+      await rowAt(page, 'left', 'Pack').click();
+      await page.getByTestId('files-move').click();
+      await expect(busy(page)).toContainText('Copying 1 of 2 to A500', { timeout: LIVE });
+      // Meanwhile a file goes into the drawer being moved.
+      await page.getByTestId('files-stash-input').setInputFiles([{ name: 'new.txt', mimeType: 'text/plain', buffer: Buffer.from('new') }]);
+      await expect.poll(async () => (await listStash(getDb(), orgId)).some((r) => r.path === 'new.txt'), { timeout: LIVE }).toBe(true);
+      expect((await page.request.post('/api/files/ops', { data: { op: 'move', sources: ['STASH:/new.txt'], dest: 'STASH:/Pack', onClash: 'ask' } })).ok()).toBe(true);
+      fakeBoardTiming.queueHeld = false;
+      await expect(busy(page)).toContainText('Kept STASH:/Pack: something new is in it', { timeout: 60_000 });
+      expect((await listStash(getDb(), orgId)).map((r) => r.path).filter((p) => p.startsWith('Pack/'))).toEqual(['Pack/new.txt']);
+      expect((fs['Work:Tools/Pack'] ?? []).map((e) => e.name).sort()).toEqual(['one.txt', 'two.txt']);
+    } finally { await board.stop(); }
+  });
+
+  test('Transfer 2.5 (protocol 4): a Move off a volume is refused with the words, nothing is deleted; Copy works', async ({ page, request }) => {
+    test.setTimeout(90_000);
+    const { deviceId, token } = await writable(page, request);
+    await setBrowse(deviceId, { rxProto: 4 });
+    const fs = amiga();
+    const board = serving(request, token, fs);
+    try {
+      await openFiles(page, 'STASH:', `NET:/${deviceId}/Work`, 'right');
+      await expect(rowAt(page, 'right', 'c.txt')).toBeVisible({ timeout: LIVE });
+      await rowAt(page, 'right', 'c.txt').click();
+      await page.getByTestId('files-move').click();
+      await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'Move needs Transfer 2.6 — use Copy.' })).toBeVisible({ timeout: LIVE });
+      await rowAt(page, 'right', 'c.txt').click();
+      await page.getByTestId('files-copy').click();
+      await expect(rowAt(page, 'left', 'c.txt')).toBeVisible({ timeout: 30_000 });
+      expect(fs['Work:'].some((e) => e.name === 'c.txt')).toBe(true);
+      expect(board.served.filter((r) => r.kind === 'DELETE')).toEqual([]);
+    } finally { await board.stop(); }
+  });
 });

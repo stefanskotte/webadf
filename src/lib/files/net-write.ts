@@ -9,10 +9,10 @@ import { findSendTarget } from '@/lib/send-targets';
 import { targetState, type SendTarget } from '@/lib/send-ui';
 import { storeSendBytes } from '@/lib/send-http';
 import { mapLimit } from '@/lib/pool';
-import { writeBlock } from '@/lib/remote-browse';
+import { MOVE_OLD_TRANSFER, writeBlock } from '@/lib/remote-browse';
 import { addWrites, latestFor, type WriteReq } from '@/lib/remote-requests';
 import { amigaPathOf, newRequestId, type EntryInfo } from '@/lib/remote-wire';
-import { FETCH_MAX_BYTES, FETCH_MAX_FILES, QUEUE_FOLDER } from '@/lib/remote-limits';
+import { FETCH_MAX_BYTES, FETCH_MAX_FILES, MOVE_PROTO, QUEUE_FOLDER } from '@/lib/remote-limits';
 import { SEND_FILE_MAX, queueTransfers, type ClashMode, type QueueFile } from '@/lib/transfers';
 import { formatPath, parsePath, type FsPath } from './path';
 import {
@@ -172,6 +172,33 @@ export async function removeOnVolume(ctx: OpCtx, sources: string[], opts: { jobI
   return done(items, job, writes);
 }
 
+/**
+ * A move's second half off a volume (spec 2026-10-31 §9): exactly what was copied -- one DELETE … one per copied file,
+ * then each copied drawer deepest first, each with `one`, so a drawer something new was saved into stays (Transfer
+ * answers notempty: the job says it was kept). Never a drawer whole, never an icon that was not copied. Needs the
+ * board writable and on Transfer 2.6; refuses (Refused) otherwise, and nothing is sent.
+ */
+export async function removeCopiedOnVolume(ctx: OpCtx, source: string, files: string[], drawers: string[], jobId: string): Promise<void> {
+  const { t, shown } = await volumeMoveBoard(ctx, source);
+  const depth = (p: string) => p.slice(p.indexOf(':') + 1).split('/').filter(Boolean).length;
+  const once = (xs: string[]) => xs.filter((x, k) => xs.findIndex((y) => y.toLowerCase() === x.toLowerCase()) === k);
+  const reqs: WriteReq[] = [...once(files), ...once(drawers).sort((a, b) => depth(b) - depth(a))]
+    .map((p) => ({ kind: 'delete', amigaPath: p, one: true, label: shown(p) }));
+  await addWrites(getDb(), { orgId: ctx.orgId, deviceId: t.id, jobId, writes: reqs });
+}
+
+/**
+ * The board a move off a volume removes its copied source on, refused (Refused) unless it can write now and runs
+ * Transfer 2.6; and the pane's words for an Amiga path under the source (a labelled volume's device path by its label).
+ */
+export async function volumeMoveBoard(ctx: FsCtx, source: string): Promise<{ t: SendTarget; shown: (p: string) => string }> {
+  const at = placeOfRaw(source);
+  if (!at || at.segs.length < 2) refuse('not_found', 404);
+  const t = await writableBoard(ctx, at.board);
+  if ((t.rxProto ?? 0) < MOVE_PROTO) refuse('unsupported', 409, MOVE_OLD_TRANSFER);
+  return { t, shown: (p: string) => (p.toLowerCase().startsWith(at.amiga.toLowerCase()) ? at.shown + p.slice(at.amiga.length) : p) };
+}
+
 /** Protect (PROTECT, the bits as AmigaDOS stores them) or a comment (NOTE) on volume entries. */
 export async function setMetaOnVolume(ctx: OpCtx, sources: string[], meta: { protection?: number; comment?: string }): Promise<Outcome> {
   if (meta.comment !== undefined) checkComment(meta.comment);
@@ -246,16 +273,18 @@ export async function copyOntoVolume(ctx: OpCtx, dir: FsPath, tops: IncomingTop[
 
   // Drawers holding no file arrive by a Makedir each, parents first; a drawer made meanwhile is as good (`ensure`).
   const holdsFile = (rel: string[]) => files.some((f) => f.rel.length > rel.length && rel.every((s, k) => sameStashName(s, f.rel[k])));
+  // A move's Makedirs are parts of it (spec §9): each names the entry it copies (its rel as collected).
   const mkdirs: WriteReq[] = going.flatMap((g) => g.top.items.filter((i) => i.kind === 'dir').map((i) => [g.name, ...i.rel.slice(1)])
     .filter((rel) => !holdsFile(rel))
     .flatMap((rel) => rel.map((_, k) => rel.slice(0, k + 1)))
     .filter((rel, k, all) => all.findIndex((x) => x.join('/').toLowerCase() === rel.join('/').toLowerCase()) === k)
-    .map((rel) => ({ kind: 'mkdir' as const, amigaPath: joinAmiga(at.amiga, ...rel), ensure: true, label: joinAmiga(at.shown, ...rel) })));
+    .map((rel) => ({ kind: 'mkdir' as const, amigaPath: joinAmiga(at.amiga, ...rel), ensure: true, label: joinAmiga(at.shown, ...rel),
+      ...(opts.move ? { move: { source: g.top.source, item: [g.top.items[0].rel[0], ...rel.slice(1)].join('/') } } : {}) })));
 
   const shas = await mapLimit(files, 12, ({ i }) => (i.sha256 ? Promise.resolve(i.sha256) : storeSendBytes(i.bytes!)));
   const queue: QueueFile[] = files.map(({ g, i, rel }, k) => ({ path: rel[rel.length - 1], sha256: shas[k], sizeBytes: i.bytes?.length ?? i.size!,
     protection: i.protection, comment: i.comment ?? '', ...(i.bytes ? { bytes: i.bytes } : {}),
-    dest: joinAmiga(at.amiga, ...rel), onClash: g.mode, ...(opts.move ? { moveSource: g.top.source } : {}) }));
+    dest: joinAmiga(at.amiga, ...rel), onClash: g.mode, ...(opts.move ? { moveSource: g.top.source, moveItem: i.rel.join('/') } : {}) }));
   const job = newRequestId();
   // The queue first: a copy it refuses makes no drawers on the Amiga either (final review I-4).
   if (queue.length) {

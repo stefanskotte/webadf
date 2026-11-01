@@ -118,4 +118,10 @@ describe('write requests', () => {
       .toEqual({ t: 'err', code: 'busy', text: 'Libs/foo.library: object in use' });
     expect(parseAnswerLine('r1', 'ERR r1 skipped 0:')).toBeNull();   // a transfer's outcome, never a request's
   });
+  // Spec 2026-10-31 §9 (protocol 5): exactly one object, a drawer only when empty.
+  it('writes DELETE ... one for a request that says one, and reads notempty', () => {
+    expect(requestLine({ id: 'r1', kind: 'delete', amigaPath: 'Work:Würfel 2', target: { one: true, label: 'x' } })).toBe('DELETE r1 13:Work:Würfel 2 one\n');
+    expect(requestLine({ id: 'r1', kind: 'delete', amigaPath: 'Work:old', target: { label: 'x' } })).toBe('DELETE r1 8:Work:old\n');
+    expect(parseAnswerLine('r1', 'ERR r1 notempty 19:Directory not empty')).toEqual({ t: 'err', code: 'notempty', text: 'Directory not empty' });
+  });
 });

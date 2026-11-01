@@ -11,6 +11,7 @@ import {
   type Added, type CopyMove, type FsCtx, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome, type VolumeDriver,
 } from './driver';
 import { NET_MOVE_IN } from './net-rules';
+import { isKeptWords } from '@/lib/remote-browse';
 import { isNetVolumeDir, isNetVolumePath } from './net-write';
 import { startFetch, volumeToVolume } from './net-fetch';
 import { addDiskImages } from './add-to-library';
@@ -175,7 +176,11 @@ async function crossDevice(ctx: OpCtx, req: CopyMove, srcs: FsPath[], dest: FsPa
     try {
       const r = await d.remove!(ctx, list, unchanged);
       if (r.kind === 'done') {
-        for (const x of r.items) if (!x.ok) results.set(x.source, { source: x.source, ok: false, refusal: { code: x.refusal.code, detail: REMOVE_FAILED } });
+        // What a move kept (spec 2026-10-31 §9: something new is in a drawer) is said as the driver says it.
+        for (const x of r.items) {
+          if (!x.ok) results.set(x.source, { source: x.source, ok: false,
+            refusal: { code: x.refusal.code, detail: x.refusal.detail && isKeptWords(x.refusal.detail) ? x.refusal.detail : REMOVE_FAILED } });
+        }
       }
     } catch (e) {
       if (!(e instanceof Refused)) throw e;

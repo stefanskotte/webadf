@@ -244,7 +244,7 @@ export const devices = pgTable('devices', {
   sendVersion: integer('send_version').notNull().default(0),
   /** NET: volumes (spec 2026-10-30): cursor bumped on every new remote request; the poll's `req.v`, echoed as ?reqAck=. */
   reqVersion: integer('req_version').notNull().default(0),
-  /** Transfer's protocol on the board's connection (?rxv=): 2 or 3; null before a 1.22 board reports. */
+  /** Transfer's protocol on the board's connection (?rxv=): 2 to 5 (5: DELETE … one, spec 2026-10-31 §9); null before a 1.22 board reports. */
   rxProto: integer('rx_proto'),
   /** Transfer's browsing switch from READY 3 (?browse=1). */
   browseOn: boolean('browse_on').notNull().default(false),

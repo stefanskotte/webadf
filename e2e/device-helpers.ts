@@ -74,7 +74,7 @@ export async function seedDevices(
  * does -- seen now, Transfer's state `rx` seen now, its protocol and its browsing switch. `firmware` is the board's real
  * form, `<semver>+g<sha>` (firmwareAtLeast refuses a bare version). Call again in a long test: online is 60 s.
  */
-export async function setBrowse(deviceId: string, o: { firmware?: string; rx?: 'c' | 'u'; rxProto?: 2 | 3 | 4; browseOn?: boolean; writeOn?: boolean } = {}) {
+export async function setBrowse(deviceId: string, o: { firmware?: string; rx?: 'c' | 'u'; rxProto?: 2 | 3 | 4 | 5; browseOn?: boolean; writeOn?: boolean } = {}) {
   const now = new Date();
   await getDb().update(devices).set({
     lastSeenAt: now, sendRxAt: now,

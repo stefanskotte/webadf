@@ -1,0 +1,1 @@
+ALTER TABLE "transfers" ADD COLUMN "move_item" text;

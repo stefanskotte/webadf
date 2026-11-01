@@ -5,7 +5,9 @@ import { QUEUE_FOLDER, type WriteKind } from './remote-limits';
 
 export type RemoteKind = 'vols' | 'dir' | 'get' | WriteKind;
 /** A write request's arguments (spec 2026-10-31 §2.3), kept in remote_requests.target: RENAME's target, PROTECT's bits, NOTE's comment. */
-export type WriteArgs = { to?: string; protection?: number; comment?: string };
+export type WriteArgs = { to?: string; protection?: number; comment?: string;
+  /** DELETE exactly this object, a drawer only when empty (protocol 5, spec 2026-10-31 §9): the line ends ` one`. */
+  one?: boolean };
 export type VolumeInfo = { name: string; device: string; size: number; free: number; date: string };
 export type EntryInfo = { name: string; dir: boolean; size: number; protection: number; date: string; comment: string };
 export type AnswerLine =
@@ -23,7 +25,7 @@ export function requestLine(r: { id: string; kind: RemoteKind; amigaPath: string
     case 'dir': return `DIR ${r.id} ${lp(r.amigaPath)}\n`;
     case 'get': return `GET ${r.id} ${lp(r.amigaPath)}\n`;
     case 'mkdir': return `MKDIR ${r.id} ${lp(r.amigaPath)}\n`;
-    case 'delete': return `DELETE ${r.id} ${lp(r.amigaPath)}\n`;
+    case 'delete': return `DELETE ${r.id} ${lp(r.amigaPath)}${a.one ? ' one' : ''}\n`;
     case 'rename': return `RENAME ${r.id} ${lp(r.amigaPath)} ${lp(a.to ?? '')}\n`;
     case 'protect': return `PROTECT ${r.id} ${lp(r.amigaPath)} ${((a.protection ?? 0) >>> 0).toString(16)}\n`;
     case 'note': return `NOTE ${r.id} ${lp(r.amigaPath)} ${lp(a.comment ?? '')}\n`;
@@ -68,7 +70,9 @@ const NAME_OK = (n: string) => amigaNameProblem(n) === null;
 const DEVICE = /^[A-Za-z0-9_.-]{1,30}:$/;
 const CODES = new Set(['off', 'notfound', 'notdir', 'isdir', 'busy', 'toolarge', 'denied', 'bad', 'io', 'norx', 'old', 'timeout',
   // phase 2 (spec 2026-10-31 §2.3): writing off, a MKDIR/RENAME target there, a write-protected or full disk, RENAME across volumes
-  'readonly', 'exists', 'wprot', 'full', 'xvol']);
+  'readonly', 'exists', 'wprot', 'full', 'xvol',
+  // protocol 5 (spec 2026-10-31 §9): DELETE … one of a drawer that is not empty
+  'notempty']);
 
 export function parseAnswerLine(rid: string, line: string): AnswerLine | null {
   const c = new Cursor(line);
