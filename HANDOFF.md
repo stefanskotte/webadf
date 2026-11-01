@@ -1504,7 +1504,9 @@ e2e teardown; 0 remote libraries / shares / copies left. Note: the A500 does not
 a reset the board reports Transfer unreachable (send_rx u) until `AddNetInterface eth0` is typed. The
 one-off local remote-mount 404: NOT reproduced (6 local runs of sharing + sharing-owner, all green); its three 404 sources
 are the library, the board's team, and the owner's not_shared; the spec prints the body when it recurs. OMV back to
-`latest`: waits on the next web-* release (none since web-1.1.0, 2026-10-16). The sharing deferred minors: NOT
+`latest`: DONE 2026-11-01 -- **web-1.2.0** tagged on 988bc4a2 (image release job green: 1.2.0 + latest), OMV switched
+from share-test to latest (.env.bak-1.2.0 is the previous .env; compose.yaml unchanged), pulled and up: it backed up
+and applied 0051-0057 itself, healthy, the built app carries 988bc4a2. The sharing deferred minors: NOT
 recoverable -- the ledger was deleted and no transcript on this machine holds that session's final message.
 (3) **Web app, smaller:** DONE 2026-11-01. "Put on a disk" from From the Amiga is what Files does (Create ADF… on
 LIBRARY:, then copy from STASH:); .lzh dropped onto a disk has unpacked since 3ae (e2e archive-drop*.spec.ts, the
@@ -1513,6 +1515,10 @@ README, screenshots retaken with a writable volume (067cc1ef). Found on the way:
 SYS:WBStartup -- the A500 kept 2.6 and an icon without DONOTWAIT there, so Workbench asked "has not yet returned".
 Install now updates it (and the icon when it lacks DONOTWAIT); FS-UAE `install` mode 6/6 on 2.04/3.1/3.2; driver disk
 d480590e (184ca84b previous), uploaded and read back (3a23f4ad).
+(3b) **2026-11-01 (operator):** STASH: rows no longer carry the "from <board>" mark (988bc4a2; help and the networking
+guide updated). The pre-existing e2e failures (§4-files) were re-run on master: 14 still fail (drive-chips 400/409,
+library-a3 57/87, library-paging 161, library-table 231, mobile 493, c8-drive-menu 462/488, cover-override 58/70/92,
+nfc-fob-button 88/183); help.spec now passes. Being fixed on branch fix/master-e2e-failures.
 (4) **Hardware:** NFC detects rarely since rev B (measure first); rev C
 (own RP2350 + antenna port, LWB+ breadboard test when the Mouser parts arrive, keyed I2C + display FFC connectors,
 next-disk button, activity LED, DF0 passthrough).
@@ -1547,13 +1553,16 @@ ellipsis (kept); STASH: commit of a sha another org already stored is ACCEPTED f
 library ingest; proof of possession stays deferred); README screenshots regenerated (4ecb33f).
 - **Security fix shipped with it:** storeSendBytes (src/lib/send-http.ts) re-verifies an existing blob by size+sha256 or
 overwrites it -- before, bytes planted at a presigned-but-uncommitted adf/<sha> key could be sent as another org's file.
-- **Bench (A500) owed:** a NET: batch (rows created ms apart) is received like single sends; the first-save rule for
-shared disks; Send from a shared disk end to end.
+- **Bench (A500): all PASSED 2026-11-01.** A NET: batch: STASH:Keymaps (7 files) copied into NET:Webfloppy1/Queue
+in one Copy (7 rows created ms apart) -- all 7 delivered under their own names into SYS:Downloads within 30 s, Transfer
+listing each "done"; then deleted from Workbench:Downloads via Files ("Deleted 7 items"). The first-save rule for
+shared disks and Send from a shared disk: see (2) in the Current order.
 - **Pre-existing master e2e failures (verified ON MASTER 2026-10-29, not Files):** mobile :744, library-a3 :87,
 library-table :231, drive-chips :400/:409, library-paging :161, cover-override :58/:70/:92, c8-drive-menu :232/:462/:488;
 help.spec "Enter opens the ?" fails on master, passes after Files. Flakes: library-a3 :57, nfc-fob-button :88,
 disk-sets :368/:441.
-- **Found while shooting the README (pre-existing, not fixed):** the Library tray says "Already in the library" for
+- **Found while shooting the README -- ALREADY FIXED 2026-10-29 22:30 (3236a882, every added disk reads "Added"; this
+note was written that afternoon and never updated):** the Library tray said "Already in the library" for
 state `deduped`, which only means the bytes already exist ON THE SERVER (any org) -- a new account sees it for disks
 it never had (src/lib/library-ingest/tray.ts:30, same on master's upload-staging). Needs words like "Added (already
 stored)", or a per-org answer from /complete.
