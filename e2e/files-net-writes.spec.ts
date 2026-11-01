@@ -1,7 +1,7 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import { signUpFresh } from './helpers';
 import { cleanupSeeded, pairDevice, setBrowse } from './device-helpers';
-import { boardSays, boardServes, fakeBoardTiming, type BoardRequest, type FakeEntry, type VolumeNext } from './amiga-board';
+import { boardSays, boardServes, boardUploads, fakeBoardTiming, type BoardRequest, type FakeEntry, type VolumeNext } from './amiga-board';
 import { getDb } from '@/db';
 import { listStash } from '@/lib/stash';
 
@@ -294,6 +294,48 @@ test('Move a volume\'s file into STASH: (deleted on the Amiga once stored), and 
   await expect(rowAt(page, 'left', 'c.txt')).toHaveCount(0, { timeout: LIVE });
   expect(fs['Work:Tools'].some((e) => e.name === 'c.txt')).toBe(true);
   await board.stop();
+});
+
+// Plan 2026-11-01-vol-to-vol-staging: a copy between two volumes holds the file as internal staging, never as a STASH:
+// row -- not while it goes up, not once stored, not after. A person's own STASH: file is the only row there throughout.
+test('Copy between two volumes: STASH: open meanwhile shows nothing of it, at any point', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const { orgId, deviceId, token } = await writable(page, request);
+  const fs = amiga();
+  fs[''].push({ name: 'Data', device: 'DH2:' });
+  fs['Data:'] = [];
+  await boardUploads(request, token, 'keep.txt', Buffer.from('keep'));
+  let release: () => void = () => {};
+  const held = new Promise<void>((reached) => {
+    fakeBoardTiming.beforeClose = (r) => {
+      if (r.path !== 'Work:c.txt') return Promise.resolve();
+      reached();
+      return new Promise<void>((go) => { release = go; });
+    };
+  });
+  const board = serving(request, token, fs);
+  const stash = await page.context().newPage();
+  const stashRows = async () => (await listStash(getDb(), orgId)).map((r) => r.path).sort();
+  try {
+    await openFiles(page, `NET:/${deviceId}/Data`, `NET:/${deviceId}/Work`, 'right');
+    await expect(rowAt(page, 'right', 'c.txt')).toBeVisible({ timeout: LIVE });
+    await rowAt(page, 'right', 'c.txt').click();
+    await page.getByTestId('files-copy').click();
+    await held;
+    // Every byte is up, the close not sent: STASH: holds the person's file and nothing else.
+    expect(await stashRows()).toEqual(['keep.txt']);
+    await openFiles(stash, 'STASH:', 'STASH:', 'left');
+    await expect(rowAt(stash, 'left', 'keep.txt')).toBeVisible({ timeout: LIVE });
+    await expect(stash.getByTestId('pane-left').getByTestId('pane-row')).toHaveCount(1);
+    release();
+    await expect(busy(page)).toContainText('Copied 1', { timeout: 60_000 });
+    expect(fs['Data:'].some((e) => e.name === 'c.txt')).toBe(true);
+    expect(fs['Work:'].some((e) => e.name === 'c.txt')).toBe(true);
+    expect(await stashRows()).toEqual(['keep.txt']);
+    await stash.reload();
+    await expect(rowAt(stash, 'left', 'keep.txt')).toBeVisible({ timeout: LIVE });
+    await expect(stash.getByTestId('pane-left').getByTestId('pane-row')).toHaveCount(1);
+  } finally { fakeBoardTiming.beforeClose = null; release(); await board.stop(); }
 });
 
 // Spec 2026-10-31 §9 (protocol 5): a Move removes only what it copied. A file saved into the source drawer while the
