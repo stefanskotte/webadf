@@ -59,6 +59,11 @@ async function rowKinds(page: Page): Promise<string[]> {
 
 /** The real pointer, past dnd-kit's 8px threshold first (collections.spec.ts dragOnto explains the steps). */
 async function dragOnto(page: Page, source: Locator, target: Locator) {
+  // The library streams in behind its loading frame: right after goto the rows can still be in the hidden
+  // Suspense container (a null box), and until hydration dnd-kit's MouseSensor hears no press.
+  await expect(source).toBeVisible();
+  await expect(target).toBeVisible();
+  await hydrated(page, 'game-row', 'onMouseDown');
   const from = await source.boundingBox();
   const to = await target.boundingBox();
   if (!from || !to) throw new Error('drag: source or target is not visible');

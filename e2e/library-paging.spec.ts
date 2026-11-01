@@ -172,6 +172,11 @@ test('dragging inside page 2 of a collection reorders those titles and leaves pa
   await expect(cards(page)).toHaveCount(2);
   // The 26th title onto the 25th's LEFT edge: it takes the 25th's place (an edge never arms a set).
   const card = (title: string) => cards(page).filter({ hasText: title });
+  // toHaveCount counts the streamed cards while they are still in the hidden Suspense container (a null box);
+  // wait for them to show, and for hydration, or dnd-kit's MouseSensor hears no press.
+  await expect(card(t[24].title)).toBeVisible();
+  await expect(card(t[25].title)).toBeVisible();
+  await hydrated(page, 'game-card', 'onMouseDown');
   const slot = (await card(t[24].title).boundingBox())!;
   const p = await pickUp(page, card(t[25].title));
   await walk(page, p, at(slot, 0.1, 0.5));

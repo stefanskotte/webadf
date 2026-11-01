@@ -446,8 +446,20 @@ export function DriveCard({ chip, close }: { chip: DriveChip; close: () => void 
     nextHadFocus.current = false;
     if (!was) return;
     // Base UI may already have pulled the lost focus onto the popup itself; either way nothing useful holds it.
-    const a = document.activeElement;
-    if (!a || a === document.body || a.hasAttribute('data-drive-panel')) ejectRef.current?.focus();
+    const lost = () => {
+      const a = document.activeElement;
+      return !a || a === document.body || a.hasAttribute('data-drive-panel');
+    };
+    if (lost()) ejectRef.current?.focus();
+    // ...and it does so twice: the Popover's restoreFocus="popup" focuses the popup in a microtask after the focused
+    // Next goes, then AGAIN on the next animation frame. When this effect runs between the two, that second focus
+    // takes the popup back from Eject. So look once more after that frame has run (two frames on), and only while
+    // focus is still lost -- a user who has moved on keeps their focus.
+    let inner = 0;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => { if (lost()) ejectRef.current?.focus(); });
+    });
+    return () => { cancelAnimationFrame(outer); cancelAnimationFrame(inner); };
   }, [chip.next]);
 
   const nextWords = chip.next ? nextLabel(chip.next) : null;
