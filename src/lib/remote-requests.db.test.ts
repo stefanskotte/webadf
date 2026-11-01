@@ -365,7 +365,8 @@ describe('the request store', () => {
 
 // NET: volumes phase 2 (spec 2026-10-31 §2.3, §4.1; plan W9-W13): the one-line writes.
 describe('write requests', () => {
-  const canWrite = (on: boolean) => getDb().update(devices).set({ rxProto: on ? 4 : 3, browseOn: true, writeOn: on }).where(eq(devices.id, deviceId));
+  // Off: Transfer 2.5 connected with its writing switch off (item 11: the take says the row's own reason).
+  const canWrite = (on: boolean) => getDb().update(devices).set({ rxProto: 4, browseOn: true, writeOn: on, firmwareVersion: '1.23.1+gabc', sendRx: 'c' }).where(eq(devices.id, deviceId));
   const answer = (rid: string, lines: string[], piece: number, last: boolean, when: Date) => answerPiece(getDb(), deviceId, rid, { piece, lines, last }, when);
   const remember = async (path: string, when: Date) => {
     const s = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: path, fresh: true }, when);
@@ -522,7 +523,7 @@ describe('write requests', () => {
     await getDb().delete(transfers);
     await getDb().update(devices).set({ sendRxAt: at(0) }).where(eq(devices.id, deviceId));
     await getDb().insert(transfers).values({ id: 'ts1', orgId, deviceId, createdByUserId: 'u', path: 'x', amigaDest: 'Work:Tools/big.lha',
-      sizeBytes: 10, crc32: 0, blobSha256: 's', status: 'sending', expiresAt: at(9999) });
+      sizeBytes: 10, crc32: 0, blobSha256: 's', status: 'sending', expiresAt: at(9999), activeAt: at(0) });   // its last chunk fetched at 0
     expect(await copyMoving(getDb(), deviceId, at(30))).toBe('Work:Tools/big.lha');
     const p = await requestListing(getDb(), { orgId, deviceId, kind: 'dir', amigaPath: 'Work:', fresh: false }, at(1));
     await expireStale(getDb(), at(59));

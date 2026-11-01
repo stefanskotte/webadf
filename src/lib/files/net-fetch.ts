@@ -10,14 +10,16 @@
 // SERVER ONLY.
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb, type Db } from '@/db';
+import { amigaFoldSql } from '@/lib/amiga-fold';
 import { devices } from '@/db/schema/devices';
 import { amigaUploads } from '@/db/schema/amiga-uploads';
 import { remoteRequests } from '@/db/schema/remote-requests';
 import { transfers } from '@/db/schema/transfers';
 import { findSendTarget } from '@/lib/send-targets';
-import { addGets, addWrites, dropMemory, expireStale, latestFor, liveGet, settleGet, type GetTarget, type RemoteRow, type WriteReq, type WriteTarget } from '@/lib/remote-requests';
+import { isOnline } from '@/lib/device-state';
+import { addGets, addWrites, claimGet, dropMemory, expireStale, latestFor, settleGet, type GetTarget, type RemoteRow, type WriteReq, type WriteTarget } from '@/lib/remote-requests';
 import { amigaPathOf, newRequestId, type EntryInfo } from '@/lib/remote-wire';
-import { errorWords, MOVE_OLD_TRANSFER, writeErrorWords } from '@/lib/remote-browse';
+import { errorWords, KEPT_NEW, KEPT_UNKNOWN, MOVE_OLD_TRANSFER, oneOrMany, writeErrorWords } from '@/lib/remote-browse';
 import { MOVE_PROTO, WRITE_KINDS } from '@/lib/remote-limits';
 import { failureText } from '@/lib/send-ui';
 import { queueTransfers, type ClashMode } from '@/lib/transfers';
@@ -142,7 +144,9 @@ export async function startFetch(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
   // A move removes only drawers that were copied (final review I-3): into STASH: a drawer arrives only by the files in
   // it, so one holding none (an empty drawer, however deep) stays on the Amiga.
   const holding = (top: Top) => top.drawers.filter((d) => top.files.some((f) => f.amigaPath.toLowerCase().startsWith(`${d.toLowerCase()}/`)));
+  const left = (top: Top) => top.drawers.filter((d) => !holding(top).includes(d));
   const move = req.op === 'move' ? (top: Top, f: File) => ({ moveSource: top.source, ...(holding(top).length ? { moveDrawers: holding(top) } : {}),
+    ...(left(top).length ? { moveLeft: left(top) } : {}),
     moveSeen: { size: f.size, date: f.date }, ...(ctx.userId ? { userId: ctx.userId } : {}) }) : () => ({});
   const files = tops.flatMap((top) => top.files.map((f) => ({ amigaPath: f.amigaPath,
     target: { dest: formatPath(dest), rel: f.rel, replace: replace.has(top), library, ...move(top, f) } satisfies GetTarget })));
@@ -244,44 +248,60 @@ const LIBRARY_WORDS: Record<string, string> = {
 
 /**
  * After a stored close of an upload a get asked for: the library's part when the copy was onto LIBRARY:, then settled.
- * Never throws: the file is stored whatever happens here, so the board hears ok and the get alone fails (`io`).
+ * Never throws: the file is stored whatever happens here, so the board hears ok and the get alone fails (`io`). The get
+ * is claimed first (`placing`, plan 2026-11-01-net-consistency R1): a second close of the same upload (the board's 30 s
+ * retry) finds nothing to place, and an error after the file was handed on never turns the done get failed.
  */
 export async function placeFetched(db: Db, uploadId: string, now = new Date()): Promise<void> {
   // A get that timed out while its file was on the way is placed all the same (fix round 1 ruling): the file is here.
-  const [g] = await db.select().from(remoteRequests).where(and(eq(remoteRequests.uploadId, uploadId), eq(remoteRequests.kind, 'get'), liveGet()));
-  // Staging whose get ended meanwhile (the board said it failed) is no use to anyone: it goes now, not in a day.
-  if (!g) return releaseStaging(db, uploadId);
-  try { await place(db, g, uploadId, now); } catch {
-    await releaseStaging(db, uploadId).catch(() => {});
-    await settleGet(db, g.id, { ok: false, code: 'io', text: 'it could not be placed' }, now).catch(() => {});
+  const g = await claimGet(db, uploadId, now);
+  if (!g) {
+    // Being placed by the first close: that one decides. Otherwise staging whose get ended meanwhile (the board said it
+    // failed) is no use to anyone: it goes now, not in a day.
+    const [placing] = await db.select({ id: remoteRequests.id }).from(remoteRequests)
+      .where(and(eq(remoteRequests.uploadId, uploadId), eq(remoteRequests.kind, 'get'), eq(remoteRequests.status, PLACING)));
+    if (!placing) await releaseStaging(db, uploadId);
+    return;
+  }
+  try { await place(db, g, uploadId, now); } catch (e) {
+    console.error('net-fetch: placing a fetched file failed', e);
+    if (await settleGet(db, g.id, { ok: false, code: 'io', text: 'it could not be placed' }, now, PLACING).catch(() => false)) {
+      await releaseStaging(db, uploadId).catch(() => {});
+    }
   }
 }
+
+const PLACING = 'placing';
 
 async function place(db: Db, g: RemoteRow, uploadId: string, now: Date): Promise<void> {
   const target = g.target as GetTarget;
   if (target.relay) return relay(db, g, target, uploadId, now);
   if (target.library) {
     const r = await addUploadToLibrary(g.orgId, uploadId);
-    if (!r.ok) return settleGet(db, g.id, { ok: false, code: r.error, text: r.reason ?? LIBRARY_WORDS[r.error] }, now);
+    if (!r.ok) { await settleGet(db, g.id, { ok: false, code: r.error, text: r.reason ?? LIBRARY_WORDS[r.error] }, now, PLACING); return; }
     if (target.library.collectionId && !(await addGameToCollection(g.orgId, target.library.collectionId, r.gameId))) {
-      return settleGet(db, g.id, { ok: false, code: 'not_found', text: ADDED_UNFILED }, now);
+      await settleGet(db, g.id, { ok: false, code: 'not_found', text: ADDED_UNFILED }, now, PLACING);
+      return;
     }
   }
-  await settleGet(db, g.id, { ok: true }, now);
-  // A move out of a volume: its source goes once every file of it is stored (plan W7).
-  if (target.moveSource) await settleMoveOfGet(db, g.id);
+  await settleGet(db, g.id, { ok: true }, now, PLACING);
+  // A move out of a volume: its source goes once every file of it is stored (plan W7). The get is done whatever the
+  // settle meets (plan 2026-11-01-net-consistency R3): a failure is logged, and its markers stay for the job's progress
+  // to settle again.
+  if (target.moveSource) await settleMoveOfGet(db, g.id).catch((e) => console.error('net-fetch: settling a move failed', e));
 }
 
 /**
  * A file on its way from one volume to another (plan W8): handed to the destination board's queue with its absolute
  * path and clash mode, then its staging goes -- the queue row keeps the blob from here (blob GC names every transfers
  * row). A queue that refuses it fails the get with the words, and the staging goes too (plan 2026-11-01-vol-to-vol-
- * staging, S4): the file is still on the source volume, and a move keeps it there.
+ * staging, S4): the file is still on the source volume, and a move keeps it there. Once queued the get is done whatever
+ * follows: staging left behind is the daily sweep's.
  */
 async function relay(db: Db, g: RemoteRow, target: GetTarget, uploadId: string, now: Date): Promise<void> {
   const r = target.relay!;
   const [u] = await db.select().from(amigaUploads).where(eq(amigaUploads.id, uploadId));
-  const fail = async (code: string, text: string) => { await releaseStaging(db, uploadId); await settleGet(db, g.id, { ok: false, code, text }, now); };
+  const fail = async (code: string, text: string) => { await releaseStaging(db, uploadId); await settleGet(db, g.id, { ok: false, code, text }, now, PLACING); };
   if (!u?.blobSha256 || !target.userId) return fail('io', 'it could not be placed');
   const q = await queueTransfers(db, { orgId: g.orgId, deviceId: r.deviceId, userId: target.userId, jobId: g.fetchId ?? undefined, now, files: [{
     path: target.rel[target.rel.length - 1], sha256: u.blobSha256, sizeBytes: u.sizeBytes, protection: Number(u.protection), comment: u.comment,
@@ -290,8 +310,8 @@ async function relay(db: Db, g: RemoteRow, target: GetTarget, uploadId: string, 
     const words = q.reason === 'queue_full' ? "the board's queue is full" : q.reason === 'empty' ? 'it is empty' : 'it could not be queued';
     return fail(q.reason, words);
   }
-  await releaseStaging(db, uploadId);
-  await settleGet(db, g.id, { ok: true }, now);
+  await settleGet(db, g.id, { ok: true }, now, PLACING);
+  await releaseStaging(db, uploadId).catch((e) => console.error('net-fetch: releasing staging failed', e));
 }
 
 /** After the board reported a queue row (the done route): a move onto a volume removes its source once all arrived. */
@@ -302,9 +322,10 @@ export async function afterTransferDone(db: Db, transferId: string): Promise<voi
   const [row] = await db.select({ deviceId: transfers.deviceId, dest: transfers.amigaDest, jobId: transfers.jobId }).from(transfers)
     .where(eq(transfers.id, transferId));
   if (!row?.dest) return;
-  const volume = row.dest.slice(0, row.dest.indexOf(':') + 1).toLowerCase();
+  const volume = row.dest.slice(0, row.dest.indexOf(':') + 1);
   const [busy] = await db.select({ id: transfers.id }).from(transfers).where(and(eq(transfers.deviceId, row.deviceId),
-    inArray(transfers.status, ['queued', 'sending']), sql`lower(${transfers.amigaDest}) like ${`${volume.replace(/[\\%_]/g, (c) => `\\${c}`)}%`}`)).limit(1);
+    inArray(transfers.status, ['queued', 'sending']),
+    sql`${amigaFoldSql(transfers.amigaDest)} like ${amigaFoldSql(`${volume.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)}`)).limit(1);
   if (busy) return;
   const dests = row.jobId
     ? (await db.select({ dest: transfers.amigaDest }).from(transfers).where(eq(transfers.jobId, row.jobId))).map((x) => x.dest).filter((x): x is string => !!x)
@@ -312,6 +333,36 @@ export async function afterTransferDone(db: Db, transferId: string): Promise<voi
   const drawers = new Set<string>();
   for (const dest of dests) for (let at = amigaParentOf(dest); ; at = amigaParentOf(at)) { drawers.add(at); if (at.endsWith(':')) break; }
   await dropMemory(db, row.deviceId, [...drawers]);
+}
+
+/**
+ * Why Transfer kept a drawer a move's DELETE … one asked for (item 9), from what the job itself knows, first match:
+ * a copied file under it changed, a copied file's delete was refused, one the Amiga did not list again, an empty drawer
+ * the copy into STASH: left out, an entry the move's fresh listing showed that the copy never walked; else no known cause.
+ */
+function keptOnVolume(d: RemoteRow, reqs: RemoteRow[]): string {
+  const fold = (s: string) => s.toLowerCase();
+  const base = fold(d.amigaPath);
+  const under = (p: string) => fold(p).startsWith(`${base}/`);
+  const name = (p: string) => p.slice(Math.max(p.lastIndexOf('/'), p.indexOf(':')) + 1);
+  const failedDeletes = reqs.filter((x) => x.kind === 'delete' && x.status === 'failed' && under(x.amigaPath));
+  const moved = (why: string) => failedDeletes.filter((x) => x.errorCode === 'moved' && (x.errorText ?? '').endsWith(why)).map((x) => name(x.amigaPath));
+  const changed = moved('it changed on the Amiga');
+  if (changed.length) return `${oneOrMany(changed)} changed on the Amiga`;
+  const refused = failedDeletes.filter((x) => x.errorCode !== 'moved').map((x) => name(x.amigaPath));
+  if (refused.length) return `${oneOrMany(refused)} could not be removed`;
+  const unlisted = moved('the Amiga did not list it again');
+  if (unlisted.length) return `${oneOrMany(unlisted)} ${unlisted.length === 1 ? 'was' : 'were'} not listed again`;
+  const gets = reqs.filter((x) => x.kind === 'get');
+  const left = [...new Set(gets.flatMap((g) => (g.target as GetTarget).moveLeft ?? []))].filter(under);
+  if (left.length) return `${oneOrMany(left.map(name), 'drawers')} ${left.length === 1 ? 'is' : 'are'} empty and ${left.length === 1 ? 'was' : 'were'} not copied`;
+  // The move's own fresh listing of the drawer (net-moves.ts checkOffVolume): an entry the copy's walk never saw is new.
+  const walked = new Set([...gets.map((g) => fold(g.amigaPath)), ...gets.flatMap((g) => ((g.target as GetTarget).moveDrawers ?? []).map(fold))]);
+  // Done, or stale since: the removal's own answers let the memory of the drawer go.
+  const fresh = reqs.find((x) => x.kind === 'dir' && (x.status === 'done' || x.status === 'stale') && fold(x.amigaPath) === base);
+  const entries = ((fresh?.answer ?? { entries: [] }) as { entries: EntryInfo[] }).entries;
+  if (entries.some((e) => !walked.has(`${base}/${fold(e.name)}`))) return KEPT_NEW;
+  return KEPT_UNKNOWN;
 }
 
 const amigaParentOf = (path: string) => {
@@ -328,8 +379,8 @@ export type JobWrite = { kind: string; label: string; to: string | null; status:
   reason: string | null; entry: string | null;
   /** An icon taken along or a drawer a copy needed: said only when it failed. */
   quiet: boolean;
-  /** A move's removal that kept a drawer because something new is in it (spec 2026-10-31 §9): said, not a failure. */
-  kept: boolean;
+  /** A move's removal that kept a drawer (spec 2026-10-31 §9): said, not a failure; `keptWhy` why (item 9). */
+  kept: boolean; keptWhy: string | null;
   /** Transfer 2.6: where a stopped drawer delete left the rest when it could not rename the drawer back. */
   restIn: string | null };
 /**
@@ -341,6 +392,8 @@ export type FetchProgress = {
   skipped: number; writes: JobWrite[];
   /** `to`: the files go onto the Amiga (queue rows, or relayed); `from`: a copy out of a volume. */
   direction: 'to' | 'from';
+  /** The name of a board something of the job still waits on that is offline (item 14), else null. */
+  offline: string | null;
 };
 
 /**
@@ -350,7 +403,8 @@ export type FetchProgress = {
 export async function fetchProgress(db: Db, orgId: string, fetchId: string, now: Date): Promise<FetchProgress | null> {
   await expireStale(db, now);
   // A move whose parts all ended -- however they ended -- is settled here, so the job finishes (final review C2).
-  await settleMovesOfJob(db, orgId, fetchId);
+  // A settle that fails is logged and tried again at the next look (R3): the progress still answers.
+  await settleMovesOfJob(db, orgId, fetchId).catch((e) => console.error('net-fetch: settling the moves of a job failed', e));
   const reqs = await db.select().from(remoteRequests)
     .where(and(eq(remoteRequests.fetchId, fetchId), eq(remoteRequests.orgId, orgId)))
     .orderBy(asc(remoteRequests.createdAt), asc(remoteRequests.id));
@@ -359,27 +413,39 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
   if (reqs.length === 0 && sent.length === 0) return null;
   // The board the job is about: a copy onto a volume names the destination, a copy out the source.
   const boardId = sent[0]?.deviceId ?? reqs.find((r) => r.kind !== 'get')?.deviceId ?? reqs[0].deviceId;
-  const [d] = await db.select({ name: devices.name }).from(devices).where(eq(devices.id, boardId));
-  const board = d?.name ?? 'The board';
+  // Every board of the job by name: a write's words name the board it ran on (item 13: a cross-board move's removal is
+  // the source board's), the files the board the job is about.
+  const ids = [...new Set([boardId, ...reqs.map((r) => r.deviceId), ...sent.map((x) => x.deviceId)])];
+  const boards = await db.select({ id: devices.id, name: devices.name, lastSeenAt: devices.lastSeenAt }).from(devices).where(inArray(devices.id, ids));
+  const names = new Map(boards.map((x) => [x.id, x.name] as const));
+  const nameOf = (id: string) => names.get(id) ?? 'The board';
+  // The board a part still waits on that is offline (item 14): the pane says so and asks less often until it is back.
+  const waitingOn = new Set([...reqs.filter((r) => ['waiting', 'sent', 'fetching', 'placing'].includes(r.status)).map((r) => r.deviceId),
+    ...sent.filter((x) => x.status === 'queued' || x.status === 'sending').map((x) => x.deviceId)]);
+  const offline = boards.find((x) => waitingOn.has(x.id) && !isOnline(x.lastSeenAt, now.getTime()))?.name ?? null;
+  const board = nameOf(boardId);
   // A move's get is not finished until its source is deleted (net-moves.ts drops the marker after).
   const moving = (r: RemoteRow) => r.status === 'done' && !!(r.target as GetTarget | null)?.moveSource;
   // A relayed file is its queue row once handed over: the get then counts no more.
   const rows = reqs.filter((r) => r.kind === 'get' && !((r.target as GetTarget).relay && r.status === 'done'));
   const writes: JobWrite[] = reqs.filter((r) => (WRITE_KINDS as readonly string[]).includes(r.kind)).map((r) => {
     const t = (r.target ?? {}) as WriteTarget;
-    const status = r.status === 'waiting' ? 'waiting' : r.status === 'sent' ? 'running' : r.status === 'done' ? 'done' : 'failed';
+    const status = r.status === 'waiting' ? 'waiting' : r.status === 'sent' || r.status === 'settling' ? 'running' : r.status === 'done' ? 'done' : 'failed';
     // Transfer 2.6: a stopped drawer delete that could not rename the drawer back says where the rest is first.
     const rest = r.kind === 'delete' ? /^the rest is in (\S+): ([\s\S]*)$/.exec(r.errorText ?? '') : null;
     const text = rest ? rest[2] : r.errorText ?? '';
     const entry = r.kind === 'delete' && status === 'failed' && text.includes(': ') ? text.slice(0, text.indexOf(': ')) : null;
+    const kept = status === 'done' && !!((r.answer as { kept?: boolean } | null)?.kept || t.kept);
     return { kind: r.kind, label: t.label ?? r.amigaPath, to: t.to ?? null, status, removed: (r.answer as { removed?: number } | null)?.removed ?? 0,
-      reason: status === 'failed' ? writeErrorWords(r.errorCode ?? '', text, board) : null, entry, quiet: !!(t.icon || t.ensure),
-      kept: status === 'done' && !!((r.answer as { kept?: boolean } | null)?.kept || t.kept), restIn: status === 'failed' && rest ? rest[1] : null };
+      reason: status === 'failed' ? writeErrorWords(r.errorCode ?? '', text, nameOf(r.deviceId)) : null, entry, quiet: !!(t.icon || t.ensure),
+      kept, keptWhy: kept ? t.keptWhy ?? keptOnVolume(r, reqs) : null, restIn: status === 'failed' && rest ? rest[1] : null };
   });
   const sentFailed = sent.filter((x) => x.status === 'failed' || x.status === 'expired' || x.status === 'cancelled').map((x) => ({
     name: x.path, reason: x.status === 'expired' ? `${board} did not take it within 24 h` : x.status === 'cancelled' ? 'cancelled'
       // A copy onto a volume's FILE refusals (Transfer 2.5): busy there is the old file in use, not Transfer busy.
-      : x.amigaDest && ['readonly', 'wprot', 'full', 'denied', 'busy'].includes(x.errorCode ?? '') ? writeErrorWords(x.errorCode!, x.errorText ?? '', board)
+      : x.amigaDest && ['readonly', 'wprot', 'full', 'denied', 'busy'].includes(x.errorCode ?? '')
+        // Transfer's own FILE refusals carry its text; only `readonly` (the server's) is said by that text (item 11).
+        ? writeErrorWords(x.errorCode!, x.errorCode === 'readonly' ? x.errorText ?? '' : '', board)
       : failureText(x.errorCode, x.errorText),
   }));
   // A move's file is not finished until its source is removed (net-moves.ts clears the marker after).
@@ -396,7 +462,8 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
     : new Map<string, string>();
   const failed = rows.filter((r) => r.status === 'failed').map((r) => {
     const rel = (r.target as GetTarget).rel;
-    const reason = r.errorCode === 'timeout' ? `${board} stopped answering` : errorWords(r.errorCode ?? '', r.errorText ?? '', board);
+    // A get runs on the source board, which a copy between boards does not name otherwise (item 13).
+    const reason = r.errorCode === 'timeout' ? `${nameOf(r.deviceId)} stopped answering` : errorWords(r.errorCode ?? '', r.errorText ?? '', nameOf(r.deviceId));
     return { name: rel[rel.length - 1], reason };
   });
   return {
@@ -406,5 +473,6 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
     arrived: doneIds.flatMap((id) => (paths.has(id) ? [formatPath({ device: 'STASH', segments: paths.get(id)!.split('/') })] : [])),
     skipped: sentCounts.skipped, writes,
     direction: sent.length || reqs.some((r) => r.kind === 'get' && (r.target as GetTarget).relay) ? 'to' : 'from',
+    offline,
   };
 }

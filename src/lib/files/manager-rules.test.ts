@@ -215,9 +215,19 @@ describe('jobStatus', () => {
       .toBe('Removed 37, then stopped at Libs/foo.library: In use on the Amiga — the rest is in .webadf-del-0a1b2c3d');
   });
   // Spec 2026-10-31 §9: a move's removal that kept a drawer is said, not counted as deleted, not a failure.
+  // Plan 2026-11-01-net-consistency, item 14: a job waiting on a board that is offline says so while it waits.
+  it('says which board it waits on is offline', () => {
+    expect(jobStatus(p({ total: 3, done: 1, waiting: 2, offline: 'A500' }), 'A500'))
+      .toEqual({ line: 'Copying 2 of 3 to A500… — A500 is offline', finished: false });
+    expect(jobStatus(p({ total: 1, done: 1, waiting: 0, offline: 'A500' }), 'A500')).toEqual({ line: 'Copied 1 to A500', finished: true });
+    expect(jobStatus(p({ total: 3, done: 1, waiting: 2, offline: null }), 'A500').line).toBe('Copying 2 of 3 to A500…');
+  });
   it('says what a move kept', () => {
     expect(jobStatus(p({ total: 2, done: 2, direction: 'from', writes: [w({ label: 'Work:Pair/a', removed: 1 }), w({ label: 'Work:Pair', kept: true })] }), 'A500'))
       .toEqual({ line: 'Copied 2 · Deleted Work:Pair/a · Kept Work:Pair: something new is in it', finished: true });
+    // Why it was kept, when the server knows (plan 2026-11-01-net-consistency, item 9).
+    expect(jobStatus(p({ total: 2, done: 2, direction: 'from', writes: [w({ label: 'Work:Pair', kept: true, keptWhy: 'a changed on the Amiga' })] }), 'A500').line)
+      .toBe('Copied 2 · Kept Work:Pair: a changed on the Amiga');
   });
   it('ends with what was done, and why anything was not', () => {
     expect(jobStatus(p({ writes: [w({ removed: 137 })] }), 'A500')).toEqual({ line: 'Deleted Work:old (137)', finished: true });

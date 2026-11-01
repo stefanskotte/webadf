@@ -211,8 +211,8 @@ describe('one-line writes on a volume', () => {
     await answerPiece(getDb(), 'w1', icon.id, { piece: 0, lines: [`DONE ${icon.id} 1`], last: true });
     const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!;
     expect(p.writes).toEqual([
-      { kind: 'delete', label: 'Work:old', to: null, status: 'failed', removed: 37, reason: 'In use on the Amiga', entry: 'Libs/foo.library', quiet: false, kept: false, restIn: null },
-      { kind: 'delete', label: 'Work:old.info', to: null, status: 'done', removed: 1, reason: null, entry: null, quiet: false, kept: false, restIn: null },
+      { kind: 'delete', label: 'Work:old', to: null, status: 'failed', removed: 37, reason: 'In use on the Amiga', entry: 'Libs/foo.library', quiet: false, kept: false, keptWhy: null, restIn: null },
+      { kind: 'delete', label: 'Work:old.info', to: null, status: 'done', removed: 1, reason: null, entry: null, quiet: false, kept: false, keptWhy: null, restIn: null },
     ]);
     expect(p).toMatchObject({ total: 0, board: 'A500', direction: 'from' });
   });
@@ -286,6 +286,20 @@ describe('copy onto a volume', () => {
     await deliver(one.id, { ok: true, savedAs: 'Work:Tools/Pack/one.txt' });
     await remember('Work:Tools', [ent('a.lha', 3), ent('Pack', 0, true)]);
     expect(await pack()).toMatchObject({ marks: [] });
+  });
+
+  // Plan 2026-11-01-net-consistency, item 10: the drawer's count is the job's own rows by state.
+  it('a drawer\'s count: a failed file is said apart, and Clear finished keeps a running job\'s finished rows', async () => {
+    const { clearFinishedTransfers } = await import('@/lib/transfers');
+    await stash('Pack/a.txt', '1'); await stash('Pack/b.txt', '2'); await stash('Pack/c.txt', '3');
+    await op({ op: 'copy', sources: ['STASH:/Pack'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
+    const pack = async () => (await netDriver.list(ctx, parsePath('NET:/w1/Work/Tools')!))!.entries.find((e) => e.name === 'Pack');
+    const [a, b] = (await rows()).sort((x, y) => x.amigaDest!.localeCompare(y.amigaDest!));
+    await deliver(a.id, { ok: true, savedAs: 'Work:Tools/Pack/a.txt' });
+    expect(await clearFinishedTransfers(getDb(), 'o1', 'w1')).toBe(0);
+    expect(await pack()).toMatchObject({ marks: ['Sending 2 of 3'] });
+    await deliver(b.id, { ok: false, code: 'full', text: 'disk full' });
+    expect(await pack()).toMatchObject({ marks: ['Sending 3 of 3 · 1 failed'] });
   });
 
   it('the limits: a file over 4 MB, and more than the board\'s queue holds', async () => {
@@ -367,6 +381,20 @@ describe('moves', () => {
     ]);
     await remember('Work:Sub', []);
     expect(await op({ op: 'move', sources: [W('Sub')], dest: 'NET:/w1/Work/Sub', onClash: 'ask' })).toMatchObject({ kind: 'refused', refusal: { code: 'cycle' } });
+  });
+
+  it('within one volume, Replace: the target\'s own icon goes before the moved icon takes its name; without a moved icon it stays', async () => {
+    // In place of the beforeEach's listing (the same millisecond: the newest of two would be a coin toss).
+    await getDb().delete(remoteRequests).where(eq(remoteRequests.amigaPath, 'Work:Sub'));
+    await remember('Work:Sub', [ent('a.txt', 1), ent('a.txt.info', 5), ent('x', 1), ent('x.info', 5)]);
+    await op({ op: 'move', sources: [W('a.txt')], dest: 'NET:/w1/Work/Sub', onClash: 'replace' });
+    expect((await lines()).map(([k, p, t]) => `${k} ${p} ${(t as { to?: string }).to ?? ''}${(t as { icon?: boolean }).icon ? ' icon' : ''}`)).toEqual([
+      'delete Work:Sub/a.txt ', 'delete Work:Sub/a.txt.info  icon', 'rename Work:a.txt Work:Sub/a.txt', 'rename Work:a.txt.info Work:Sub/a.txt.info',
+    ]);
+    await getDb().delete(remoteRequests).where(eq(remoteRequests.fetchId, (await writes())[0].fetchId!));
+    // Work:x has no icon of its own (the remembered Work: lists none): Sub/x.info is left alone.
+    await op({ op: 'move', sources: [W('x')], dest: 'NET:/w1/Work/Sub', onClash: 'replace' });
+    expect((await lines()).map(([k, p]) => `${k} ${p}`)).toEqual(['delete Work:Sub/x', 'rename Work:x']);
   });
 
   it('out of a volume into STASH:: the source is deleted on the Amiga once its file is stored', async () => {
@@ -609,12 +637,15 @@ describe('safe moves off a volume (protocol 5)', () => {
 describe('final review fixes: copies onto a volume', () => {
   beforeEach(async () => { await remember('Work:Tools', []); });
 
-  it('I-3: an empty file inside a drawer is left out, the rest is copied', async () => {
+  // Plan 2026-11-01-net-consistency, item 15 (was I-3: left out): the board and Transfer both carry a 0-byte FILE.
+  it('an empty file is copied onto a volume, in a drawer or picked on its own', async () => {
     await stash('Box/full.txt', 'full');
     await stash('Box/empty.txt', '');
-    const r = await op({ op: 'copy', sources: ['STASH:/Box'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
-    expect(r).toMatchObject({ kind: 'done', items: [{ source: 'STASH:/Box', ok: true }], job: { files: 1 } });
-    expect((await rows()).map((x) => x.amigaDest)).toEqual(['Work:Tools/Box/full.txt']);
+    await stash('alone.txt', '');
+    const r = await op({ op: 'copy', sources: ['STASH:/Box', 'STASH:/alone.txt'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
+    expect(r).toMatchObject({ kind: 'done', items: [{ source: 'STASH:/Box', ok: true }, { source: 'STASH:/alone.txt', ok: true }], job: { files: 3 } });
+    expect((await rows()).map((x) => [x.amigaDest, x.sizeBytes]).sort()).toEqual([['Work:Tools/Box/empty.txt', 0], ['Work:Tools/Box/full.txt', 4], ['Work:Tools/alone.txt', 0]]);
+    expect(await sendQueueText(getDb(), 'w1')).toMatch(/\n\S+ 0 20:Work:Tools\/alone\.txt\n/);   // in the board's list, size 0
   });
 
   it('I-4: a copy the queue refuses makes no drawers on the Amiga', async () => {

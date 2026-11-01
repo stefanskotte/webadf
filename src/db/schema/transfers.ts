@@ -45,4 +45,9 @@ export const transfers = pgTable('transfers', {
    * first part the moved entry's own name as it was collected), so the move removes exactly what was copied.
    */
   moveItem: text('move_item'),
-}, (t) => [index('transfers_device_idx').on(t.deviceId, t.status, t.createdAt), index('transfers_job_idx').on(t.jobId)]);
+  /**
+   * The last chunk the board fetched for this row (plan 2026-11-01-net-consistency, item 8): a `sending` row is a file
+   * moving only while this is recent, so one left sending when Transfer stopped holds nothing up (amiga_uploads.active_at's twin).
+   */
+  activeAt: timestamp('active_at', { withTimezone: true }),
+},(t) => [index('transfers_device_idx').on(t.deviceId, t.status, t.createdAt), index('transfers_job_idx').on(t.jobId)]);

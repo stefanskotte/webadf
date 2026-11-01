@@ -142,8 +142,11 @@ export async function GET(request: Request) {
   const browse = new URL(request.url).searchParams.get('browse');
   const write = new URL(request.url).searchParams.get('write');
   if (xferAck !== null && rx !== null && /^[cru-]$/.test(rx)) {
-    const cap = rxv === '2' || rxv === '3' || rxv === '4' || rxv === '5' ? { proto: Number(rxv), browse: browse === '1', write: write === '1' } : undefined;
-    await recordSendRx(getDb(), device.deviceId, rx as 'c' | 'r' | 'u' | '-', new Date(), cap);
+    // Any protocol 2 or newer (final review, plan 2026-11-01-net-consistency): with no rxv both switches are cleared, so
+    // a protocol newer than this server knows must not read as none.
+    const proto = rxv !== null && /^\d{1,3}$/.test(rxv) ? Number(rxv) : 0;
+    const cap = proto >= 2 ? { proto, browse: browse === '1', write: write === '1' } : undefined;
+    await recordSendRx(getDb(), device.deviceId, rx as 'c' | 'r' | 'u' | '-', new Date(), cap, { poll: true });
     // Transfer is there but cannot write (switched off, or too old): what waits to be written fails `readonly` now
     // rather than hang (plan W3). Transfer merely gone (rx not c) leaves it waiting.
     if (rx === 'c' && !(cap && cap.proto >= 4 && cap.browse && cap.write)) await failWritesWhenOff(getDb(), device.deviceId);

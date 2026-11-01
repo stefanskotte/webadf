@@ -13,7 +13,7 @@ import { protectionString } from '@/lib/adffs/dir';
 import { uploadFailureText } from '@/lib/from-amiga-ui';
 import { UPLOAD_AREA_MAX_BYTES, UPLOAD_AREA_MAX_FILES } from '@/lib/amiga-upload-limits';
 import { formatPath, parsePath, type FsPath } from './path';
-import { isKeptWords, keptWords } from '@/lib/remote-browse';
+import { isKeptWords, keptWords, KEPT_NEW, oneOrMany } from '@/lib/remote-browse';
 import { keepBothName, rowsUnder, sameStashName, STASH_FILE_MAX, stashTree, type StashNode } from './stash-paths';
 import { openArchive, type OpenedArchive } from './stash-archive';
 import {
@@ -494,17 +494,22 @@ async function remove(ctx: OpCtx, sources: string[], unchanged?: ReadonlyMap<str
       const under = (a: string[], b: string[]) => a.length > b.length && b.every((x, k) => same(x, a[k]));
       const match = (c: IncomingItem, r: StashRow) => (c.id !== undefined ? c.id === r.id : sameRel(c.rel.slice(1), below(r)));
       const gone = new Set(rows.filter((r) => r.status === 'failed').map((r) => r.id));
+      const changed: string[] = [];
       for (const c of copied) {
         if (c.kind !== 'file') continue;
         const r = live(rows).find((x) => x.kind === 'file' && !gone.has(x.id) && match(c, x));
         if (r && c.protection === r.protection && (c.comment ?? '') === r.comment && c.sha256 === r.blobSha256) gone.add(r.id);
+        else if (r) changed.push(c.rel[c.rel.length - 1]);
       }
       for (const c of copied.filter((x) => x.kind === 'dir').sort((a, b) => b.rel.length - a.rel.length)) {
         const r = rows.find((x) => x.kind === 'dir' && !gone.has(x.id) && match(c, x));
         if (r && !rows.some((x) => !gone.has(x.id) && under(below(x), below(r)))) gone.add(r.id);
       }
       ids.push(...gone);
-      if (rows.some((r) => !gone.has(r.id))) refuse('conflict', 409, e.node.kind === 'dir' ? keptWords(raw) : REMOVE_FAILED);
+      // Why it stays (item 9): a copied file changed since, else what is left was not collected -- new since the copy.
+      if (rows.some((r) => !gone.has(r.id))) {
+        refuse('conflict', 409, e.node.kind === 'dir' ? keptWords(raw, changed.length ? `${oneOrMany(changed)} changed since the copy` : KEPT_NEW) : REMOVE_FAILED);
+      }
     } catch (err) {
       if (!(err instanceof Refused)) throw err;
       const detail = err.refusal.detail && isKeptWords(err.refusal.detail) ? err.refusal.detail : REMOVE_FAILED;

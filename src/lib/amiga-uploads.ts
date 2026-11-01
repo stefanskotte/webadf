@@ -62,10 +62,16 @@ async function openRow(db: Db, dev: { deviceId: string; orgId: string }, a: Open
       .where(and(eq(amigaUploads.orgId, dev.orgId), eq(amigaUploads.deviceId, dev.deviceId), eq(amigaUploads.status, 'receiving'), eq(amigaUploads.path, path),
         eq(amigaUploads.sizeBytes, a.size), eq(amigaUploads.amigaDate, a.date), gt(amigaUploads.expiresAt, now),
         // Only a row of the same kind: a Receive upload never resumes into a staging row of the same name, nor back.
-        eq(amigaUploads.source, source)))
+        eq(amigaUploads.source, source),
+        // Staging is named by the file's base name only, so it resumes only the row this very get opened (plan
+        // 2026-11-01-net-consistency R2): never one an earlier, timed-out get of a file alike left.
+        ...(staging && rid ? [sql`exists (select 1 from remote_requests g where g.id = ${rid} and g.upload_id = ${amigaUploads.id})`] : [])))
       .orderBy(desc(amigaUploads.createdAt)).limit(1);
     if (same) {
       await tx.update(amigaUploads).set({ activeAt: now }).where(eq(amigaUploads.id, same.id));
+      // A copy into STASH: resumes its row at that path, which an earlier get may still name: that get lets go of it,
+      // so the close places it for this one (R2).
+      if (rid) await tx.update(remoteRequests).set({ uploadId: null }).where(and(eq(remoteRequests.uploadId, same.id), ne(remoteRequests.id, rid)));
       if (rid) await touchGet(tx, { id: rid }, now, same.id);
       return { ok: true as const, id: same.id, offset: same.received };
     }
@@ -127,6 +133,9 @@ export type CloseResult = { ok: true; name: string } | { ok: false; status: 404 
 function settledAnswer(r: UploadRow, crc: number): CloseResult | null {
   if (r.status === 'receiving') return null;
   if (r.crc32 === crc >>> 0) {
+    // Staging handed on (or released) after its close keeps its CRC and bytes' key: a repeat of that close is the
+    // same file, stored (plan 2026-11-01-net-consistency, item 1), not gone.
+    if (r.status === 'deleted' && r.source === STAGING && r.blobSha256) return { ok: true, name: r.path };
     if (r.status === 'stored') return { ok: true, name: r.sentName ?? r.path };   // the name the board sent, not a keep-both one (R4)
     if (r.status === 'failed' && r.errorCode === 'crc') return { ok: false, status: 409, code: 'crc' };
   }

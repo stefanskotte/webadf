@@ -270,6 +270,41 @@ describe('fix round 1', () => {
     expect(await names('LIBRARY:/g5/d5/Box')).toEqual(['Empty', 'Sub', 'one']);
     expect(await text('LIBRARY:/g5/d5/Box/Sub/two')).toBe('2');
   });
+  // Plan 2026-11-01-net-consistency, item 9: a folder kept says why, truthfully.
+  it('item 9: a folder kept because a copied file changed says so; a folder gone since the copy is no "Kept"', async () => {
+    const enc = (t: string) => new TextEncoder().encode(t);
+    const { applyDiskEdit } = await import('@/lib/disk-write');
+    const r0 = await applyDiskEdit('o1', 'd4', applyBatch([{ op: 'mkdir', parentPath: '', name: 'Crate' }, { op: 'add', parentPath: 'Crate', name: 'one', bytes: enc('1') },
+      { op: 'mkdir', parentPath: '', name: 'Gone' }, { op: 'add', parentPath: 'Gone', name: 'g', bytes: enc('g') }]), null);
+    if (!r0.ok) throw new Error(r0.reason);
+    seam.afterNextEdit = async (real) => {
+      const r = await real('o1', 'd4', applyBatch([{ op: 'replace', parentPath: 'Crate', name: 'one', bytes: enc('changed') }]));
+      if (!r.ok) throw new Error(r.reason);
+    };
+    expect(await runOp(ctx, { op: 'move', sources: ['LIBRARY:/g4/d4/Crate'], dest: 'LIBRARY:/g5/d5', onClash: 'ask' })).toMatchObject({
+      kind: 'done', items: [{ source: 'LIBRARY:/g4/d4/Crate', ok: false, refusal: { code: 'conflict', detail: 'Kept LIBRARY:/g4/d4/Crate: one changed since the copy' } }] });
+    seam.afterNextEdit = async () => {   // the copy landed; now someone deletes the folder on d4
+      expect(await runOp(ctx, { op: 'delete', sources: ['LIBRARY:/g4/d4/Gone'] })).toMatchObject({ kind: 'done', items: [{ ok: true }] });
+    };
+    expect(await runOp(ctx, { op: 'move', sources: ['LIBRARY:/g4/d4/Gone'], dest: 'LIBRARY:/g5/d5', onClash: 'ask' })).toMatchObject({
+      kind: 'done', items: [{ source: 'LIBRARY:/g4/d4/Gone', ok: false, refusal: { code: 'conflict', detail: 'copied, but the original could not be removed — it is no longer on the disk' } }] });
+  });
+  it('item 9: a STASH: folder kept because a copied file changed says so', async () => {
+    const enc = (t: string) => new TextEncoder().encode(t);
+    const { insertStash } = await import('@/lib/stash');
+    const { amigaUploads } = await import('@/db/schema/amiga-uploads');
+    const put = async (path: string, body: string) => {
+      const b = enc(body); const h = createHash('sha256').update(b).digest('hex');
+      await diskStore.put(h, b, { overwrite: true });
+      const r = await insertStash(getDb(), 'o1', 'browser', [{ path, kind: 'file', sha256: h, sizeBytes: b.length, date: null, protection: 0, comment: '' }]);
+      if (!r.ok) throw new Error(r.code);
+    };
+    await put('Bag/one.txt', 'one'); await put('Bag/two.txt', 'two');
+    seam.afterNextEdit = async () => { await getDb().update(amigaUploads).set({ comment: 'edited' }).where(eq(amigaUploads.path, 'Bag/one.txt')); };
+    expect(await runOp(ctx, { op: 'move', sources: ['STASH:/Bag'], dest: 'LIBRARY:/g5/d5', onClash: 'ask' })).toMatchObject({
+      kind: 'done', items: [{ source: 'STASH:/Bag', ok: false, refusal: { code: 'conflict', detail: 'Kept STASH:/Bag: one.txt changed since the copy' } }] });
+    await getDb().delete(amigaUploads).where(eq(amigaUploads.path, 'Bag/one.txt'));
+  });
   it('§9: a STASH: folder moved onto a disk leaves a file put into it meanwhile', async () => {
     const enc = (t: string) => new TextEncoder().encode(t);
     const { insertStash, listStash } = await import('@/lib/stash');

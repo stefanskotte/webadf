@@ -20,17 +20,19 @@ import { newRequestId } from '@/lib/remote-wire';
 import { parsePath } from './path';
 import { driverFor } from './drivers';
 import { Refused, REMOVE_FAILED, type IncomingItem, type OpCtx } from './driver';
-import { isKeptWords } from '@/lib/remote-browse';
+import { isKeptWords, keptWhyOf, KEPT_UNKNOWN } from '@/lib/remote-browse';
 import { amigaParent, isNetVolumePath, placeOf, removeCopiedOnVolume, volumeMoveBoard } from './net-write';
 import { addListings, type GetTarget } from '@/lib/remote-requests';
 import type { EntryInfo } from '@/lib/remote-wire';
 import { refusalWords } from './words';
 
 const ACTIVE_ROWS = ['queued', 'sending'];
+/** A move's removal decided and not yet recorded (final review I-1): the job counts it as running. */
+const SETTLING = 'settling';
 
 type Part = { id: string; kind: string; status: string; amigaPath: string; target: unknown; deviceId: string };
 type Row = { blobSha256: string; sizeBytes: number; protection: number; comment: string; moveItem: string | null };
-type Removal = { kind: 'removed' } | { kind: 'kept'; label: string } | { kind: 'refused'; why: string };
+type Removal = { kind: 'removed' } | { kind: 'kept'; label: string; why: string } | { kind: 'refused'; why: string };
 
 /**
  * What a move of a STASH:/LIBRARY: entry copied (spec §9), as its driver's `unchanged`: each delivered row's file by
@@ -78,8 +80,9 @@ async function removeSource(orgId: string, userId: string | null, source: string
     if (r.kind !== 'done') return { kind: 'refused', why: refusalWords('failed') };
     const bad = r.items.find((i) => !i.ok);
     if (!bad || bad.ok) return { kind: 'removed' };
-    if (bad.refusal.detail && isKeptWords(bad.refusal.detail)) return { kind: 'kept', label: source };
-    return { kind: 'refused', why: bad.refusal.detail === REMOVE_FAILED ? refusalWords(bad.refusal.code) : bad.refusal.detail ?? refusalWords(bad.refusal.code) };
+    if (bad.refusal.detail && isKeptWords(bad.refusal.detail)) return { kind: 'kept', label: source, why: keptWhyOf(bad.refusal.detail, source) ?? KEPT_UNKNOWN };
+    const why = bad.refusal.detail?.startsWith(`${REMOVE_FAILED} — `) ? bad.refusal.detail.slice(REMOVE_FAILED.length + 3) : bad.refusal.detail;
+    return { kind: 'refused', why: why === REMOVE_FAILED ? refusalWords(bad.refusal.code) : why ?? refusalWords(bad.refusal.code) };
   } catch (e) {
     if (e instanceof Refused) return { kind: 'refused', why: e.refusal.detail ?? refusalWords(e.refusal.code) };
     throw e;
@@ -94,10 +97,10 @@ type Checked = { kind: 'waiting' } | { kind: 'refused'; why: string } | { kind: 
  * is not the one copied: it stays, and the job says so. The first call asks (the listings carry the job id, so their
  * answers settle the move again: afterRequestAnswered); later calls wait for the answers, then say what may go.
  */
-async function checkOffVolume(tx: Pick<Db, 'select' | 'insert' | 'update'>, ctx: OpCtx, source: string, jobId: string, gets: Part[]): Promise<Checked> {
+async function checkOffVolume(tx: Db, ctx: OpCtx, source: string, jobId: string, gets: Part[]): Promise<Checked> {
   const asked = (gets[0]?.target as GetTarget | undefined)?.moveVerify;
   if (!asked) {
-    try { await volumeMoveBoard(ctx, source); } catch (e) {
+    try { await volumeMoveBoard(ctx, source, tx); } catch (e) {
       if (e instanceof Refused) return { kind: 'refused', why: e.refusal.detail ?? refusalWords(e.refusal.code) };
       throw e;
     }
@@ -131,12 +134,22 @@ const getMarked = (jobId: string, source: string) => and(eq(remoteRequests.fetch
   or(sql`${remoteRequests.target}->>'moveSource' = ${source}`, sql`${remoteRequests.target}->'relay'->>'moveSource' = ${source}`));
 const rowMarked = (jobId: string, source: string) => and(eq(transfers.jobId, jobId), eq(transfers.moveSource, source));
 
+/** What settleMove decided under its locks, done after they are let go (plan 2026-11-01-net-consistency R4). */
+type Decision = { userId: string | null; said: { id: string; orgId: string; deviceId: string; kind: string; amigaPath: string; fetchId: string };
+  label: string; parts: Part[]; rows: Row[]; checked?: string[]; refused?: string };
+
 /**
  * The move of `source` in job `jobId`, once every part of it has ended: removed if all of it arrived, else kept; a
  * refused removal is recorded in the job as a failed delete. Returns whether the source was removed.
+ *
+ * Decided under the parts' row locks, then done after them (R4): the transaction reads and locks every marked part,
+ * decides, and claims the move by clearing its markers; a second caller waits for it, then finds nothing, so a removal
+ * is never queued twice. The removal itself (its requests on the board, a STASH:/LIBRARY: driver's delete) runs once the
+ * locks are let go, on any connection -- nothing waits on this settle's own locks (pool 5). A crash between the two
+ * leaves the source where it is: the move became a copy, never a double removal.
  */
 export async function settleMove(db: Db, orgId: string, jobId: string, source: string): Promise<boolean> {
-  return db.transaction(async (tx) => {
+  const d = await db.transaction(async (tx): Promise<Decision | null> => {
     const parts = await tx.select({ id: remoteRequests.id, kind: remoteRequests.kind, status: remoteRequests.status, amigaPath: remoteRequests.amigaPath,
       target: remoteRequests.target, deviceId: remoteRequests.deviceId, createdAt: remoteRequests.createdAt })
       .from(remoteRequests).where(getMarked(jobId, source)).orderBy(remoteRequests.createdAt, remoteRequests.id).for('update');
@@ -145,52 +158,73 @@ export async function settleMove(db: Db, orgId: string, jobId: string, source: s
     const rows = await tx.select({ id: transfers.id, status: transfers.status, userId: transfers.createdByUserId, deviceId: transfers.deviceId,
       blobSha256: transfers.blobSha256, sizeBytes: transfers.sizeBytes, protection: transfers.protection, comment: transfers.comment, moveItem: transfers.moveItem })
       .from(transfers).where(rowMarked(jobId, source)).for('update');
-    if (parts.length === 0 && rows.length === 0) return false;
+    if (parts.length === 0 && rows.length === 0) return null;
     // Still on its way: a get not settled, a Makedir not answered, or a queue row waiting or moving.
     if (gets.some((g) => g.status !== 'done' && g.status !== 'failed') || mkdirs.some((m) => m.status !== 'done' && m.status !== 'failed')
-      || rows.some((r) => ACTIVE_ROWS.includes(r.status))) return false;
+      || rows.some((r) => ACTIVE_ROWS.includes(r.status))) return null;
     // A relayed get hands its file to a queue row: the row must exist (it is made in the same request as the get's done).
     const relayed = gets.filter((g) => (g.target as { relay?: unknown }).relay);
     const arrived = parts.every((g) => g.status === 'done') && rows.every((r) => r.status === 'delivered') && rows.length >= relayed.length;
-    let removed = false;
+    let decision: Decision | null = null;
     if (arrived) {
       const userId = (gets[0]?.target as { userId?: string } | undefined)?.userId ?? rows[0]?.userId ?? null;
       const at = placeOf(parsePath(source));
       const said = { id: newRequestId(), orgId, deviceId: gets[0]?.deviceId ?? rows[0]?.deviceId ?? parts[0].deviceId, kind: 'delete',
-        amigaPath: at?.amiga ?? source, fetchId: jobId, answeredAt: new Date() };
+        amigaPath: at?.amiga ?? source, fetchId: jobId };
+      decision = { userId, said, label: at?.shown ?? source, parts, rows };
       const p = parsePath(source);
-      let out: Removal;
       if (p && isNetVolumePath(p)) {
         // Off a volume: first what the Amiga holds now (final review I-1); the markers stay while that is asked.
-        const c = await checkOffVolume(tx, { orgId, userId, versions: [] }, source, jobId, gets);
-        if (c.kind === 'waiting') return false;
-        if (c.kind === 'refused') out = c;
+        const c = await checkOffVolume(tx as unknown as Db, { orgId, userId, versions: [] }, source, jobId, gets);
+        if (c.kind === 'waiting') return null;
+        if (c.kind === 'refused') decision.refused = c.why;
         else {
           for (const x of c.changed) {
             const label = at ? at.shown + x.path.slice(at.amiga.length) : x.path;
             await tx.insert(remoteRequests).values({ ...said, id: newRequestId(), amigaPath: x.path, status: 'failed', errorCode: 'moved',
-              errorText: `Copied, but the original could not be removed — ${x.why}`, target: { label } });
+              errorText: `Copied, but the original could not be removed — ${x.why}`, target: { label }, answeredAt: new Date() });
           }
-          out = await removeSource(orgId, userId, source, jobId, parts, rows, c.files);
+          decision.checked = c.files;
         }
-      } else out = await removeSource(orgId, userId, source, jobId, parts, rows);
-      removed = out.kind === 'removed';
-      if (out.kind === 'refused') {
-        // Said in the job, as a delete that could not be done (final review I-2): the person sees the move became a copy.
-        await tx.insert(remoteRequests).values({ ...said, status: 'failed', errorCode: 'moved',
-          errorText: `Copied, but the original could not be removed — ${out.why}`, target: { label: at?.shown ?? source } });
-      } else if (out.kind === 'kept') {
-        // What the move left because something new is in it (spec §9): said in the job, not a failure.
-        await tx.insert(remoteRequests).values({ ...said, status: 'done', answer: { removed: 0, kept: true }, target: { label: out.label, kept: true } });
       }
+    }
+    // The claim: the markers go now, in the same transaction that decided -- and, when there is a removal to do, the job
+    // gets its placeholder (`settling`, final review I-1): the job is not finished until the removal is recorded, and a
+    // crash before that is failed by expireStale, so the move never reads as done while its source stays unsaid.
+    if (decision) {
+      await tx.insert(remoteRequests).values({ ...decision.said, status: SETTLING, target: { label: decision.label }, createdAt: new Date(), activeAt: new Date() });
     }
     if (parts.length) {
       await tx.update(remoteRequests).set({ target: sql`(${remoteRequests.target} - 'moveSource') #- '{relay,moveSource}'` })
         .where(inArray(remoteRequests.id, parts.map((g) => g.id)));
     }
     if (rows.length) await tx.update(transfers).set({ moveSource: null }).where(inArray(transfers.id, rows.map((r) => r.id)));
-    return removed;
+    return decision;
   });
+  if (!d) return false;
+  let out: Removal;
+  try {
+    out = d.refused !== undefined ? { kind: 'refused', why: d.refused }
+      : await removeSource(orgId, d.userId, source, jobId, d.parts, d.rows, d.checked);
+  } catch (e) {
+    // The markers are gone: no later settle will try again, so the job says it (final review I-2).
+    console.error('net-moves: removing a moved source failed', e);
+    out = { kind: 'refused', why: refusalWords('failed') };
+  }
+  const placeholder = and(eq(remoteRequests.id, d.said.id), eq(remoteRequests.status, SETTLING));
+  if (out.kind === 'refused') {
+    // Said in the job, as a delete that could not be done (final review I-2): the person sees the move became a copy.
+    await db.update(remoteRequests).set({ status: 'failed', errorCode: 'moved', answeredAt: new Date(),
+      errorText: `Copied, but the original could not be removed — ${out.why}`, target: { label: d.label } }).where(placeholder);
+  } else if (out.kind === 'kept') {
+    // What the move left, and why (spec §9; item 9): said in the job, not a failure.
+    await db.update(remoteRequests).set({ status: 'done', answeredAt: new Date(), answer: { removed: 0, kept: true },
+      target: { label: out.label, kept: true, keptWhy: out.why } }).where(placeholder);
+  } else {
+    // Removed, or its DELETEs queued (they are the job's from here): the placeholder has said all it had to.
+    await db.delete(remoteRequests).where(placeholder);
+  }
+  return out.kind === 'removed';
 }
 
 /**

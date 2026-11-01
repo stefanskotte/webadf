@@ -151,7 +151,9 @@ export function fetchStatus(p: { total: number; done: number; failed: { name: st
 type JobWriteView = { kind: string; label: string; to: string | null; status: 'waiting' | 'running' | 'done' | 'failed'; removed: number;
   reason: string | null; entry: string | null; quiet: boolean;
   /** A move's removal that kept a drawer something new is in (spec 2026-10-31 §9). */
-  kept?: boolean; restIn?: string | null };
+  kept?: boolean; restIn?: string | null;
+  /** Why it was kept, when the server knows (plan 2026-11-01-net-consistency, item 9). */
+  keptWhy?: string | null };
 const RUNNING: Record<string, string> = { delete: 'Deleting', mkdir: 'Making', rename: 'Renaming', protect: 'Protecting', note: 'Setting the comment on' };
 
 /** One finished write in words: "Deleted Work:old (137)", "Made Work:New", "Renamed Work:a to Work:b". */
@@ -172,8 +174,17 @@ const PAST: Record<string, string> = { delete: 'Deleted', mkdir: 'Made', rename:
  * A500…"). Then what was done and why anything was not -- a delete stopped half way says how far it got. An icon taken
  * along, or a drawer a copy needed, is said only when it failed.
  */
-export function jobStatus(p: { total: number; done: number; failed: { name: string; reason: string }[]; waiting: number; skipped: number;
-  writes: JobWriteView[]; direction: 'to' | 'from' }, board: string): { line: string; finished: boolean } {
+export function jobStatus(p: JobProgressView, board: string): { line: string; finished: boolean } {
+  const s = jobLine(p, board);
+  // A board the job waits on is offline (plan 2026-11-01-net-consistency, item 14): said while it waits.
+  return !s.finished && p.offline ? { ...s, line: `${s.line} — ${p.offline} is offline` } : s;
+}
+type JobProgressView = { total: number; done: number; failed: { name: string; reason: string }[]; waiting: number; skipped: number;
+  writes: JobWriteView[]; direction: 'to' | 'from';
+  /** The board something of the job still waits on that is offline, if any. */
+  offline?: string | null };
+
+function jobLine(p: JobProgressView, board: string): { line: string; finished: boolean } {
   const loud = p.writes.filter((w) => !w.quiet);
   const running = loud.find((w) => w.status === 'running') ?? (p.waiting === 0 ? loud.find((w) => w.status === 'waiting') : undefined);
   if (running) {
@@ -198,7 +209,7 @@ export function jobStatus(p: { total: number; done: number; failed: { name: stri
   const byKind = new Map<string, JobWriteView[]>();
   for (const w of ok) byKind.set(w.kind, [...(byKind.get(w.kind) ?? []), w]);
   for (const [kind, list] of byKind) parts.push(list.length > 2 ? `${PAST[kind]} ${list.length} items` : list.map(doneWords).join(', '));
-  for (const w of p.writes.filter((x) => x.status === 'done' && x.kept)) parts.push(keptWords(w.label));
+  for (const w of p.writes.filter((x) => x.status === 'done' && x.kept)) parts.push(keptWords(w.label, w.keptWhy ?? undefined));
   for (const w of p.writes.filter((x) => x.status === 'failed')) {
     // A drawer delete that stopped names the entry (Transfer's text, relative to the drawer); DEL 0: nothing removed.
     const rest = w.restIn ? ` — the rest is in ${w.restIn}` : '';

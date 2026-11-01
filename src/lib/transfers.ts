@@ -9,6 +9,7 @@ import { diskStore } from '@/lib/storage';
 import { mapLimit } from '@/lib/pool';
 import type { Db } from '@/db';
 import type { SendSummary } from '@/lib/send-ui';
+import { boardWriteWords } from '@/lib/remote-browse';
 import { XFER_FW, SEND_FILE_MAX, SEND_QUEUE_MAX_FILES, SEND_QUEUE_MAX_BYTES } from '@/lib/send-limits';
 
 export { XFER_FW, SEND_FILE_MAX, SEND_QUEUE_MAX_FILES, SEND_QUEUE_MAX_BYTES };
@@ -158,7 +159,9 @@ export async function queueTransfers(db: Db, a: { orgId: string; deviceId: strin
     const st = stats[k];
     if (!st) return { ok: false, reason: 'no_blob', path: f.path };
     if (st.sizeBytes > SEND_FILE_MAX) return { ok: false, reason: 'too_large', path: f.path };
-    if (st.sizeBytes === 0) return { ok: false, reason: 'empty', path: f.path };
+    // A copy onto a volume takes an empty file (plan 2026-11-01-net-consistency R10: firmware sends no chunk for size 0,
+    // Transfer finishes a 0-byte FILE at GO); the ordinary queue into ReceiveDir keeps its refusal (P7).
+    if (st.sizeBytes === 0 && f.dest === undefined) return { ok: false, reason: 'empty', path: f.path };
     checked.push({ path: paths[k]!, size: st.sizeBytes, f });
   }
   // Read before the transaction: up to 16 MB of store reads must not hold it open.
@@ -207,11 +210,15 @@ export async function sendQueueText(db: Db, deviceId: string, now = new Date()):
  */
 export async function failWritesWhenOff(db: Db, deviceId: string, now = new Date()): Promise<{ rows: number; requests: number }> {
   return db.transaction(async (tx) => {
-    const rows = await tx.update(transfers).set({ status: 'failed', errorCode: 'readonly', errorText: WRITING_OFF, finishedAt: now })
+    // The reason the board's row gives now (item 11): Transfer too old, browsing off, or writing off.
+    const [d] = await tx.select({ rxProto: devices.rxProto, browseOn: devices.browseOn, writeOn: devices.writeOn, firmwareVersion: devices.firmwareVersion,
+      sendRx: devices.sendRx, name: devices.name }).from(devices).where(eq(devices.id, deviceId));
+    const why = d ? boardWriteWords(d) : WRITING_OFF;
+    const rows = await tx.update(transfers).set({ status: 'failed', errorCode: 'readonly', errorText: why, finishedAt: now })
       .where(and(eq(transfers.deviceId, deviceId), inArray(transfers.status, ACTIVE), isNotNull(transfers.amigaDest)))
       .returning({ id: transfers.id });
     if (rows.length) await tx.update(devices).set({ sendVersion: sql`${devices.sendVersion} + 1` }).where(eq(devices.id, deviceId));
-    const reqs = await tx.update(remoteRequests).set({ status: 'failed', errorCode: 'readonly', errorText: WRITING_OFF, answeredAt: now })
+    const reqs = await tx.update(remoteRequests).set({ status: 'failed', errorCode: 'readonly', errorText: why, answeredAt: now })
       .where(and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.status, 'waiting'), inArray(remoteRequests.kind, [...WRITE_KINDS])))
       .returning({ id: remoteRequests.id });
     return { rows: rows.length, requests: reqs.length };
@@ -222,7 +229,7 @@ export async function recordChunk(db: Db, deviceId: string, id: string, offset: 
   Promise<{ ok: true; sha256: string; sizeBytes: number } | { ok: false; status: 400 | 404 | 409 }> {
   // One conditional update, never a read then a write: a cancel that lands between the two must not be turned back
   // into 'sending' (review finding). The offset is checked in the same statement, before the row is marked.
-  const [u] = await db.update(transfers).set({ status: 'sending', bytesSent: offset })
+  const [u] = await db.update(transfers).set({ status: 'sending', bytesSent: offset, activeAt: new Date() })
     .where(and(eq(transfers.id, id), eq(transfers.deviceId, deviceId), inArray(transfers.status, ACTIVE),
       gt(transfers.sizeBytes, offset)))
     .returning({ sha: transfers.blobSha256, size: transfers.sizeBytes });
@@ -285,14 +292,17 @@ export async function expireTransfers(db: Db, now = new Date()): Promise<{ expir
 /**
  * `cap` (NET: volumes): Transfer's protocol, browse and write flags from the poll's rxv/browse/write; a change counts
  * like a new rx. Writing is on only for protocol 4 with both switches (plan W2). A receiver state other than connected
- * clears browse and write (Transfer is gone; spec 2026-10-31 §4.3).
+ * clears browse and write (Transfer is gone; spec 2026-10-31 §4.3). `poll`: the report is the poll's -- there a connected
+ * receiver with no rxv is one the board gives no protocol for, which can neither browse nor write (plan
+ * 2026-11-01-net-consistency, item 12); a chunk's report (rx c, no cap) says only that Transfer is there.
  */
 export async function recordSendRx(
   db: Db, deviceId: string, rx: 'c' | 'r' | 'u' | '-', now = new Date(), cap?: { proto: number; browse: boolean; write?: boolean },
+  opts: { poll?: boolean } = {},
 ): Promise<void> {
   const flags: { rxProto?: number; browseOn: boolean; writeOn: boolean } | null = cap
     ? { rxProto: cap.proto, browseOn: cap.browse, writeOn: cap.proto >= 4 && cap.browse && cap.write === true }
-    : rx !== 'c' ? { browseOn: false, writeOn: false } : null;
+    : rx !== 'c' || opts.poll ? { browseOn: false, writeOn: false } : null;
   const capChanged = flags
     ? sql` or ${devices.browseOn} is distinct from ${flags.browseOn} or ${devices.writeOn} is distinct from ${flags.writeOn}${
       flags.rxProto !== undefined ? sql` or ${devices.rxProto} is distinct from ${flags.rxProto}` : sql``}`
@@ -319,6 +329,14 @@ export async function listTransfers(db: Db, orgId: string, deviceId: string, lim
 }
 
 /**
+ * A finished row of a Files job still running -- another row of it waiting or moving, or a file of it still coming up
+ * from a volume -- stays for Clear (plan 2026-11-01-net-consistency R8): the drawer it went into counts it.
+ */
+const notOfRunningJob = (now: Date) => sql`not (${transfers.jobId} is not null and ${transfers.status} not in ('queued', 'sending') and (
+  exists (select 1 from transfers a where a.job_id = ${transfers.jobId} and a.status in ('queued', 'sending') and a.expires_at > ${now})
+  or exists (select 1 from remote_requests g where g.fetch_id = ${transfers.jobId} and g.kind = 'get' and g.status in ('waiting', 'sent', 'fetching', 'placing'))))`;
+
+/**
  * "Clear finished" on the Upload page: deletes this org's finished rows for the board (delivered, failed, cancelled,
  * expired) and the queued or sending rows past their expiry, which the page already shows as expired (toView's
  * "lapsed"). A live waiting or sending row is never touched. No cursor bump: sendQueueText lists only active rows not
@@ -328,7 +346,7 @@ export async function clearFinishedTransfers(db: Db, orgId: string, deviceId: st
   const del = await db.delete(transfers)
     .where(and(eq(transfers.orgId, orgId), eq(transfers.deviceId, deviceId),
       or(inArray(transfers.status, FINISHED),
-        and(inArray(transfers.status, ACTIVE), lte(transfers.expiresAt, now)))))
+        and(inArray(transfers.status, ACTIVE), lte(transfers.expiresAt, now))), notOfRunningJob(now)))
     .returning({ id: transfers.id });
   return del.length;
 }

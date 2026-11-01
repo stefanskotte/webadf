@@ -12,9 +12,20 @@ export const WRITE_OLD_TRANSFER = 'Transfer 2.5 or newer writes to the Amiga';
 export const WRITE_OLD_FIRMWARE = 'Board firmware 1.23.0 or newer writes to the Amiga';
 /** Spec 2026-10-31 §9: a Move that copies off a volume removes only what it copied, which needs Transfer 2.6 (protocol 5). */
 export const MOVE_OLD_TRANSFER = 'Move needs Transfer 2.6 — use Copy';
-/** What a move left in its source because something new is in it (spec 2026-10-31 §9). */
-export const keptWords = (label: string) => `Kept ${label}: something new is in it`;
-export const isKeptWords = (s: string) => /^Kept .+: something new is in it$/.test(s);
+/** Why a move kept a drawer when what it holds was not there at the copy (spec 2026-10-31 §9). */
+export const KEPT_NEW = 'something new is in it';
+/** Why, when nothing more is known than that the drawer still holds something the move did not copy. */
+export const KEPT_UNKNOWN = 'something not copied is in it';
+/**
+ * What a move left in its source, and why (plan 2026-11-01-net-consistency, item 9): "Kept Work:Pack: a changed on the
+ * Amiga", "… could not be removed", "… is empty and was not copied", "… something new is in it".
+ */
+export const keptWords = (label: string, why: string = KEPT_NEW) => `Kept ${label}: ${why}`;
+export const isKeptWords = (s: string) => /^Kept .+: .+$/.test(s);
+/** The why of keptWords' words (the text after the label), or null. */
+export const keptWhyOf = (s: string, label: string) => (s.startsWith(`Kept ${label}: `) ? s.slice(`Kept ${label}: `.length) : null);
+/** One name, or how many: "a", "3 files". */
+export const oneOrMany = (names: string[], what = 'files') => (names.length === 1 ? names[0] : `${names.length} ${what}`);
 
 export type BrowseInput = {
   online: boolean; firmware: string | null; rx: string | null; rxProto: number | null; browseOn: boolean; name: string; offlineWords: string;
@@ -42,6 +53,20 @@ export function writeBlock(b: BrowseInput & { writeOn: boolean }): string | null
   if (!b.writeOn) return WRITE_OFF;
   return null;
 }
+
+/**
+ * Why a board that is talking to the server cannot write now, from its own row (plan 2026-11-01-net-consistency, item
+ * 11): what a write refused when the board takes it (or a poll fails it) says -- Transfer gone, too old, firmware too
+ * old, writing off -- never "Writing is off" for all of them.
+ */
+export function boardWriteWords(d: { firmwareVersion: string | null; sendRx: string | null; rxProto: number | null; browseOn: boolean; writeOn: boolean; name: string }): string {
+  return writeBlock({ online: true, offlineWords: '', firmware: d.firmwareVersion, rx: d.sendRx, rxProto: d.rxProto, browseOn: d.browseOn,
+    writeOn: d.writeOn, name: d.name }) ?? WRITE_OFF;
+}
+
+/** Whether `s` is one of boardWriteWords' sentences (the server's reason), not Transfer's own text for the same code. */
+const isBlockWords = (s: string) => s === WRITE_OFF || s === WRITE_OLD_TRANSFER || s === WRITE_OLD_FIRMWARE || s === 'Firmware 1.22 or newer is needed'
+  || /^(Transfer is not running on|Switch on browsing in Transfer on|Transfer 2\.3 or newer is needed on) .+$/.test(s);
 
 /**
  * The NET: root row's mark (spec §5): "browsable", or the one missing thing in a few words. Null when the row already
@@ -74,7 +99,7 @@ export function writeErrorWords(code: string, text: string, board: string): stri
     case 'full': case 'space': return 'The disk is full';
     case 'denied': return 'Protected against deletion';
     case 'busy': return 'In use on the Amiga';
-    case 'readonly': return WRITE_OFF;
+    case 'readonly': return isBlockWords(text) ? text : WRITE_OFF;   // the reason the server found (item 11); Transfer's own text is lower case
     case 'exists': return 'Already exists';
     case 'xvol': return 'Rename works within one volume';
     case 'notempty': return 'The drawer is not empty';

@@ -5,12 +5,14 @@ import type { Db } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { remoteRequests } from '@/db/schema/remote-requests';
 import { transfers } from '@/db/schema/transfers';
-import { amigaUploads } from '@/db/schema/amiga-uploads';
+import { amigaUploads, amigaUploadChunks } from '@/db/schema/amiga-uploads';
+import { STAGING } from '@/lib/stash';
+import { amigaFoldSql } from '@/lib/amiga-fold';
 import {
   ALIVE_PIECE_MS, FAILED_SHOWN_MS, GET_TIMEOUT_MS, LIST_TIMEOUT_MS, PANE_GIVE_UP_MS, REMEMBER_MS, REQUEST_KEEP_MS, REQ_FETCH_MAX,
   MOVE_PROTO, WRITE_KINDS, type WriteKind,
 } from './remote-limits';
-import { MOVE_OLD_TRANSFER } from './remote-browse';
+import { boardWriteWords, MOVE_OLD_TRANSFER, WRITE_OFF } from './remote-browse';
 import { newRequestId, parseAnswerLine, type EntryInfo, type VolumeInfo, type WriteArgs } from './remote-wire';
 
 export type RemoteRow = typeof remoteRequests.$inferSelect;
@@ -25,6 +27,8 @@ export type GetTarget = { dest: string; rel: string[]; replace: boolean; library
   moveDrawers?: string[];
   /** The file as the copy's walk saw it (final review I-1): removed only while a fresh listing still shows it so. */
   moveSeen?: { size: number; date: string };
+  /** A moved drawer's drawers the copy into STASH: left out, holding no file (item 9: why a drawer was kept). */
+  moveLeft?: string[];
   /** The fresh listings a settling move asked for (their request ids) before it removes anything off a volume. */
   moveVerify?: string[];
   /** Who made the copy (a move's removal and a relay's queue row are theirs). */
@@ -40,8 +44,8 @@ export type WriteReq = { kind: WriteKind; amigaPath: string; args?: WriteArgs; i
 export type WriteTarget = WriteArgs & { label: string; icon?: boolean; ensure?: boolean; moved?: string;
   /** A move's part (§9): the source it moves and the entry it copies; cleared once the move settled. */
   moveSource?: string; moveItem?: string;
-  /** A move's removal said, not sent: what it kept (net-moves.ts). */
-  kept?: boolean };
+  /** A move's removal said, not sent: what it kept (net-moves.ts), and why (item 9). */
+  kept?: boolean; keptWhy?: string };
 export type ListingState =
   | { state: 'ready'; row: RemoteRow; ageMs: number }
   | { state: 'pending'; row: RemoteRow }
@@ -68,7 +72,7 @@ function boardMoving(cut: Date) {
     or exists (select 1 from remote_requests w where w.device_id = remote_requests.device_id and w.id <> remote_requests.id
       and w.status = 'sent' and w.pieces > 0 and w.active_at >= ${cut})
     or exists (select 1 from devices d where d.id = remote_requests.device_id and d.send_rx_at >= ${cut} and (
-      exists (select 1 from transfers t where t.device_id = d.id and t.status = 'sending')
+      exists (select 1 from transfers t where t.device_id = d.id and t.status = 'sending' and t.active_at >= ${cut})
       or exists (select 1 from amiga_uploads u where u.device_id = d.id and u.status = 'receiving' and u.source = 'amiga'
         and u.active_at >= ${cut}))))`;
 }
@@ -98,6 +102,15 @@ export async function expireStale(db: Db, now = new Date()): Promise<void> {
         where b.device_id = remote_requests.device_id and b.kind = 'get' and coalesce(b.active_at, b.sent_at) >= ${cutGet})`),
     ),
   ));
+  // A move's removal decided and never recorded (the process died after the claim, final review I-2): the job says the
+  // move became a copy.
+  await db.update(remoteRequests).set({ status: 'failed', errorCode: 'moved', answeredAt: now,
+    errorText: 'Copied, but the original could not be removed — Something went wrong.' })
+    .where(and(eq(remoteRequests.status, 'settling'), lt(remoteRequests.activeAt, cutGet)));
+  // A placement that never ended (the process died mid-way, R1) fails as one that could not be placed: its file is not
+  // coming again, so not `timeout`, which a late arrival revives.
+  await db.update(remoteRequests).set({ status: 'failed', errorCode: 'io', errorText: 'it could not be placed', answeredAt: now })
+    .where(and(eq(remoteRequests.kind, 'get'), eq(remoteRequests.status, 'placing'), lt(remoteRequests.activeAt, cutGet)));
 }
 
 /**
@@ -116,7 +129,9 @@ export async function copyMoving(db: Db, deviceId: string, now = new Date()): Pr
   const [d] = await db.select({ at: devices.sendRxAt }).from(devices).where(eq(devices.id, deviceId));
   if (!d?.at || d.at < cut) return null;
   const [t] = await db.select({ path: sql<string>`coalesce(${transfers.amigaDest}, ${transfers.path})` }).from(transfers)
-    .where(and(eq(transfers.deviceId, deviceId), eq(transfers.status, 'sending'))).limit(1);
+    // A row left sending when Transfer stopped mid-file is not moving (plan 2026-11-01-net-consistency, item 8): only
+    // one whose chunks came lately.
+    .where(and(eq(transfers.deviceId, deviceId), eq(transfers.status, 'sending'), gte(transfers.activeAt, cut))).limit(1);
   if (t) return t.path;
   const [u] = await db.select({ path: amigaUploads.path }).from(amigaUploads)
     .where(and(eq(amigaUploads.deviceId, deviceId), eq(amigaUploads.status, 'receiving'), eq(amigaUploads.source, 'amiga'),
@@ -161,7 +176,7 @@ export async function latestFor(db: Db, deviceId: string, kind: 'vols' | 'dir', 
   await expireStale(db, now);
   const [row] = await db.select().from(remoteRequests).where(and(
     eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.kind, kind),
-    sql`lower(${remoteRequests.amigaPath}) = lower(${amigaPath})`,
+    sql`${amigaFoldSql(remoteRequests.amigaPath)} = ${amigaFoldSql(amigaPath)}`,
   )).orderBy(sql`${remoteRequests.createdAt} desc`).limit(1);
   if (!row) return { state: 'none' };
   if (row.status === 'waiting' || row.status === 'sent') return { state: 'pending', row };
@@ -273,10 +288,11 @@ function writeTouches(r: RemoteRow): { paths: string[]; under: string[] } {
  */
 export async function dropMemory(db: Pick<Db, 'update'>, deviceId: string, paths: string[], under: string[] = []): Promise<void> {
   if (paths.length === 0 && under.length === 0) return;
-  const lowered = paths.map((x) => x.toLowerCase());
+  // Both sides folded by the one Amiga fold, in SQL (plan 2026-11-01-net-consistency, item 7).
+  const at = amigaFoldSql(remoteRequests.amigaPath);
   const conds = [
-    ...(lowered.length ? [sql`lower(${remoteRequests.amigaPath}) in (${sql.join(lowered.map((x) => sql`${x}`), sql`, `)})`] : []),
-    ...under.map((u) => sql`lower(${remoteRequests.amigaPath}) like ${`${u.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}/%`}`),
+    ...(paths.length ? [sql`${at} in (${sql.join(paths.map((x) => amigaFoldSql(x)), sql`, `)})`] : []),
+    ...under.map((u) => sql`${at} like ${amigaFoldSql(`${u.replace(/[\\%_]/g, (c) => `\\${c}`)}/%`)}`),
   ];
   await db.update(remoteRequests).set({ status: 'stale' }).where(and(
     eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.kind, 'dir'), eq(remoteRequests.status, 'done'), or(...conds),
@@ -295,9 +311,11 @@ export async function takeWaiting(db: Db, deviceId: string, now = new Date()): P
   return db.transaction(async (tx) => {
     // A write goes only to a board that reports writing on (spec 2026-10-31 §3); one that does not fails it here, so
     // a 1.22 board never sees one and nothing waits for a switch that is off (plan W11).
-    const [d] = await tx.select({ rxProto: devices.rxProto, browseOn: devices.browseOn, writeOn: devices.writeOn }).from(devices).where(eq(devices.id, deviceId));
+    const [d] = await tx.select({ rxProto: devices.rxProto, browseOn: devices.browseOn, writeOn: devices.writeOn, firmwareVersion: devices.firmwareVersion,
+      sendRx: devices.sendRx, name: devices.name }).from(devices).where(eq(devices.id, deviceId));
     if (!d || !((d.rxProto ?? 0) >= 4 && d.browseOn && d.writeOn)) {
-      await tx.update(remoteRequests).set({ status: 'failed', errorCode: 'readonly', errorText: 'Writing is off in Transfer', answeredAt: now })
+      // With the reason the board's own row gives (item 11): Transfer gone or too old, firmware too old, or writing off.
+      await tx.update(remoteRequests).set({ status: 'failed', errorCode: 'readonly', errorText: d ? boardWriteWords(d) : WRITE_OFF, answeredAt: now })
         .where(and(eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.status, 'waiting'), inArray(remoteRequests.kind, WRITES)));
     }
     // DELETE … one (a move's removal, spec 2026-10-31 §9) only to Transfer 2.6: one older would delete a whole drawer.
@@ -358,6 +376,15 @@ export async function answerPiece(
     if (r.kind !== 'get') set.answer = prev;
     if (end) Object.assign(set, { status: end, answeredAt: now });
     await tx.update(remoteRequests).set(set).where(eq(remoteRequests.id, rid));
+    // A get the board ended with an error mid-file: its staging (a copy between volumes) is no use to anyone now, so it
+    // goes with its chunks at once, not at the daily sweep (plan 2026-11-01-net-consistency, item 3). A copy into
+    // STASH: keeps its row: that is the person's, shown as it is.
+    if (r.kind === 'get' && end === 'failed' && r.uploadId) {
+      const hit = await tx.update(amigaUploads).set({ status: 'deleted' })
+        .where(and(eq(amigaUploads.id, r.uploadId), eq(amigaUploads.source, STAGING), eq(amigaUploads.status, 'receiving')))
+        .returning({ id: amigaUploads.id });
+      if (hit.length) await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, r.uploadId));
+    }
     return { ok: true as const };
   });
 }
@@ -394,9 +421,30 @@ export async function getForUpload(db: Db, deviceId: string, rid: string): Promi
   return r ?? null;
 }
 
-export async function settleGet(db: Db, rid: string, outcome: { ok: true } | { ok: false; code: string; text: string }, now = new Date()): Promise<void> {
+/**
+ * A get settled. `onlyFrom`: only while it is in that state (a placement settles only the get it claimed, `placing`, so a
+ * later error never turns a done get failed). Whether it was settled now.
+ */
+export async function settleGet(db: Pick<Db, 'update'>, rid: string, outcome: { ok: true } | { ok: false; code: string; text: string }, now = new Date(),
+  onlyFrom?: string): Promise<boolean> {
   const set = outcome.ok
     ? { status: 'done', answeredAt: now }
     : { status: 'failed', errorCode: outcome.code, errorText: outcome.text, answeredAt: now };
-  await db.update(remoteRequests).set(set).where(eq(remoteRequests.id, rid));
+  const hit = await db.update(remoteRequests).set(set)
+    .where(and(eq(remoteRequests.id, rid), ...(onlyFrom ? [eq(remoteRequests.status, onlyFrom)] : []))).returning({ id: remoteRequests.id });
+  return hit.length > 0;
+}
+
+/**
+ * The get whose file upload `uploadId` is, claimed for its placement (plan 2026-11-01-net-consistency, R1): one UPDATE
+ * moves it from live to `placing`, so of two closes of one upload (the board's 30 s retry) only one places the file. Null
+ * when no live get names the upload (placed already, being placed, or ended).
+ */
+export async function claimGet(db: Pick<Db, 'update' | 'select'>, uploadId: string, now = new Date()): Promise<RemoteRow | null> {
+  const live = and(eq(remoteRequests.uploadId, uploadId), eq(remoteRequests.kind, 'get'), liveGet());
+  const [g] = await db.update(remoteRequests).set({ status: 'placing', activeAt: now, errorCode: null, errorText: null, answeredAt: null })
+    .where(and(live, inArray(remoteRequests.id, db.select({ id: remoteRequests.id }).from(remoteRequests).where(live)
+      .orderBy(sql`${remoteRequests.createdAt} desc`).limit(1))))
+    .returning();
+  return g ?? null;
 }

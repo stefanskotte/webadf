@@ -9,7 +9,8 @@
 // answers (remote-requests.ts), remembered 2 minutes. Phase 2 (spec 2026-10-31 §4.1): a volume a board can write to is
 // writable -- Copy onto it, Makedir, Rename, Delete, Protect and comments go through net-write.ts -- and shows the files
 // of a copy still on their way as arriving rows. SERVER ONLY.
-import { and, eq, inArray, isNotNull, notInArray } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, notInArray, sql } from 'drizzle-orm';
+import { remoteRequests } from '@/db/schema/remote-requests';
 import { getDb } from '@/db';
 import { transfers } from '@/db/schema/transfers';
 import { cancelTransfer, clearTransfer, listTransfers, queueLoad, queueTransfers, sendSummaries, type QueueFile } from '@/lib/transfers';
@@ -165,11 +166,17 @@ async function withArriving(t: SendTarget, segs: string[], amiga: string, listed
   const db = getDb();
   const active = await db.select().from(transfers).where(and(eq(transfers.deviceId, t.id), inArray(transfers.status, ACTIVE_ROWS),
     isNotNull(transfers.amigaDest)));
-  if (active.length === 0) return listed;
-  // The finished rows of those copies too, so a drawer can say how many of its files are through.
-  const jobs = [...new Set(active.flatMap((r) => (r.jobId ? [r.jobId] : [])))];
+  // Files of a copy between volumes still on their way up to the server: rows of this board's queue to come (item 10).
+  const relayed = await db.select().from(remoteRequests).where(and(eq(remoteRequests.kind, 'get'),
+    inArray(remoteRequests.status, [...COMING, 'failed']), sql`${remoteRequests.target}->'relay'->>'deviceId' = ${t.id}`));
+  const coming = relayed.filter((g) => COMING.includes(g.status));
+  if (active.length === 0 && coming.length === 0) return listed;
+  // The whole of each job still moving (plan 2026-11-01-net-consistency, item 10): its finished rows, so a drawer can say
+  // how many of its files are through, and its gets not yet handed over, so the count does not grow as they arrive.
+  const jobs = [...new Set([...active, ...coming.map((g) => ({ jobId: g.fetchId }))].flatMap((r) => (r.jobId ? [r.jobId] : [])))];
   const through = jobs.length ? await db.select().from(transfers).where(and(eq(transfers.deviceId, t.id), inArray(transfers.jobId, jobs),
     isNotNull(transfers.amigaDest), notInArray(transfers.status, ACTIVE_ROWS))) : [];
+  const toCome = relayed.filter((g) => g.fetchId && jobs.includes(g.fetchId));
   const out = [...listed];
   const here = amiga.toLowerCase();
   const below = (dest: string) => {
@@ -177,27 +184,36 @@ async function withArriving(t: SendTarget, segs: string[], amiga: string, listed
     return dest.slice(here.length + (here.endsWith(':') ? 0 : 1)).split('/');
   };
   const at = (name: string) => out.findIndex((e) => e.name.toLowerCase() === name.toLowerCase());
-  const drawers = new Map<string, { name: string; total: number; through: number; sending: boolean }>();
+  type Count = { name: string; total: number; done: number; failed: number; sending: boolean };
+  const drawers = new Map<string, Count>();
+  const count = (dest: string, as: 'waiting' | 'sending' | 'done' | 'failed') => {
+    const rest = below(dest);
+    if (!rest || rest.length < 2) return;
+    const d = drawers.get(rest[0].toLowerCase()) ?? { name: rest[0], total: 0, done: 0, failed: 0, sending: false };
+    drawers.set(rest[0].toLowerCase(), { ...d, total: d.total + 1, done: d.done + (as === 'done' ? 1 : 0), failed: d.failed + (as === 'failed' ? 1 : 0),
+      sending: d.sending || as === 'sending' });
+  };
   for (const row of [...active, ...through]) {
+    const state = row.status === 'sending' ? 'sending' : row.status === 'queued' ? 'waiting'
+      : row.status === 'delivered' || row.status === 'skipped' ? 'done' : 'failed';
+    count(row.amigaDest!, state);
     const rest = below(row.amigaDest!);
-    if (!rest) continue;
-    const name = rest[0];
-    const moving = ACTIVE_ROWS.includes(row.status);
-    if (rest.length > 1) {
-      const d = drawers.get(name.toLowerCase()) ?? { name, total: 0, through: 0, sending: false };
-      drawers.set(name.toLowerCase(), { ...d, total: d.total + 1, through: d.through + (moving ? 0 : 1), sending: d.sending || row.status === 'sending' });
-      continue;
-    }
-    if (!moving) continue;
+    if (!rest || rest.length > 1 || !ACTIVE_ROWS.includes(row.status)) continue;
     const view = toView(row, now);
-    const entry: FsEntry = { name, kind: 'file', path: netPath(t.id, ...segs, name), size: row.sizeBytes, date: iso(view.createdAt),
+    const entry: FsEntry = { name: rest[0], kind: 'file', path: netPath(t.id, ...segs, rest[0]), size: row.sizeBytes, date: iso(view.createdAt),
       protection: protectionString(row.protection), comment: row.comment || null, marks: [transferState(view).text] };
-    const k = at(name);
+    const k = at(rest[0]);
     if (k >= 0) out[k] = entry; else out.push(entry);
   }
+  // A relayed get becomes a queue row once handed over (done): until then it is a file to come, or one that failed.
+  for (const g of toCome) {
+    const dest = (g.target as { relay?: { dest: string } } | null)?.relay?.dest;
+    if (dest) count(dest, g.status === 'failed' ? 'failed' : 'waiting');
+  }
   for (const d of drawers.values()) {
-    if (d.through === d.total) continue;   // only finished rows here: a copy sharing its job with one still moving elsewhere
-    const mark = !d.sending && d.through === 0 ? 'Waiting' : `Sending ${Math.min(d.through + 1, d.total)} of ${d.total}`;
+    if (d.done + d.failed === d.total) continue;   // only finished files here: a copy sharing its job with one still moving elsewhere
+    const failed = d.failed ? ` · ${d.failed} failed` : '';
+    const mark = !d.sending && d.done + d.failed === 0 ? 'Waiting' : `Sending ${d.done + d.failed + 1} of ${d.total}${failed}`;
     const k = at(d.name);
     if (k >= 0 && out[k].kind === 'dir') out[k] = { ...out[k], marks: [mark] };
     else if (k >= 0) out[k] = { ...out[k], kind: 'dir', size: null, marks: [mark] };   // a file a drawer replaces (review minor)
@@ -205,6 +221,8 @@ async function withArriving(t: SendTarget, segs: string[], amiga: string, listed
   }
   return out;
 }
+/** A get of a copy between volumes whose file has not reached the destination's queue yet. */
+const COMING = ['waiting', 'sent', 'fetching', 'placing'];
 
 /** The free space of the volume a pane is in, from a remembered volumes answer (never asked for on its own). */
 async function volumeFree(t: SendTarget, volume: string, now: number): Promise<string> {

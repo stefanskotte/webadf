@@ -4,7 +4,7 @@
 // PROTECT, NOTE), and one queue row per file of a copy onto a volume (the extended FILE). Every request and row of one
 // operation shares a job id; the pane follows the job (jobProgress). Nothing here waits for the Amiga: an op answers
 // once its requests are queued, and refuses at once when the board cannot write (writeBlock). SERVER ONLY.
-import { getDb } from '@/db';
+import { getDb, type Db } from '@/db';
 import { findSendTarget } from '@/lib/send-targets';
 import { targetState, type SendTarget } from '@/lib/send-ui';
 import { storeSendBytes } from '@/lib/send-http';
@@ -38,8 +38,8 @@ export const writeOf = (t: SendTarget, now: number) => writeBlock({ online: t.on
   rxProto: t.rxProto, browseOn: t.browseOn, writeOn: t.writeOn, name: t.name, offlineWords: targetState(t, now) });
 
 /** The board a path names, refused as not found unless it is this org's, and refused with the words unless it can write. */
-export async function writableBoard(ctx: FsCtx, id: string, now = Date.now()): Promise<SendTarget> {
-  const t = await findSendTarget(getDb(), ctx.orgId, id, now);
+export async function writableBoard(ctx: FsCtx, id: string, now = Date.now(), db: Db = getDb()): Promise<SendTarget> {
+  const t = await findSendTarget(db, ctx.orgId, id, now);
   if (!t) refuse('not_found', 404);
   const block = writeOf(t, now);
   if (block) refuse('read_only', 409, block);
@@ -191,10 +191,10 @@ export async function removeCopiedOnVolume(ctx: OpCtx, source: string, files: st
  * The board a move off a volume removes its copied source on, refused (Refused) unless it can write now and runs
  * Transfer 2.6; and the pane's words for an Amiga path under the source (a labelled volume's device path by its label).
  */
-export async function volumeMoveBoard(ctx: FsCtx, source: string): Promise<{ t: SendTarget; shown: (p: string) => string }> {
+export async function volumeMoveBoard(ctx: FsCtx, source: string, db: Db = getDb()): Promise<{ t: SendTarget; shown: (p: string) => string }> {
   const at = placeOfRaw(source);
   if (!at || at.segs.length < 2) refuse('not_found', 404);
-  const t = await writableBoard(ctx, at.board);
+  const t = await writableBoard(ctx, at.board, Date.now(), db);
   if ((t.rxProto ?? 0) < MOVE_PROTO) refuse('unsupported', 409, MOVE_OLD_TRANSFER);
   return { t, shown: (p: string) => (p.toLowerCase().startsWith(at.amiga.toLowerCase()) ? at.shown + p.slice(at.amiga.length) : p) };
 }
@@ -256,13 +256,9 @@ export async function copyOntoVolume(ctx: OpCtx, dir: FsPath, tops: IncomingTop[
   if (clashes.length) return { kind: 'clashes', clashes };
 
   const sizeOf = (i: IncomingTop['items'][number]) => i.bytes?.length ?? i.size;
-  // An empty file is left out (the board's queue carries no 0-byte file; final review I-3): a picked one is refused as
-  // its own item, one inside a drawer is skipped and the rest of the drawer goes.
-  for (const g of [...going]) {
-    const only = g.top.items.length === 1 && g.top.items[0].kind === 'file' && sizeOf(g.top.items[0]) === 0;
-    if (only) { results.set(g.top.source, { source: g.top.source, ok: false, refusal: { code: 'unsupported', detail: `${g.name} is empty` } }); going.splice(going.indexOf(g), 1); }
-  }
-  const files = going.flatMap((g) => g.top.items.filter((i) => i.kind === 'file' && sizeOf(i) !== 0).map((i) => ({ g, i, rel: [g.name, ...i.rel.slice(1)] })));
+  // An empty file goes too (plan 2026-11-01-net-consistency R10; was left out, final review I-3): the board sends no chunk
+  // for size 0 and Transfer finishes such a FILE at once.
+  const files = going.flatMap((g) => g.top.items.filter((i) => i.kind === 'file').map((i) => ({ g, i, rel: [g.name, ...i.rel.slice(1)] })));
   for (const { i, rel } of files) {
     const size = sizeOf(i);
     if (size === undefined || (!i.bytes && !i.sha256)) refuse('failed', 500, `${rel.join('/')} came without its bytes`);
@@ -336,16 +332,23 @@ export async function moveWithinVolume(ctx: OpCtx, sources: string[], dest: stri
     if (to.amiga.toLowerCase() === lower || to.amiga.toLowerCase().startsWith(`${lower}/`)) refuse('cycle', 409);
     if (amigaParent(at.amiga).toLowerCase() === to.amiga.toLowerCase()) refuse('name_exists', 409, 'same file');
     let target = name;
+    const parent = amigaParent(at.amiga);
+    const icon = iconOf(await rememberedEntries(t.id, parent), name, (n) => picked.has(joinAmiga(parent, n).toLowerCase()));
     if (has(entries, name) || going.some((g) => sameStashName(g, name))) {
       if (onClash === 'ask') { clashes.push({ source: raw, name, dest }); continue; }
       if (onClash === 'skip') { items.push(skippedItem(raw)); continue; }
-      if (onClash === 'replace') writes.push({ kind: 'delete', amigaPath: joinAmiga(to.amiga, name), label: joinAmiga(to.shown, name) });
-      else target = keepBothName(name, (n) => has(entries, n) || going.some((g) => sameStashName(g, n)));
+      if (onClash === 'replace') {
+        writes.push({ kind: 'delete', amigaPath: joinAmiga(to.amiga, name), label: joinAmiga(to.shown, name) });
+        // The replaced object's own icon goes too when the moved one brings its own (plan 2026-11-01-net-consistency,
+        // item 6): else the icon's RENAME meets it and fails `exists`. Without a moved icon the target's stays.
+        const old = entries.find((e) => sameStashName(e.name, `${name}${INFO}`));
+        if (icon?.known && old && !isInfo(name)) {
+          writes.push({ kind: 'delete', amigaPath: joinAmiga(to.amiga, old.name), icon: true, label: joinAmiga(to.shown, old.name) });
+        }
+      } else target = keepBothName(name, (n) => has(entries, n) || going.some((g) => sameStashName(g, n)));
     }
     going.push(target);
     writes.push({ kind: 'rename', amigaPath: at.amiga, args: { to: joinAmiga(to.amiga, target) }, label: at.shown });
-    const parent = amigaParent(at.amiga);
-    const icon = iconOf(await rememberedEntries(t.id, parent), name, (n) => picked.has(joinAmiga(parent, n).toLowerCase()));
     if (icon && !isInfo(target)) {
       writes.push({ kind: 'rename', amigaPath: joinAmiga(parent, icon.name), args: { to: joinAmiga(to.amiga, `${target}${INFO}`) },
         icon: !icon.known, label: joinAmiga(amigaParent(at.shown), icon.name) });
