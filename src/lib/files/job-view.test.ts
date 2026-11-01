@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  barOf, canCancel, cardShown, commonDrawer, confirmWords, failureList, isClean, jobLine, jobNow, jobTitle, leftWords, panelLift,
+  askingAbout, barOf, canCancel, cardShown, commonDrawer, confirmWords, failureList, isClean, jobLine, jobNow, jobTitle, leftWords, panelLift,
   pillWords, resultWords, sizeWords, timeLeft, type JobView, type Sample,
 } from './job-view';
 
@@ -171,6 +171,18 @@ describe('canCancel and confirmWords (spec §5, §6)', () => {
     expect(confirmWords(job({ kind: 'move' }))).toBe('Cancel the rest of this move? What has arrived stays.');
     expect(confirmWords(job({ kind: 'send' }))).toBe('Cancel the rest of this send? What has arrived stays.');
     expect(confirmWords(job({ kind: 'write' }))).toBe('Cancel the rest of these changes? What is done stays.');
+  });
+  it('a write job whose drawer delete already runs says that drawer finishes first (spec §6 limit)', () => {
+    const running = job({ kind: 'write', writes: [w({ status: 'running' }), w({ label: 'Work:B' })] });
+    expect(confirmWords(running)).toBe('Cancel the rest of these changes? A drawer being deleted now finishes first; what is done stays.');
+    expect(confirmWords(job({ kind: 'write', writes: [w({ kind: 'rename', status: 'running' }), w()] })))
+      .toBe('Cancel the rest of these changes? What is done stays.');
+  });
+  it('askingAbout: the job the dialog asks about while it still runs, its latest answer; else null', () => {
+    const now = job({ done: 5 });
+    expect(askingAbout('j1', [job({ id: 'j2' }), now])).toBe(now);
+    expect(askingAbout('j1', [done()])).toBeNull();
+    expect(askingAbout('j1', [])).toBeNull();
   });
 });
 

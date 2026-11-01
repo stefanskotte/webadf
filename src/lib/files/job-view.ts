@@ -202,8 +202,18 @@ export function canCancel(j: JobView): boolean {
 
 /** Cancel asks first (spec §5). */
 export function confirmWords(j: JobView): string {
-  if (j.kind === 'write') return 'Cancel the rest of these changes? What is done stays.';
+  if (j.kind === 'write') {
+    // A drawer delete Transfer already runs has no stop (spec §6): it finishes its drawer.
+    return j.writes.some((w) => w.kind === 'delete' && w.status === 'running')
+      ? 'Cancel the rest of these changes? A drawer being deleted now finishes first; what is done stays.'
+      : 'Cancel the rest of these changes? What is done stays.';
+  }
   return `Cancel the rest of this ${j.kind}? What has arrived stays.`;
+}
+
+/** The job a Cancel dialog asks about, as the latest answer has it, while it still runs; null closes the dialog. */
+export function askingAbout(id: string, jobs: JobView[]): JobView | null {
+  return jobs.find((j) => j.id === id && j.running) ?? null;
 }
 
 /** How far above the viewport's bottom the panel sits to clear the lowest anchor on screen (the Files bar), else 0. */

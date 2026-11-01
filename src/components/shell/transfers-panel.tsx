@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { isSignedOutAnswer, SIGNED_OUT_TEXT } from '@/lib/signed-out';
 import {
-  barOf, canCancel, cardShown, confirmWords, failureList, isClean, jobLine, jobNow, jobTitle, panelLift, pillWords, resultWords, timeLeft,
+  askingAbout, barOf, canCancel, cardShown, confirmWords, failureList, isClean, jobLine, jobNow, jobTitle, panelLift, pillWords, resultWords, timeLeft,
   type JobView, type Sample,
 } from '@/lib/files/job-view';
 import { useJobsState, useJobsStore } from './jobs-provider';
@@ -23,12 +23,14 @@ export function TransfersPanel() {
   const st = useJobsState();
   const [now, setNow] = useState(() => Date.now());
   const [lift, setLift] = useState(0);
-  const [asking, setAsking] = useState<JobView | null>(null);
+  const [asking, setAsking] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const box = useRef<HTMLElement>(null);
   const seen = new Set(st.seen);
   const shown = st.jobs.filter((j) => cardShown(j, { finishedSeenAt: st.finishedSeenAt[j.id] ?? null, dismissed: seen.has(j.id), now }));
   const hasCards = shown.length > 0;
+  // The dialog asks about the job as the store has it now, and goes once that job no longer runs.
+  const ask = asking === null ? null : askingAbout(asking, st.jobs);
 
   // While cards show: the clock for the fade and the estimate, and where the panel sits (above an anchor on screen).
   useEffect(() => {
@@ -98,17 +100,17 @@ export function TransfersPanel() {
               </li>
             )}
             {shown.map((j) => (
-              <JobCard key={j.id} j={j} samples={st.samples[j.id] ?? []} now={now} onCancel={() => setAsking(j)} onClose={() => store.dismiss(j.id)} />
+              <JobCard key={j.id} j={j} samples={st.samples[j.id] ?? []} now={now} onCancel={() => setAsking(j.id)} onClose={() => store.dismiss(j.id)} />
             ))}
           </ul>
         </section>
       )}
-      {asking && (
+      {ask && (
         <Modal open onOpenChange={(o) => { if (!o) setAsking(null); }} title="Cancel the rest?" width={440}
                testId="transfers-cancel-dialog" closeTestId="transfers-cancel-close" dismissible={!cancelling}
                footer={(
                  <>
-                   <Button variant="destructive" data-testid="transfers-cancel-yes" disabled={cancelling} onClick={() => void cancel(asking)}>
+                   <Button variant="destructive" data-testid="transfers-cancel-yes" disabled={cancelling} onClick={() => void cancel(ask)}>
                      Cancel the rest
                    </Button>
                    <Button variant="outline" data-testid="transfers-cancel-no" disabled={cancelling} onClick={() => setAsking(null)}>
@@ -116,7 +118,7 @@ export function TransfersPanel() {
                    </Button>
                  </>
                )}>
-          <p data-testid="transfers-cancel-text" className="px-6 py-4 text-[14px]" style={{ color: 'var(--ink)' }}>{confirmWords(asking)}</p>
+          <p data-testid="transfers-cancel-text" className="px-6 py-4 text-[14px]" style={{ color: 'var(--ink)' }}>{confirmWords(ask)}</p>
         </Modal>
       )}
     </>
