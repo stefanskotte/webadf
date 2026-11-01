@@ -349,6 +349,7 @@ export function makeWriteFixture(root: string): string {
   fs.symlinkSync(path.join(w, 'Tools'), path.join(w, 'Linked', 'Libs'));
   // protocol 5 (spec §9): One5.txt, Empty5/, Full5/f, Old5/ with 60 files
   fs.writeFileSync(path.join(w, 'One5.txt'), '1'); fs.mkdirSync(path.join(w, 'Empty5'));
+  fs.writeFileSync(path.join(w, 'Kept6.info'), 'mine');   // protocol 6: an icon already there stays
   fs.mkdirSync(path.join(w, 'Full5')); fs.writeFileSync(path.join(w, 'Full5', 'f'), 'f'); fs.mkdirSync(path.join(w, 'Old5'));
   for (let i = 0; i < 60; i++) fs.writeFileSync(path.join(w, 'Old5', `f${String(i).padStart(2, '0')}`), '');
   fs.mkdirSync(path.join(root, 'Prot')); fs.mkdirSync(path.join(root, 'Full'));
@@ -470,6 +471,31 @@ export const WRITE_SCENARIOS: WriteScenario[] = [
   { name: 'w-one-on-4', run: async (p, h, ctl) => { const b = await b4(p, h); try {
       return oneLine(await b.request(`DELETE o0 ${lenp('Work:One5.txt')} one`), /^ERR o0 bad 11:bad request$/)
         ?? (hostHolds(ctl, 'One5.txt', '1') ? null : 'deleted on protocol 4');
+    } finally { await b.close(); } } },
+  // Protocol 6 (Transfer 2.9): MKDIR <rid> <path> icon also writes the Amiga's default drawer icon.
+  { name: 'w6-hello', run: async (p, h) => { const b = await connect(p, h, { v: 6 }); try {
+      return b.browse && b.writable ? null : `READY 6 ${b.browse ? 1 : 0} ${b.writable ? 1 : 0}`;
+    } finally { await b.close(); } } },
+  { name: 'w6-mkdir-icon', uaeOnly: true, run: async (p, h, ctl) => { const b = await connect(p, h, { v: 6 }); try {
+      const a = await b.request(`MKDIR m1 ${lenp('Work:Made6')} icon`);
+      if (a.join('|') !== 'DONE m1 1' || !fs.statSync(onWork(ctl, 'Made6')).isDirectory()) return `MKDIR: ${JSON.stringify(a)}`;
+      const i = onWork(ctl, 'Made6.info');
+      if (!fs.existsSync(i)) return 'no Made6.info';
+      const d = fs.readFileSync(i);
+      // A DiskObject: do_Magic 0xE310, do_Version 1, then a 44-byte Gadget; do_Type at 48 is WBDRAWER (2).
+      return d.length > 78 && d.readUInt16BE(0) === 0xe310 && d.readUInt16BE(2) === 1 && d[48] === 2 ? null
+        : `not a drawer icon: ${d.length} B, ${d.subarray(0, 4).toString('hex')}, type ${d[48]}`;
+    } finally { await b.close(); } } },
+  { name: 'w6-mkdir-plain', run: async (p, h, ctl) => { const b = await connect(p, h, { v: 6 }); try {
+      const a = await b.request(`MKDIR m1 ${lenp('Work:Plain6')}`);
+      return a.join('|') === 'DONE m1 1' && fs.statSync(onWork(ctl, 'Plain6')).isDirectory() && !fs.existsSync(onWork(ctl, 'Plain6.info'))
+        ? null : `got ${JSON.stringify(a)}, icon ${fs.existsSync(onWork(ctl, 'Plain6.info'))}`;
+    } finally { await b.close(); } } },
+  { name: 'w6-icon-kept', run: async (p, h, ctl) => { const b = await connect(p, h, { v: 6 }); try {
+      const a = await b.request(`MKDIR m1 ${lenp('Work:Kept6')} icon`);
+      const i = onWork(ctl, 'Kept6.info');
+      return a.join('|') === 'DONE m1 1' && hostHolds(ctl, 'Kept6.info', 'mine') ? null
+        : `got ${JSON.stringify(a)}; Kept6.info ${fs.existsSync(i) ? `${fs.statSync(i).size} B ${fs.readFileSync(i).subarray(0, 8).toString('hex')}` : 'missing'}; Work: ${fs.readdirSync(ctl.work).join(',')}`;
     } finally { await b.close(); } } },
   { name: 'w5-hello', run: async (p, h) => { const b = await connect(p, h, { v: 5 }); try {
       return b.browse && b.writable ? null : `READY 5 ${b.browse ? 1 : 0} ${b.writable ? 1 : 0}`;

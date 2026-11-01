@@ -541,7 +541,7 @@ typedef struct {
     // The poll's req.v (the server's request cursor), 0 until a body carries it; req_seen once one has.
     uint32_t req_version;
     bool     req_seen;
-    // What the next poll reports (dc_set_req): &reqAck=, and &rxv=&browse=&write= while Transfer is connected at protocol 2-5
+    // What the next poll reports (dc_set_req): &reqAck=, and &rxv=&browse=&write= while Transfer is connected at protocol 2-6
     // (plan rulings F1, N3). Absent until dc_set_req is first called, so a board that cannot browse polls as 1.21.
     bool     _req_on;
     uint32_t _req_ack;

@@ -89,6 +89,9 @@ typedef struct rx_fs {
     long (*w_delete)(void *ctx, const char *path);             /* one file, or one empty drawer */
     long (*w_protect)(void *ctx, const char *path, unsigned long prot);
     long (*w_note)(void *ctx, const char *path, const char *comment);
+    /* Protocol 6: give the drawer at path the Amiga's default drawer icon (<path>.info), unless it has an icon
+       already. 0, or a DOS error; the drawer stays made either way. */
+    long (*w_icon)(void *ctx, const char *path);
 } rx_fs;
 
 enum { RX_EV_HELLO, RX_EV_LIST, RX_EV_BEGIN, RX_EV_PROGRESS, RX_EV_DONE, RX_EV_FAILED,

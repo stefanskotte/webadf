@@ -719,6 +719,12 @@ static bool req_start(amiga_send_t *s, uint32_t t) {
         ar_end_err(r, "old", AS_TXT_OLD5);
         return true;
     }
+    if (r->kind == AR_MKDIR_ICON && s->peer_v < 6) {
+        // fw 1.24.0: Transfer before 2.9 refuses the " icon" token; the drawer still goes, just without its icon.
+        r->out_n -= 5;
+        r->out[r->out_n - 1] = '\n';
+        r->out[r->out_n] = 0;
+    }
     if (s->peer_v == 3 && ar_kind_is_write(r->kind)) {
         // Transfer 2.3/2.4 know no writes (ruling N2): the board answers as 2.5 with writing off would. At protocol 4
         // a write goes even with writing off -- Transfer answers readonly itself, as it answers off for browsing (F11).
@@ -886,7 +892,7 @@ static bool run(amiga_send_t *s, bool http) {
     case AS_CONNECTING:
         if (sock == AS_SOCK_OPEN) {
             if (s->up && s->up->key[0]) {   // protocol 2 (fw 1.19.0): uploads; protocol 3 (fw 1.22.0): requests too
-                s->hello_v = s->req ? 5 : 2;   // protocol 5 (fw 1.23.1): DELETE one; 2.5 answers READY 4, 2.4 READY 3
+                s->hello_v = s->req ? 6 : 2;   // protocol 6 (fw 1.24.0): MKDIR icon; 2.6-2.8 answer READY 5, 2.5 READY 4, 2.4 READY 3
                 int n = snprintf(s->up->line, sizeof s->up->line, "WEBADF %u %s\n", (unsigned)s->hello_v, s->up->key);
                 push(s, (const uint8_t *)s->up->line, n);
             } else {
@@ -925,11 +931,12 @@ static bool run(amiga_send_t *s, bool http) {
                 // Receive 1 says READY 1 to anything; READY 2 counts only as the answer to a protocol 2-4 hello
                 // (Transfer 2.2 answers a protocol 3 hello READY 2), READY 3 <0|1> only as the answer to protocol 3 or 4
                 // (Transfer 2.3/2.4 answer a protocol 4 or 5 hello so: no writes), READY 4 <b> <w> only to protocol 4
-                // or 5 (Transfer 2.5 answers a protocol 5 hello so: no DELETE one), READY 5 <b> <w> only to protocol 5.
+                // or 5 (Transfer 2.5 answers a protocol 5 hello so: no DELETE one), READY 5 <b> <w> only to protocol 5 or 6
+                // (Transfer 2.6-2.8 answer a protocol 6 hello so: no MKDIR icon), READY 6 <b> <w> only to protocol 6.
                 const char *v = s->line + 6;
                 const bool b01 = v[0] && v[1] == ' ' && (v[2] == '0' || v[2] == '1');
                 const bool bw = b01 && v[3] == ' ' && (v[4] == '0' || v[4] == '1') && v[5] == 0;
-                if (bw && ((s->hello_v >= 4 && v[0] == '4') || (s->hello_v >= 5 && v[0] == '5'))) {
+                if (bw && ((s->hello_v >= 4 && v[0] == '4') || (s->hello_v >= 5 && v[0] == '5') || (s->hello_v >= 6 && v[0] == '6'))) {
                     s->peer_v = (uint8_t)(v[0] - '0');
                     s->req->browse = v[2] == '1';
                     s->req->write = s->req->browse && v[4] == '1';   // <w> is 1 only when <b> is (spec 2.1)

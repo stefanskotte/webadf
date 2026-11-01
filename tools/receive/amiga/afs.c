@@ -5,7 +5,11 @@
 #include <dos/dosextens.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
+#include <workbench/workbench.h>
+#include <proto/icon.h>
 #include "afs.h"
+
+extern struct Library *IconBase;   /* cx.c's: opened here only for the call, as cx.c does */
 
 /* Plan ruling T8: while Transfer reads for the web app, a drive whose disk went never opens "Please insert volume" on
    the Amiga's screen -- it would stop Transfer, and the board, until someone clicks. The call fails instead. */
@@ -330,6 +334,26 @@ static long a_w_rename(void *x, const char *from, const char *to) { APTR w = qui
 static long a_w_delete(void *x, const char *path) { APTR w = quiet_on(); (void)x; return done(w, DeleteFile((STRPTR)path) != 0); }
 static long a_w_protect(void *x, const char *path, unsigned long prot) { APTR w = quiet_on(); (void)x; return done(w, SetProtection((STRPTR)path, (LONG)prot) != 0); }
 static long a_w_note(void *x, const char *path, const char *comment) { APTR w = quiet_on(); (void)x; return done(w, SetComment((STRPTR)path, (STRPTR)comment) != 0); }
+/* Protocol 6: the drawer just made gets the Amiga's own default drawer icon -- ENV:Sys/def_drawer.info when the owner
+   has one, else icon.library's built-in -- exactly what Workbench's New Drawer writes. An icon already there stays. */
+static long a_w_icon(void *x, const char *path) {
+    static char info[RX_LOCAL_MAX + 6];   /* static: the Amiga's stack is small */
+    struct DiskObject *d; BPTR l; APTR w; long e = 0; int opened = 0;
+    (void)x;
+    if (strlen(path) > RX_LOCAL_MAX) return ERROR_OBJECT_TOO_LARGE;
+    strcpy(info, path); strcat(info, ".info");
+    w = quiet_on();
+    if ((l = Lock((STRPTR)info, ACCESS_READ)) != 0) { UnLock(l); quiet_off(w); return 0; }
+    if (!IconBase) { if (!(IconBase = OpenLibrary((STRPTR)"icon.library", 37))) { quiet_off(w); return ERROR_INVALID_RESIDENT_LIBRARY; } opened = 1; }
+    if ((d = GetDefDiskObject(WBDRAWER)) != NULL) {
+        d->do_CurrentX = NO_ICON_POSITION; d->do_CurrentY = NO_ICON_POSITION;   /* Workbench places it */
+        if (!PutDiskObject((STRPTR)path, d)) e = IoErr() ? IoErr() : ERROR_OBJECT_NOT_FOUND;
+        FreeDiskObject(d);
+    } else e = IoErr() ? IoErr() : ERROR_NO_FREE_STORE;
+    if (opened) { CloseLibrary(IconBase); IconBase = NULL; }
+    quiet_off(w);
+    return e;
+}
 void afs_base_name(const char *path, char *out) { rx_base_name(path, out); }   /* the rule is the core's, host-tested */
 void afs_set_root(afs_ctx *c, const char *root) { strncpy(c->root, root, sizeof c->root - 1); c->root[sizeof c->root - 1] = 0; }
 void afs_init(afs_ctx *c, rx_fs *fs, const char *root) {
@@ -342,6 +366,6 @@ void afs_init(afs_ctx *c, rx_fs *fs, const char *root) {
     fs->vols = a_vols; fs->dir_open = a_dir_open; fs->dir_next = a_dir_next; fs->dir_close = a_dir_close;
     fs->stat = a_stat; fs->fault = a_fault;
     fs->err = a_err; fs->free_at = a_free_at;
-    fs->w_mkdir = a_w_mkdir; fs->w_rename = a_w_rename; fs->w_delete = a_w_delete; fs->w_protect = a_w_protect;
+    fs->w_mkdir = a_w_mkdir; fs->w_icon = a_w_icon; fs->w_rename = a_w_rename; fs->w_delete = a_w_delete; fs->w_protect = a_w_protect;
     fs->w_note = a_w_note;
 }
