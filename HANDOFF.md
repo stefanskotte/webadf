@@ -1527,7 +1527,8 @@ c8-drive-menu C8-17 (:462, :488) -- since Remote joined the nav the pill no long
 (1009 px layout: 324 px lane vs 387 px pill; 1100 with Admin: 415 vs 463), so it scrolls and clips a tab. Options:
 narrower .seg-item padding lg..xl, Remote into More lg..xl, or a narrower search lg..xl. The chipSlots comment in
 src/lib/drive-chips.ts still assumes the old pill width.
-(4) **Hardware:** NFC detects rarely since rev B (measure first); rev C
+(4) **Hardware:** NFC "detects rarely since rev B" was FIXED in fw 1.16.1 (2026-10-18, §3bx: the 3 s re-tap rule ate
+Next-card re-taps); this line was stale -- reopen only with a new report on 1.23.1. Rev C
 (own RP2350 + antenna port, LWB+ breadboard test when the Mouser parts arrive, keyed I2C + display FFC connectors,
 next-disk button, activity LED, DF0 passthrough).
 (5) **Firmware state:** the bench board runs the released 1.23.1 (seq 130, 2026-11-01); no TEST build is installed.
