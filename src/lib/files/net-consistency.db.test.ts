@@ -41,7 +41,7 @@ vi.mock('./net-moves', async (orig) => {
 
 const { getDb, closeDb } = await import('@/db');
 const { migrate } = await import('drizzle-orm/node-postgres/migrator');
-const { asc, eq } = await import('drizzle-orm');
+const { asc, eq, sql } = await import('drizzle-orm');
 const { organization } = await import('@/db/schema/auth');
 const { devices } = await import('@/db/schema/devices');
 const { transfers } = await import('@/db/schema/transfers');
@@ -279,5 +279,35 @@ describe('item 4: a settle failure leaves the get as it ended', () => {
     const job = (r as { fetching: { id: string } }).fetching.id;
     boom.settleMovesOfJob = true;
     expect(await fetchProgress(getDb(), 'o1', job, new Date())).toMatchObject({ total: 1, waiting: 1 });
+  });
+});
+
+describe('item 5: settleMove decides under its locks, then removes (pool 5)', () => {
+  const within = <T>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<never>((_, no) => setTimeout(() => no(new Error(`still waiting after ${ms} ms`)), ms))]);
+
+  it('a move whose parts are over a day old: the removal is queued, nothing waits on the settle\'s own locks', { timeout: 30_000 }, async () => {
+    await op({ op: 'move', sources: [W('x')], dest: 'STASH:', onClash: 'ask' });
+    const [g] = await gets();
+    await arrive(g.id, 'Work:x', bytes('xx'));
+    // addWrites' 24 h cleanup deletes requests older than a day: the move's own get is one of them now.
+    await getDb().update(remoteRequests).set({ createdAt: new Date(Date.now() - 25 * 3600_000) }).where(eq(remoteRequests.id, g.id));
+    await within(answerFresh(), 8_000);
+    expect(await deletesOn('w1')).toEqual(['Work:x one']);
+  });
+
+  it('two settles of one move at once queue its removal once', async () => {
+    const { settleMove } = await import('./net-moves');
+    const r = await op({ op: 'move', sources: [W('Pair')], dest: 'NET:/w2/DF0', onClash: 'ask' });
+    const job = (r as { job: { id: string } }).job.id;
+    for (const g of await gets()) await arrive(g.id, g.amigaPath, bytes('z'));
+    for (const q of await rows('w2')) await deliver(q.id, 'w2');
+    await answerFresh();
+    await getDb().delete(remoteRequests).where(eq(remoteRequests.kind, 'delete'));
+    // Put the markers back as they were before the settle: two callers race for one move.
+    await getDb().update(remoteRequests).set({ target: sql`jsonb_set(${remoteRequests.target}, '{relay,moveSource}', ${JSON.stringify(W('Pair'))}::jsonb)` })
+      .where(eq(remoteRequests.kind, 'get'));
+    await getDb().update(transfers).set({ moveSource: W('Pair') }).where(eq(transfers.deviceId, 'w2'));
+    await Promise.all([settleMove(getDb(), 'o1', job, W('Pair')), settleMove(getDb(), 'o1', job, W('Pair')), settleMove(getDb(), 'o1', job, W('Pair'))]);
+    expect(await deletesOn('w1')).toEqual(['Work:Pair one', 'Work:Pair/a one', 'Work:Pair/b one']);
   });
 });

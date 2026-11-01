@@ -4,7 +4,7 @@
 // PROTECT, NOTE), and one queue row per file of a copy onto a volume (the extended FILE). Every request and row of one
 // operation shares a job id; the pane follows the job (jobProgress). Nothing here waits for the Amiga: an op answers
 // once its requests are queued, and refuses at once when the board cannot write (writeBlock). SERVER ONLY.
-import { getDb } from '@/db';
+import { getDb, type Db } from '@/db';
 import { findSendTarget } from '@/lib/send-targets';
 import { targetState, type SendTarget } from '@/lib/send-ui';
 import { storeSendBytes } from '@/lib/send-http';
@@ -38,8 +38,8 @@ export const writeOf = (t: SendTarget, now: number) => writeBlock({ online: t.on
   rxProto: t.rxProto, browseOn: t.browseOn, writeOn: t.writeOn, name: t.name, offlineWords: targetState(t, now) });
 
 /** The board a path names, refused as not found unless it is this org's, and refused with the words unless it can write. */
-export async function writableBoard(ctx: FsCtx, id: string, now = Date.now()): Promise<SendTarget> {
-  const t = await findSendTarget(getDb(), ctx.orgId, id, now);
+export async function writableBoard(ctx: FsCtx, id: string, now = Date.now(), db: Db = getDb()): Promise<SendTarget> {
+  const t = await findSendTarget(db, ctx.orgId, id, now);
   if (!t) refuse('not_found', 404);
   const block = writeOf(t, now);
   if (block) refuse('read_only', 409, block);
@@ -191,10 +191,10 @@ export async function removeCopiedOnVolume(ctx: OpCtx, source: string, files: st
  * The board a move off a volume removes its copied source on, refused (Refused) unless it can write now and runs
  * Transfer 2.6; and the pane's words for an Amiga path under the source (a labelled volume's device path by its label).
  */
-export async function volumeMoveBoard(ctx: FsCtx, source: string): Promise<{ t: SendTarget; shown: (p: string) => string }> {
+export async function volumeMoveBoard(ctx: FsCtx, source: string, db: Db = getDb()): Promise<{ t: SendTarget; shown: (p: string) => string }> {
   const at = placeOfRaw(source);
   if (!at || at.segs.length < 2) refuse('not_found', 404);
-  const t = await writableBoard(ctx, at.board);
+  const t = await writableBoard(ctx, at.board, Date.now(), db);
   if ((t.rxProto ?? 0) < MOVE_PROTO) refuse('unsupported', 409, MOVE_OLD_TRANSFER);
   return { t, shown: (p: string) => (p.toLowerCase().startsWith(at.amiga.toLowerCase()) ? at.shown + p.slice(at.amiga.length) : p) };
 }
