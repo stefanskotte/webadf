@@ -5,8 +5,9 @@
 // so openUpload stores it at the copy's target (source 'copy', P6) and, once closed, placeFetched settles the get --
 // adding a disk image to the library first when the copy was onto LIBRARY: (P5). Phase 2 (spec 2026-10-31 §4.1): a
 // move out of a volume deletes each source once its files are stored (net-moves.ts); a copy or move onto another volume
-// fetches each file and hands it to that board's queue as it arrives (plan W8); the progress covers every part of a job
-// (jobProgress). SERVER ONLY.
+// fetches each file and hands it to that board's queue as it arrives (plan W8) -- held meanwhile as internal staging,
+// never a STASH: row (plan 2026-11-01-vol-to-vol-staging); the progress covers every part of a job (jobProgress).
+// SERVER ONLY.
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb, type Db } from '@/db';
 import { devices } from '@/db/schema/devices';
@@ -22,6 +23,7 @@ import { failureText } from '@/lib/send-ui';
 import { queueTransfers, type ClashMode } from '@/lib/transfers';
 import { FETCH_MAX_BYTES, FETCH_MAX_FILES } from '@/lib/remote-limits';
 import { UPLOAD_FILE_MAX } from '@/lib/amiga-upload-limits';
+import { releaseStaging } from '@/lib/amiga-uploads';
 import { libraryEligible } from '@/lib/from-amiga-ui';
 import { listStash } from '@/lib/stash';
 import { addUploadToLibrary } from '@/lib/stash-library';
@@ -151,9 +153,9 @@ export async function startFetch(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
 
 /**
  * A copy or move from a volume onto a volume (spec 2026-10-31 §4.1). A move within one volume is a RENAME
- * (moveWithinVolume). Anything else goes up and down (plan W8): each file is fetched as a copy out is, and on arrival
- * handed to the destination board's queue with its absolute path and clash mode; a move's source goes once every file
- * of it is delivered there. Clashes are decided now against the destination's remembered listing (W4); drawers that
+ * (moveWithinVolume). Anything else goes up and down (plan W8): each file is fetched as a copy out is -- held as
+ * internal staging, never in STASH: (plan 2026-11-01-vol-to-vol-staging) -- and on arrival handed to the destination
+ * board's queue with its absolute path and clash mode; a move's source goes once every file of it is delivered there. Clashes are decided now against the destination's remembered listing (W4); drawers that
  * hold no file are made there (`ensure`).
  */
 export async function volumeToVolume(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
@@ -247,8 +249,10 @@ const LIBRARY_WORDS: Record<string, string> = {
 export async function placeFetched(db: Db, uploadId: string, now = new Date()): Promise<void> {
   // A get that timed out while its file was on the way is placed all the same (fix round 1 ruling): the file is here.
   const [g] = await db.select().from(remoteRequests).where(and(eq(remoteRequests.uploadId, uploadId), eq(remoteRequests.kind, 'get'), liveGet()));
-  if (!g) return;
+  // Staging whose get ended meanwhile (the board said it failed) is no use to anyone: it goes now, not in a day.
+  if (!g) return releaseStaging(db, uploadId);
   try { await place(db, g, uploadId, now); } catch {
+    await releaseStaging(db, uploadId).catch(() => {});
     await settleGet(db, g.id, { ok: false, code: 'io', text: 'it could not be placed' }, now).catch(() => {});
   }
 }
@@ -270,21 +274,23 @@ async function place(db: Db, g: RemoteRow, uploadId: string, now: Date): Promise
 
 /**
  * A file on its way from one volume to another (plan W8): handed to the destination board's queue with its absolute
- * path and clash mode, then its STASH: row goes (it was only passing through). A queue that refuses it fails the get
- * with the words, and the file stays in STASH:, so nothing is lost.
+ * path and clash mode, then its staging goes -- the queue row keeps the blob from here (blob GC names every transfers
+ * row). A queue that refuses it fails the get with the words, and the staging goes too (plan 2026-11-01-vol-to-vol-
+ * staging, S4): the file is still on the source volume, and a move keeps it there.
  */
 async function relay(db: Db, g: RemoteRow, target: GetTarget, uploadId: string, now: Date): Promise<void> {
   const r = target.relay!;
   const [u] = await db.select().from(amigaUploads).where(eq(amigaUploads.id, uploadId));
-  if (!u?.blobSha256 || !target.userId) return settleGet(db, g.id, { ok: false, code: 'io', text: 'it could not be placed' }, now);
+  const fail = async (code: string, text: string) => { await releaseStaging(db, uploadId); await settleGet(db, g.id, { ok: false, code, text }, now); };
+  if (!u?.blobSha256 || !target.userId) return fail('io', 'it could not be placed');
   const q = await queueTransfers(db, { orgId: g.orgId, deviceId: r.deviceId, userId: target.userId, jobId: g.fetchId ?? undefined, now, files: [{
     path: target.rel[target.rel.length - 1], sha256: u.blobSha256, sizeBytes: u.sizeBytes, protection: Number(u.protection), comment: u.comment,
     dest: r.dest, onClash: r.onClash, ...(r.moveSource ? { moveSource: r.moveSource } : {}) }] });
   if (!q.ok) {
     const words = q.reason === 'queue_full' ? "the board's queue is full" : q.reason === 'empty' ? 'it is empty' : 'it could not be queued';
-    return settleGet(db, g.id, { ok: false, code: q.reason, text: words }, now);
+    return fail(q.reason, words);
   }
-  await db.update(amigaUploads).set({ status: 'deleted' }).where(eq(amigaUploads.id, uploadId));
+  await releaseStaging(db, uploadId);
   await settleGet(db, g.id, { ok: true }, now);
 }
 

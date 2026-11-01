@@ -196,7 +196,9 @@ async function boardWrites(request: APIRequestContext, token: string, fs: Record
  */
 export const fakeBoardTiming: { delMs: number; delBeforeMs: number; delEvery: number; queueHeld: boolean;
   /** Called before the fake Transfer answers each request: a test changes the Amiga mid-operation (spec §9). */
-  onRequest: ((r: BoardRequest) => void) | null } = { delMs: 0, delBeforeMs: 0, delEvery: 50, queueHeld: false, onRequest: null };
+  onRequest: ((r: BoardRequest) => void) | null;
+  /** Awaited between a GET's last chunk and its close: a test holds a file on its way up. */
+  beforeClose: ((r: BoardRequest) => Promise<void>) | null } = { delMs: 0, delBeforeMs: 0, delEvery: 50, queueHeld: false, onRequest: null, beforeClose: null };
 
 /** Words and <len>:<text> fields of one protocol line, from `at`. */
 function cursor(line: string, at: number) {
@@ -234,7 +236,11 @@ export async function boardServesOne(request: APIRequestContext, token: string, 
   const file = entriesOf(fs, drawer)?.find((e) => !e.dir && e.name.toLowerCase() === name.toLowerCase());
   if (!file?.data) { await boardAnswers(request, token, r.id, [`ERR ${r.id} notfound ${lp('Object not found')}`]); return; }
   await boardAnswers(request, token, r.id, [`GOT ${r.id} 1`]);
-  await boardUploads(request, token, name, file.data, AMIGA_DATE, r.id);
+  const { id, offset } = await boardOpens(request, token, name, file.data.length, AMIGA_DATE, r.id);
+  await boardSendsChunks(request, token, id, file.data, offset);
+  // Every byte is up and the close not yet sent: a test looks at what the server shows meanwhile.
+  await fakeBoardTiming.beforeClose?.(r);
+  expect((await boardCloses(request, token, id, crc32(file.data) >>> 0)).status()).toBe(200);
 }
 
 export type VolumeNext = { id: string; dest: string | null; mode: string | null; outcome: string };

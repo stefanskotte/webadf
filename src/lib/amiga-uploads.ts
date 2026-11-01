@@ -6,7 +6,8 @@ import { transfers } from '@/db/schema/transfers';
 import { amigaUploads, amigaUploadChunks } from '@/db/schema/amiga-uploads';
 import { remoteRequests } from '@/db/schema/remote-requests';
 import { cleanAmigaPath, recordSendRx } from '@/lib/transfers';
-import { listStash, lockOrg, touchStashDirs } from '@/lib/stash';
+import { listStash, lockOrg, notStaging, STAGING, touchStashDirs } from '@/lib/stash';
+export { STAGING } from '@/lib/stash';
 import { uniqueStashPath } from '@/lib/files/stash-paths';
 import { parsePath } from '@/lib/files/path';
 import { getForUpload, liveGet, settleGet, touchGet, type GetTarget } from '@/lib/remote-requests';
@@ -45,38 +46,42 @@ export async function openUpload(db: Db, dev: { deviceId: string; orgId: string 
   const path = cleanAmigaPath(target ? [...(parsePath(target.dest)?.segments ?? []), ...target.rel].join('/') : a.path);
   if (!path) return refused('name', { code: 'bad', text: 'the name could not be used' });
   const comment = a.comment.replace(/[^\x20-\x7e\xa0-\xff]/g, '').slice(0, 79);
-  const r = await openRow(db, dev, a, path, comment, get?.id ?? null, now);
+  const r = await openRow(db, dev, a, path, comment, get?.id ?? null, !!target?.relay, now);
   if (!r.ok) return refused(r.code, r.code === 'full' ? { code: 'full', text: 'STASH: is full' } : { code: 'bad', text: 'it could not be stored' });
   return r;
 }
 
 async function openRow(db: Db, dev: { deviceId: string; orgId: string }, a: OpenInput, path: string, comment: string, rid: string | null,
-  now: Date): Promise<OpenResult> {
+  staging: boolean, now: Date): Promise<OpenResult> {
+  // A fetched file is a Files copy (P6): source copy, no board name, as every copy row -- or staging, between volumes.
+  const source = !rid ? 'amiga' : staging ? STAGING : 'copy';
   return db.transaction(async (tx) => {
     // The count and the insert under one lock per org: READ COMMITTED alone lets two opens count the same rows (ruling P8).
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`amiga_uploads:${dev.orgId}`}))`);
     const [same] = await tx.select({ id: amigaUploads.id, received: amigaUploads.receivedBytes }).from(amigaUploads)
       .where(and(eq(amigaUploads.orgId, dev.orgId), eq(amigaUploads.deviceId, dev.deviceId), eq(amigaUploads.status, 'receiving'), eq(amigaUploads.path, path),
-        eq(amigaUploads.sizeBytes, a.size), eq(amigaUploads.amigaDate, a.date), gt(amigaUploads.expiresAt, now)))
+        eq(amigaUploads.sizeBytes, a.size), eq(amigaUploads.amigaDate, a.date), gt(amigaUploads.expiresAt, now),
+        // Only a row of the same kind: a Receive upload never resumes into a staging row of the same name, nor back.
+        eq(amigaUploads.source, source)))
       .orderBy(desc(amigaUploads.createdAt)).limit(1);
     if (same) {
       await tx.update(amigaUploads).set({ activeAt: now }).where(eq(amigaUploads.id, same.id));
       if (rid) await touchGet(tx, { id: rid }, now, same.id);
       return { ok: true as const, id: same.id, offset: same.received };
     }
-    // Only rows that still count (3bv I1): receiving within its 24 h, stored within its 30 days.
+    // Only rows that still count (3bv I1): receiving within its 24 h, stored within its 30 days. Staging is not STASH:'s:
+    // it neither counts nor is refused by it (bounded by the copy's own limits, 64 files / 16 MB).
     const [load] = await tx.select({ n: sql<number>`count(*)::int`, b: sql<string>`coalesce(sum(${amigaUploads.sizeBytes}),0)::bigint` })
       .from(amigaUploads)
-      .where(and(eq(amigaUploads.orgId, dev.orgId), inArray(amigaUploads.status, LIVE), gt(amigaUploads.expiresAt, now)));
-    if (load.n + 1 > UPLOAD_AREA_MAX_FILES || Number(load.b) + a.size > UPLOAD_AREA_MAX_BYTES) {
+      .where(and(eq(amigaUploads.orgId, dev.orgId), inArray(amigaUploads.status, LIVE), gt(amigaUploads.expiresAt, now), notStaging()));
+    if (!staging && (load.n + 1 > UPLOAD_AREA_MAX_FILES || Number(load.b) + a.size > UPLOAD_AREA_MAX_BYTES)) {
       return { ok: false as const, code: 'full' as const };
     }
     const [d] = await tx.select({ name: devices.name }).from(devices).where(eq(devices.id, dev.deviceId));
     const id = crypto.randomUUID();
-    // A fetched file is a Files copy (P6): source copy, no board name, as every copy row.
     await tx.insert(amigaUploads).values({ id, orgId: dev.orgId, deviceId: dev.deviceId, deviceName: rid ? null : d?.name ?? 'Board',
       path, sizeBytes: a.size, protection: a.protection >>> 0, comment, amigaDate: a.date,
-      expiresAt: new Date(now.getTime() + UPLOAD_RESUME_MS), activeAt: now, ...(rid ? { source: 'copy' } : {}) });
+      expiresAt: new Date(now.getTime() + UPLOAD_RESUME_MS), activeAt: now, source });
     if (rid) await touchGet(tx, { id: rid }, now, id);
     return { ok: true as const, id, offset: 0 };
   });
@@ -167,7 +172,16 @@ export async function closeUpload(db: Db, deviceId: string, id: string, crc: num
     return failed ? { ok: false, status: 409, code: 'crc' } : lost({ ok: false, status: 404, code: 'gone' });
   }
   const sha = await storeSendBytes(bytes);   // adf/<sha256> through diskStore: local folder or Vercel Blob (ruling P5)
+  const staged = r.source === STAGING;
   const done = await db.transaction(async (tx) => {
+    // Staging is no STASH: entry: stored as it is, no name taken or replaced there, no folder kept alive.
+    if (staged) {
+      const hit = await tx.update(amigaUploads).set({ status: 'stored', crc32: crc >>> 0, blobSha256: sha, storedAt: sql`now()`, receivedBytes: r.sizeBytes,
+        expiresAt: new Date(now.getTime() + UPLOAD_RESUME_MS) })
+        .where(and(eq(amigaUploads.id, id), eq(amigaUploads.status, 'receiving'))).returning({ id: amigaUploads.id });
+      if (hit.length) await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
+      return hit.length > 0;
+    }
     // One name, one entry (R4): under the org lock, a path STASH: already holds is stored as its keep-both name.
     await lockOrg(tx, r.orgId);
     // A fetch answered Replace (P4): the FILE at exactly this path goes, so the arriving one takes its name.
@@ -201,8 +215,17 @@ async function settleGetOf(db: Db, id: string, outcome: Parameters<typeof settle
 
 export async function getUpload(db: Db, orgId: string, id: string): Promise<UploadRow | null> {
   const [r] = await db.select().from(amigaUploads)
-    .where(and(eq(amigaUploads.id, id), eq(amigaUploads.orgId, orgId), ne(amigaUploads.status, 'deleted')));
+    .where(and(eq(amigaUploads.id, id), eq(amigaUploads.orgId, orgId), ne(amigaUploads.status, 'deleted'), notStaging()));
   return r ?? null;
+}
+
+/** A staging row released (deleted, its chunks gone); any other row is left alone. */
+export async function releaseStaging(db: Db, id: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    const hit = await tx.update(amigaUploads).set({ status: 'deleted' })
+      .where(and(eq(amigaUploads.id, id), eq(amigaUploads.source, STAGING), ne(amigaUploads.status, 'deleted'))).returning({ id: amigaUploads.id });
+    if (hit.length) await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
+  });
 }
 
 /** The blob of a row the person can still use: stored and not past its 30 days; else null. */
@@ -246,7 +269,10 @@ export async function expireUploads(db: Db, now = new Date()): Promise<{ failed:
     const old = new Date(now.getTime() - UPLOAD_KEEP_MS);
     const deleted = await tx.delete(amigaUploads)
       .where(or(and(eq(amigaUploads.status, 'stored'), lte(amigaUploads.expiresAt, now)),
-        and(inArray(amigaUploads.status, ['failed', 'deleted']), lt(amigaUploads.createdAt, old))))
+        and(inArray(amigaUploads.status, ['failed', 'deleted']), lt(amigaUploads.createdAt, old)),
+        // Staging a copy between volumes left (a get that never ended, a crash between close and hand-over): past its
+        // day's resume window it is no use to anyone, whatever its state. Its chunks go with it (cascade).
+        and(eq(amigaUploads.source, STAGING), lt(amigaUploads.createdAt, new Date(now.getTime() - UPLOAD_RESUME_MS)))))
       .returning({ id: amigaUploads.id });
     return { failed: failed.length, deleted: deleted.length };
   });
