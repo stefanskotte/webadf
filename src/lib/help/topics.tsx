@@ -103,17 +103,8 @@ export const HELP_TOPICS = {
           <em>Protect</em> sets bits; <em>Info</em> shows details. Type in a filter box; <em>Show .info</em> hides or shows icon files.
         </p>
         <p>
-          <strong>Browsing the Amiga.</strong> Inside a board, NET: lists its Amiga&apos;s volumes, then its{' '}
-          <em>Queue</em> folder, where the files you send wait. Browsing needs firmware 1.22 and Transfer 2.3, with browsing
-          switched on in Transfer. Each drawer takes a few seconds to read; a drawer read in the last 2 minutes opens at once
-          and says when it was read. <em>Refresh</em> (Ctrl-R) reads it again. Copy files from a volume to STASH:, or disk
-          images to LIBRARY:.
-        </p>
-        <p>
-          <strong>Changing the Amiga&apos;s disks.</strong> Firmware 1.23, Transfer 2.5 and{' '}
-          <em>Let the web app change my disks</em> make volumes writable: Copy, Move, Makedir, Rename, Protect, comments,
-          Delete (it cannot be undone; the .info goes along). A write-protected disk is said in words. A Move removes
-          only what it copied; off a volume it needs Transfer 2.6.
+          <strong>The Amiga&apos;s own disks.</strong> Inside a board, NET: lists its Amiga&apos;s volumes too: see{' '}
+          <em>The Amiga’s disks</em>.
         </p>
         <p>
           <strong>Keys.</strong> ↑ and ↓ move, Space picks, Enter opens, Backspace goes up, Tab switches pane, / filters,
@@ -571,7 +562,7 @@ export const HELP_TOPICS = {
           <strong>NET:</strong> lists your boards on firmware 1.15.0 or newer. Copy files or folders into a board&apos;s{' '}
           <em>Queue</em> to send them to its Amiga: each waits there until Transfer takes it, marked waiting, sending, delivered or failed.
           Delete cancels a file still waiting or sending, or clears a finished one. Its Amiga&apos;s volumes are listed beside
-          Queue: see <em>Browsing the Amiga</em> under Files. On firmware 1.19.0 or newer a board&apos;s row shows
+          Queue: see <em>The Amiga’s disks</em>. On firmware 1.19.0 or newer a board&apos;s row shows
           four digits of its key (<em>key AB12</em>), the digits Transfer shows.
         </p>
         <GoodToKnow items={[
@@ -579,6 +570,46 @@ export const HELP_TOPICS = {
           'Up to 4 MB a file, and 32 files or 16 MB waiting for one board.',
           'Nothing is copied out of a board’s Queue, and a copy into it leaves the original where it was.',
           'STASH: keeps no versions: a delete there cannot be undone.',
+        ]} />
+      </>
+    ),
+  },
+
+  // Sources: NET: volumes specs 2026-10-30 (§2.3 the Read switch, §4.3-4.6 browsing, the 2-minute cache, Refresh) and
+  // 2026-10-31 (§2.4 the Write switch, §4.1-4.2 the writes, Delete always asks, the .info goes along, write-protected in
+  // words; §9 a Move removes only what it copied and keeps a drawer something new is in); plan 2026-11-01-transfer-2-7
+  // (the "Web App: Read Write" row, unticking Write stops a copy onto a volume, the commodity, CX_POPUP, ctrl alt w);
+  // tools/receive/README.md; src/lib/files/view.ts paneHelpTopic (a board's volumes open this topic).
+  'amiga-disks': {
+    title: 'The Amiga’s disks',
+    short: 'Inside a board under NET:, the Amiga’s own volumes: open drawers and copy files off them, and, when Transfer allows it, copy onto them, make drawers, rename and delete.',
+    body: (
+      <>
+        <p>
+          <strong>Read and Write.</strong> Transfer&apos;s window has one row, <em>Web App: Read Write</em>.{' '}
+          <em>Read</em> lets the web app list the Amiga&apos;s volumes and copy files off them (firmware 1.22 and
+          Transfer 2.3 or newer). <em>Write</em> also lets it change them (Firmware 1.23 and Transfer 2.5): Copy and Move
+          onto a volume, Makedir, Rename, Protect, comments and Delete. Both stay off until you tick them; Transfer
+          remembers them.
+        </p>
+        <p>
+          <strong>Browsing.</strong> Inside a board, NET: lists its volumes, then its <em>Queue</em>. Each drawer takes a
+          few seconds to read; one read in the last 2 minutes opens at once and says when it was read.{' '}
+          <em>Refresh</em> (Ctrl-R) reads it again.
+        </p>
+        <p>
+          <strong>Moves and deletes.</strong> Delete always asks, and cannot be undone; the .info goes along. A Move
+          removes only what it copied (off a volume it needs Transfer 2.6): a file saved into the source meanwhile is
+          kept, and the Move says so. A write-protected disk is said in words.
+        </p>
+        <p>
+          <strong>Starting Transfer.</strong> Transfer 2.7 is a commodity: double-click its icon, or copy Transfer and
+          Transfer.info into SYS:WBStartup to start it with Workbench (with the tool type CX_POPUP=NO it starts hidden).
+          Ctrl-Alt-W shows its window, the close gadget hides it, and Exchange shows, hides or quits it.
+        </p>
+        <GoodToKnow items={[
+          'Unticking Write while a file is being copied onto a volume stops it: the old file stays as it was, and the copy fails with “Writing is off in Transfer”. Files going into Transfer’s own folder carry on.',
+          'Write needs Read: unticking Read stops both.',
         ]} />
       </>
     ),
@@ -598,8 +629,8 @@ export const HELP_TOPICS = {
       <>
         <p>
           Your board must be in <em>Network (PaulaNET)</em> mode, on firmware 1.15.0 or newer. On the Amiga, run{' '}
-          <em>Install</em> from the driver disk once: it copies <em>Transfer</em> to SYS:Tools and C:. Start it yourself (in a Shell: <em>Transfer RECEIVE</em>), choose a folder and press
-          Save. The default folder is RAM:.
+          <em>Install</em> from the driver disk once: it copies <em>Transfer</em> to SYS:Tools and C:. Start it from its icon,
+          from SYS:WBStartup, or in a Shell (<em>Transfer RECEIVE</em>), choose a folder and press Save. The default folder is RAM:.
         </p>
         <p>
           <strong>Three ways to send.</strong> On the Files page, drop files or a folder on <em>Send files to the
@@ -868,7 +899,7 @@ export type HelpGroup = { id: HelpGroupId; name: string; topics: readonly HelpTo
 export const HELP_GROUPS: readonly HelpGroup[] = [
   { id: 'drives', name: 'Drives', topics: ['boards', 'display', 'second-drive', 'next-disk', 'nfc', 'write-protect'] },
   { id: 'disks', name: 'Library and disks', topics: ['library', 'files', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image'] },
-  { id: 'network', name: 'Amiga networking', topics: ['network', 'stash-net', 'send', 'from-amiga'] },
+  { id: 'network', name: 'Amiga networking', topics: ['network', 'stash-net', 'amiga-disks', 'send', 'from-amiga'] },
   { id: 'server', name: 'This server', topics: ['preferences', 'sharing', 'remote', 'own-server', 'about'] },
 ];
 

@@ -112,4 +112,10 @@ describe('paneHelpTopic', () => {
     expect(paneHelpTopic('NET:')).toBe('stash-net');
     expect(paneHelpTopic('LIBRARY:/g/d')).toBe('files');
   });
+  it("a board's volumes open the Amiga's disks topic; its Queue stays STASH: and NET:", () => {
+    expect(paneHelpTopic('NET:/b1/Work')).toBe('amiga-disks');
+    expect(paneHelpTopic('NET:/b1/Work/Tools')).toBe('amiga-disks');
+    expect(paneHelpTopic('NET:/b1/Queue')).toBe('stash-net');
+    expect(paneHelpTopic('NET:/b1')).toBe('stash-net');
+  });
 });

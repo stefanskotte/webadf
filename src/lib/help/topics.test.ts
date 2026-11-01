@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HELP_TOPICS, HELP_ORDER, HELP_GROUPS, helpGroupOf, type HelpTopicId } from './topics';
 
-const IDS: HelpTopicId[] = ['library', 'boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'from-amiga', 'cover-image', 'about', 'preferences', 'sharing', 'remote', 'files', 'stash-net'];
+const IDS: HelpTopicId[] = ['library', 'boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'from-amiga', 'cover-image', 'about', 'preferences', 'sharing', 'remote', 'files', 'stash-net', 'amiga-disks'];
 // Internal words a reader of the help should never meet (spec §5).
 const BANNED = /\b(PSRAM|TBYB|poll|sha256|cursor|WPROT)\b/i;
 
@@ -340,13 +340,13 @@ describe('help groups (C5 spec §3.1, Ruling 14)', () => {
     ]);
     expect(HELP_GROUPS[0].topics).toEqual(['boards', 'display', 'second-drive', 'next-disk', 'nfc', 'write-protect']);
     expect(HELP_GROUPS[1].topics).toEqual(['library', 'files', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image']);
-    expect(HELP_GROUPS[2].topics).toEqual(['network', 'stash-net', 'send', 'from-amiga']);
+    expect(HELP_GROUPS[2].topics).toEqual(['network', 'stash-net', 'amiga-disks', 'send', 'from-amiga']);
     expect(HELP_GROUPS[3].topics).toEqual(['preferences', 'sharing', 'remote', 'own-server', 'about']);
   });
   it('put every topic in exactly one group, and HELP_ORDER is the groups flattened', () => {
     const all = HELP_GROUPS.flatMap((g) => g.topics);
     expect([...all].sort()).toEqual([...IDS].sort());
-    expect(new Set(all).size).toBe(21);
+    expect(new Set(all).size).toBe(22);
     expect(HELP_ORDER).toEqual(all);
     expect(helpGroupOf('library').name).toBe('Library and disks');
     expect(helpGroupOf('write-protect').id).toBe('drives');
@@ -394,26 +394,37 @@ describe('Files help (increment 4)', () => {
     expect(bodyText('library').replace(/\s+/g, ' ')).toContain('Add disks , which also takes a URL');
   });
   it('the new topics never say drive in their title or short (the help filter test pins drive to four topics)', () => {
-    for (const id of ['files', 'stash-net'] as const) expect(HELP_TOPICS[id].title + HELP_TOPICS[id].short).not.toMatch(/drive/i);
+    for (const id of ['files', 'stash-net', 'amiga-disks'] as const) expect(HELP_TOPICS[id].title + HELP_TOPICS[id].short).not.toMatch(/drive/i);
   });
 
-  it('files says how to browse the Amiga: its needs, Refresh, the Queue folder (NET: volumes)', () => {
+  it('files points to the Amiga\'s disks topic for browsing and writing, and no longer explains them itself', () => {
     const b = bodyText('files').replace(/\s+/g, ' ');
-    for (const w of ['Browsing the Amiga', 'firmware 1.22', 'Transfer 2.3', 'browsing switched on', 'a few seconds',
-      '2 minutes', 'says when it was read', 'Refresh', 'Ctrl-R', 'Queue folder']) expect(b).toContain(w);
-    expect(b).not.toContain('Read-only for now');
+    expect(b).toContain('The Amiga’s disks');
+    for (const w of ['Ctrl-R', 'Firmware 1.23', 'Let the web app change my disks']) expect(b).not.toContain(w);
   });
 
-  // NET: volumes phase 2 (spec 2026-10-31 §2.4, §4.1-4.2): what writing needs, what it does, and that a delete is final.
-  it('files says how to change the Amiga\'s disks: its needs, the second switch, Delete cannot be undone', () => {
-    const b = bodyText('files').replace(/\s+/g, ' ');
-    for (const w of ['Changing the Amiga', 'Firmware 1.23', 'Transfer 2.5', 'Let the web app change my disks',
-      'Makedir', 'Rename', 'Protect', 'cannot be undone', 'the .info', 'write-protected']) expect(b).toContain(w);
+  // NET: volumes (spec 2026-10-30, 2026-10-31 incl. §9) and Transfer 2.7 (plan 2026-11-01-transfer-2-7): reading, writing,
+  // what Move and Delete take, and Transfer as a commodity.
+  it('amiga-disks says how to browse: its needs, the Read box, Refresh, the 2-minute cache', () => {
+    const b = bodyText('amiga-disks').replace(/\s+/g, ' ');
+    for (const w of ['firmware 1.22', 'Transfer 2.3', 'Read', 'a few seconds', '2 minutes', 'Refresh', 'Ctrl-R', 'Queue'])
+      expect(b).toContain(w);
+  });
+  it('amiga-disks says how to write: its needs, the Write box, Delete cannot be undone, what a Move removes', () => {
+    const b = bodyText('amiga-disks').replace(/\s+/g, ' ');
+    for (const w of ['Firmware 1.23', 'Transfer 2.5', 'Write', 'Makedir', 'Rename', 'Protect', 'cannot be undone',
+      'the .info', 'write-protected', 'only what it copied', 'Transfer 2.6', 'kept']) expect(b).toContain(w);
+    expect(b).not.toContain('Let the web app change my disks');
+  });
+  it('amiga-disks says unticking Write stops a copy and leaves the old file, and how to start Transfer from Workbench', () => {
+    const b = bodyText('amiga-disks').replace(/\s+/g, ' ');
+    for (const w of ['Unticking Write', 'old file', 'Transfer 2.7', 'WBStartup', 'CX_POPUP=NO', 'Exchange', 'Ctrl-Alt-W'])
+      expect(b).toContain(w);
   });
 
   it("stash-net points to Files for a board's volumes, and sends go into its Queue (NET: volumes)", () => {
     const b = bodyText('stash-net').replace(/\s+/g, ' ');
-    for (const w of ['Queue', 'Browsing the Amiga under Files']) expect(b).toContain(w);
+    for (const w of ['Queue', 'The Amiga’s disks']) expect(b).toContain(w);
   });
 
   it('files says a title already in the target collection is skipped and stays put', () => {
