@@ -95,6 +95,7 @@ test('the ⋯ menu and its items neither navigate nor start a drag, and its dial
   const c = card(page, title);
   // dragStyle (title-controls.tsx) drops a dragged card to 0.4.
   const opacity = () => c.evaluate((el) => getComputedStyle(el).opacity);
+  await expect(c).toBeVisible();
   const box = await c.boundingBox();
 
   // Opening it: the trigger sits inside the card's <a href>.

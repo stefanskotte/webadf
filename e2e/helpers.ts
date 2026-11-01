@@ -189,6 +189,13 @@ export async function browseDisks(page: Page, files: Parameters<Locator['setInpu
  */
 export async function openTitleMenu(page: Page, gameId: string) {
   const trigger = page.getByTestId(`title-menu-${gameId}`);
+  // Before hydration the trigger is a plain button inside the card's <a href>: a press there navigates to the
+  // title instead of opening the menu. Wait until React has wired its handler.
+  await page.waitForFunction((tid) => {
+    const el = document.querySelector(`[data-testid="${tid}"]`);
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$')
+      && typeof (el as unknown as Record<string, Record<string, unknown>>)[k]?.onClick === 'function');
+  }, `title-menu-${gameId}`);
   const touch = await page.evaluate(() => navigator.maxTouchPoints > 0);
   if (touch) await trigger.tap();
   else await trigger.click();

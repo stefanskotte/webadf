@@ -1,11 +1,11 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { getDb } from '@/db';
 import { games } from '@/db/schema/catalog';
 import { signUpFresh } from './helpers';
-import { cleanupSeeded, seedDisk } from './device-helpers';
+import { cleanupSeeded, hydrated, seedDisk } from './device-helpers';
 
 // A title's own cover (HANDOFF backlog "Override a title's main image").
 // The image is a real 40x50 PNG made by ImageMagick (the unit tests' fixture).
@@ -16,6 +16,11 @@ test.afterAll(async () => { await cleanupSeeded(); });
 
 const PNG = join(process.cwd(), 'src/lib/__fixtures__/cover/cover.png');
 const freshSha = () => randomUUID().replace(/-/g, '').padEnd(64, '0');
+// A file chosen before hydration fires a change no React handler hears: nothing uploads.
+const chooseCover = async (page: Page, file: Parameters<Page['setInputFiles']>[1]) => {
+  await hydrated(page, 'cover-file', 'onChange');
+  await page.getByTestId('cover-file').setInputFiles(file);
+};
 const overrideOf = async (id: string) =>
   (await getDb().select({ s: games.coverOverrideSha256 }).from(games).where(eq(games.id, id)))[0]?.s ?? null;
 
@@ -29,7 +34,7 @@ test('upload a cover on an un-enriched title, see it on the page and the card, t
   await expect(page.getByTestId('cover-revert')).toHaveCount(0);
   await expect(page.getByTestId('cover-change')).toBeVisible();
 
-  await page.getByTestId('cover-file').setInputFiles(PNG);
+  await chooseCover(page, PNG);
 
   const cover = page.getByTestId('game-cover');
   await expect(cover).toBeVisible();
@@ -59,7 +64,7 @@ test('a non-image is refused with a message, and nothing changes', async ({ page
   const u = await signUpFresh(page);
   const { gameId } = await seedDisk(u.orgId, { title: 'Cover Refusal', diskNo: 1, sha256: freshSha() });
   await page.goto(`/games/${gameId}`);
-  await page.getByTestId('cover-file').setInputFiles({
+  await chooseCover(page, {
     name: 'evil.png', mimeType: 'image/png',
     buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'),
   });
@@ -71,7 +76,7 @@ test('another organization can neither see nor change the cover', async ({ page,
   const owner = await signUpFresh(page);
   const { gameId } = await seedDisk(owner.orgId, { title: 'Cover Private', diskNo: 1, sha256: freshSha() });
   await page.goto(`/games/${gameId}`);
-  await page.getByTestId('cover-file').setInputFiles(PNG);
+  await chooseCover(page, PNG);
   await expect(page.getByTestId('game-cover')).toBeVisible();
   const sha = await overrideOf(gameId);
 
@@ -94,7 +99,7 @@ test('the controls fit a 390 px phone', async ({ page }) => {
   const u = await signUpFresh(page);
   const { gameId } = await seedDisk(u.orgId, { title: 'Cover Phone', diskNo: 1, sha256: freshSha() });
   await page.goto(`/games/${gameId}`);
-  await page.getByTestId('cover-file').setInputFiles(PNG);
+  await chooseCover(page, PNG);
   await expect(page.getByTestId('cover-revert')).toBeVisible();
   for (const id of ['cover-change', 'cover-revert', 'help-tip-cover-image']) {
     const box = await page.getByTestId(id).boundingBox();

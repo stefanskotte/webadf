@@ -497,6 +497,10 @@ test('a card held and dropped on a card at 390px opens the set dialog: it fits, 
   await page.goto('/library');
   const cards = page.getByTestId('game-card');
   await expect(cards).toHaveCount(6);
+  // toHaveCount also counts cards still in the hidden Suspense container the library streams into (a null box);
+  // wait for them to show, and for hydration, or dnd-kit's TouchSensor hears no press.
+  await expect(cards.nth(2)).toBeVisible();
+  await hydrated(page, 'game-card', 'onTouchStart');
   const vw = page.viewportSize()!.width;
 
   // Card 3 sits under card 1 (two columns), so a straight upward finger
