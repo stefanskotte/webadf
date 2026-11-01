@@ -211,3 +211,5 @@ Work: arrives with the fake board). Commit.
 - [ ] `pnpm test`, full `pnpm test:db`, `pnpm exec tsc --noEmit`, e2e specs (desktop + mobile files-net ones).
 
 ## Ledger
+- Task 1: Ruling: a repeated close of staging already handed on (status deleted, CRC and blob kept) answers ok with the name, not gone -- the RED test showed the board's retry heard `gone` for a file that was delivered -- cost if wrong: none (same CRC, same bytes)
+- Task 1: complete (net-consistency item 1 RED 3/4 -> GREEN; net-consistency + vol-staging + net-fetch + remote-requests + amiga-uploads db 102/102)

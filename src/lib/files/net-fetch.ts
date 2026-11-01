@@ -15,7 +15,7 @@ import { amigaUploads } from '@/db/schema/amiga-uploads';
 import { remoteRequests } from '@/db/schema/remote-requests';
 import { transfers } from '@/db/schema/transfers';
 import { findSendTarget } from '@/lib/send-targets';
-import { addGets, addWrites, dropMemory, expireStale, latestFor, liveGet, settleGet, type GetTarget, type RemoteRow, type WriteReq, type WriteTarget } from '@/lib/remote-requests';
+import { addGets, addWrites, claimGet, dropMemory, expireStale, latestFor, settleGet, type GetTarget, type RemoteRow, type WriteReq, type WriteTarget } from '@/lib/remote-requests';
 import { amigaPathOf, newRequestId, type EntryInfo } from '@/lib/remote-wire';
 import { errorWords, MOVE_OLD_TRANSFER, writeErrorWords } from '@/lib/remote-browse';
 import { MOVE_PROTO, WRITE_KINDS } from '@/lib/remote-limits';
@@ -244,30 +244,43 @@ const LIBRARY_WORDS: Record<string, string> = {
 
 /**
  * After a stored close of an upload a get asked for: the library's part when the copy was onto LIBRARY:, then settled.
- * Never throws: the file is stored whatever happens here, so the board hears ok and the get alone fails (`io`).
+ * Never throws: the file is stored whatever happens here, so the board hears ok and the get alone fails (`io`). The get
+ * is claimed first (`placing`, plan 2026-11-01-net-consistency R1): a second close of the same upload (the board's 30 s
+ * retry) finds nothing to place, and an error after the file was handed on never turns the done get failed.
  */
 export async function placeFetched(db: Db, uploadId: string, now = new Date()): Promise<void> {
   // A get that timed out while its file was on the way is placed all the same (fix round 1 ruling): the file is here.
-  const [g] = await db.select().from(remoteRequests).where(and(eq(remoteRequests.uploadId, uploadId), eq(remoteRequests.kind, 'get'), liveGet()));
-  // Staging whose get ended meanwhile (the board said it failed) is no use to anyone: it goes now, not in a day.
-  if (!g) return releaseStaging(db, uploadId);
-  try { await place(db, g, uploadId, now); } catch {
-    await releaseStaging(db, uploadId).catch(() => {});
-    await settleGet(db, g.id, { ok: false, code: 'io', text: 'it could not be placed' }, now).catch(() => {});
+  const g = await claimGet(db, uploadId, now);
+  if (!g) {
+    // Being placed by the first close: that one decides. Otherwise staging whose get ended meanwhile (the board said it
+    // failed) is no use to anyone: it goes now, not in a day.
+    const [placing] = await db.select({ id: remoteRequests.id }).from(remoteRequests)
+      .where(and(eq(remoteRequests.uploadId, uploadId), eq(remoteRequests.kind, 'get'), eq(remoteRequests.status, PLACING)));
+    if (!placing) await releaseStaging(db, uploadId);
+    return;
+  }
+  try { await place(db, g, uploadId, now); } catch (e) {
+    console.error('net-fetch: placing a fetched file failed', e);
+    if (await settleGet(db, g.id, { ok: false, code: 'io', text: 'it could not be placed' }, now, PLACING).catch(() => false)) {
+      await releaseStaging(db, uploadId).catch(() => {});
+    }
   }
 }
+
+const PLACING = 'placing';
 
 async function place(db: Db, g: RemoteRow, uploadId: string, now: Date): Promise<void> {
   const target = g.target as GetTarget;
   if (target.relay) return relay(db, g, target, uploadId, now);
   if (target.library) {
     const r = await addUploadToLibrary(g.orgId, uploadId);
-    if (!r.ok) return settleGet(db, g.id, { ok: false, code: r.error, text: r.reason ?? LIBRARY_WORDS[r.error] }, now);
+    if (!r.ok) { await settleGet(db, g.id, { ok: false, code: r.error, text: r.reason ?? LIBRARY_WORDS[r.error] }, now, PLACING); return; }
     if (target.library.collectionId && !(await addGameToCollection(g.orgId, target.library.collectionId, r.gameId))) {
-      return settleGet(db, g.id, { ok: false, code: 'not_found', text: ADDED_UNFILED }, now);
+      await settleGet(db, g.id, { ok: false, code: 'not_found', text: ADDED_UNFILED }, now, PLACING);
+      return;
     }
   }
-  await settleGet(db, g.id, { ok: true }, now);
+  await settleGet(db, g.id, { ok: true }, now, PLACING);
   // A move out of a volume: its source goes once every file of it is stored (plan W7).
   if (target.moveSource) await settleMoveOfGet(db, g.id);
 }
@@ -276,12 +289,13 @@ async function place(db: Db, g: RemoteRow, uploadId: string, now: Date): Promise
  * A file on its way from one volume to another (plan W8): handed to the destination board's queue with its absolute
  * path and clash mode, then its staging goes -- the queue row keeps the blob from here (blob GC names every transfers
  * row). A queue that refuses it fails the get with the words, and the staging goes too (plan 2026-11-01-vol-to-vol-
- * staging, S4): the file is still on the source volume, and a move keeps it there.
+ * staging, S4): the file is still on the source volume, and a move keeps it there. Once queued the get is done whatever
+ * follows: staging left behind is the daily sweep's.
  */
 async function relay(db: Db, g: RemoteRow, target: GetTarget, uploadId: string, now: Date): Promise<void> {
   const r = target.relay!;
   const [u] = await db.select().from(amigaUploads).where(eq(amigaUploads.id, uploadId));
-  const fail = async (code: string, text: string) => { await releaseStaging(db, uploadId); await settleGet(db, g.id, { ok: false, code, text }, now); };
+  const fail = async (code: string, text: string) => { await releaseStaging(db, uploadId); await settleGet(db, g.id, { ok: false, code, text }, now, PLACING); };
   if (!u?.blobSha256 || !target.userId) return fail('io', 'it could not be placed');
   const q = await queueTransfers(db, { orgId: g.orgId, deviceId: r.deviceId, userId: target.userId, jobId: g.fetchId ?? undefined, now, files: [{
     path: target.rel[target.rel.length - 1], sha256: u.blobSha256, sizeBytes: u.sizeBytes, protection: Number(u.protection), comment: u.comment,
@@ -290,8 +304,8 @@ async function relay(db: Db, g: RemoteRow, target: GetTarget, uploadId: string, 
     const words = q.reason === 'queue_full' ? "the board's queue is full" : q.reason === 'empty' ? 'it is empty' : 'it could not be queued';
     return fail(q.reason, words);
   }
-  await releaseStaging(db, uploadId);
-  await settleGet(db, g.id, { ok: true }, now);
+  await settleGet(db, g.id, { ok: true }, now, PLACING);
+  await releaseStaging(db, uploadId).catch((e) => console.error('net-fetch: releasing staging failed', e));
 }
 
 /** After the board reported a queue row (the done route): a move onto a volume removes its source once all arrived. */

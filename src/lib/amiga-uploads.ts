@@ -127,6 +127,9 @@ export type CloseResult = { ok: true; name: string } | { ok: false; status: 404 
 function settledAnswer(r: UploadRow, crc: number): CloseResult | null {
   if (r.status === 'receiving') return null;
   if (r.crc32 === crc >>> 0) {
+    // Staging handed on (or released) after its close keeps its CRC and bytes' key: a repeat of that close is the
+    // same file, stored (plan 2026-11-01-net-consistency, item 1), not gone.
+    if (r.status === 'deleted' && r.source === STAGING && r.blobSha256) return { ok: true, name: r.path };
     if (r.status === 'stored') return { ok: true, name: r.sentName ?? r.path };   // the name the board sent, not a keep-both one (R4)
     if (r.status === 'failed' && r.errorCode === 'crc') return { ok: false, status: 409, code: 'crc' };
   }

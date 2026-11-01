@@ -98,6 +98,10 @@ export async function expireStale(db: Db, now = new Date()): Promise<void> {
         where b.device_id = remote_requests.device_id and b.kind = 'get' and coalesce(b.active_at, b.sent_at) >= ${cutGet})`),
     ),
   ));
+  // A placement that never ended (the process died mid-way, R1) fails as one that could not be placed: its file is not
+  // coming again, so not `timeout`, which a late arrival revives.
+  await db.update(remoteRequests).set({ status: 'failed', errorCode: 'io', errorText: 'it could not be placed', answeredAt: now })
+    .where(and(eq(remoteRequests.kind, 'get'), eq(remoteRequests.status, 'placing'), lt(remoteRequests.activeAt, cutGet)));
 }
 
 /**
@@ -394,9 +398,30 @@ export async function getForUpload(db: Db, deviceId: string, rid: string): Promi
   return r ?? null;
 }
 
-export async function settleGet(db: Db, rid: string, outcome: { ok: true } | { ok: false; code: string; text: string }, now = new Date()): Promise<void> {
+/**
+ * A get settled. `onlyFrom`: only while it is in that state (a placement settles only the get it claimed, `placing`, so a
+ * later error never turns a done get failed). Whether it was settled now.
+ */
+export async function settleGet(db: Pick<Db, 'update'>, rid: string, outcome: { ok: true } | { ok: false; code: string; text: string }, now = new Date(),
+  onlyFrom?: string): Promise<boolean> {
   const set = outcome.ok
     ? { status: 'done', answeredAt: now }
     : { status: 'failed', errorCode: outcome.code, errorText: outcome.text, answeredAt: now };
-  await db.update(remoteRequests).set(set).where(eq(remoteRequests.id, rid));
+  const hit = await db.update(remoteRequests).set(set)
+    .where(and(eq(remoteRequests.id, rid), ...(onlyFrom ? [eq(remoteRequests.status, onlyFrom)] : []))).returning({ id: remoteRequests.id });
+  return hit.length > 0;
+}
+
+/**
+ * The get whose file upload `uploadId` is, claimed for its placement (plan 2026-11-01-net-consistency, R1): one UPDATE
+ * moves it from live to `placing`, so of two closes of one upload (the board's 30 s retry) only one places the file. Null
+ * when no live get names the upload (placed already, being placed, or ended).
+ */
+export async function claimGet(db: Pick<Db, 'update' | 'select'>, uploadId: string, now = new Date()): Promise<RemoteRow | null> {
+  const live = and(eq(remoteRequests.uploadId, uploadId), eq(remoteRequests.kind, 'get'), liveGet());
+  const [g] = await db.update(remoteRequests).set({ status: 'placing', activeAt: now, errorCode: null, errorText: null, answeredAt: null })
+    .where(and(live, inArray(remoteRequests.id, db.select({ id: remoteRequests.id }).from(remoteRequests).where(live)
+      .orderBy(sql`${remoteRequests.createdAt} desc`).limit(1))))
+    .returning();
+  return g ?? null;
 }
