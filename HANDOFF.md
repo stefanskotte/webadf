@@ -1565,6 +1565,17 @@ Seen on the bench, FIXED 5b6b7ae4 (migration 0055 amiga_uploads.active_at, appli
 itself in listings' "once it has copied X" text. Bench side effects: Transfer's first positional argument is SEND (not the
 folder) -- `Transfer SYS:Downloads` uploaded all of SYS:Downloads to the operator's STASH:Downloads (about 30 files); a
 library disk (Workbench3.2 disk 10) is left in DF0; Workbench:WebTest (Keymaps with cdn/f2/d, e) is left on the A500.
+**Spec §9 SHIPPED 2026-11-01 (operator: "I agree, proceed"):** protocol 5 -- server fix/safe-moves-web merged (migration 0056
+transfers.move_item applied), Transfer 2.6 (pin 64e658a6, 56,212 B; driver disk 3c8c037d, 4b1cc536 PREVIOUS), firmware
+1.23.1 RELEASED seq 130 / fw-1.23.1. A Move removes only what it copied (DELETE ... one per file, drawers deepest first,
+kept when not empty; re-lists first and keeps a file changed on the Amiga); Move off a volume refused below protocol 5;
+a drawer DELETE renames to .webadf-del-XXXXXXXX first (listed as "Left by an interrupted delete" if a reset strands it).
+A500 bench 2026-11-01 PASSED: Workbench:MoveTest (21 libs) moved to STASH: while new.txt was saved into it -> "Copied 21 ·
+Deleted 21 items · Kept Workbench:MoveTest: something new is in it", only new.txt left; Workbench:DelTest (53 files from C)
+deleted 00:25:55.7-00:26:03.1 while a new DelTest/late.txt was made at ~00:25:58 -> late.txt survives, 54 removed.
+Items (1) and (2) below are FIXED; (3)-(4) and the rest stand. Plans: 2026-11-01-safe-moves-web.md,
+2026-11-01-transfer-2-6.md, 2026-11-01-firmware-1-23-1.md (rulings S1-S8, X1-X7, P1-P4 and deferred minors there).
+Bench leftovers on the A500: Workbench:MoveTest (new.txt), Workbench:DelTest (late.txt); STASH:MoveTest (21 libraries).
 **Open after the bench (2026-11-01, operator asked for the list):** data-loss risks first -- (1) a Move deletes the source
 as it is at the end (ruling I-1): files added to it during the move are lost; fix = delete only what was copied, then
 drawers only if empty; (2) a drawer DELETE holds no locks between steps: files added meanwhile are deleted; (3) writing
