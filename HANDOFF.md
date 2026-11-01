@@ -1487,7 +1487,9 @@ sharing shipped 2026-10-28; **Files SHIPPED 2026-10-29** (merge ef711fb, §4-fil
 with Transfer 2.3, README screenshots. **Phase 2 (writes)** -- spec docs/superpowers/specs/2026-10-31-net-volumes-writes-design.md:
 SHIPPED 2026-10-31 -- server/web merged 5c440cfc (migration 0054 applied to production), Transfer 2.5 merged 2341529d (driver
 disk 4b1cc536, 01485ce4), firmware 1.23.0 merged 4af240e6 and RELEASED seq 129 / fw-1.23.0; A500 bench 7/7 passed
-(§4-net-writes). The three bench UI gaps fixed in 5b6b7ae4 (migration 0055 applied). Open: the consistency list in §4-net-writes.
+(§4-net-writes). The three bench UI gaps fixed in 5b6b7ae4 (migration 0055 applied). The consistency list in §4-net-writes
+is DONE 2026-11-01 (night run: staging ce5fa134, Transfer 2.7 + disk 026ed784, consistency 16a699ca with migration 0057,
+help topic aa7090f2); open there: the two board send stalls found on the bench (see "Night run 2026-11-01").
 (1b) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there. Backlog (operator 2026-10-30): clicking a pane's left edge goes up one level in that pane, as in Directory Opus; at a
 root it does nothing. Backlog (operator 2026-10-30): the disk strip's History button should read as a toggle (it opens and
 closes the History panel), e.g. with a caret.
@@ -1589,6 +1591,33 @@ named for up to 24 h (needs transfers.active_at); "Sending k of n" count drift. 
 holds its file with `Run Wait >file` -- on the A500 that did NOT hold a file; confirm the test really exercises busy; the
 deepest new Transfer stack path (absolute FILE making two drawers) unmeasured on the A500; dest copies capped at 32 by the
 board queue (spec 64).
+**Night run 2026-11-01 (operator asleep; authorized merge/push/deploy and the A500):**
+- Risks (3) and (4) above FIXED. (4): vol-to-vol copies hold bytes as hidden staging (amiga_uploads.source='staging',
+  never in STASH:, released at hand-over, swept after 24 h) -- merge ce5fa134, plan 2026-11-01-vol-to-vol-staging.md.
+  (3): Transfer 2.7 -- merge before c5dfa027, plan 2026-11-01-transfer-2-7.md (rulings R1-R17): unticking Write/Read
+  while a file is written onto a volume deletes the .webadf-rx temp and answers `ERR readonly writing is off in
+  Transfer` after the last byte; the window row is "Web App: [x] Read [x] Write"; Transfer is a commodity (Exchange
+  Show/Hide/Enable/Disable/Kill, CX_POPKEY default `ctrl alt w`, close gadget hides, a second start shows the first,
+  DONOTWAIT + CX_POPUP/CX_PRIORITY/TO tool types for WBStartup); Transfer.info (floppy, arrows, globe) generated from
+  tools/receive/icon/. Pin de61367b, 59,960 B. Driver disk 026ed784 (PREVIOUS 3c8c037d), uploaded; the Docker image's
+  disk stage needed the icon sources (a4139f4d).
+- The rest of the list FIXED: merge 16a699ca (fix/net-consistency, plan 2026-11-01-net-consistency.md, 15 items, rulings
+  R1-R10 + task rulings in its ledger), migration 0057 transfers.active_at APPLIED to production (verified in
+  information_schema). Empty files now copy onto volumes (ReceiveDir queue still refuses them).
+- Docs: help topic `amiga-disks` ("The Amiga's disks": Read/Write, browsing, Move/Delete, the commodity), opened by the "?"
+  of a board's volume panes; Files and STASH:/NET: point to it; the web app says "Tick Read in Transfer on X" / "Read is
+  off in Transfer" (old words still recognised). tools/receive/README.md and the disk ReadMe were updated by Transfer 2.7.
+- e2e help keyboard test was failing every run (Enter before hydration) -- fixed 6b62a3c5.
+- A500 bench PASSED (Workbench 3.1, board 1.23.1): Transfer+Transfer.info in SYS:WBStartup start with Workbench (no "has
+  not yet returned"), listen before the interface is up (Roadshow's library opens on demand) and connect once
+  `AddNetInterface eth0` runs; close gadget hides, Ctrl-Alt-W shows; a 391 KB Replace onto Ram Disk:Keep.txt, Write
+  unticked at 16 % -> failed "writing is off in Transfer", Keep.txt still 24 B, no temp left; a 0-byte file arrives.
+  Exchange and the CX_POPUP=NO hidden start were checked in FS-UAE only (2.04/3.1/3.2).
+- FOUND on the bench (board side, investigation branch fix/fw-send-stalls): (A) a file queued while the Amiga's network
+  was down is not offered after Transfer reconnects until the queue changes again (a send_version bump released it);
+  (B) a lost delivery acknowledgement made the board send the same transfer again -> a duplicate Transfer27_2.
+- A500 state left: SYS:WBStartup/Transfer(+.info) (2.7, starts with Workbench -- remove if unwanted), SYS:Downloads/
+  Transfer(+.info), Ram Disk:Keep.txt and Empty.txt; Transfer 2.6 no longer running.
 **Server/web step detail (was: branch feat/net-writes-web):**
 Spec docs/superpowers/specs/2026-10-31-net-volumes-writes-design.md, plan docs/superpowers/plans/2026-10-31-net-writes-web.md
 (rulings W1-W13 and the ledger there). **Migration 0054 (drizzle/0054_net_writes.sql) -- NOT yet applied to production:
