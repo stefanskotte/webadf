@@ -1519,7 +1519,7 @@ next-disk button, activity LED, DF0 passthrough).
 (5) **Firmware state:** the bench board runs the released 1.23.1 (seq 130, 2026-11-01); no TEST build is installed.
 (6) **Open, not scheduled:** HD bench leftovers (rev B WDATA retest, steps
 4-7); layered disks (never designed).
-(7) **Any network card, not just PaulaNET (operator, 2026-11-01; not designed).** Transfer on an Amiga with its own
+(7) **Any network card, not just PaulaNET (operator, 2026-11-01; PARKED by the operator the same day, not designed).** Transfer on an Amiga with its own
 interface (ZZ9000, IDE-CP-LAN, the C= Ethernet card, Ariadne, ...): sending both ways and NET: volumes without the board's DF1
 path. The operator's idea: a new "Network card" device type in the web app. Today the board learns the Amiga's
 address from the PaulaNET sorter (device_client.h `amiga_ip`, devices.net_amiga_ip) and connects to Transfer's TCP
