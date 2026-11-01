@@ -1519,6 +1519,18 @@ next-disk button, activity LED, DF0 passthrough).
 (5) **Firmware state:** the bench board runs the released 1.23.1 (seq 130, 2026-11-01); no TEST build is installed.
 (6) **Open, not scheduled:** HD bench leftovers (rev B WDATA retest, steps
 4-7); layered disks (never designed).
+(7) **Any network card, not just PaulaNET (operator, 2026-11-01; not designed).** Transfer on an Amiga with its own
+interface (ZZ9000, IDE-CP-LAN, the C= Ethernet card, Ariadne, ...): sending both ways and NET: volumes without the board's DF1
+path. The operator's idea: a new "Network card" device type in the web app. Today the board learns the Amiga's
+address from the PaulaNET sorter (device_client.h `amiga_ip`, devices.net_amiga_ip) and connects to Transfer's TCP
+6800 over the PaulaNET local path (amiga_send.h). Two shapes, to settle in brainstorming:
+(a) **board present, Amiga on its own card** -- the board reaches Transfer over Wi-Fi at the Amiga's LAN address
+(entered, or announced by Transfer) instead of over DF1; DF1 stays free for a real drive. Mostly firmware and a
+setting; Transfer and the protocol are unchanged.
+(b) **no board at all ("Network card" device)** -- Transfer talks to the server itself, with its own pairing and key.
+The hard part is the server end: our server is HTTPS-only (Vercel: no raw TCP), so Transfer needs TLS on the Amiga
+(AmiSSL; slow on a 68000) or a relay; it also needs a device row with no drives, and the Devices, Files and Send UI
+without a board. Self-host parity applies: a self-hoster on the LAN could take plain TCP.
 **Closed 2026-10-28 (operator):** B10 -- the board works on the A4000D too; the 128x64 setup screen was confirmed
 by a user.
 **§4-files. FILES SHIPPED — 2026-10-29 (merge ef711fb).** Spec docs/superpowers/specs/2026-10-29-files-manager-design.md,
