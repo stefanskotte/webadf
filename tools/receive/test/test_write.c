@@ -701,8 +701,11 @@ static void writing_off_mid_replace_keeps_the_old_file(void) {
     feedn(data, 20000); drain();
     Q.write = 0; rx_switch_changed(&S);
     CHECK(!has("Work:" RX_TMP_NAME), "the temporary file goes at once");
-    { long w = F.written; feedn(data + 20000, 19999); drain(); CHECK(ob_n == 0, "nothing answered before the last byte");
-      CHECK(F.written == w, "nothing written after the switch"); }
+    { long w = F.written; int n0 = n_ev, k, progress = 0;
+      feedn(data + 20000, 19999); drain(); CHECK(ob_n == 0, "nothing answered before the last byte");
+      CHECK(F.written == w, "nothing written after the switch");
+      for (k = n0; k < n_ev; k++) if (ev[k].kind == RX_EV_PROGRESS) progress++;
+      CHECK(progress == 0, "no progress for a file already stopped (review minor 6)"); }
     feedn(data + 39999, 1); drain();
     CHECK(strcmp(ob, "ERR r readonly writing is off in Transfer\n") == 0, ob);
     CHECK(holds("Work:Keep.txt", "old") && !has("Work:" RX_TMP_NAME), "the old file untouched");

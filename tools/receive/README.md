@@ -16,6 +16,9 @@ TCP/IP stack had too little left to send a 1000-entry listing. Transfer waits ou
 instead of dropping the connection. Transfer 2.5 adds 7.4 KB of code (50,016 B) and 1,396 B of fixed buffers (BSS
 25,188 B) to 2.4's, measured from the hunks; the Shell stack stays 8 KB (a drawer delete keeps its place in one path,
 with no recursion). Transfer 2.6 adds 956 B of code (50,972 B) and 320 B of fixed buffers (BSS 25,508 B), and no stack.
+Transfer 2.7 (the commodity, the menu, the icon's tool types, the stopped copy) adds 3,240 B of code (54,212 B), 84 B
+of data (396 B) and 96 B of BSS (25,604 B); the Shell form opens no new library. commodities.library is opened only
+by the window (and icon.library only for a moment, to read the tool types).
 
 ## Using it
 
@@ -30,7 +33,8 @@ with no recursion). Transfer 2.6 adds 956 B of code (50,972 B) and 320 B of fixe
   connection; the status says *Disabled in Exchange*); **Enable** listens again. A second start (a double-click, or
   `Transfer GUI`) only shows the running one's window; files given to that second start are not queued (drop them on
   the window instead); from a Shell it prints `Transfer is already running: its window is shown`. Without
-  `commodities.library` the window works as before 2.7 (closing it stops Transfer) and says so once in the status line.
+  `commodities.library` (or without memory for the broker) the window works as before 2.7 (closing it stops Transfer)
+  and, once it listens, the status line says `No Exchange: closing the window stops Transfer`.
   The Shell form (no `GUI`) is no commodity and opens no library it did not open before.
 - **In WBStartup:** copy `SYS:Tools/Transfer` and `Transfer.info` to `SYS:WBStartup`. Its icon's tool types:
   `DONOTWAIT` (Workbench does not wait for it), `CX_POPUP=YES|NO` (`NO`: start with the window hidden),

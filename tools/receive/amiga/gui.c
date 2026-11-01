@@ -524,7 +524,8 @@ int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int 
         rc = RETURN_OK; goto out;
     }
     G->has_cx = k == 0;
-    if (!G->has_cx) G->note = "No commodities.library: running without Exchange";
+    /* any broker failure (no commodities.library, or no memory for it): review minor 2 */
+    if (!G->has_cx) G->note = "No Exchange: closing the window stops Transfer";
     else if (cx_hotkey_bad()) G->note = "Hotkey not understood (CX_POPKEY): none set";
     new_list(&G->list);
     G->ctx = &ctx; G->fs = &fs; G->s = s; G->q = &q; G->ui = &ui;

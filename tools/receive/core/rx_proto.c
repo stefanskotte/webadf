@@ -1143,7 +1143,7 @@ int rx_feed(rx_session *s, const unsigned char *data, unsigned long n) {
             s->cur_left -= take; data += take; n -= take;
             {
                 unsigned long done = s->cur_size - s->cur_left;
-                if (s->cur_left && done / PROGRESS_STEP > s->cur_mark) {
+                if (s->cur_left && !s->cur_off && done / PROGRESS_STEP > s->cur_mark) {   /* a stopped file shows none */
                     s->cur_mark = done / PROGRESS_STEP;
                     emit(s, RX_EV_PROGRESS, s->cur_id, s->cur_path, s->cur_size, done, 0);
                 }
