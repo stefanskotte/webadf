@@ -1493,10 +1493,15 @@ help topic aa7090f2, send stalls + Transfer 2.8 + disk 184ca84b). Nothing open o
 (1b) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there. The two
 operator backlog items are SHIPPED 2026-11-01 (fc3aa195): a click on a pane's left edge goes up one level (Directory Opus;
 at a root nothing; lg and up only, the mouse's shortcut beside ↑), and History wears a caret (▾ closed, ▴ open).
-(2) **Sharing follow-ups:** A500 bench of the first-write rule and Send to Amiga from a remote disk end to end -- BLOCKED
-on the operator: adding a remote library to the operator's org was refused by the permission layer (2026-11-01); a
-throwaway owner (t-1793535884887-727850@example.test, title "Share Bench", one ShareBench FFS disk, share "A500 bench",
-everything) is waiting on production for it, set up by an untracked .bench/ (no teardown); remove both afterwards. The
+(2) **Sharing follow-ups:** A500 bench PASSED 2026-11-01 (Webfloppy1, Transfer 2.8, fw 1.23.1): a throwaway owner on
+production shared "Share Bench" (FFS: ReadMe, S/) with the operator's org (the operator pressed Add library: the
+permission layer refuses that click to the agent). Send .adf to Amiga from the remote title delivered
+"Share Bench (Disk 1).adf", 901,120 B, into SYS:Downloads (~70 s once eth0 was up). Mount put the owner's bytes
+(e903e189) in DF0; the A500 copied FromA500.txt onto DF0:; the first write made the operator's own title "Share Bench"
+(copied_from "<owner>'s library", no remote link, sha 39e30444 = ReadMe, S, FromA500.txt) and left the owner's disk at
+e903e189. Cleaned up: ejected (DF0 empty, as before), own copy deleted, remote library removed, owner removed by the
+e2e teardown; 0 remote libraries / shares / copies left. Note: the A500 does not run AddNetInterface at boot -- after
+a reset the board reports Transfer unreachable (send_rx u) until `AddNetInterface eth0` is typed. The
 one-off local remote-mount 404: NOT reproduced (6 local runs of sharing + sharing-owner, all green); its three 404 sources
 are the library, the board's team, and the owner's not_shared; the spec prints the body when it recurs. OMV back to
 `latest`: waits on the next web-* release (none since web-1.1.0, 2026-10-16). The sharing deferred minors: NOT
