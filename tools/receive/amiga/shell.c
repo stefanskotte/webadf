@@ -80,7 +80,7 @@ static int send_rc(void) { return sh.ok == sh.asked ? RETURN_OK : sh.ok ? RETURN
 
 int shell_main(const char *dir, STRPTR *send, int trust, int browse, int write) {
     static afs_ctx ctx; static rx_fs fs;
-    net_ui ui = { NULL, sh_event, sh_status, 0, sh_signal, sh_pass, NULL };
+    net_ui ui = { NULL, sh_event, sh_status, 0, sh_signal, sh_pass, NULL, NULL };
     char key[RX_KEY_HEX + 8];
     LONG args[2];
     int i, rc;

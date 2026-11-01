@@ -14,7 +14,7 @@
 #include "config.h"
 #include "ui.h"
 
-static const char version[] = "$VER: Transfer 2.6 (01.11.2026) webadf";
+static const char version[] = "$VER: Transfer 2.7 (01.11.2026) webadf";
 
 /* Shell and Workbench starts often give 4 KB of stack; the window, asl and dos calls nest deeper than that. Below the
    mode's size, run on a stack of our own (exec StackSwap, V37). Everything used across the swap is file-static. The
@@ -25,6 +25,7 @@ static const char version[] = "$VER: Transfer 2.6 (01.11.2026) webadf";
 static char dir[256];
 static int want_gui, want_trust, rc_swapped, browse, write_on;
 static STRPTR *send_files;
+static cx_opts cxo;   /* the window's commodity options (Transfer 2.7): tooltypes on a Workbench start */
 static struct WBArg *wb_args;
 static long wb_n;
 static APTR stack_mem;
@@ -37,7 +38,7 @@ static int is_word(const char *s, const char *w) {
 }
 
 static int run(void) {
-    return want_gui ? gui_main(dir, wb_args, wb_n, send_files, want_trust, browse, write_on)
+    return want_gui ? gui_main(dir, wb_args, wb_n, send_files, want_trust, browse, write_on, &cxo)
                     : shell_main(dir, send_files, want_trust, browse, write_on);
 }
 
@@ -62,9 +63,13 @@ int main(int argc, char **argv) {
     struct RDArgs *rd;
     int rc, want_receive, want_browse, want_write;
     (void)version;
+    cx_defaults(&cxo);
     if (argc == 0) {   /* Workbench start: libnix passes the WBStartup message as argv */
         struct WBStartup *wb = (struct WBStartup *)argv;
-        cfg_load(dir, sizeof dir); want_gui = 1; browse = cfg_browse_load(); write_on = browse && cfg_write_load();
+        cfg_load(dir, sizeof dir); want_gui = 1;
+        /* CX_POPUP, CX_POPKEY, CX_PRIORITY and TO (this run only, as the Shell's TO) from Transfer's icon */
+        if (wb && wb->sm_NumArgs > 0) cx_tooltypes(&wb->sm_ArgList[0], &cxo, dir, sizeof dir);
+        browse = cfg_browse_load(); write_on = browse && cfg_write_load();
         if (wb && wb->sm_NumArgs > 1) { wb_args = wb->sm_ArgList + 1; wb_n = wb->sm_NumArgs - 1; }   /* [0] is Transfer */
         return run_with_stack();
     }
@@ -72,6 +77,7 @@ int main(int argc, char **argv) {
     if (!rd) { PrintFault(IoErr(), (STRPTR)"Transfer"); return RETURN_FAIL; }
     if (args[0]) { strncpy(dir, (const char *)args[0], sizeof dir - 1); } else cfg_load(dir, sizeof dir);
     want_gui = args[2] != 0;
+    cxo.shell = 1;
     send_files = (STRPTR *)args[3];
     want_trust = args[4] != 0;
     want_receive = args[5] != 0;

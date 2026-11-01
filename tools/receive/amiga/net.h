@@ -14,6 +14,8 @@ typedef struct net_ui {             /* the front end's hooks */
     int (*on_signal)(void *u, ULONG sigs);            /* 1 = quit */
     int (*on_pass)(void *u, rx_session *s, int connected);   /* each pass; 1 = quit; NULL: never */
     void (*on_link)(void *u, int connected);          /* the board connected (1) or went (0); NULL: nothing */
+    /* Transfer 2.7: 1 while Exchange has Transfer disabled: no connection and no listener; NULL: never */
+    int (*off)(void *u);
 } net_ui;
 int net_run(net_ui *ui, afs_ctx *ctx, rx_fs *fs, rx_session *s, rx_upq *q); /* returns when asked to quit; 0 ok, -1 no listen */
 #endif
