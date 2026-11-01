@@ -1532,7 +1532,7 @@ Next-card re-taps); this line was stale -- reopen only with a new report on 1.23
 (own RP2350 + antenna port, LWB+ breadboard test when the Mouser parts arrive, keyed I2C + display FFC connectors,
 next-disk button, activity LED, DF0 passthrough).
 (4b) **Field benchmarks (Pillock, Discord WifiFloppy thread, 2026-11-01 21:20; his numbers, not ours):**
-A500 / 68030 / 6 MB (LZ4 both ways), board on 1.23.1:
+A500 / 68030 / 2 MB chip + 4 MB fast (LZ4 both ways), board on 1.23.1:
 | Transfer | Size | Time | Rate |
 |---|---|---|---|
 | Monkey disk02.lec STASH: -> Amiga | 821 KB | 71 s | ~11.6 KB/s |
@@ -1543,10 +1543,18 @@ A500 / 68030 / 6 MB (LZ4 both ways), board on 1.23.1:
 Notable: on his 030 the Amiga->web direction is ~1.6-1.7x FASTER than web->Amiga, the opposite of the 68000
 expectation; and every rate is far below the ~45 KB/s link figure in docs/amiga-networking.md -- web->Amiga is
 paced per file by the board's HTTPS fetch + the send window, worth a measurement. He offered to time the same set
-on his A600 / 68000 / 2 MB for comparison (only LZ4 down there). Same thread, his other asks (relayed, not acted on):
+on his A600 / 68000 / 2 MB for comparison (only LZ4 down there). His A600 (68000, 2 MB chip, NO fast) so far:
+STASH: -> Amiga 821 KB in 127 s (~6.5 KB/s, 1.8x the 030); LIBRARY: -> Amiga 821 KB in **381 s** (~2.2 KB/s, 3x
+its own STASH: run of the same size, 5.6x the 030) -- he will re-run it. A chip-RAM-only 68000 is also what Chris
+(A600, 2 MB chip, no fast) runs, whose uploads stalled for minutes once (2026-11-01, not reproduced on our A500).
+Worth a measurement on a chip-only machine: why LIBRARY: -> Amiga differs from STASH: -> Amiga there and not on
+the 030. He confirmed Transfer shows in Commodities Exchange and obeys Show/Hide. Same thread, his other asks
+(relayed, not acted on):
 Files "Select All" in the pane bar gap; treat a LIBRARY: title's disks as folders so all files of Monkey Island 1-4
 copy into Monkey1-4 drawers on the Amiga; "Save files to" set to an HD partition yet a "Send files to the Amiga"
-file landed in RAM: (check: was Save pressed after Choose…? Transfer keeps the folder only after Save).
+file landed in RAM: -- confirmed: he used Choose… and did not press Save. FIXED in Transfer 2.9 (a chosen or typed
+folder is saved at once; driver disk e427a3d7, 2026-11-01). His Makedir drawer-icon ask is SHIPPED the same night
+(fw 1.24.0 seq 131 RELEASED / fw-1.24.0, Transfer 2.9, protocol 6; A500 bench: icon written, shows on Workbench).
 (5) **Firmware state:** the bench board runs the released 1.23.1 (seq 130, 2026-11-01); no TEST build is installed.
 (6) **Open, not scheduled:** HD bench leftovers (rev B WDATA retest, steps
 4-7); layered disks (never designed).
