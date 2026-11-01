@@ -1521,7 +1521,8 @@ library-a3 57/87, library-paging 161, library-table 231, mobile 493, c8-drive-me
 nfc-fob-button 88/183); help.spec now passes. FIXED 73847fff (merge): 15 were tests racing hydration or the
 streamed library (helpers.openTitleMenu and the drag/cover specs now wait); drive-chips 400/409 was a real stale
 first-paint pill estimate (317/394 -> 387/463 since Remote joined the nav); also found and fixed C8-05 (Next->Eject
-focus lost to the Popover's second restore-focus, 4/5 failing on master). STILL OPEN, needs an operator ruling:
+focus lost to the Popover's second restore-focus, 4/5 failing on master). C8-17 RULED 2026-11-01 (operator: tighter tabs) and FIXED: .nav-tabs .seg-item padding 9 px for lg..xl
+(globals.css), c8-drive-menu + drive-chips 35/35; c5-layout's help counts were stale (22 topics), fixed. Was:
 c8-drive-menu C8-17 (:462, :488) -- since Remote joined the nav the pill no longer fits between lg and xl
 (1009 px layout: 324 px lane vs 387 px pill; 1100 with Admin: 415 vs 463), so it scrolls and clips a tab. Options:
 narrower .seg-item padding lg..xl, Remote into More lg..xl, or a narrower search lg..xl. The chipSlots comment in
