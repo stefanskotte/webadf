@@ -1531,6 +1531,22 @@ src/lib/drive-chips.ts still assumes the old pill width.
 Next-card re-taps); this line was stale -- reopen only with a new report on 1.23.1. Rev C
 (own RP2350 + antenna port, LWB+ breadboard test when the Mouser parts arrive, keyed I2C + display FFC connectors,
 next-disk button, activity LED, DF0 passthrough).
+(4b) **Field benchmarks (Pillock, Discord WifiFloppy thread, 2026-11-01 21:20; his numbers, not ours):**
+A500 / 68030 / 6 MB (LZ4 both ways), board on 1.23.1:
+| Transfer | Size | Time | Rate |
+|---|---|---|---|
+| Monkey disk02.lec STASH: -> Amiga | 821 KB | 71 s | ~11.6 KB/s |
+| Monkey disk03.lec LIBRARY: -> Amiga | 821 KB | 68 s | ~12.1 KB/s |
+| Monkey disk03.lec Amiga -> STASH: | 821 KB | 42 s | ~19.5 KB/s |
+| GCODE file PC -> Amiga (Send files) | 2 MB | 143 s | ~14.3 KB/s |
+| GCODE file Amiga -> STASH: | 2 MB | 88 s | ~23.3 KB/s |
+Notable: on his 030 the Amiga->web direction is ~1.6-1.7x FASTER than web->Amiga, the opposite of the 68000
+expectation; and every rate is far below the ~45 KB/s link figure in docs/amiga-networking.md -- web->Amiga is
+paced per file by the board's HTTPS fetch + the send window, worth a measurement. He offered to time the same set
+on his A600 / 68000 / 2 MB for comparison (only LZ4 down there). Same thread, his other asks (relayed, not acted on):
+Files "Select All" in the pane bar gap; treat a LIBRARY: title's disks as folders so all files of Monkey Island 1-4
+copy into Monkey1-4 drawers on the Amiga; "Save files to" set to an HD partition yet a "Send files to the Amiga"
+file landed in RAM: (check: was Save pressed after Choose…? Transfer keeps the folder only after Save).
 (5) **Firmware state:** the bench board runs the released 1.23.1 (seq 130, 2026-11-01); no TEST build is installed.
 (6) **Open, not scheduled:** HD bench leftovers (rev B WDATA retest, steps
 4-7); layered disks (never designed).
