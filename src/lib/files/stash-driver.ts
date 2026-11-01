@@ -131,7 +131,6 @@ function crumbsOf(shown: readonly string[]): Crumb[] {
 
 function marksOf(row: StashRow): string[] {
   const marks: string[] = [];
-  if (row.source === 'amiga' && row.deviceName) marks.push(`from ${row.deviceName}`);
   // R8 (increment 4): a file from a drop on this page or a pasted URL; a copy from a disk or an archive says nothing.
   if (row.source === 'browser') marks.push('dropped');
   if (row.status === 'receiving') marks.push(`arriving ${row.sizeBytes ? Math.min(99, Math.floor((row.receivedBytes * 100) / row.sizeBytes)) : 0}%`);

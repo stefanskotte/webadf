@@ -539,7 +539,7 @@ export const HELP_TOPICS = {
   // Sources: Files spec 2026-10-29 §4.2-§4.3, §5; increment 2 rulings (STASH: keeps no versions, archives stay one file
   // and open read-only), increment 3 rulings R1-R8 (NET: rows, Delete cancels or clears, no move into NET:, the key on
   // the board's row), increment 4 R8 (the "dropped" mark); stash-drop-zone.tsx (the zone's title, Paste a URL),
-  // stash-driver.ts (marks: from <board>, dropped; "kept 30 days"), net-driver.ts (boards on XFER_FW, `key ABCD`),
+  // stash-driver.ts (marks: dropped, no board mark since 2026-11-01; "kept 30 days"), net-driver.ts (boards on XFER_FW, `key ABCD`),
   // amiga-upload-limits.ts (500 files, 256 MB, 30 days, 4 MB), stash-paths.ts (20 MB), send-limits.ts (4 MB, 32, 16 MB);
   // net-driver.ts remove (Delete cancels a waiting or sending row), stash url/route.ts (a pasted URL is source 'browser').
   'stash-net': {
@@ -549,8 +549,8 @@ export const HELP_TOPICS = {
       <>
         <p>
           <strong>STASH:</strong> Drop files, folders, .lha or .zip on <em>Drop files into STASH:</em>, or paste a URL.
-          Files your Amiga sends with Transfer land here too, marked with the board; files you dropped or fetched from a
-          pasted URL are marked <em>dropped</em>. Make folders, rename, protect and comment as on a disk.
+          Files your Amiga sends with Transfer land here too; files you dropped or fetched from a pasted URL are marked
+          <em>dropped</em>. Make folders, rename, protect and comment as on a disk.
         </p>
         <p>
           <strong>Archives.</strong> An .lha or .zip stays one file. <em>Open</em> shows what is inside, read-only; copy
@@ -661,7 +661,7 @@ export const HELP_TOPICS = {
   'from-amiga': {
     title: 'Files from the Amiga',
     short:
-      'Send files from your Amiga to the web app with Transfer. They land in STASH: on the Files page, marked with the board, where you can download them, add disk images to your library, copy them onto a disk or send them on.',
+      'Send files from your Amiga to the web app with Transfer. They land in STASH: on the Files page, where you can download them, add disk images to your library, copy them onto a disk or send them on.',
     body: (
       <>
         <p>

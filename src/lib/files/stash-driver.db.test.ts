@@ -56,7 +56,7 @@ beforeAll(async () => {
 afterAll(async () => { await closeDb(); await admin(`drop database if exists ${DB} with (force)`); });
 
 describe('STASH: listing', () => {
-  it("marks files dropped from the computer 'dropped', copies and folders nothing, Amiga files their board (R8)", async () => {
+  it("marks files dropped from the computer 'dropped', copies and folders nothing, Amiga files no board mark (R8; the operator dropped it 2026-11-01)", async () => {
     await insertStash(getDb(), 'o1', 'copy', [{ path: 'Copied.txt', kind: 'file', sha256: await put(enc('c')), sizeBytes: 1,
       date: new Date(Date.UTC(2020, 0, 2)), protection: 0, comment: '' }]);
     const l = (await stashDriver.list(ctx, P('STASH:')))!;
@@ -64,7 +64,7 @@ describe('STASH: listing', () => {
     expect(marks('ReadMe')).toEqual(['dropped']);
     expect(marks('Copied.txt')).toEqual([]);
     expect(marks('Mods')).toEqual([]);
-    expect(marks('Broken.txt')[0]).toBe('from A500 bench');
+    expect(marks('Broken.txt')).not.toContain('from A500 bench');
   });
 
   it('lists the root: folders, files and an archive, with protection, comment and the limit line', async () => {
@@ -76,13 +76,13 @@ describe('STASH: listing', () => {
     expect([l.writable, l.disk, l.crumbs]).toEqual([true, null, [{ label: 'STASH:', path: 'STASH:' }]]);
     expect(l.meta).toMatch(/of 256 MB · kept 30 days/);
   });
-  it('marks a file still arriving with the board and its progress, and a failed one with why', async () => {
+  it('marks a file still arriving with its progress, and a failed one with why; the board is not a mark', async () => {
     const l = (await stashDriver.list(ctx, P('STASH:/mods')))!;
-    expect(l.entries.find((e) => e.name === 'arriving.mod')!.marks).toEqual(['from A500 bench', 'arriving 45%']);
+    expect(l.entries.find((e) => e.name === 'arriving.mod')!.marks).toEqual(['arriving 45%']);
     expect(l.crumbs).toEqual([{ label: 'STASH:', path: 'STASH:' }, { label: 'Mods', path: 'STASH:/Mods' }]);
     expect(l.meta).toBe('0 folders · 2 files');
     const root = (await stashDriver.list(ctx, P('STASH:')))!;
-    expect(root.entries.find((e) => e.name === 'Broken.txt')!.marks).toEqual(['from A500 bench', 'failed — damaged on the way: send it again']);
+    expect(root.entries.find((e) => e.name === 'Broken.txt')!.marks).toEqual(['failed — damaged on the way: send it again']);
   });
   it('opens an archive as a read-only folder with the dates it records', async () => {
     const l = (await stashDriver.list(ctx, P('STASH:/t.zip/src')))!;

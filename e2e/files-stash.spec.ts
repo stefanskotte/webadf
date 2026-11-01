@@ -287,14 +287,14 @@ test('an archive opens read-only and a file copies out of it with its date', asy
   expect(at(await storedRoot(d.diskId), 'readme.txt')!.sizeBytes).toBe(135);
 });
 
-test('a file from the Amiga lands in STASH: with its board', async ({ page, request }) => {
+test('a file from the Amiga lands in STASH:, with no board mark', async ({ page, request }) => {
   await signUpFresh(page);
   const { token } = await pairDevice(page, request, 'Bench');
   await boardSays(request, token);
   await boardUploads(request, token, 'Up/hi.txt', Buffer.from('hi'));
   await openStash(page);
   await row(page, 'Up').dblclick();
-  await expect(row(page, 'hi.txt')).toContainText('from Bench');
+  await expect(row(page, 'hi.txt')).not.toContainText('from Bench');
   await expect(row(page, 'hi.txt').locator('td:nth-child(3)')).toHaveText('2 B');
 });
 

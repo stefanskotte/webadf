@@ -85,7 +85,7 @@ and why. **Delete** on a waiting or sending file cancels it, and on a finished o
 ## Sending files from the Amiga
 
 Drop files or drawers on Transfer's window, press **Send…**, or type `Transfer SEND DH0:file` in a Shell. They land in
-**STASH:** on the Files page, marked with the board. From there you can download them, copy them onto a disk, send them
+**STASH:** on the Files page. From there you can download them, copy them onto a disk, send them
 on, or, for a disk image, **Add to library**.
 
 - Up to 4 MB a file. STASH: holds up to 500 files or 256 MB for your organization, and keeps each file 30 days.
