@@ -14,6 +14,8 @@ import { LiveRefresh } from "@/components/shell/live-refresh";
 import { DriveChips } from "@/components/shell/drive-chips";
 import { HeaderStart } from "@/components/shell/header-start";
 import { driveChips } from "@/lib/drive-chips";
+import { JobsProvider } from "@/components/shell/jobs-provider";
+import { TransfersPanel } from "@/components/shell/transfers-panel";
 
 export default async function AppLayout({
   children,
@@ -45,7 +47,7 @@ export default async function AppLayout({
   // LiveRefresh keeps them exactly as fresh as the Devices page.
   const chips = driveChips(liveRows, now);
   return (
-    <>
+    <JobsProvider>
       <LiveRefresh initial={fingerprint} />
       {/* The bottom padding is the room the fixed tab bar occupies below lg (see the wrapper below). It lives here,
           once, rather than on each page: every page under this layout is behind that bar, and a page that forgot the
@@ -122,6 +124,8 @@ export default async function AppLayout({
         </header>
         {children}
       </div>
-    </>
+      {/* The progress panel (spec 2026-11-01-progress-panel): every page, from the jobs store above. */}
+      <TransfersPanel />
+    </JobsProvider>
   );
 }
