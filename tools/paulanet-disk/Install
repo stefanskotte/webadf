@@ -32,6 +32,22 @@ If WARN
   Skip NOTRANSFER
 EndIf
 Echo "Copied Transfer to SYS:Tools and C:."
+; A Transfer started with Workbench is updated too, or an old one keeps
+; starting from SYS:WBStartup. Its icon is replaced only when it lacks
+; DONOTWAIT (an icon from before Transfer 2.7, without which Workbench asks
+; whether to wait for it); an icon with the owner's own tool types stays.
+If EXISTS SYS:WBStartup/Transfer
+  Copy PaulaNET:Transfer SYS:WBStartup/ CLONE QUIET
+  If WARN
+    Echo "Could not update SYS:WBStartup/Transfer."
+  Else
+    Search >NIL: SYS:WBStartup/Transfer.info DONOTWAIT QUIET
+    If WARN
+      Copy PaulaNET:Transfer.info SYS:WBStartup/ CLONE QUIET
+    EndIf
+    Echo "Updated Transfer in SYS:WBStartup."
+  EndIf
+EndIf
 If EXISTS SYS:Tools/Receive
   Delete SYS:Tools/Receive QUIET
 EndIf

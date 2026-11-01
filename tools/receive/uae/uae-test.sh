@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Boots FS-UAE with Transfer and runs the shared scenarios against it through bsdsocket emulation (the Amiga's
-# listen on 6800 is the Mac's port 6800). Usage: uae-test.sh 204|31|32 [shell|gui|space|ram|send|browse|write|flip|icon|cx]
+# listen on 6800 is the Mac's port 6800). Usage: uae-test.sh 204|31|32 [shell|gui|space|ram|send|browse|write|flip|icon|cx|install]
 # flip, icon and cx (Transfer 2.7) drive the Amiga with poke (uae/poke.c) and save screenshots in WEBADF_SHOTS (default:
 # the run's folder).
 # Never pattern-kills: stops only the FS-UAE PID it started.
@@ -19,7 +19,7 @@ case "$ks" in
        # its Modules disk (copied into Work:Libs below), and a 3.1 Workbench has none.
        wb="${WEBADF_WB32:-$HOME/Downloads/workbench-3.2-adf/Workbench3.2.adf}"
        modules="${WEBADF_MOD32:-$HOME/Downloads/workbench-3.2-adf/ModulesA500_3.2.adf}";;
-  *) echo "usage: uae-test.sh 204|31|32 [shell|gui|space|ram|send|browse|write|flip|icon|cx]"; exit 2;;
+  *) echo "usage: uae-test.sh 204|31|32 [shell|gui|space|ram|send|browse|write|flip|icon|cx|install]"; exit 2;;
 esac
 [ -f "$rom" ] || { echo "FAIL: no Kickstart ROM at $rom"; exit 1; }
 [ -f "$wb" ] || { echo "FAIL: no Workbench disk at $wb"; exit 1; }
@@ -46,6 +46,7 @@ tools_out="$work/hd/Transfer"
 if [ -n "${WEBADF_TRANSFER:-}" ]; then cp "$WEBADF_TRANSFER" "$tools_out"; else "$repo/tools/receive/build.sh" "$tools_out" >/dev/null; fi
 target='Work:Out'; df0=''
 shots="${WEBADF_SHOTS:-$work}"
+say() { [ -e "$work/hd/$1" ] || { echo "(no $1)"; return 0; }; tr -d '\r' < "$work/hd/$1" | tr '\n' ' ' | sed 's/ *$//'; }
 # Transfer 2.7's modes: poke drives the Amiga (keys typed on the Mac never reach FS-UAE's Amiga, measured 2026-11-01).
 case "$mode" in flip|icon|cx)
   img=stefanreinauer/amiga-gcc@sha256:cafc64bc34a5450d858cf27d6f399222bed241fced3c093123b9ec764a82f26f
@@ -133,6 +134,20 @@ if [ "$mode" = write ]; then
     + write "$work/x1" Stuck/a + write "$work/x1" Stuck/b + write "$work/x1" Stuck/locked \
     + protect Locked rwe + protect Stuck/locked rwe >/dev/null
   df0="$work/prot.adf"; df2="$work/full.adf"; fdc=3
+fi
+if [ "$mode" = install ]; then
+  # The driver disk's Install against an existing SYS:WBStartup/Transfer: (A) an old Transfer and an icon without
+  # DONOTWAIT, both replaced; (B) an old Transfer and the owner's icon with DONOTWAIT, the icon kept; (C) none, none made.
+  mkdir -p "$work/hd/Disk" "$work/hd/Devs" "$work/hd/C" "$work/hd/WBStartup" "$work/hd/fixB"
+  # WEBADF_INSTALL=<file>: run that Install script (an older one, say) instead of this tree's.
+  cp "${WEBADF_INSTALL:-$repo/tools/paulanet-disk/Install}" "$work/hd/Disk/Install"
+  cp "$tools_out" "$repo/tools/receive/dist/Transfer.info" "$work/hd/Disk/"
+  printf 'driver' > "$work/hd/Disk/PaulaNET.device"
+  printf 'old' > "$work/hd/WBStartup/Transfer"; printf 'old' > "$work/hd/fixB/Transfer"
+  python3 -I "$repo/tools/receive/icon/make_transfer_icon.py" "$repo/tools/receive/icon/transfer-icon.txt" "$work/hd/WBStartup/Transfer.info" \
+    --tooltypes 'CX_POPUP=YES'
+  python3 -I "$repo/tools/receive/icon/make_transfer_icon.py" "$repo/tools/receive/icon/transfer-icon.txt" "$work/hd/fixB/Transfer.info" \
+    --tooltypes 'DONOTWAIT|CX_POPUP=NO'
 fi
 W='"WebFloppy - Receive & Send"'
 case "$mode" in
@@ -233,6 +248,31 @@ EOS
 DF1:C/LoadWB
 Run >NIL: Execute Work:steps
 EndCLI >NIL:";;
+  # Install ends with Ask, which reads the CLI's own input: the steps run in a CLI whose input is NIL:, where it
+  # returns at once (in the startup-sequence it would wait on the boot console).
+  install) cat > "$work/hd/steps" <<EOS
+FailAt 21
+Execute PaulaNET:Install
+Copy Work:WBStartup/Transfer Work:resA.bin
+Copy Work:WBStartup/Transfer.info Work:resA.info
+Copy Work:fixB/Transfer Work:WBStartup/Transfer
+Copy Work:fixB/Transfer.info Work:WBStartup/Transfer.info
+Execute PaulaNET:Install
+Copy Work:WBStartup/Transfer Work:resB.bin
+Copy Work:WBStartup/Transfer.info Work:resB.info
+Delete >NIL: Work:WBStartup/Transfer Work:WBStartup/Transfer.info QUIET
+Execute PaulaNET:Install
+If EXISTS Work:WBStartup/Transfer
+  Echo >Work:resC made
+Else
+  Echo >Work:resC none
+EndIf
+Echo >Work:done done
+EOS
+           run_line="DF1:C/Assign >NIL: SYS: Work:
+DF1:C/Assign >NIL: PaulaNET: Work:Disk
+DF1:C/Assign >NIL: DEVS: Work:Devs
+Run >NIL: <NIL: Execute Work:steps";;
   gui) run_line="DF1:C/Assign >NIL: SYS: DF1:
 DF1:C/LoadWB
 Run >NIL: Work:Transfer TO $target GUI BROWSE WRITE SEND Work:Up/Lemmings.adf Work:Up/Notes.txt";;
@@ -304,7 +344,7 @@ EOF
 pid=$!
 echo "fs-uae pid $pid, folder $work"
 rc=0
-if [ "$mode" != icon ] && [ "$mode" != cx ]; then   # icon and cx start Transfer later, from Workbench
+if [ "$mode" != icon ] && [ "$mode" != cx ] && [ "$mode" != install ]; then   # icon and cx start Transfer later; install never
 for _ in $(seq 1 90); do nc -z 127.0.0.1 6800 2>/dev/null && break; sleep 1; done
 nc -z 127.0.0.1 6800 || { echo "FAIL: Transfer never listened on 6800"; tail -20 "$work/fs-uae.log"; exit 1; }
 fi
@@ -364,6 +404,18 @@ case "$mode" in
       expect c11.log "" "Exchange Kill ends it"
       expect c12.log closed "its window with it"
       shot exchange;;
+  install) for _ in $(seq 1 180); do [ -e "$work/hd/done" ] && break; sleep 1; done
+           [ -e "$work/hd/done" ] || { echo "FAIL: the Install runs never finished"; rc=1; }
+           cmp -s "$work/hd/resA.bin" "$tools_out" && echo "PASS (A) an old WBStartup/Transfer is replaced" \
+             || { echo "FAIL (A) WBStartup/Transfer not replaced"; rc=1; }
+           cmp -s "$work/hd/resA.info" "$repo/tools/receive/dist/Transfer.info" && echo "PASS (A) an icon without DONOTWAIT is replaced" \
+             || { echo "FAIL (A) the icon without DONOTWAIT stayed"; rc=1; }
+           cmp -s "$work/hd/resB.bin" "$tools_out" && echo "PASS (B) the old Transfer is replaced" \
+             || { echo "FAIL (B) WBStartup/Transfer not replaced"; rc=1; }
+           cmp -s "$work/hd/resB.info" "$work/hd/fixB/Transfer.info" && echo "PASS (B) the owner's icon with DONOTWAIT is kept" \
+             || { echo "FAIL (B) the owner's icon was changed"; rc=1; }
+           [ "$(say resC)" = none ] && echo "PASS (C) no WBStartup/Transfer: none is made" || { echo "FAIL (C) got '$(say resC)'"; rc=1; }
+           cmp -s "$work/hd/Tools/Transfer" "$tools_out" && echo "PASS SYS:Tools/Transfer installed" || { echo "FAIL SYS:Tools/Transfer"; rc=1; };;
   write) echo "--- Delete Full:Hold.txt (held by Wait's own redirection): $(tr -d '\r' < "$work/hd/holddel.log" 2>/dev/null)"
          echo "--- Delete Full:Hold2.txt (Run's redirection): $(tr -d '\r' < "$work/hd/hold2del.log" 2>/dev/null)"
          # 3.2's Delete says "No file to delete" (its pattern match cannot Lock a file open for writing); older ones may

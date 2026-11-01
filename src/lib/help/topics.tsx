@@ -605,7 +605,8 @@ export const HELP_TOPICS = {
         </p>
         <p>
           <strong>Starting Transfer.</strong> Transfer 2.7 is a commodity: double-click its icon, or copy Transfer and
-          Transfer.info into SYS:WBStartup to start it with Workbench (with the tool type CX_POPUP=NO it starts hidden).
+          Transfer.info into SYS:WBStartup to start it with Workbench (with the tool type CX_POPUP=NO it starts hidden);
+          running <em>Install</em> again updates that copy too.
           Ctrl-Alt-W shows its window, the close gadget hides it, and Exchange shows, hides or quits it.
         </p>
         <GoodToKnow items={[
