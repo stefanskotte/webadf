@@ -290,14 +290,17 @@ export async function expireTransfers(db: Db, now = new Date()): Promise<{ expir
 /**
  * `cap` (NET: volumes): Transfer's protocol, browse and write flags from the poll's rxv/browse/write; a change counts
  * like a new rx. Writing is on only for protocol 4 with both switches (plan W2). A receiver state other than connected
- * clears browse and write (Transfer is gone; spec 2026-10-31 §4.3).
+ * clears browse and write (Transfer is gone; spec 2026-10-31 §4.3). `poll`: the report is the poll's -- there a connected
+ * receiver with no rxv is one the board gives no protocol for, which can neither browse nor write (plan
+ * 2026-11-01-net-consistency, item 12); a chunk's report (rx c, no cap) says only that Transfer is there.
  */
 export async function recordSendRx(
   db: Db, deviceId: string, rx: 'c' | 'r' | 'u' | '-', now = new Date(), cap?: { proto: number; browse: boolean; write?: boolean },
+  opts: { poll?: boolean } = {},
 ): Promise<void> {
   const flags: { rxProto?: number; browseOn: boolean; writeOn: boolean } | null = cap
     ? { rxProto: cap.proto, browseOn: cap.browse, writeOn: cap.proto >= 4 && cap.browse && cap.write === true }
-    : rx !== 'c' ? { browseOn: false, writeOn: false } : null;
+    : rx !== 'c' || opts.poll ? { browseOn: false, writeOn: false } : null;
   const capChanged = flags
     ? sql` or ${devices.browseOn} is distinct from ${flags.browseOn} or ${devices.writeOn} is distinct from ${flags.writeOn}${
       flags.rxProto !== undefined ? sql` or ${devices.rxProto} is distinct from ${flags.rxProto}` : sql``}`

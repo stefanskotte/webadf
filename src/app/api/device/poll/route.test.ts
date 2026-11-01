@@ -738,7 +738,7 @@ describe('GET /api/device/poll -- xfer (PaulaNET Phase 4: files sent to the Amig
     const { GET } = await import('./route');
     await GET(get('?since=1&xferAck=0&rx=c'));
     expect(recordSendRx).toHaveBeenCalledTimes(1);
-    expect(recordSendRx).toHaveBeenCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), undefined);
+    expect(recordSendRx).toHaveBeenCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), undefined, { poll: true });
     recordSendRx.mockClear();
     await GET(get('?since=1&xferAck=0&rx=zz'));
     expect(recordSendRx).not.toHaveBeenCalled();
@@ -777,9 +777,9 @@ describe('GET /api/device/poll -- req (NET: volumes, spec 2026-10-30 §3)', () =
     readPollTick.mockResolvedValue(baseTick({ sendVersion: 1 }));
     const { GET } = await import('./route');
     await GET(get('?since=1&xferAck=0&rx=c&rxv=3&browse=1'));
-    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 3, browse: true, write: false });
+    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 3, browse: true, write: false }, { poll: true });
     await GET(get('?since=1&xferAck=0&rx=c&rxv=2&browse=0'));
-    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 2, browse: false, write: false });
+    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 2, browse: false, write: false }, { poll: true });
     recordSendRx.mockClear();
     readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0 }));   // wakes at once, so no hold
     await GET(get('?since=1&rx=c&rxv=3&browse=1'));
@@ -790,7 +790,7 @@ describe('GET /api/device/poll -- req (NET: volumes, spec 2026-10-30 §3)', () =
     readPollTick.mockResolvedValue(baseTick({ sendVersion: 1 }));
     const { GET } = await import('./route');
     await GET(get('?since=1&xferAck=0&rx=c&rxv=4&browse=1&write=1'));
-    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 4, browse: true, write: true });
+    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 4, browse: true, write: true }, { poll: true });
     expect(failWritesWhenOff).not.toHaveBeenCalled();
     await GET(get('?since=1&xferAck=0&rx=c&rxv=4&browse=1&write=0'));
     expect(failWritesWhenOff).toHaveBeenCalledTimes(1);
@@ -801,7 +801,7 @@ describe('GET /api/device/poll -- req (NET: volumes, spec 2026-10-30 §3)', () =
     await GET(get('?since=1&xferAck=0&rx=u'));
     expect(failWritesWhenOff).toHaveBeenCalledTimes(2);
     await GET(get('?since=1&xferAck=0&rx=c&rxv=6&browse=1&write=1'));
-    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), undefined);
+    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), undefined, { poll: true });
   });
   // Spec 2026-10-31 §9: firmware 1.23.1 with Transfer 2.6 says rxv=5 (everything protocol 4 does, plus DELETE ... one).
   it('records protocol 5 with its write flag', async () => {
@@ -809,7 +809,7 @@ describe('GET /api/device/poll -- req (NET: volumes, spec 2026-10-30 §3)', () =
     const { GET } = await import('./route');
     failWritesWhenOff.mockClear();
     await GET(get('?since=1&xferAck=0&rx=c&rxv=5&browse=1&write=1'));
-    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 5, browse: true, write: true });
+    expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 5, browse: true, write: true }, { poll: true });
     expect(failWritesWhenOff).not.toHaveBeenCalled();
   });
 });

@@ -350,6 +350,17 @@ describe('transfers', () => {
   const writable = (d: string, on = true) => getDb().update(devices).set({ rxProto: 4, browseOn: true, writeOn: on }).where(eq(devices.id, d));
   const flags = async (d: string) => (await getDb().select({ p: devices.rxProto, b: devices.browseOn, w: devices.writeOn }).from(devices).where(eq(devices.id, d)))[0];
 
+  // Plan 2026-11-01-net-consistency, item 12: rx=c with no rxv is a Transfer the board reports no protocol for (older than
+  // protocol 2, or a firmware that does not say): it can neither browse nor write.
+  it('a poll with rx=c and no rxv clears browse and write; a chunk\'s report (rx c, no poll) leaves them', async () => {
+    const d = await device();
+    await writable(d);
+    await T.recordSendRx(getDb(), d, 'c', new Date());
+    expect(await flags(d)).toMatchObject({ b: true, w: true });
+    await T.recordSendRx(getDb(), d, 'c', new Date(), undefined, { poll: true });
+    expect(await flags(d)).toMatchObject({ b: false, w: false });
+  });
+
   it('records the write switch from a protocol 4 report, and clears browse and write when Transfer goes', async () => {
     const d = await device(); const t0 = new Date('2026-10-31T12:00:00Z');
     await T.recordSendRx(getDb(), d, 'c', t0, { proto: 4, browse: true, write: true });

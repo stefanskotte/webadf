@@ -233,3 +233,5 @@ Work: arrives with the fake board). Commit.
 - Task 11: Ruling: the server's reason is told from Transfer's own `readonly` text (lower case "writing is off in Transfer") by an exact list of the server's sentences (isBlockWords); Transfer's text still reads "Writing is off in Transfer" -- cost if wrong: words
 - Task 11: Ruling: the fixtures of remote-requests 'never handed a write' and transfers 'writing switched off fails' now model a board as the poll records it (firmware 1.23.1, rx c, Transfer 2.5, write off); before, they were a firmware-less Transfer 2.4 / a still-writable row whose truthful words differ -- cost if wrong: none
 - Task 11: complete (item 11 RED 4/5 -> GREEN; db 164/164; lib unit 3341)
+- Task 12: Ruling: browse_on is cleared with write_on (a board that reports rx=c but no rxv can do neither: firmware sends rxv for protocol 2-5 only) -- cost if wrong: a browse switch shown off until the next rxv poll
+- Task 12: complete (transfers 'no rxv' RED -> GREEN; poll route unit expectations carry { poll: true }; device api 192/192)

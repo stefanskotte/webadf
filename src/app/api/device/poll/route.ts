@@ -143,7 +143,7 @@ export async function GET(request: Request) {
   const write = new URL(request.url).searchParams.get('write');
   if (xferAck !== null && rx !== null && /^[cru-]$/.test(rx)) {
     const cap = rxv === '2' || rxv === '3' || rxv === '4' || rxv === '5' ? { proto: Number(rxv), browse: browse === '1', write: write === '1' } : undefined;
-    await recordSendRx(getDb(), device.deviceId, rx as 'c' | 'r' | 'u' | '-', new Date(), cap);
+    await recordSendRx(getDb(), device.deviceId, rx as 'c' | 'r' | 'u' | '-', new Date(), cap, { poll: true });
     // Transfer is there but cannot write (switched off, or too old): what waits to be written fails `readonly` now
     // rather than hang (plan W3). Transfer merely gone (rx not c) leaves it waiting.
     if (rx === 'c' && !(cap && cap.proto >= 4 && cap.browse && cap.write)) await failWritesWhenOff(getDb(), device.deviceId);
