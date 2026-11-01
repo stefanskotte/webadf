@@ -71,6 +71,8 @@ export function createJobsStore(deps: JobsDeps) {
   let failed = false;
 
   const set = (next: Partial<JobsState>) => { state = { ...state, ...next }; for (const l of listeners) l(); };
+  /** Reading window.localStorage itself can throw (blocked site data): then nothing is remembered. */
+  const storage = () => { try { return deps.storage(); } catch { return null; } };
   const clear = () => { if (timer !== null) { deps.clearTimer(timer); timer = null; } };
 
   function schedule() {
@@ -109,6 +111,8 @@ export function createJobsStore(deps: JobsDeps) {
       failed = a === null;
       if (a === 'signed-out') set({ signedOut: true });
       else if (a) take(a.jobs);
+    } catch {
+      failed = true;
     } finally {
       inFlight = false;
       if (again) { again = false; void tick(); } else schedule();
@@ -117,7 +121,7 @@ export function createJobsStore(deps: JobsDeps) {
 
   function dismiss(id: string) {
     const seen = [...state.seen.filter((x) => x !== id), id].slice(-SEEN_MAX);
-    save(deps.storage(), SEEN_KEY, JSON.stringify(seen));
+    save(storage(), SEEN_KEY, JSON.stringify(seen));
     set({ seen });
   }
 
@@ -125,7 +129,7 @@ export function createJobsStore(deps: JobsDeps) {
     getState: () => state,
     subscribe(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn); }; },
     start() {
-      const s = deps.storage();
+      const s = storage();
       set({ open: readOpen(s), seen: readSeen(s) });
       stopped = false;
       void tick();
@@ -144,7 +148,7 @@ export function createJobsStore(deps: JobsDeps) {
       watchers.set(id, list);
       return () => { list.delete(fn); if (list.size === 0) watchers.delete(id); };
     },
-    setOpen(open: boolean) { save(deps.storage(), OPEN_KEY, open ? '1' : '0'); set({ open }); },
+    setOpen(open: boolean) { save(storage(), OPEN_KEY, open ? '1' : '0'); set({ open }); },
     dismiss,
     /** Puts away each clean finish seen finished FADE_MS ago or more (spec §3: it fades after 6 s). */
     fadeFinished(now: number) {

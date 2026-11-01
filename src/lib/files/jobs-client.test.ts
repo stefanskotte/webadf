@@ -110,6 +110,18 @@ describe('createJobsStore polling', () => {
     expect(load).toHaveBeenCalledTimes(2);
     expect(store.getState().jobs).toHaveLength(1);
   });
+  it('a load that rejects is tried again after 15 s, with no unhandled rejection', async () => {
+    let k = 0;
+    const load = vi.fn(async () => { if (k++ === 0) throw new Error('network'); return { jobs: [job()] }; });
+    const store = createJobsStore({ load, now: () => Date.now(), setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: (t) => clearTimeout(t as ReturnType<typeof setTimeout>), visible: () => true, storage: () => null });
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(OFFLINE_POLL_MS - 1_000);
+    expect(load).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(store.getState().jobs).toHaveLength(1);
+  });
   it('signed out: it stops and says so', async () => {
     const { store, load } = harness(['signed-out']);
     store.start();
@@ -222,6 +234,16 @@ describe('remembered per browser', () => {
     for (let k = 0; k < SEEN_MAX + 5; k++) a.dismiss(`j${k}`);
     expect(a.getState().seen).toHaveLength(SEEN_MAX);
     expect(a.getState().seen[0]).toBe('j5');
+  });
+  it('a storage accessor that throws changes nothing else: it still polls, and dismiss/setOpen still change state', async () => {
+    const { store, load } = harness([[job()]], { storage: () => { throw new Error('blocked'); } });
+    store.start();
+    await flush();
+    expect(load).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(() => { store.setOpen(false); store.dismiss('j1'); }).not.toThrow();
+    expect(store.getState()).toMatchObject({ open: false, seen: ['j1'] });
   });
   // Review Focus 5: storage that throws (a private window).
   it('storage that throws changes nothing else', async () => {
