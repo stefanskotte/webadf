@@ -149,7 +149,7 @@ export async function startFetch(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
     ...(left(top).length ? { moveLeft: left(top) } : {}),
     moveSeen: { size: f.size, date: f.date }, ...(ctx.userId ? { userId: ctx.userId } : {}) }) : () => ({});
   const files = tops.flatMap((top) => top.files.map((f) => ({ amigaPath: f.amigaPath,
-    target: { dest: formatPath(dest), rel: f.rel, replace: replace.has(top), library, ...move(top, f) } satisfies GetTarget })));
+    target: { dest: formatPath(dest), rel: f.rel, replace: replace.has(top), library, size: f.size, ...move(top, f) } satisfies GetTarget })));
   await addGets(getDb(), { orgId: ctx.orgId, deviceId: t.id, fetchId, files }, now);
   for (const top of tops) if (!results.has(top.source)) results.set(top.source, { source: top.source, ok: true });
   return { kind: 'done', items: req.sources.map((s) => results.get(s)!), ...(files.length ? { fetching: { id: fetchId, files: files.length } } : {}) };
@@ -205,7 +205,7 @@ export async function volumeToVolume(ctx: OpCtx, req: CopyMove): Promise<Outcome
   const job = newRequestId();
   const gets = tops.flatMap((top) => top.files.map((f) => {
     const rel = [top.name, ...f.rel.slice(1)];
-    return { amigaPath: f.amigaPath, target: { dest: 'STASH:', rel: [rel[rel.length - 1]], replace: false, library: null,
+    return { amigaPath: f.amigaPath, target: { dest: 'STASH:', rel: [rel[rel.length - 1]], replace: false, library: null, size: f.size,
       relay: { deviceId: dt.id, dest: joinAmiga(to.amiga, ...rel), onClash: top.mode, ...(req.op === 'move' ? { moveSource: top.source } : {}) },
       ...(req.op === 'move' && top.drawers.length ? { moveDrawers: top.drawers } : {}),
       ...(req.op === 'move' ? { moveSeen: { size: f.size, date: f.date } } : {}),

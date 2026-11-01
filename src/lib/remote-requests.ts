@@ -32,7 +32,9 @@ export type GetTarget = { dest: string; rel: string[]; replace: boolean; library
   /** The fresh listings a settling move asked for (their request ids) before it removes anything off a volume. */
   moveVerify?: string[];
   /** Who made the copy (a move's removal and a relay's queue row are theirs). */
-  userId?: string };
+  userId?: string;
+  /** The file's size as the copy's walk saw it: the progress panel's bytes before its upload opens (spec 2026-11-01 §4). */
+  size?: number };
 /** A write request (spec 2026-10-31 §2.3): `label` the object in the pane's words, `icon` a `.info` taken along (W9). */
 export type WriteReq = { kind: WriteKind; amigaPath: string; args?: WriteArgs; icon?: boolean; ensure?: boolean; label: string;
   /** DELETE exactly this object (protocol 5, spec 2026-10-31 §9): what a move removes. */
