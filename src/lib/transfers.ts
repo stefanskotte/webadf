@@ -359,7 +359,7 @@ export async function clearTransfer(db: Db, orgId: string, id: string, now = new
   const del = await db.delete(transfers)
     .where(and(eq(transfers.id, id), eq(transfers.orgId, orgId),
       or(inArray(transfers.status, FINISHED),
-        and(inArray(transfers.status, ACTIVE), lte(transfers.expiresAt, now))), notOfRunningJob(now)))
+        and(inArray(transfers.status, ACTIVE), lte(transfers.expiresAt, now)))))
     .returning({ id: transfers.id });
   return del.length > 0;
 }

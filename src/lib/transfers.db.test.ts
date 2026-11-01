@@ -350,6 +350,18 @@ describe('transfers', () => {
   const writable = (d: string, on = true) => getDb().update(devices).set({ rxProto: 4, browseOn: true, writeOn: on }).where(eq(devices.id, d));
   const flags = async (d: string) => (await getDb().select({ p: devices.rxProto, b: devices.browseOn, w: devices.writeOn }).from(devices).where(eq(devices.id, d)))[0];
 
+  // Plan 2026-11-01-net-consistency R8 (final review): Clear finished keeps a running job's finished rows; Delete of one
+  // such row, asked for by name, still deletes it.
+  it('Clear finished keeps the finished rows of a running job; Delete of one of them still deletes it', async () => {
+    const d = await device();
+    const later = new Date(Date.now() + 3600_000);
+    const row = (id: string, status: string) => ({ id, orgId: 'org-a', deviceId: d, createdByUserId: 'u1', path: id, sizeBytes: 1, crc32: 0,
+      blobSha256: 'a'.repeat(64), expiresAt: later, amigaDest: `Work:${id}`, onClash: 'keep', jobId: `job-${d}`, status, finishedAt: status === 'queued' ? null : new Date() });
+    await getDb().insert(transfers).values([row(`f-${d}`, 'failed'), row(`ok-${d}`, 'delivered'), row(`q-${d}`, 'queued')]);
+    expect(await T.clearFinishedTransfers(getDb(), 'org-a', d)).toBe(0);
+    expect(await T.clearTransfer(getDb(), 'org-a', `f-${d}`)).toBe(true);
+  });
+
   // Plan 2026-11-01-net-consistency, item 12: rx=c with no rxv is a Transfer the board reports no protocol for (older than
   // protocol 2, or a firmware that does not say): it can neither browse nor write.
   it('a poll with rx=c and no rxv clears browse and write; a chunk\'s report (rx c, no poll) leaves them', async () => {
