@@ -5,7 +5,8 @@ import type { Db } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { remoteRequests } from '@/db/schema/remote-requests';
 import { transfers } from '@/db/schema/transfers';
-import { amigaUploads } from '@/db/schema/amiga-uploads';
+import { amigaUploads, amigaUploadChunks } from '@/db/schema/amiga-uploads';
+import { STAGING } from '@/lib/stash';
 import {
   ALIVE_PIECE_MS, FAILED_SHOWN_MS, GET_TIMEOUT_MS, LIST_TIMEOUT_MS, PANE_GIVE_UP_MS, REMEMBER_MS, REQUEST_KEEP_MS, REQ_FETCH_MAX,
   MOVE_PROTO, WRITE_KINDS, type WriteKind,
@@ -362,6 +363,15 @@ export async function answerPiece(
     if (r.kind !== 'get') set.answer = prev;
     if (end) Object.assign(set, { status: end, answeredAt: now });
     await tx.update(remoteRequests).set(set).where(eq(remoteRequests.id, rid));
+    // A get the board ended with an error mid-file: its staging (a copy between volumes) is no use to anyone now, so it
+    // goes with its chunks at once, not at the daily sweep (plan 2026-11-01-net-consistency, item 3). A copy into
+    // STASH: keeps its row: that is the person's, shown as it is.
+    if (r.kind === 'get' && end === 'failed' && r.uploadId) {
+      const hit = await tx.update(amigaUploads).set({ status: 'deleted' })
+        .where(and(eq(amigaUploads.id, r.uploadId), eq(amigaUploads.source, STAGING), eq(amigaUploads.status, 'receiving')))
+        .returning({ id: amigaUploads.id });
+      if (hit.length) await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, r.uploadId));
+    }
     return { ok: true as const };
   });
 }
