@@ -482,3 +482,20 @@ describe('item 11: a write refused when the board takes it says the real reason'
     expect((await fetchProgress(getDb(), 'o1', 'j11', new Date()))!.writes.map((w) => w.reason)).toEqual(['Transfer 2.5 or newer writes to the Amiga']);
   });
 });
+
+describe('item 13: a cross-board move names the source board in its removal\'s words', () => {
+  it('the source DELETE on A500 refused: the words name A500, not A1200', async () => {
+    const r = await op({ op: 'move', sources: [W('x')], dest: 'NET:/w2/DF0', onClash: 'ask' });
+    const job = (r as { job: { id: string } }).job.id;
+    const [g] = await gets();
+    await arrive(g.id, 'Work:x', bytes('xx'));
+    const [row] = await rows('w2');
+    await deliver(row.id, 'w2');
+    await answerFresh();
+    const [del] = (await takeWaiting(getDb(), 'w1')).filter((x) => x.kind === 'delete');
+    await answerPiece(getDb(), 'w1', del.id, { piece: 0, lines: [`ERR ${del.id} norx 0:`], last: true });
+    const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!;
+    expect(p.board).toBe('A1200');
+    expect(p.writes.map((w) => w.reason)).toEqual(['Transfer is not running on A500']);
+  });
+});

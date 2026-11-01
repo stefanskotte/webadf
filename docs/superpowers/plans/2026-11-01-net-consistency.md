@@ -235,3 +235,5 @@ Work: arrives with the fake board). Commit.
 - Task 11: complete (item 11 RED 4/5 -> GREEN; db 164/164; lib unit 3341)
 - Task 12: Ruling: browse_on is cleared with write_on (a board that reports rx=c but no rxv can do neither: firmware sends rxv for protocol 2-5 only) -- cost if wrong: a browse switch shown off until the next rxv poll
 - Task 12: complete (transfers 'no rxv' RED -> GREEN; poll route unit expectations carry { poll: true }; device api 192/192)
+- Task 13: Ruling: a get's failure words name the source board too (a copy between boards said the destination's name for a source timeout, the same defect) -- covered by the same nameOf; no separate RED test -- cost if wrong: words
+- Task 13: complete (item 13 RED -> GREEN; db 102/102)

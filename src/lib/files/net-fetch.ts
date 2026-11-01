@@ -410,8 +410,12 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
   if (reqs.length === 0 && sent.length === 0) return null;
   // The board the job is about: a copy onto a volume names the destination, a copy out the source.
   const boardId = sent[0]?.deviceId ?? reqs.find((r) => r.kind !== 'get')?.deviceId ?? reqs[0].deviceId;
-  const [d] = await db.select({ name: devices.name }).from(devices).where(eq(devices.id, boardId));
-  const board = d?.name ?? 'The board';
+  // Every board of the job by name: a write's words name the board it ran on (item 13: a cross-board move's removal is
+  // the source board's), the files the board the job is about.
+  const ids = [...new Set([boardId, ...reqs.map((r) => r.deviceId), ...sent.map((x) => x.deviceId)])];
+  const names = new Map((await db.select({ id: devices.id, name: devices.name }).from(devices).where(inArray(devices.id, ids))).map((x) => [x.id, x.name] as const));
+  const nameOf = (id: string) => names.get(id) ?? 'The board';
+  const board = nameOf(boardId);
   // A move's get is not finished until its source is deleted (net-moves.ts drops the marker after).
   const moving = (r: RemoteRow) => r.status === 'done' && !!(r.target as GetTarget | null)?.moveSource;
   // A relayed file is its queue row once handed over: the get then counts no more.
@@ -425,7 +429,7 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
     const entry = r.kind === 'delete' && status === 'failed' && text.includes(': ') ? text.slice(0, text.indexOf(': ')) : null;
     const kept = status === 'done' && !!((r.answer as { kept?: boolean } | null)?.kept || t.kept);
     return { kind: r.kind, label: t.label ?? r.amigaPath, to: t.to ?? null, status, removed: (r.answer as { removed?: number } | null)?.removed ?? 0,
-      reason: status === 'failed' ? writeErrorWords(r.errorCode ?? '', text, board) : null, entry, quiet: !!(t.icon || t.ensure),
+      reason: status === 'failed' ? writeErrorWords(r.errorCode ?? '', text, nameOf(r.deviceId)) : null, entry, quiet: !!(t.icon || t.ensure),
       kept, keptWhy: kept ? t.keptWhy ?? keptOnVolume(r, reqs) : null, restIn: status === 'failed' && rest ? rest[1] : null };
   });
   const sentFailed = sent.filter((x) => x.status === 'failed' || x.status === 'expired' || x.status === 'cancelled').map((x) => ({
@@ -450,7 +454,8 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
     : new Map<string, string>();
   const failed = rows.filter((r) => r.status === 'failed').map((r) => {
     const rel = (r.target as GetTarget).rel;
-    const reason = r.errorCode === 'timeout' ? `${board} stopped answering` : errorWords(r.errorCode ?? '', r.errorText ?? '', board);
+    // A get runs on the source board, which a copy between boards does not name otherwise (item 13).
+    const reason = r.errorCode === 'timeout' ? `${nameOf(r.deviceId)} stopped answering` : errorWords(r.errorCode ?? '', r.errorText ?? '', nameOf(r.deviceId));
     return { name: rel[rel.length - 1], reason };
   });
   return {
