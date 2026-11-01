@@ -208,6 +208,8 @@ export function DiskStrip({ side, disk, data, onChanged }: DiskStripProps) {
       <button type="button" data-testid="disk-strip-history-toggle" aria-expanded={historyOpen}
               onClick={() => setToggled(!historyOpen)} className={BTN} style={BTN_STYLE}>
         {data.headSeq === null ? 'History' : `History · v${data.headSeq}`}
+        {/* It opens and closes the panel, so it wears a caret, as Mount to ▾ does (backlog 2026-10-30). */}
+        <span aria-hidden="true" className="text-[11px]">{historyOpen ? ' ▴' : ' ▾'}</span>
       </button>
       <a href={`/api/disks/${disk.diskId}/adf`} data-testid="disk-strip-adf" className={BTN} style={BTN_STYLE}
          title={`Download ${disk.label} as an .adf`}>⬇ ADF</a>

@@ -113,9 +113,9 @@ test('copy a file between disks makes one version', async ({ page }) => {
   await copy.click();
   await expect(toast(page, /^Copied 1 item to .*Disk 1.* — saved as version 1\./)).toBeVisible({ timeout: 15_000 });
   await expect(row(page, 'left', 'ReadMe')).toHaveCount(1);
-  await expect(page.getByTestId('disk-strip-left').getByTestId('disk-strip-history-toggle')).toHaveText('History · v1');
+  await expect(page.getByTestId('disk-strip-left').getByTestId('disk-strip-history-toggle')).toHaveText('History · v1 ▾');
   // The source is untouched: no version, same bytes.
-  await expect(page.getByTestId('disk-strip-right').getByTestId('disk-strip-history-toggle')).toHaveText('History');
+  await expect(page.getByTestId('disk-strip-right').getByTestId('disk-strip-history-toggle')).toHaveText('History ▾');
   expect((await stored(a.diskId)).sha256).toBe(a.sha256);
   expect((await stored(b.diskId)).root.map((e) => e.name)).toEqual(['ReadMe']);
 });
@@ -285,6 +285,27 @@ test('keyboard: arrows, Space, F5, Tab, Enter, Backspace', async ({ page }) => {
   await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe(a.path);
 });
 
+test("a pane's left edge goes up one level, as in Directory Opus; at the root it goes nowhere (backlog 2026-10-30)", async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const a = await seedTitle(orgId, `Edge-${runTag()}`);
+  await openFiles(page, 'STASH:', `${a.path}/C`, 'right');
+  await expect(row(page, 'right', 'Assign')).toHaveCount(1);
+  const edge = page.getByTestId('pane-right-edge');
+  await expect(edge).toHaveAttribute('title', 'Up one level');
+
+  await edge.click({ position: { x: 3, y: 10 } });
+  await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe(a.path);
+  await expect(row(page, 'right', 'ReadMe')).toHaveCount(1);
+  await edge.click({ position: { x: 3, y: 10 } });                 // the disk -> its title
+  await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe(`LIBRARY:/${a.gameId}`);
+  await edge.click({ position: { x: 3, y: 10 } });                 // the title -> LIBRARY:
+  await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe('LIBRARY:');
+  await expect(edge).toHaveAttribute('data-up', 'false');
+  await edge.click({ position: { x: 3, y: 10 } });                 // the root: nowhere further
+  await expect(page.getByTestId('pane-right-crumb-0')).toHaveText('LIBRARY:');
+  expect(new URL(page.url()).searchParams.get('right')).toBe('LIBRARY:');
+});
+
 test('a disk in a drive is read-only', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
   const tag = runTag();
@@ -350,7 +371,7 @@ test('/disks/<id>/files redirects to Files; ?version=1 still shows the old page'
     return [u.pathname, u.searchParams.get('left'), u.searchParams.get('right'), u.searchParams.get('active')];
   }).toEqual(['/files', 'STASH:', a.path, 'right']);
   await expect(row(page, 'right', 'Edited')).toHaveCount(1);
-  await expect(page.getByTestId('disk-strip-right').getByTestId('disk-strip-history-toggle')).toHaveText('History · v1');
+  await expect(page.getByTestId('disk-strip-right').getByTestId('disk-strip-history-toggle')).toHaveText('History · v1 ▾');
 });
 
 test('Info edits a comment', async ({ page }) => {

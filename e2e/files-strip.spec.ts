@@ -61,7 +61,7 @@ test('Files… opens the disk on the right with its strip; the Browse address la
   await expect(strip.getByTestId('disk-strip-usage')).toHaveText(/^\d+ of 880 KB · \d+ KB free$/);
   await expect(strip.getByTestId('disk-strip-adf')).toHaveAttribute('href', `/api/disks/${diskId}/adf`);
   await expect(strip.getByTestId('disk-strip-volume')).toHaveText(`Vol${tag.slice(0, 6)}`);
-  await expect(strip.getByTestId('disk-strip-history-toggle')).toHaveText('History');   // never changed yet
+  await expect(strip.getByTestId('disk-strip-history-toggle')).toHaveText('History ▾');   // never changed yet
   await expect(page.getByTestId('pane-row').filter({ hasText: 'ReadMe' })).toHaveCount(1);
 
   // The old address, without a version: Files, the disk on the right.
@@ -113,10 +113,11 @@ test('files dropped from the computer land in the folder the pane shows, as a ne
   await expect(review).toHaveCount(0);
   await expect(page.getByText(/^Added 1 item to .+ — saved as version 1\.$/)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId('pane-right').getByTestId('pane-row').filter({ hasText: 'Notes.txt' })).toHaveCount(1);
-  await expect(page.getByTestId('disk-strip-right').getByTestId('disk-strip-history-toggle')).toHaveText('History · v1');
+  await expect(page.getByTestId('disk-strip-right').getByTestId('disk-strip-history-toggle')).toHaveText('History · v1 ▾');
 
   // The History opens over the pane, the drop as the current version.
   await page.getByTestId('disk-strip-history-toggle').click();
+  await expect(page.getByTestId('disk-strip-history-toggle')).toHaveText('History · v1 ▴');   // open: the caret turns
   const panel = page.getByTestId('disk-strip-history');
   await expect(panel.getByTestId('version-1')).toHaveAttribute('data-head', 'true');
   await expect(panel.getByTestId('changes-1')).toContainText('Notes.txt');
@@ -186,7 +187,7 @@ test('a filed title: Files… opens its disk inside its first collection, and th
     await expect(page.getByText(/^Added 1 item to .+ — saved as version 1\.$/)).toBeVisible({ timeout: 15_000 });
     const row = page.getByTestId('pane-right').getByTestId('pane-row').filter({ hasText: 'Notes.txt' });
     await expect(row.getByTestId('pane-new-Notes.txt')).toHaveText('new in v1');
-    await expect(strip.getByTestId('disk-strip-history-toggle')).toHaveText('History · v1');
+    await expect(strip.getByTestId('disk-strip-history-toggle')).toHaveText('History · v1 ▾');
 
     // An unreadable disk reached through the collection keeps its strip, on load and on arriving.
     await page.goto(`/files?${new URLSearchParams({ left: `LIBRARY:/${first}/${lost.gameId}/${lost.diskId}`, right: 'LIBRARY:', active: 'left' })}`);

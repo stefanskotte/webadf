@@ -574,7 +574,7 @@ test('a disk inside a collection path: copy a file in, Undo, and "new in v1"', a
   const copied = toast(page, /^Copied 1 item to .* — saved as version 1\./);
   await expect(copied).toBeVisible({ timeout: 15_000 });
   await expect(row(page, 'right', 'note.txt').getByTestId('pane-new-note.txt')).toHaveText('new in v1');
-  await expect(page.getByTestId('disk-strip-right').getByTestId('disk-strip-history-toggle')).toHaveText('History · v1');
+  await expect(page.getByTestId('disk-strip-right').getByTestId('disk-strip-history-toggle')).toHaveText('History · v1 ▾');
   expect(await storedNames(t1.diskId)).toContain('note.txt');
 
   await copied.getByRole('button', { name: 'Undo' }).click();
