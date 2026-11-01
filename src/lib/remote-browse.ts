@@ -12,9 +12,20 @@ export const WRITE_OLD_TRANSFER = 'Transfer 2.5 or newer writes to the Amiga';
 export const WRITE_OLD_FIRMWARE = 'Board firmware 1.23.0 or newer writes to the Amiga';
 /** Spec 2026-10-31 §9: a Move that copies off a volume removes only what it copied, which needs Transfer 2.6 (protocol 5). */
 export const MOVE_OLD_TRANSFER = 'Move needs Transfer 2.6 — use Copy';
-/** What a move left in its source because something new is in it (spec 2026-10-31 §9). */
-export const keptWords = (label: string) => `Kept ${label}: something new is in it`;
-export const isKeptWords = (s: string) => /^Kept .+: something new is in it$/.test(s);
+/** Why a move kept a drawer when what it holds was not there at the copy (spec 2026-10-31 §9). */
+export const KEPT_NEW = 'something new is in it';
+/** Why, when nothing more is known than that the drawer still holds something the move did not copy. */
+export const KEPT_UNKNOWN = 'something not copied is in it';
+/**
+ * What a move left in its source, and why (plan 2026-11-01-net-consistency, item 9): "Kept Work:Pack: a changed on the
+ * Amiga", "… could not be removed", "… is empty and was not copied", "… something new is in it".
+ */
+export const keptWords = (label: string, why: string = KEPT_NEW) => `Kept ${label}: ${why}`;
+export const isKeptWords = (s: string) => /^Kept .+: .+$/.test(s);
+/** The why of keptWords' words (the text after the label), or null. */
+export const keptWhyOf = (s: string, label: string) => (s.startsWith(`Kept ${label}: `) ? s.slice(`Kept ${label}: `.length) : null);
+/** One name, or how many: "a", "3 files". */
+export const oneOrMany = (names: string[], what = 'files') => (names.length === 1 ? names[0] : `${names.length} ${what}`);
 
 export type BrowseInput = {
   online: boolean; firmware: string | null; rx: string | null; rxProto: number | null; browseOn: boolean; name: string; offlineWords: string;

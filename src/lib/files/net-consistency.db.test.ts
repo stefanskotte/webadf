@@ -382,3 +382,60 @@ describe('item 8: a sending row moves only while its chunks come (transfers.acti
     expect(await copyMoving(getDb(), 'w1')).toBe('big.lha');
   });
 });
+
+describe('item 9: a drawer a move off a volume kept says why', () => {
+  /** The board takes every waiting write on w1 and answers each as `answer` says (default DONE). */
+  async function answerWrites(answer: (rid: string, path: string) => string = (rid) => `DONE ${rid} 1`) {
+    for (const r of (await takeWaiting(getDb(), 'w1')).filter((x) => x.kind !== 'dir' && x.kind !== 'get')) {
+      expect(await answerPiece(getDb(), 'w1', r.id, { piece: 0, lines: [answer(r.id, r.amigaPath)], last: true })).toEqual({ ok: true });
+      await afterRequestAnswered(getDb(), 'w1', r.id);
+    }
+  }
+  const notEmpty = (keep: string) => (rid: string, path: string) => (path === keep ? `ERR ${rid} notempty 19:Directory not empty` : `DONE ${rid} 1`);
+  async function movePair(entries = [ent('a', 1), ent('b', 1)]) {
+    await remember('Work:Pair', entries);
+    const r = await op({ op: 'move', sources: [W('Pair')], dest: 'STASH:', onClash: 'ask' });
+    const job = (r as { fetching: { id: string } }).fetching.id;
+    for (const g of await gets()) await arrive(g.id, g.amigaPath, bytes('z'));
+    return job;
+  }
+  const kept = async (job: string) => (await fetchProgress(getDb(), 'o1', job, new Date()))!.writes.filter((w) => w.kept).map((w) => [w.label, w.keptWhy]);
+
+  it('a copied file saved again on the Amiga since: "a changed on the Amiga"', async () => {
+    const job = await movePair();
+    amigaNow.set('w1 work:pair', [{ ...ent('a', 1), size: 9 }, ent('b', 1)]);
+    await answerFresh();
+    await answerWrites(notEmpty('Work:Pair'));
+    expect(await kept(job)).toEqual([['Work:Pair', 'a changed on the Amiga']]);
+  });
+
+  it('a copied file whose delete was refused: "a could not be removed"', async () => {
+    const job = await movePair();
+    await answerFresh();
+    await answerWrites((rid, path) => (path === 'Work:Pair/a' ? `ERR ${rid} busy 13:object in use` : notEmpty('Work:Pair')(rid, path)));
+    expect(await kept(job)).toEqual([['Work:Pair', 'a could not be removed']]);
+  });
+
+  it('a file new in the fresh listing: "something new is in it"', async () => {
+    const job = await movePair();
+    amigaNow.set('w1 work:pair', [ent('a', 1), ent('b', 1), ent('new.txt', 3)]);
+    await answerFresh();
+    await answerWrites(notEmpty('Work:Pair'));
+    expect(await kept(job)).toEqual([['Work:Pair', 'something new is in it']]);
+  });
+
+  it('an empty drawer STASH: does not get: "E is empty and was not copied"', async () => {
+    await remember('Work:Pair/E', []);
+    const job = await movePair([ent('a', 1), ent('b', 1), ent('E', 0, true)]);
+    await answerFresh();
+    await answerWrites(notEmpty('Work:Pair'));
+    expect(await kept(job)).toEqual([['Work:Pair', 'E is empty and was not copied']]);
+  });
+
+  it('no cause known (something saved after the fresh listing): "something not copied is in it"', async () => {
+    const job = await movePair();
+    await answerFresh();
+    await answerWrites(notEmpty('Work:Pair'));
+    expect(await kept(job)).toEqual([['Work:Pair', 'something not copied is in it']]);
+  });
+});

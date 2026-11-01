@@ -218,6 +218,9 @@ describe('jobStatus', () => {
   it('says what a move kept', () => {
     expect(jobStatus(p({ total: 2, done: 2, direction: 'from', writes: [w({ label: 'Work:Pair/a', removed: 1 }), w({ label: 'Work:Pair', kept: true })] }), 'A500'))
       .toEqual({ line: 'Copied 2 · Deleted Work:Pair/a · Kept Work:Pair: something new is in it', finished: true });
+    // Why it was kept, when the server knows (plan 2026-11-01-net-consistency, item 9).
+    expect(jobStatus(p({ total: 2, done: 2, direction: 'from', writes: [w({ label: 'Work:Pair', kept: true, keptWhy: 'a changed on the Amiga' })] }), 'A500').line)
+      .toBe('Copied 2 · Kept Work:Pair: a changed on the Amiga');
   });
   it('ends with what was done, and why anything was not', () => {
     expect(jobStatus(p({ writes: [w({ removed: 137 })] }), 'A500')).toEqual({ line: 'Deleted Work:old (137)', finished: true });

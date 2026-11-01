@@ -27,6 +27,8 @@ export type GetTarget = { dest: string; rel: string[]; replace: boolean; library
   moveDrawers?: string[];
   /** The file as the copy's walk saw it (final review I-1): removed only while a fresh listing still shows it so. */
   moveSeen?: { size: number; date: string };
+  /** A moved drawer's drawers the copy into STASH: left out, holding no file (item 9: why a drawer was kept). */
+  moveLeft?: string[];
   /** The fresh listings a settling move asked for (their request ids) before it removes anything off a volume. */
   moveVerify?: string[];
   /** Who made the copy (a move's removal and a relay's queue row are theirs). */
@@ -42,8 +44,8 @@ export type WriteReq = { kind: WriteKind; amigaPath: string; args?: WriteArgs; i
 export type WriteTarget = WriteArgs & { label: string; icon?: boolean; ensure?: boolean; moved?: string;
   /** A move's part (§9): the source it moves and the entry it copies; cleared once the move settled. */
   moveSource?: string; moveItem?: string;
-  /** A move's removal said, not sent: what it kept (net-moves.ts). */
-  kept?: boolean };
+  /** A move's removal said, not sent: what it kept (net-moves.ts), and why (item 9). */
+  kept?: boolean; keptWhy?: string };
 export type ListingState =
   | { state: 'ready'; row: RemoteRow; ageMs: number }
   | { state: 'pending'; row: RemoteRow }

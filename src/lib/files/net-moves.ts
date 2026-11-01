@@ -20,7 +20,7 @@ import { newRequestId } from '@/lib/remote-wire';
 import { parsePath } from './path';
 import { driverFor } from './drivers';
 import { Refused, REMOVE_FAILED, type IncomingItem, type OpCtx } from './driver';
-import { isKeptWords } from '@/lib/remote-browse';
+import { isKeptWords, keptWhyOf, KEPT_UNKNOWN } from '@/lib/remote-browse';
 import { amigaParent, isNetVolumePath, placeOf, removeCopiedOnVolume, volumeMoveBoard } from './net-write';
 import { addListings, type GetTarget } from '@/lib/remote-requests';
 import type { EntryInfo } from '@/lib/remote-wire';
@@ -30,7 +30,7 @@ const ACTIVE_ROWS = ['queued', 'sending'];
 
 type Part = { id: string; kind: string; status: string; amigaPath: string; target: unknown; deviceId: string };
 type Row = { blobSha256: string; sizeBytes: number; protection: number; comment: string; moveItem: string | null };
-type Removal = { kind: 'removed' } | { kind: 'kept'; label: string } | { kind: 'refused'; why: string };
+type Removal = { kind: 'removed' } | { kind: 'kept'; label: string; why: string } | { kind: 'refused'; why: string };
 
 /**
  * What a move of a STASH:/LIBRARY: entry copied (spec §9), as its driver's `unchanged`: each delivered row's file by
@@ -78,8 +78,9 @@ async function removeSource(orgId: string, userId: string | null, source: string
     if (r.kind !== 'done') return { kind: 'refused', why: refusalWords('failed') };
     const bad = r.items.find((i) => !i.ok);
     if (!bad || bad.ok) return { kind: 'removed' };
-    if (bad.refusal.detail && isKeptWords(bad.refusal.detail)) return { kind: 'kept', label: source };
-    return { kind: 'refused', why: bad.refusal.detail === REMOVE_FAILED ? refusalWords(bad.refusal.code) : bad.refusal.detail ?? refusalWords(bad.refusal.code) };
+    if (bad.refusal.detail && isKeptWords(bad.refusal.detail)) return { kind: 'kept', label: source, why: keptWhyOf(bad.refusal.detail, source) ?? KEPT_UNKNOWN };
+    const why = bad.refusal.detail?.startsWith(`${REMOVE_FAILED} — `) ? bad.refusal.detail.slice(REMOVE_FAILED.length + 3) : bad.refusal.detail;
+    return { kind: 'refused', why: why === REMOVE_FAILED ? refusalWords(bad.refusal.code) : why ?? refusalWords(bad.refusal.code) };
   } catch (e) {
     if (e instanceof Refused) return { kind: 'refused', why: e.refusal.detail ?? refusalWords(e.refusal.code) };
     throw e;
@@ -202,7 +203,7 @@ export async function settleMove(db: Db, orgId: string, jobId: string, source: s
       errorText: `Copied, but the original could not be removed — ${out.why}`, target: { label: d.label } });
   } else if (out.kind === 'kept') {
     // What the move left because something new is in it (spec §9): said in the job, not a failure.
-    await db.insert(remoteRequests).values({ ...d.said, status: 'done', answeredAt: new Date(), answer: { removed: 0, kept: true }, target: { label: out.label, kept: true } });
+    await db.insert(remoteRequests).values({ ...d.said, status: 'done', answeredAt: new Date(), answer: { removed: 0, kept: true }, target: { label: out.label, kept: true, keptWhy: out.why } });
   }
   return out.kind === 'removed';
 }

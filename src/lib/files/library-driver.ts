@@ -11,7 +11,7 @@ import {
 } from '@/lib/adffs';
 import { sameName } from '@/lib/adffs/write';
 import { createHash } from 'node:crypto';
-import { keptWords } from '@/lib/remote-browse';
+import { keptWords, KEPT_NEW, oneOrMany } from '@/lib/remote-browse';
 import { applyDiskEdit, type DiskEditOutcome } from '@/lib/disk-write';
 import { isMountedReason } from '@/lib/mount-wording';
 import { childOf, formatPath, isWithin, parsePath, type FsPath } from './path';
@@ -280,14 +280,17 @@ type Removal = { raw: string; loc: Loc; d: ResolvedDisk; hit: Hit; copied: PlanI
  */
 async function removeCopied(ctx: Run, list: Removal[], results: Map<string, OpItem>) {
   for (const [d, group] of groupBy(list, (s) => s.d)) {
-    const kept = new Set<string>();
+    const kept = new Map<string, Kept>();
     try {
       // applyDiskEdit may run the step again on newer bytes: what was kept is what the last run kept.
       await edit(ctx, d, (adf) => { kept.clear(); return chain(...deepestFirst(group).map((s) => removeAsCopied(s, kept)))(adf); });
       for (const s of group) {
-        if (kept.has(s.raw)) {
-          results.set(s.raw, { source: s.raw, ok: false, refusal: { code: 'conflict', detail: s.hit.entry.kind === 'dir' ? keptWords(s.raw) : REMOVE_FAILED } });
-        }
+        const k = kept.get(s.raw);
+        if (!k) continue;
+        // Why (item 9): a folder says what it kept for; a top gone or made again since is no "Kept" -- nothing of it is left.
+        const detail = k.gone ? `${REMOVE_FAILED} — ${k.gone}` : s.hit.entry.kind !== 'dir' ? REMOVE_FAILED
+          : keptWords(s.raw, k.changed.length ? `${oneOrMany(k.changed)} changed since the copy` : KEPT_NEW);
+        results.set(s.raw, { source: s.raw, ok: false, refusal: { code: 'conflict', detail } });
       }
     } catch (e) {
       if (!(e instanceof Refused)) throw e;
@@ -316,17 +319,24 @@ function sameAsCopied(adf: Uint8Array, h: Hit, c: PlanItem): boolean {
   return !!c.sha256 && !!n.bytes && createHash('sha256').update(n.bytes).digest('hex') === c.sha256;
 }
 
+/** What a removal left of one source: the copied files changed since, or why the whole of it was not there to remove. */
+type Kept = { changed: string[]; gone: string | null };
+
 /** The step that removes what was copied of one source; anything it leaves marks `kept`. */
-function removeAsCopied(s: Removal, kept: Set<string>): Step {
+function removeAsCopied(s: Removal, kept: Map<string, Kept>): Step {
   return (adf) => {
+    const mark = () => kept.get(s.raw) ?? kept.set(s.raw, { changed: [], gone: null }).get(s.raw)!;
     const top = find(adf, s.loc.names);
     // Gone, or not the entry collected (deleted and made again since, however alike): nothing of it was copied.
-    if (!top || top.entry.block !== s.hit.entry.block) { kept.add(s.raw); return { ok: true, adf }; }
+    if (!top || top.entry.block !== s.hit.entry.block) {
+      mark().gone = top ? 'it was made again since the copy' : 'it is no longer on the disk';
+      return { ok: true, adf };
+    }
     let cur = adf;
     const at = (c: PlanItem) => [...s.loc.names, ...c.rel.slice(1)];
     for (const c of s.copied.filter((x) => x.kind === 'file')) {
       const h = find(cur, at(c));
-      if (!h || !sameAsCopied(cur, h, c)) { kept.add(s.raw); continue; }
+      if (!h || !sameAsCopied(cur, h, c)) { const k = mark(); if (h) k.changed.push(c.rel[c.rel.length - 1]); continue; }
       const r = deleteEntry(cur, h.parentBlock, h.entry.block);
       if (!r.ok) return r;
       cur = r.adf;
@@ -334,7 +344,7 @@ function removeAsCopied(s: Removal, kept: Set<string>): Step {
     for (const c of s.copied.filter((x) => x.kind === 'dir').sort((a, b) => b.rel.length - a.rel.length)) {
       const h = find(cur, at(c));
       if (!h || h.entry.kind !== 'dir') continue;
-      if (h.entry.children.length) { kept.add(s.raw); continue; }
+      if (h.entry.children.length) { mark(); continue; }
       const r = deleteEntry(cur, h.parentBlock, h.entry.block);
       if (!r.ok) return r;
       cur = r.adf;

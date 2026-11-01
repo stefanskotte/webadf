@@ -211,8 +211,8 @@ describe('one-line writes on a volume', () => {
     await answerPiece(getDb(), 'w1', icon.id, { piece: 0, lines: [`DONE ${icon.id} 1`], last: true });
     const p = (await fetchProgress(getDb(), 'o1', job, new Date()))!;
     expect(p.writes).toEqual([
-      { kind: 'delete', label: 'Work:old', to: null, status: 'failed', removed: 37, reason: 'In use on the Amiga', entry: 'Libs/foo.library', quiet: false, kept: false, restIn: null },
-      { kind: 'delete', label: 'Work:old.info', to: null, status: 'done', removed: 1, reason: null, entry: null, quiet: false, kept: false, restIn: null },
+      { kind: 'delete', label: 'Work:old', to: null, status: 'failed', removed: 37, reason: 'In use on the Amiga', entry: 'Libs/foo.library', quiet: false, kept: false, keptWhy: null, restIn: null },
+      { kind: 'delete', label: 'Work:old.info', to: null, status: 'done', removed: 1, reason: null, entry: null, quiet: false, kept: false, keptWhy: null, restIn: null },
     ]);
     expect(p).toMatchObject({ total: 0, board: 'A500', direction: 'from' });
   });

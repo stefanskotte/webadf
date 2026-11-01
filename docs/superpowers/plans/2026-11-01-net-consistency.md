@@ -225,3 +225,7 @@ Work: arrives with the fake board). Commit.
 - Task 8: Migration 0057_transfer_active_at.sql (ALTER TABLE transfers ADD COLUMN active_at timestamptz) -- NOT applied to production; test DBs migrate themselves
 - Task 8: Ruling: remote-requests' 'a listing waits behind a queue file the board is sending' fixture gains activeAt at(0) (a sending row with a chunk just fetched, as the board makes it) -- cost if wrong: none
 - Task 8: complete (item 8 RED 1/2 -> GREEN)
+- Task 9: Ruling: STASH:/LIBRARY: words say "<name> changed since the copy" (R7 drafted "since it was copied"; "the copy" reads right for one or several) -- cost if wrong: words
+- Task 9: Ruling: a LIBRARY: source gone or made again since the copy is said "copied, but the original could not be removed — it is no longer on the disk" / "— it was made again since the copy" (net-moves strips the prefix so the job says it once) -- cost if wrong: words
+- Task 9: Ruling: a volume drawer's fresh listing counts though dropMemory marked it stale (the removal's own answers let the memory go before the progress reads it) -- cost if wrong: none
+- Task 9: complete (item 9 RED: 5 volume cases, 2 driver cases, 1 rule -> GREEN; db 130/130; lib unit green)

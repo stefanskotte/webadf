@@ -18,7 +18,7 @@ import { transfers } from '@/db/schema/transfers';
 import { findSendTarget } from '@/lib/send-targets';
 import { addGets, addWrites, claimGet, dropMemory, expireStale, latestFor, settleGet, type GetTarget, type RemoteRow, type WriteReq, type WriteTarget } from '@/lib/remote-requests';
 import { amigaPathOf, newRequestId, type EntryInfo } from '@/lib/remote-wire';
-import { errorWords, MOVE_OLD_TRANSFER, writeErrorWords } from '@/lib/remote-browse';
+import { errorWords, KEPT_NEW, KEPT_UNKNOWN, MOVE_OLD_TRANSFER, oneOrMany, writeErrorWords } from '@/lib/remote-browse';
 import { MOVE_PROTO, WRITE_KINDS } from '@/lib/remote-limits';
 import { failureText } from '@/lib/send-ui';
 import { queueTransfers, type ClashMode } from '@/lib/transfers';
@@ -143,7 +143,9 @@ export async function startFetch(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
   // A move removes only drawers that were copied (final review I-3): into STASH: a drawer arrives only by the files in
   // it, so one holding none (an empty drawer, however deep) stays on the Amiga.
   const holding = (top: Top) => top.drawers.filter((d) => top.files.some((f) => f.amigaPath.toLowerCase().startsWith(`${d.toLowerCase()}/`)));
+  const left = (top: Top) => top.drawers.filter((d) => !holding(top).includes(d));
   const move = req.op === 'move' ? (top: Top, f: File) => ({ moveSource: top.source, ...(holding(top).length ? { moveDrawers: holding(top) } : {}),
+    ...(left(top).length ? { moveLeft: left(top) } : {}),
     moveSeen: { size: f.size, date: f.date }, ...(ctx.userId ? { userId: ctx.userId } : {}) }) : () => ({});
   const files = tops.flatMap((top) => top.files.map((f) => ({ amigaPath: f.amigaPath,
     target: { dest: formatPath(dest), rel: f.rel, replace: replace.has(top), library, ...move(top, f) } satisfies GetTarget })));
@@ -332,6 +334,36 @@ export async function afterTransferDone(db: Db, transferId: string): Promise<voi
   await dropMemory(db, row.deviceId, [...drawers]);
 }
 
+/**
+ * Why Transfer kept a drawer a move's DELETE … one asked for (item 9), from what the job itself knows, first match:
+ * a copied file under it changed, a copied file's delete was refused, one the Amiga did not list again, an empty drawer
+ * the copy into STASH: left out, an entry the move's fresh listing showed that the copy never walked; else no known cause.
+ */
+function keptOnVolume(d: RemoteRow, reqs: RemoteRow[]): string {
+  const fold = (s: string) => s.toLowerCase();
+  const base = fold(d.amigaPath);
+  const under = (p: string) => fold(p).startsWith(`${base}/`);
+  const name = (p: string) => p.slice(Math.max(p.lastIndexOf('/'), p.indexOf(':')) + 1);
+  const failedDeletes = reqs.filter((x) => x.kind === 'delete' && x.status === 'failed' && under(x.amigaPath));
+  const moved = (why: string) => failedDeletes.filter((x) => x.errorCode === 'moved' && (x.errorText ?? '').endsWith(why)).map((x) => name(x.amigaPath));
+  const changed = moved('it changed on the Amiga');
+  if (changed.length) return `${oneOrMany(changed)} changed on the Amiga`;
+  const refused = failedDeletes.filter((x) => x.errorCode !== 'moved').map((x) => name(x.amigaPath));
+  if (refused.length) return `${oneOrMany(refused)} could not be removed`;
+  const unlisted = moved('the Amiga did not list it again');
+  if (unlisted.length) return `${oneOrMany(unlisted)} ${unlisted.length === 1 ? 'was' : 'were'} not listed again`;
+  const gets = reqs.filter((x) => x.kind === 'get');
+  const left = [...new Set(gets.flatMap((g) => (g.target as GetTarget).moveLeft ?? []))].filter(under);
+  if (left.length) return `${oneOrMany(left.map(name), 'drawers')} ${left.length === 1 ? 'is' : 'are'} empty and ${left.length === 1 ? 'was' : 'were'} not copied`;
+  // The move's own fresh listing of the drawer (net-moves.ts checkOffVolume): an entry the copy's walk never saw is new.
+  const walked = new Set([...gets.map((g) => fold(g.amigaPath)), ...gets.flatMap((g) => ((g.target as GetTarget).moveDrawers ?? []).map(fold))]);
+  // Done, or stale since: the removal's own answers let the memory of the drawer go.
+  const fresh = reqs.find((x) => x.kind === 'dir' && (x.status === 'done' || x.status === 'stale') && fold(x.amigaPath) === base);
+  const entries = ((fresh?.answer ?? { entries: [] }) as { entries: EntryInfo[] }).entries;
+  if (entries.some((e) => !walked.has(`${base}/${fold(e.name)}`))) return KEPT_NEW;
+  return KEPT_UNKNOWN;
+}
+
 const amigaParentOf = (path: string) => {
   const c = path.indexOf(':');
   const slash = path.lastIndexOf('/');
@@ -346,8 +378,8 @@ export type JobWrite = { kind: string; label: string; to: string | null; status:
   reason: string | null; entry: string | null;
   /** An icon taken along or a drawer a copy needed: said only when it failed. */
   quiet: boolean;
-  /** A move's removal that kept a drawer because something new is in it (spec 2026-10-31 §9): said, not a failure. */
-  kept: boolean;
+  /** A move's removal that kept a drawer (spec 2026-10-31 §9): said, not a failure; `keptWhy` why (item 9). */
+  kept: boolean; keptWhy: string | null;
   /** Transfer 2.6: where a stopped drawer delete left the rest when it could not rename the drawer back. */
   restIn: string | null };
 /**
@@ -391,9 +423,10 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
     const rest = r.kind === 'delete' ? /^the rest is in (\S+): ([\s\S]*)$/.exec(r.errorText ?? '') : null;
     const text = rest ? rest[2] : r.errorText ?? '';
     const entry = r.kind === 'delete' && status === 'failed' && text.includes(': ') ? text.slice(0, text.indexOf(': ')) : null;
+    const kept = status === 'done' && !!((r.answer as { kept?: boolean } | null)?.kept || t.kept);
     return { kind: r.kind, label: t.label ?? r.amigaPath, to: t.to ?? null, status, removed: (r.answer as { removed?: number } | null)?.removed ?? 0,
       reason: status === 'failed' ? writeErrorWords(r.errorCode ?? '', text, board) : null, entry, quiet: !!(t.icon || t.ensure),
-      kept: status === 'done' && !!((r.answer as { kept?: boolean } | null)?.kept || t.kept), restIn: status === 'failed' && rest ? rest[1] : null };
+      kept, keptWhy: kept ? t.keptWhy ?? keptOnVolume(r, reqs) : null, restIn: status === 'failed' && rest ? rest[1] : null };
   });
   const sentFailed = sent.filter((x) => x.status === 'failed' || x.status === 'expired' || x.status === 'cancelled').map((x) => ({
     name: x.path, reason: x.status === 'expired' ? `${board} did not take it within 24 h` : x.status === 'cancelled' ? 'cancelled'
