@@ -253,3 +253,5 @@ Work: arrives with the fake board). Commit.
 - Final: minor (deferred): a `placing` get does not count as the board busy (boardMoving): a listing behind a slow LIBRARY: import can time out; placement is bounded by the 60 s route limit
 - Final: minor (deferred): staging of a copy onto LIBRARY: is left to the daily sweep when the first close is still placing (pre-existing; place() does not release library staging)
 - Final: minor (deferred): no RED test for get failure words naming the source board (Task 13 ruling); the item 14 e2e was written after its code
+- Final: Ruling: 'Copy from STASH: onto a volume: each clash answer' failed 1 of 4 repeats (the fake board notes a file only after its done POST returns, which the page can see first; a test race, not product code) -- its board.queue check now polls; 6/6 repeats then green -- cost if wrong: none
+- Final: after the fix pass: pnpm test 4187 passed / 2 skipped; full pnpm test:db 736/736; tsc clean; e2e files-net-writes 14/14, files-net-volumes + files-net (desktop + mobile) 21/21, files-stash + from-amiga + send-to-amiga + device-send + device-poll 43/43

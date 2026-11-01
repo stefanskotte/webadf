@@ -230,7 +230,8 @@ test('Copy from STASH: onto a volume: each clash answer, and the queue line the 
   await copyX('keep-both');
   await expect(busy(page)).toContainText('Copied 1 to A500', { timeout: LIVE });
   await expect(rowAt(page, 'right', 'x_1.lha')).toBeVisible({ timeout: LIVE });
-  expect(board.queue.map((q) => `${q.dest} ${q.mode} ${q.outcome}`)).toEqual([
+  // The fake board notes a file only after its done POST returns, which the page can see first: wait for the note.
+  await expect.poll(() => board.queue.map((q) => `${q.dest} ${q.mode} ${q.outcome}`), { timeout: LIVE }).toEqual([
     'Work:Tools/y.txt keep delivered', 'Work:Tools/x.lha replace delivered', 'Work:Tools/x_1.lha keep delivered',
   ]);
   await board.stop();
