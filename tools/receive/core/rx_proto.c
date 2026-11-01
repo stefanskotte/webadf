@@ -937,16 +937,41 @@ static void fail_file_err(rx_session *s, long err, const char *dflt) {
     fail_file(s, rx_file_code(err), t);
 }
 void rx_switch_changed(rx_session *s) {
-    if (!s->in_data || !s->cur_mode || s->cur_off || rx_write_on(s)) return;
+    if (!s->in_data || !s->cur_mode || s->cur_off || s->cur_dup || rx_write_on(s)) return;
     if (s->cur_open) { s->fs->close_w(s->fs->ctx); s->cur_open = 0; }
     s->fs->remove(s->fs->ctx, s->cur_tmp);
     s->cur_off = 1;
 }
+static void reply_ok(rx_session *s, const char *saved) {
+    char digits[12];
+    puts_(s, "OK "); puts_(s, s->cur_id); puts_(s, " ");
+    rx_utoa((unsigned long)strlen(saved), digits); puts_(s, digits); puts_(s, ":"); puts_(s, saved); puts_(s, "\n");
+}
+/* Transfer 2.8: 1 when this FILE is the file saved last -- the same id, size and CRC -- and that copy is still there. */
+static int done_repeat(const rx_session *s, const char *id, unsigned long size, unsigned long crc) {
+    const rx_done *d = s->upq ? &s->upq->done : 0;
+    return d && d->id[0] && strcmp(d->id, id) == 0 && d->size == size && d->crc == crc && s->fs->exists(s->fs->ctx, d->saved);
+}
+static void done_keep(rx_session *s, const char *saved) {
+    rx_done *d = s->upq ? &s->upq->done : 0;
+    if (!d) return;
+    strcpy(d->id, s->cur_id); strcpy(d->saved, saved);
+    d->size = s->cur_size; d->crc = s->cur_crc_want;
+}
 static void finish_file(rx_session *s) {
-    char saved[RX_PATH_MAX + 1], digits[12];
+    char saved[RX_PATH_MAX + 1];
     unsigned n;
     int closed;
     long cerr;
+    if (s->cur_dup) {
+        /* A repeat of a file already saved (its OK was lost): that copy was checked when it was saved, so it is the
+           answer whatever these bytes were -- nothing is written, and no second copy is made. */
+        strcpy(saved, s->upq->done.saved);
+        s->cur_dup = 0; s->in_data = 0;
+        reply_ok(s, saved);
+        emit(s, RX_EV_DONE, s->cur_id, saved, s->cur_size, s->cur_size, 0);
+        return;
+    }
     if (s->cur_off) {   /* plan ruling R1: answered after the last byte, when the board listens for it */
         s->cur_off = 0; s->in_data = 0;
         reply_err(s, s->cur_id, "readonly", "writing is off in Transfer");
@@ -994,8 +1019,8 @@ static void finish_file(rx_session *s) {
         return;
     }
     s->fs->set_meta(s->fs->ctx, saved, s->cur_prot, s->cur_comment);
-    puts_(s, "OK "); puts_(s, s->cur_id); puts_(s, " ");
-    rx_utoa((unsigned long)strlen(saved), digits); puts_(s, digits); puts_(s, ":"); puts_(s, saved); puts_(s, "\n");
+    reply_ok(s, saved);
+    done_keep(s, saved);
     s->in_data = 0;
     emit(s, RX_EV_DONE, s->cur_id, saved, s->cur_size, s->cur_size, 0);
 }
@@ -1061,6 +1086,15 @@ static void on_file(rx_session *s, cur *c) {
     /* plan ruling W2: an absolute path needs a mode, and a mode an absolute path */
     if (mode < 0 || (mode != RX_MODE_NONE) != (strchr(s->cur_path, ':') != NULL)) { refuse(s, id, s->cur_path, "name", "bad request"); return; }
     s->cur_mode = mode;
+    if (done_repeat(s, id, size, crc)) {   /* the same file again (its OK was lost): GO, its bytes read and dropped */
+        strcpy(s->cur_id, id);
+        s->cur_size = s->cur_left = size; s->cur_crc_want = crc; s->cur_crc = 0; s->cur_prot = prot;
+        s->cur_mark = 0; s->cur_open = 0; s->cur_write_failed = 0; s->cur_off = 0; s->cur_dup = 1; s->in_data = 1;
+        puts_(s, "GO "); puts_(s, id); puts_(s, "\n");
+        emit(s, RX_EV_BEGIN, s->cur_id, s->cur_path, size, 0, 0);
+        if (size == 0) finish_file(s);
+        return;
+    }
     if (mode) {
         if (abs_file_start(s, id, size) != 0) return;
     } else {
@@ -1077,7 +1111,7 @@ static void on_file(rx_session *s, cur *c) {
     }
     strcpy(s->cur_id, id);
     s->cur_size = s->cur_left = size; s->cur_crc_want = crc; s->cur_crc = 0; s->cur_prot = prot;
-    s->cur_mark = 0; s->cur_open = 1; s->cur_write_failed = 0; s->cur_off = 0; s->in_data = 1;
+    s->cur_mark = 0; s->cur_open = 1; s->cur_write_failed = 0; s->cur_off = 0; s->cur_dup = 0; s->in_data = 1;
     puts_(s, "GO "); puts_(s, id); puts_(s, "\n");
     emit(s, RX_EV_BEGIN, s->cur_id, s->cur_path, size, 0, 0);
     if (size == 0) finish_file(s);
@@ -1138,7 +1172,7 @@ int rx_feed(rx_session *s, const unsigned char *data, unsigned long n) {
             unsigned long take = n < s->cur_left ? n : s->cur_left;
             if (take > room) take = room;
             rx_switch_changed(s);
-            if (!s->cur_off && !s->cur_write_failed && s->fs->write(s->fs->ctx, data, take) != 0) { s->cur_write_failed = 1; s->cur_err = rx_ferr(s); }
+            if (!s->cur_off && !s->cur_dup && !s->cur_write_failed && s->fs->write(s->fs->ctx, data, take) != 0) { s->cur_write_failed = 1; s->cur_err = rx_ferr(s); }
             s->cur_crc = rx_crc32_update(s->cur_crc, data, take);
             s->cur_left -= take; data += take; n -= take;
             {
@@ -1171,8 +1205,8 @@ int rx_feed(rx_session *s, const unsigned char *data, unsigned long n) {
 void rx_disconnected(rx_session *s) {
     if (s->in_data) {
         if (s->cur_open) { s->fs->close_w(s->fs->ctx); s->cur_open = 0; }
-        if (!s->cur_off) s->fs->remove(s->fs->ctx, s->cur_tmp);   /* an aborted file's temp went already */
-        s->in_data = 0; s->cur_off = 0;
+        if (!s->cur_off && !s->cur_dup) s->fs->remove(s->fs->ctx, s->cur_tmp);   /* an aborted file's temp went already; a repeat has none */
+        s->in_data = 0; s->cur_off = 0; s->cur_dup = 0;
         emit(s, RX_EV_FAILED, s->cur_id, s->cur_path, s->cur_size, 0, "connection lost");
     }
     if (s->up_phase != RX_UP_IDLE) up_finish(s, RX_EV_UP_FAILED, s->up_cancel ? "cancelled" : "connection lost", "local", 0);

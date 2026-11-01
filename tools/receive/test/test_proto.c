@@ -548,6 +548,61 @@ static void no_gone_mid_file_shows_the_boards_text(void) {
     CHECK(i >= 0 && strcmp(ev_path[i], "Big|deleted on the web app") == 0, ev_path[i < 0 ? 0 : i]);
     drain(); CHECK(ob_closed, "closed: the place in the stream is lost");
 }
+/* A500 bench 2026-11-01: Transfer saved Transfer27 and answered OK, the board never had the OK (the connection went
+   between the last byte and the OK), the row stayed 'sending', and the same id came again: Transfer27_2. A FILE for an
+   id this Transfer already saved -- same size and CRC, the saved file still there -- reads its bytes, writes nothing,
+   and answers OK with the name it was saved as. */
+static void reconnect2(void) { rx_disconnected(&S); rx_init(&S, &FS, on_ev, NULL); rx_attach(&S, &Q); }
+static void a_resent_id_after_a_lost_ok_is_answered_ok_and_not_saved_twice(void) {
+    char l[600]; setup2("");
+    file_line(l, "ae009322", "hello", 5, 0, "Transfer27", "", 0);
+    feed(l); feed("hello");
+    CHECK(strcmp(out(), "GO ae009322\nOK ae009322 10:Transfer27\n") == 0, "first copy");
+    reconnect2();
+    feed(l); CHECK(strcmp(out(), "GO ae009322\n") == 0, "GO: the board sends the bytes as ever");
+    CHECK(!has(RX_TMP_NAME), "no temporary file for a repeat");
+    feed("hel"); feed("lo");
+    CHECK(strcmp(out(), "OK ae009322 10:Transfer27\n") == 0, "OK with the first copy's name");
+    CHECK(!has("Transfer27_2") && !has(RX_TMP_NAME), "no second copy");
+    CHECK_EQ_INT(last_ev[n_ev - 1].kind, RX_EV_DONE);
+    CHECK(strcmp(ev_text[n_ev - 1], "Transfer27") == 0, ev_text[n_ev - 1]);
+    /* Another id with the same name is another file: keep-on-clash as ever. */
+    file_line(l, "b7", "hello", 5, 0, "Transfer27", "", 0); feed(l); feed("hello");
+    CHECK(strstr(out(), "OK b7 12:Transfer27_2\n") != NULL, "a new id still gets its own name");
+}
+static void a_resent_id_whose_copy_is_gone_or_differs_is_received_again(void) {
+    char l[600]; setup2("");
+    file_line(l, "c9", "hello", 5, 0, "Hello.txt", "", 0); feed(l); feed("hello"); out();
+    ff_remove(&F, "Hello.txt");
+    reconnect2();
+    feed(l); feed("hello");
+    CHECK(strcmp(out(), "GO c9\nOK c9 9:Hello.txt\n") == 0, "the owner deleted the copy: written again");
+    CHECK(has("Hello.txt"), "there again");
+    /* The same id with another size or CRC is not the file remembered. */
+    reconnect2();
+    file_line(l, "c9", "howdy", 5, 0, "Hello.txt", "", 0); feed(l); feed("howdy");
+    CHECK(strcmp(out(), "GO c9\nOK c9 11:Hello_2.txt\n") == 0, "another CRC: a new copy");
+}
+static void a_damaged_or_cut_off_repeat_leaves_the_first_copy(void) {
+    char l[600]; setup2("");
+    file_line(l, "d4", "hello", 5, 0, "Keep.txt", "", 0); feed(l); feed("hello"); out();
+    reconnect2();
+    feed(l); feed("hexlo");
+    /* The copy was checked when it was saved: it is the answer, whatever the repeat's bytes were. */
+    CHECK(strcmp(out(), "GO d4\nOK d4 8:Keep.txt\n") == 0, "a damaged repeat: OK, the first copy");
+    CHECK(has("Keep.txt") && memcmp(F.e[ff_find(&F, "Keep.txt")].data, "hello", 5) == 0, "the first copy untouched");
+    CHECK(!has("Keep_2.txt") && !has(RX_TMP_NAME), "nothing written");
+    reconnect2();
+    feed(l); feed("he"); rx_disconnected(&S);
+    CHECK(has("Keep.txt") && !has(RX_TMP_NAME), "a repeat cut off removes nothing");
+}
+static void without_a_queue_nothing_is_remembered(void) {
+    char l[600]; setup();
+    file_line(l, "e5", "x", 1, 0, "N", "", 0); feed(l); feed("x"); out();
+    rx_disconnected(&S); rx_init(&S, &FS, on_ev, NULL);
+    feed(l); feed("x");
+    CHECK(strcmp(out(), "GO e5\nOK e5 3:N_2\n") == 0, "protocol 1 front end: as before");
+}
 int main(void) {
     RUN(hello_and_ping); RUN(list_items); RUN(list_split_across_feeds_and_bad_line_skipped); RUN(one_file);
     RUN(line_and_data_in_one_feed_then_next_line); RUN(collision); RUN(subfolder_made); RUN(bad_crc);
@@ -570,6 +625,9 @@ int main(void) {
     RUN(the_upload_silence_outlasts_the_boards_5_minute_wait);
     RUN(a_resumes_pre_read_counts_as_receives_own_work); RUN(no_gone_mid_file_shows_the_boards_text);
     RUN(an_empty_queue_holds_no_item_storage);
+    RUN(a_resent_id_after_a_lost_ok_is_answered_ok_and_not_saved_twice);
+    RUN(a_resent_id_whose_copy_is_gone_or_differs_is_received_again);
+    RUN(a_damaged_or_cut_off_repeat_leaves_the_first_copy); RUN(without_a_queue_nothing_is_remembered);
     RUN(a_failed_add_says_why); RUN(a_walk_counts_the_files_memory_refused); RUN(init_frees_what_a_queue_still_holds);
     return REPORT();
 }

@@ -19,6 +19,8 @@ with no recursion). Transfer 2.6 adds 956 B of code (50,972 B) and 320 B of fixe
 Transfer 2.7 (the commodity, the menu, the icon's tool types, the stopped copy) adds 3,240 B of code (54,212 B), 84 B
 of data (396 B) and 96 B of BSS (25,604 B); the Shell form opens no new library. commodities.library is opened only
 by the window (and icon.library only for a moment, to read the tool types).
+Transfer 2.8 (a file sent again after a lost OK is not saved twice) adds 376 B of code (54,588 B) and 304 B of BSS
+(25,908 B): the file saved last, remembered across connections.
 
 ## Using it
 
@@ -108,6 +110,10 @@ by the window (and icon.library only for a moment, to read the tool types).
   `RAM:`.
 - **Nothing is overwritten:** a second `Foo.lha` arrives as `Foo_2.lha`. Nothing is written outside the folder,
   unless writing is switched on (above).
+- **The same file twice is saved once (Transfer 2.8):** when the connection goes between a file's last byte and its
+  `OK`, the board never hears the `OK` and sends the file again under the same id. Transfer remembers the file it
+  saved last (id, size, CRC and the name it got): a repeat is answered `GO`, its bytes are read and dropped, and `OK`
+  names the first copy -- no `Foo_2.lha`. Only while Transfer keeps running, and only while that copy is still there.
 
 While `Transfer` runs, it listens on TCP port 6800 for the board.
 
