@@ -1,8 +1,9 @@
 /* Transfer's window (spec 2026-10-16 §5, 2026-10-18 §2): the folder, the board, and both directions in one list. It is
    an AppWindow: icons dropped on it go to the web app (a drawer walked, 64 files at most); Send... opens an asl
-   requester (several files on V38+, one on V37). A checkbox lets the web app browse the Amiga's disks (read-only), a
-   second one (only while browsing is on) lets it change them; the status line shows its last request. gadtools, asl
-   and workbench only (V37). */
+   requester (several files on V38+, one on V37). One row, "Web App: [x] Read [x] Write" (Transfer 2.7), lets the web
+   app browse the Amiga's disks (read-only) and, only while Read is on, change them; the status line shows its last
+   request. It is a commodity (cx.c, Transfer 2.7): Exchange and a hotkey show and hide it, the close gadget hides it,
+   Project/Quit or Exchange's Kill end it. gadtools, asl, workbench and commodities only (V37). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,7 @@
 #include "afs.h"
 #include "clock.h"
 #include "config.h"
+#include "cx.h"
 #include "ipc.h"
 #include "net.h"
 #include "ui.h"
@@ -33,7 +35,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *WorkbenchBase = NULL;
 struct IntuitionBase *IntuitionBase = NULL;
 struct GfxBase *GfxBase = NULL;
 
-enum { G_DIR, G_CHOOSE, G_SEND, G_RETRY, G_TRUST, G_SAVE, G_BROWSE, G_WRITE, G_STATUS, G_LIST, G_N };
+enum { G_DIR, G_CHOOSE, G_SEND, G_RETRY, G_TRUST, G_SAVE, G_WEBAPP, G_BROWSE, G_WRITE, G_STATUS, G_LIST, G_N };
 #define ROWS_MAX 96
 enum { ST_WAITING, ST_RECEIVING, ST_DONE, ST_FAILED, ST_UP_WAITING, ST_UP_MOVING, ST_UP_DONE, ST_UP_FAILED, ST_SKIPPED };
 typedef struct { struct Node node; char id[RX_ID_MAX + 1]; unsigned tag; char name[RX_PATH_MAX + 1];
@@ -48,6 +50,15 @@ typedef struct {
     char okstatus[80]; int stalled; ULONG t_wait;   /* spec §8: "waiting for the web app" while the credit is stalled */
     int old_board;   /* the board connected cannot take files up (before 1.19.0) */
     struct Gadget *gl;   /* CreateContext's list: freed after CloseWindow (FirstGadget includes system gadgets) */
+    /* Transfer 2.7: the window comes and goes (a commodity); what it shows outlives it. */
+    char dirbuf[256];    /* the folder gadget's text while the window is hidden */
+    int trust_on;        /* Trust this board is usable */
+    int has_cx;          /* a broker: the close gadget hides */
+    int disabled;        /* Exchange's Disable: net.c closes the connection and the listener */
+    int want_hide;
+    const char *note;    /* said instead of the first network status (no commodities.library, a bad hotkey) */
+    struct Menu *menu;
+    net_ui *ui;
 } gui;
 
 /* amiga.lib's NewList, without linking amiga.lib. */
@@ -58,6 +69,7 @@ static void set_status(gui *G, const char *t) {
     if (G->win) GT_SetGadgetAttrs(G->g[G_STATUS], G->win, NULL, GTTX_Text, (ULONG)G->status, TAG_END);
 }
 static void set_trust_button(gui *G, int on) {
+    G->trust_on = on;
     if (G->win) GT_SetGadgetAttrs(G->g[G_TRUST], G->win, NULL, GA_Disabled, (ULONG)(on ? FALSE : TRUE), TAG_END);
 }
 /* Every board before 1.19.0 connects this way to send files down: said only once something is to go up (as shell.c). */
@@ -250,7 +262,12 @@ static void on_event(void *u, const rx_event *e, rx_session *s) {
     relist(G);
 }
 /* net_run reports "Listening on port 6800"; a missing folder says so instead, from the first draw. */
-static void on_status(void *u, const char *t) { gui *G = u; set_status(G, G->fs->folder_ok(G->ctx) ? t : "Folder not found"); }
+static void on_status(void *u, const char *t) {
+    gui *G = u;
+    if (G->note) { set_status(G, G->note); G->note = NULL; return; }
+    set_status(G, strcmp(t, "Listening on port 6800") || G->fs->folder_ok(G->ctx) ? t : "Folder not found");
+}
+static int gui_off(void *u) { return ((gui *)u)->disabled; }
 static void on_link(void *u, int connected) {
     gui *G = u;
     G->connected = connected;
@@ -296,6 +313,7 @@ static void set_browse(gui *G, int on) {
     G->q->browse = on;
     /* spec 2026-10-31 §2.4: writing is usable only while browsing is on; unticking browsing unticks writing */
     if (!on && G->q->write) { G->q->write = 0; cfg_write_save(0); }
+    rx_switch_changed(G->s);   /* Transfer 2.7: an absolute FILE being received stops now */
     if (G->win) GT_SetGadgetAttrs(G->g[G_WRITE], G->win, NULL, GTCB_Checked, (ULONG)(G->q->write ? TRUE : FALSE),
                                   GA_Disabled, (ULONG)(on ? FALSE : TRUE), TAG_END);
     if (cfg_browse_save(on) != 0) set_status(G, on ? "Browsing on (not saved: ENVARC:)" : "Browsing off (not saved: ENVARC:)");
@@ -304,16 +322,35 @@ static void set_browse(gui *G, int on) {
 /* The writing switch (spec 2026-10-31 §2.4), stored at once as the browsing one; a connected board reconnects. */
 static void set_write(gui *G, int on) {
     G->q->write = on && G->q->browse;
+    rx_switch_changed(G->s);
     if (cfg_write_save(G->q->write) != 0) set_status(G, on ? "Writing on (not saved: ENVARC:)" : "Writing off (not saved: ENVARC:)");
     else set_status(G, on ? "Writing on: the web app can change your disks" : "Writing off: the web app only reads");
 }
+static ULONG gui_sigs(gui *G) {
+    return (G->win ? 1UL << G->win->UserPort->mp_SigBit : 0) | (G->app_port ? 1UL << G->app_port->mp_SigBit : 0) |
+           ipc_sigmask() | cx_sigmask();
+}
+static void sync_sigs(gui *G) { if (G->ui) G->ui->extra_sigs = gui_sigs(G); }
+static int show(gui *G);
+static void hide(gui *G);
+/* Project: Hide (Amiga-H, only with a broker: without one nothing could show the window again), Quit (Amiga-Q). */
+static void menu_pick(gui *G, UWORD code) {
+    while (code != MENUNULL) {
+        struct MenuItem *it = ItemAddress(G->menu, code);
+        if (MENUNUM(code) == 0 && ITEMNUM(code) == 0 && G->has_cx) G->want_hide = 1;
+        else if (MENUNUM(code) == 0 && ITEMNUM(code) == 1) G->quit = 1;
+        if (!it) break;
+        code = it->NextSelect;
+    }
+}
 static int on_signal(void *u, ULONG sigs) {
-    gui *G = u; struct IntuiMessage *m; struct AppMessage *am; LONG i;
+    gui *G = u; struct IntuiMessage *m; struct AppMessage *am; LONG i; int cx;
     (void)sigs;
-    while ((m = GT_GetIMsg(G->win->UserPort)) != NULL) {
-        ULONG cls = m->Class; struct Gadget *gad = (struct Gadget *)m->IAddress;
+    while (G->win && (m = GT_GetIMsg(G->win->UserPort)) != NULL) {
+        ULONG cls = m->Class; UWORD code = m->Code; struct Gadget *gad = (struct Gadget *)m->IAddress;
         GT_ReplyIMsg(m);
-        if (cls == IDCMP_CLOSEWINDOW) G->quit = 1;
+        if (cls == IDCMP_CLOSEWINDOW) { if (G->has_cx) G->want_hide = 1; else G->quit = 1; }
+        else if (cls == IDCMP_MENUPICK) menu_pick(G, code);
         else if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(G->win); GT_EndRefresh(G->win, TRUE); }
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_CHOOSE) choose(G);
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_SAVE) save(G);
@@ -323,11 +360,18 @@ static int on_signal(void *u, ULONG sigs) {
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_RETRY) retry_failed(G);
         else if (cls == IDCMP_GADGETUP && gad->GadgetID == G_TRUST && rx_trust_now(G->s) != 0) set_status(G, "No board to trust yet");
     }
+    if (G->want_hide) { G->want_hide = 0; hide(G); }
     if (G->app_port) while ((am = (struct AppMessage *)GetMsg(G->app_port)) != NULL) {
         for (i = 0; i < am->am_NumArgs; i++) add_wbarg(G, &am->am_ArgList[i]);
         ReplyMsg((struct Message *)am);
     }
     ipc_take(G->q, on_added, gui_trust, G);
+    cx = cx_take();   /* Exchange and the hotkey */
+    if (cx & CX_DISABLE) G->disabled = 1;
+    if (cx & CX_ENABLE) G->disabled = 0;
+    if (cx & CX_HIDE) hide(G);
+    if (cx & CX_SHOW) show(G);
+    if (cx & CX_QUIT) G->quit = 1;
     relist(G);
     /* A drop, Send... or a Shell's SEND while a board before 1.19.0 is connected: say why nothing moves. */
     if (G->connected && G->old_board && G->q->n) set_status(G, OLD_FW);
@@ -336,16 +380,30 @@ static int on_signal(void *u, ULONG sigs) {
 
 static UWORD text_w(struct RastPort *rp, const char *s) { return (UWORD)(TextLength(rp, (STRPTR)s, (UWORD)strlen(s)) + 16); }
 
-static int build(gui *G, const char *dir) {
+static struct NewMenu menus[] = {
+    { NM_TITLE, (STRPTR)"Project", NULL, 0, 0, NULL },
+    { NM_ITEM, (STRPTR)"Hide", (STRPTR)"H", 0, 0, NULL },
+    { NM_ITEM, (STRPTR)"Quit", (STRPTR)"Q", 0, 0, NULL },
+    { NM_END, NULL, NULL, 0, 0, NULL }
+};
+
+/* The layout (Transfer 2.7, plan rulings R6, R7): a 6-pixel margin all round, 4 pixels between rows; the labels
+   "Save files to:" and "Web App:" end in one column, where the folder field and the Read box start. */
+#define CB_W 26    /* a V37 checkbox is 26 x 11 whatever the font */
+#define CB_H 11
+static int build(gui *G) {
     struct NewGadget ng; struct Gadget *gl = NULL, *g;
     struct TextAttr *ta = G->scr->Font;
     struct TextFont *tf = OpenFont(ta);
     struct RastPort rp;
-    UWORD fh = ta->ta_YSize, mw, lw, w, wsend, wretry, wtrust, x0, y, gh, iw, row2;
+    UWORD fh = ta->ta_YSize, mw, lw, lw2, w, wsend, wretry, wtrust, wread, x0, right, top, y, gh, iw, row2, lh;
     InitRastPort(&rp);
     if (tf) SetFont(&rp, tf);
     mw = (UWORD)TextLength(&rp, (STRPTR)"M", 1);
     lw = (UWORD)TextLength(&rp, (STRPTR)"Save files to:", 14) + 8;
+    lw2 = (UWORD)TextLength(&rp, (STRPTR)"Web App:", 8) + 8;
+    if (lw < lw2) lw = lw2;
+    wread = (UWORD)TextLength(&rp, (STRPTR)"Read", 4);
     w = text_w(&rp, "Choose...");
     wsend = text_w(&rp, "Send..."); wretry = text_w(&rp, "Retry failed"); wtrust = text_w(&rp, "Trust this board");
     if (tf) CloseFont(tf);
@@ -353,14 +411,15 @@ static int build(gui *G, const char *dir) {
     row2 = (UWORD)(wsend + wretry + wtrust + w + 3 * 6 + 12);   /* the second row's buttons, side by side */
     if (iw < row2) iw = row2;
     if (iw > G->scr->Width - 24) iw = (UWORD)(G->scr->Width - 24);
-    x0 = (UWORD)(G->scr->WBorLeft + 6); y = (UWORD)(G->scr->WBorTop + fh + 1 + 4); gh = (UWORD)(fh + 6);
+    top = (UWORD)(G->scr->WBorTop + fh + 1);   /* the title bar */
+    x0 = (UWORD)(G->scr->WBorLeft + 6); right = (UWORD)(x0 + iw - 12); y = (UWORD)(top + 6); gh = (UWORD)(fh + 6);
     g = CreateContext(&gl);
     memset(&ng, 0, sizeof ng);
     ng.ng_VisualInfo = G->vi; ng.ng_TextAttr = ta;
-    ng.ng_LeftEdge = (WORD)(x0 + lw); ng.ng_TopEdge = (WORD)y; ng.ng_Width = (WORD)(iw - lw - w - 18); ng.ng_Height = (WORD)gh;
+    ng.ng_LeftEdge = (WORD)(x0 + lw); ng.ng_TopEdge = (WORD)y; ng.ng_Width = (WORD)(right - w - 6 - x0 - lw); ng.ng_Height = (WORD)gh;
     ng.ng_GadgetText = (UBYTE *)"Save files to:"; ng.ng_GadgetID = G_DIR; ng.ng_Flags = PLACETEXT_LEFT;
-    G->g[G_DIR] = g = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)dir, GTST_MaxChars, 255, TAG_END);
-    ng.ng_LeftEdge = (WORD)(x0 + iw - w - 6); ng.ng_Width = (WORD)w; ng.ng_GadgetText = (UBYTE *)"Choose...";
+    G->g[G_DIR] = g = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)G->dirbuf, GTST_MaxChars, 255, TAG_END);
+    ng.ng_LeftEdge = (WORD)(right - w); ng.ng_Width = (WORD)w; ng.ng_GadgetText = (UBYTE *)"Choose...";
     ng.ng_GadgetID = G_CHOOSE; ng.ng_Flags = PLACETEXT_IN;
     G->g[G_CHOOSE] = g = CreateGadget(BUTTON_KIND, g, &ng, TAG_END);
     y = (UWORD)(y + gh + 4);
@@ -370,66 +429,107 @@ static int build(gui *G, const char *dir) {
     ng.ng_LeftEdge = (WORD)(x0 + wsend + 6); ng.ng_Width = (WORD)wretry; ng.ng_GadgetText = (UBYTE *)"Retry failed"; ng.ng_GadgetID = G_RETRY;
     G->g[G_RETRY] = g = CreateGadget(BUTTON_KIND, g, &ng, TAG_END);
     ng.ng_LeftEdge = (WORD)(x0 + wsend + wretry + 12); ng.ng_Width = (WORD)wtrust; ng.ng_GadgetText = (UBYTE *)"Trust this board"; ng.ng_GadgetID = G_TRUST;
-    G->g[G_TRUST] = g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, TRUE, TAG_END);
-    ng.ng_LeftEdge = (WORD)(x0 + iw - w - 6); ng.ng_Width = (WORD)w; ng.ng_GadgetText = (UBYTE *)"Save"; ng.ng_GadgetID = G_SAVE;
+    G->g[G_TRUST] = g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, (ULONG)(G->trust_on ? FALSE : TRUE), TAG_END);
+    ng.ng_LeftEdge = (WORD)(right - w); ng.ng_Width = (WORD)w; ng.ng_GadgetText = (UBYTE *)"Save"; ng.ng_GadgetID = G_SAVE;
     G->g[G_SAVE] = g = CreateGadget(BUTTON_KIND, g, &ng, TAG_END);
+    /* The switches (spec 2026-10-30 §2.3, 2026-10-31 §2.4) on one row: "Web App:" is a borderless text gadget's label
+       (zero wide, so it never takes a click), Read and Write the boxes' own labels; Write is greyed while Read is off. */
     y = (UWORD)(y + gh + 4);
-    /* The browsing switch (spec 2026-10-30 §2.3), on its own row. */
-    ng.ng_LeftEdge = (WORD)x0; ng.ng_TopEdge = (WORD)y; ng.ng_Width = 26; ng.ng_Height = (WORD)gh;
-    ng.ng_GadgetText = (UBYTE *)"Let the web app browse my disks (read-only)"; ng.ng_GadgetID = G_BROWSE;
-    ng.ng_Flags = PLACETEXT_RIGHT;
+    /* One line lower than the box: GadTools centres a checkbox's label one line lower than a text gadget's (seen on
+       3.1, 2026-11-01), so the three labels share a baseline. */
+    ng.ng_LeftEdge = (WORD)(x0 + lw); ng.ng_TopEdge = (WORD)(y + (gh - CB_H) / 2 + 1); ng.ng_Width = 0; ng.ng_Height = CB_H;
+    ng.ng_GadgetText = (UBYTE *)"Web App:"; ng.ng_GadgetID = G_WEBAPP; ng.ng_Flags = PLACETEXT_LEFT;
+    G->g[G_WEBAPP] = g = CreateGadget(TEXT_KIND, g, &ng, TAG_END);
+    ng.ng_TopEdge = (WORD)(y + (gh - CB_H) / 2); ng.ng_Width = CB_W;
+    ng.ng_GadgetText = (UBYTE *)"Read"; ng.ng_GadgetID = G_BROWSE; ng.ng_Flags = PLACETEXT_RIGHT;
     G->g[G_BROWSE] = g = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, (ULONG)(G->q->browse ? TRUE : FALSE), TAG_END);
-    /* The writing switch (spec 2026-10-31 §2.4), under it, greyed while browsing is off. */
-    y = (UWORD)(y + gh + 4);
-    ng.ng_TopEdge = (WORD)y; ng.ng_GadgetText = (UBYTE *)"Let the web app change my disks"; ng.ng_GadgetID = G_WRITE;
+    ng.ng_LeftEdge = (WORD)(x0 + lw + CB_W + 8 + wread + 16); ng.ng_GadgetText = (UBYTE *)"Write"; ng.ng_GadgetID = G_WRITE;
     G->g[G_WRITE] = g = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, (ULONG)(G->q->write ? TRUE : FALSE),
                                      GA_Disabled, (ULONG)(G->q->browse ? FALSE : TRUE), TAG_END);
     ng.ng_Flags = PLACETEXT_IN;
     y = (UWORD)(y + gh + 4);
-    ng.ng_LeftEdge = (WORD)x0; ng.ng_TopEdge = (WORD)y; ng.ng_Width = (WORD)(iw - 12); ng.ng_GadgetText = NULL; ng.ng_GadgetID = G_STATUS;
+    ng.ng_LeftEdge = (WORD)x0; ng.ng_TopEdge = (WORD)y; ng.ng_Width = (WORD)(right - x0); ng.ng_Height = (WORD)gh;
+    ng.ng_GadgetText = NULL; ng.ng_GadgetID = G_STATUS;
     G->g[G_STATUS] = g = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)G->status, GTTX_Border, TRUE, TAG_END);
     y = (UWORD)(y + gh + 4);
-    ng.ng_TopEdge = (WORD)y; ng.ng_Height = (WORD)(8 * (fh + 1) + 4); ng.ng_GadgetID = G_LIST;
+    lh = (UWORD)(8 * fh + 4);   /* eight whole lines: GadTools drops a part line, which left a gap under the list */
+    ng.ng_TopEdge = (WORD)y; ng.ng_Height = (WORD)lh; ng.ng_GadgetID = G_LIST;
     G->g[G_LIST] = g = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&G->list, GTLV_ReadOnly, TRUE, TAG_END);
     G->gl = gl;
-    if (!g) { FreeGadgets(gl); G->gl = NULL; return -1; }
+    if (!g) return -1;
+    menus[1].nm_Flags = G->has_cx ? 0 : NM_ITEMDISABLED;
+    G->menu = CreateMenus(menus, TAG_END);
+    if (G->menu && !LayoutMenus(G->menu, G->vi, TAG_END)) { FreeMenus(G->menu); G->menu = NULL; }
     G->win = OpenWindowTags(NULL,
         WA_Title, (ULONG)"WebFloppy - Receive & Send", WA_PubScreen, (ULONG)G->scr, WA_Gadgets, (ULONG)gl,
-        WA_InnerWidth, iw, WA_InnerHeight, (ULONG)(y + ng.ng_Height + 6 - (G->scr->WBorTop + fh + 1)),
+        WA_InnerWidth, iw, WA_InnerHeight, (ULONG)(y + lh + 6 - top),
         WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
-        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | BUTTONIDCMP | STRINGIDCMP | LISTVIEWIDCMP, TAG_END);
-    if (!G->win) { FreeGadgets(gl); G->gl = NULL; return -1; }
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_MENUPICK | BUTTONIDCMP | STRINGIDCMP | LISTVIEWIDCMP, TAG_END);
+    if (!G->win) return -1;
+    if (G->menu) SetMenuStrip(G->win, G->menu);
     GT_RefreshWindow(G->win, NULL);
+    return 0;
+}
+
+/* The window opens (Exchange's Show, the hotkey, a second start) and closes (the close gadget, Hide) while Transfer
+   keeps serving; the folder text, the switches, the Trust state and the list stay in G. */
+static void hide(gui *G) {
+    if (G->win) strncpy(G->dirbuf, dir_text(G), sizeof G->dirbuf - 1);
+    if (G->app_win) { RemoveAppWindow(G->app_win); G->app_win = NULL; }
+    if (G->win) { if (G->menu) ClearMenuStrip(G->win); CloseWindow(G->win); G->win = NULL; }
+    if (G->menu) { FreeMenus(G->menu); G->menu = NULL; }
+    if (G->gl) { FreeGadgets(G->gl); G->gl = NULL; }
+    if (G->vi) { FreeVisualInfo(G->vi); G->vi = NULL; }
+    if (G->scr) { UnlockPubScreen(NULL, G->scr); G->scr = NULL; }
+    sync_sigs(G);
+}
+static int show(gui *G) {
+    if (G->win) { WindowToFront(G->win); ActivateWindow(G->win); return 0; }
+    if (!(G->scr = LockPubScreen(NULL)) || !(G->vi = GetVisualInfo(G->scr, TAG_END)) || build(G) != 0) { hide(G); return -1; }
+    if (G->app_port) G->app_win = AddAppWindowA(0, 0, G->win, G->app_port, NULL);
+    sync_sigs(G);
     return 0;
 }
 
 /* Without a network (no stack, or port 6800 taken) the window still takes drops, Send... and Shell hand-offs. */
 static void wait_window(gui *G) {
-    ULONG mask = 1UL << G->win->UserPort->mp_SigBit | (G->app_port ? 1UL << G->app_port->mp_SigBit : 0) | ipc_sigmask();
     while (!G->quit) {
-        ULONG sigs = Wait(mask | SIGBREAKF_CTRL_C);
+        ULONG sigs = Wait(gui_sigs(G) | SIGBREAKF_CTRL_C);
         if (sigs & SIGBREAKF_CTRL_C) break;
         on_signal(G, sigs);
     }
 }
 
-int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int trust, int browse, int write) {
+int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int trust, int browse, int write, const cx_opts *cx) {
     /* G (68 KB: 96 rows) and the session are malloc'd here, not static, so a Shell run never holds them (512 KB bench,
        spec 2026-10-30 §7 step 8); libnix frees them with the program. */
     static afs_ctx ctx; static rx_fs fs; static rx_upq q;
     gui *G = calloc(1, sizeof *G); rx_session *s = calloc(1, sizeof *s);
+    net_ui ui;
     char key[RX_KEY_HEX + 8];
     long i;
-    int rc = RETURN_FAIL;
+    int rc = RETURN_FAIL, k;
     if (!G || !s) { PrintFault(ERROR_NO_FREE_STORE, (STRPTR)"Transfer"); return RETURN_FAIL; }
+    memset(&ui, 0, sizeof ui);
     IntuitionBase = (struct IntuitionBase *)OpenLibrary((STRPTR)"intuition.library", 37);
     GfxBase = (struct GfxBase *)OpenLibrary((STRPTR)"graphics.library", 37);
     GadToolsBase = OpenLibrary((STRPTR)"gadtools.library", 37);
     AslBase = OpenLibrary((STRPTR)"asl.library", 37);
     WorkbenchBase = OpenLibrary((STRPTR)"workbench.library", 37);   /* none (no Workbench): no drops, the rest works */
     if (!IntuitionBase || !GfxBase || !GadToolsBase || !AslBase) goto out;
+    /* Before anything shows: a second start only shows the first one's window (plan ruling R10). */
+    k = cx_open(cx);
+    if (k == 1) {
+        if (cx->shell) PutStr((STRPTR)"Transfer is already running: its window is shown\n");
+        rc = RETURN_OK; goto out;
+    }
+    G->has_cx = k == 0;
+    /* any broker failure (no commodities.library, or no memory for it): review minor 2 */
+    if (!G->has_cx) G->note = "No Exchange: closing the window stops Transfer";
+    else if (cx_hotkey_bad()) G->note = "Hotkey not understood (CX_POPKEY): none set";
     new_list(&G->list);
-    G->ctx = &ctx; G->fs = &fs; G->s = s; G->q = &q;
+    G->ctx = &ctx; G->fs = &fs; G->s = s; G->q = &q; G->ui = &ui;
+    strncpy(G->dirbuf, dir, sizeof G->dirbuf - 1);
     afs_init(&ctx, &fs, dir);
     cfg_key_load(key, sizeof key);
     rx_upq_init(&q, key);
@@ -437,21 +537,20 @@ int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int 
     if (trust) gui_trust(G);   /* Transfer GUI TRUST (ruling PF18): as the Shell form, the next board's key is trusted */
     strcpy(G->status, "Starting...");
     strcpy(G->okstatus, "Listening on port 6800");
-    if (!(G->scr = LockPubScreen(NULL)) || !(G->vi = GetVisualInfo(G->scr, TAG_END))) goto out;
-    if (build(G, dir) != 0) goto out;
-    if (WorkbenchBase && (G->app_port = CreateMsgPort()) != NULL)
-        G->app_win = AddAppWindowA(0, 0, G->win, G->app_port, NULL);
+    if (WorkbenchBase) G->app_port = CreateMsgPort();
+    /* CX_POPUP=NO starts hidden, only with a broker: without one nothing could show the window (ruling R9). */
+    if ((!G->has_cx || cx->popup) && show(G) != 0) goto out;
     ipc_open();
+    sync_sigs(G);
     for (i = 0; i < nwb; i++) add_wbarg(G, &wbargs[i]);           /* shift-clicked project icons */
     for (i = 0; send && send[i]; i++) add_path(G, (const char *)send[i]);   /* Transfer GUI SEND ... */
     if (net_open() != 0) {
         set_status(G, "No TCP/IP stack running (bsdsocket.library)");
         wait_window(G);
     } else {
-        net_ui ui;
         ui.u = G; ui.on_event = on_event; ui.on_status = on_status;
-        ui.extra_sigs = 1UL << G->win->UserPort->mp_SigBit | (G->app_port ? 1UL << G->app_port->mp_SigBit : 0) | ipc_sigmask();
-        ui.on_signal = on_signal; ui.on_pass = gui_pass; ui.on_link = on_link;
+        ui.on_signal = on_signal; ui.on_pass = gui_pass; ui.on_link = on_link; ui.off = gui_off;
+        sync_sigs(G);
         if (net_run(&ui, &ctx, &fs, s, &q) != 0) {
             /* e.g. Transfer is already running: say so and wait for the close gadget, as without a stack. */
             set_status(G, "Could not listen on port 6800");
@@ -462,12 +561,9 @@ int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int 
     rc = RETURN_OK;
 out:
     ipc_close();
-    if (G->app_win) RemoveAppWindow(G->app_win);
+    hide(G);
     if (G->app_port) { struct Message *m; while ((m = GetMsg(G->app_port)) != NULL) ReplyMsg(m); DeleteMsgPort(G->app_port); }
-    if (G->win) CloseWindow(G->win);
-    if (G->gl) FreeGadgets(G->gl);
-    if (G->vi) FreeVisualInfo(G->vi);
-    if (G->scr) UnlockPubScreen(NULL, G->scr);
+    cx_close();
     if (WorkbenchBase) CloseLibrary(WorkbenchBase);
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);

@@ -45,29 +45,46 @@ static void drop(net_ui *ui, rx_session *s, LONG *cl) {
     if (ui->on_link) ui->on_link(ui->u, 0);
 }
 
-int net_run(net_ui *ui, afs_ctx *ctx, rx_fs *fs, rx_session *s, rx_upq *q) {
-    static unsigned char buf[4096];
+/* The listener on RX_PORT, or -1. */
+static LONG listen_on(void) {
     struct sockaddr_in a;
-    LONG one = 1, ls, cl = -1;
-    ULONG last = 0;
-    (void)ctx;
-    cur_ui = ui; cur_s = s;
-    o_len = o_off = 0;
-    rx_init(s, fs, relay, NULL);   /* idle until the board connects */
-    ls = socket(AF_INET, SOCK_STREAM, 0);
+    LONG one = 1, ls = socket(AF_INET, SOCK_STREAM, 0);
     if (ls < 0) return -1;
     setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
     memset(&a, 0, sizeof a);
     a.sin_family = AF_INET; a.sin_port = htons(RX_PORT); a.sin_addr.s_addr = htonl(INADDR_ANY);
     if (bind(ls, (struct sockaddr *)&a, sizeof a) != 0 || listen(ls, 2) != 0) { CloseSocket(ls); return -1; }
+    return ls;
+}
+
+int net_run(net_ui *ui, afs_ctx *ctx, rx_fs *fs, rx_session *s, rx_upq *q) {
+    static unsigned char buf[4096];
+    LONG ls, cl = -1;
+    ULONG last = 0;
+    int said_no_listen = 0;
+    (void)ctx;
+    cur_ui = ui; cur_s = s;
+    o_len = o_off = 0;
+    rx_init(s, fs, relay, NULL);   /* idle until the board connects */
+    if ((ls = listen_on()) < 0) return -1;
     ui->on_status(ui->u, "Listening on port 6800");
     for (;;) {
         fd_set r, w;
         ULONG sigs = SIGBREAKF_CTRL_C | ui->extra_sigs;
         struct timeval tv;
-        LONG n, maxfd = ls;
+        LONG n, maxfd;
         int bad = 0, round;
-        FD_ZERO(&r); FD_ZERO(&w); FD_SET(ls, &r);
+        /* Exchange's Disable (plan 2026-11-01 ruling R11): the connection and the listener go; Enable listens again. */
+        if (ui->off && ui->off(ui->u)) {
+            if (cl >= 0) drop(ui, s, &cl);
+            if (ls >= 0) { CloseSocket(ls); ls = -1; ui->on_status(ui->u, "Disabled in Exchange"); }
+            said_no_listen = 0;
+        } else if (ls < 0) {
+            if ((ls = listen_on()) >= 0) ui->on_status(ui->u, "Listening on port 6800");
+            else if (!said_no_listen) { said_no_listen = 1; ui->on_status(ui->u, "Could not listen on port 6800"); }
+        }
+        maxfd = ls >= 0 ? ls : 0;
+        FD_ZERO(&r); FD_ZERO(&w); if (ls >= 0) FD_SET(ls, &r);
         if (cl >= 0) { FD_SET(cl, &r); if (o_off < o_len && !nobufs) FD_SET(cl, &w); if (cl > maxfd) maxfd = cl; }
         tv.tv_secs = (cl >= 0 && o_off == o_len && rx_want_output(s)) ? 0 : 1; tv.tv_micro = 0;
         if (cl >= 0 && nobufs) { tv.tv_secs = 0; tv.tv_micro = RX_NOBUFS_US; }
@@ -110,7 +127,7 @@ int net_run(net_ui *ui, afs_ctx *ctx, rx_fs *fs, rx_session *s, rx_upq *q) {
            buffer too, or the last chunk is lost), so the board reconnects and hears it (plan ruling T1). */
         if (cl >= 0 && !bad && o_off == o_len && rx_hello_stale(s)) bad = 1;
         if (cl >= 0 && bad) drop(ui, s, &cl);
-        if (n > 0 && FD_ISSET(ls, &r)) {
+        if (n > 0 && ls >= 0 && FD_ISSET(ls, &r)) {
             LONG ns = accept(ls, NULL, NULL);
             if (ns >= 0) {
                 if (cl >= 0) { send_all(ns, "ERR - busy receiver busy\n", 25); CloseSocket(ns); }
@@ -126,6 +143,6 @@ int net_run(net_ui *ui, afs_ctx *ctx, rx_fs *fs, rx_session *s, rx_upq *q) {
         }
     }
     if (cl >= 0) drop(ui, s, &cl);
-    CloseSocket(ls);
+    if (ls >= 0) CloseSocket(ls);
     return 0;
 }

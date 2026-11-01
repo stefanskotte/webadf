@@ -43,8 +43,18 @@ page (Send to Amiga), from a disk's Browse page, or a whole disk
 as an .adf file -- are saved into a folder you choose. Start it
 by hand: double-click its icon, or type Transfer in a Shell. In
 the window, choose the folder and press Save. The default folder
-is RAM:. Close the window to stop. Files sent while Transfer is
-not running wait on the server for 24 hours.
+is RAM:. Files sent while Transfer is not running wait on the
+server for 24 hours.
+
+Transfer is a commodity: closing its window only hides it, and
+it keeps working. Ctrl Alt W, or Show in Exchange, brings the
+window back; Quit in its Project menu (Amiga-Q), or Kill in
+Exchange, stops it. Disable in Exchange closes its connection
+until Enable. Starting it again only shows the window. To start
+it with Workbench, copy SYS:Tools/Transfer and its icon to
+SYS:WBStartup; set CX_POPUP=NO in the icon's tool types to start
+without the window. Tool types: CX_POPUP, CX_POPKEY (the hot
+key), CX_PRIORITY and TO (the folder, for that run).
 
 In a Shell:
   Transfer RECEIVE [TO <folder>] [SAVE] [GUI] [TRUST] [BROWSE]
@@ -64,22 +74,22 @@ same four digits). If another one connects, press Trust this
 board (or use TRUST) to accept it. A file cut off part way
 continues when you send it again within 24 hours.
 
-Browsing (board firmware 1.22 or newer): tick Let the web app
-browse my disks in the window, or use BROWSE, and the web app's
-Files can show your disks under NET: and copy files from them.
-Transfer only reads; nothing on the Amiga changes. BROWSE SAVE
-keeps it on. To switch it off, untick the box in the window, or
-from a Shell type
+Browsing (board firmware 1.22 or newer): tick Web App: Read in
+the window, or use BROWSE, and the web app's Files can show your
+disks under NET: and copy files from them. Transfer only reads;
+nothing on the Amiga changes. BROWSE SAVE keeps it on. To switch
+it off, untick Read in the window, or from a Shell type
   Delete ENVARC:webadf/Browse ENV:webadf/Browse
 and start Transfer again without BROWSE.
 
-Writing (board firmware 1.23 or newer): also tick Let the web
-app change my disks, or use WRITE (it switches browsing on too),
-and Files can copy onto your disks, make drawers, rename, delete,
-protect and comment there. Nothing is forced: a write-protected
-or full disk, or a protected or open file, is reported, never
-asked about on the Amiga. WRITE SAVE keeps it on; unticking
-either box switches it off.
+Writing (board firmware 1.23 or newer): also tick Write, or use
+WRITE (it switches browsing on too), and Files can copy onto
+your disks, make drawers, rename, delete, protect and comment
+there. Nothing is forced: a write-protected or full disk, or a
+protected or open file, is reported, never asked about on the
+Amiga. WRITE SAVE keeps it on; unticking Read or Write switches
+it off, and a file being copied onto your disks then stops at
+once (nothing of it is kept).
 
 Nothing is overwritten: a second Foo.lha arrives as Foo_2.lha,
 and nothing is written outside the folder unless writing is on.

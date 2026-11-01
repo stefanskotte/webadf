@@ -148,6 +148,7 @@ typedef struct rx_session { /* fields private to rx_proto.c except list/list_n *
     unsigned long cur_size, cur_left, cur_crc_want, cur_crc, cur_prot, cur_mark;
     int cur_open, cur_write_failed;
     int cur_mode; long cur_err;   /* protocol 4: RX_MODE_* (an absolute path), and the DOS error of a failed write */
+    int cur_off;   /* Transfer 2.7: writing went off mid absolute FILE: the temp is gone, the rest is read and dropped */
     char out[RX_OUT_MAX]; unsigned out_n;
     /* protocol 2 */
     rx_upq *upq; int peer_v, trust, proto_err; char peer_key[RX_KEY_HEX + 1];
@@ -209,6 +210,10 @@ int rx_browse_on(const rx_session *s);    /* 1: requests are answered (switch on
 int rx_hello_stale(const rx_session *s);
 /* Protocol 4 (spec 2026-10-31 §2): 1 while writes are answered (both switches on, protocol 4, the trusted key). */
 int rx_write_on(const rx_session *s);
+/* Transfer 2.7: the owner's switches changed. An absolute FILE being received stops now when writing is off: its
+   temporary file is deleted, the rest of its bytes are read and dropped, and ERR <id> readonly follows the last one
+   (the board takes ERR only once it has sent everything: plan 2026-11-01 ruling R1). A relative FILE is not affected. */
+void rx_switch_changed(rx_session *s);
 /* The protocol code for an AmigaDOS error (plan ruling T3); want_dir: the request wanted a drawer (DIR), not a file. */
 const char *rx_err_code(long err, int want_dir);
 /* FILE's code for an AmigaDOS error on an absolute path (plan ruling W9): wprot, full, denied, busy, else write. */

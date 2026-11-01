@@ -936,11 +936,25 @@ static void fail_file_err(rx_session *s, long err, const char *dflt) {
     fault_text(s, err, dflt, t, sizeof t);
     fail_file(s, rx_file_code(err), t);
 }
+void rx_switch_changed(rx_session *s) {
+    if (!s->in_data || !s->cur_mode || s->cur_off || rx_write_on(s)) return;
+    if (s->cur_open) { s->fs->close_w(s->fs->ctx); s->cur_open = 0; }
+    s->fs->remove(s->fs->ctx, s->cur_tmp);
+    s->cur_off = 1;
+}
 static void finish_file(rx_session *s) {
     char saved[RX_PATH_MAX + 1], digits[12];
     unsigned n;
-    int closed = s->fs->close_w(s->fs->ctx);
-    long cerr = closed != 0 ? rx_ferr(s) : 0;
+    int closed;
+    long cerr;
+    if (s->cur_off) {   /* plan ruling R1: answered after the last byte, when the board listens for it */
+        s->cur_off = 0; s->in_data = 0;
+        reply_err(s, s->cur_id, "readonly", "writing is off in Transfer");
+        emit(s, RX_EV_FAILED, s->cur_id, s->cur_path, s->cur_size, 0, "writing is off in Transfer");
+        return;
+    }
+    closed = s->fs->close_w(s->fs->ctx);
+    cerr = closed != 0 ? rx_ferr(s) : 0;
     s->cur_open = 0;
     if (s->cur_write_failed || closed != 0) {
         if (s->cur_mode) fail_file_err(s, s->cur_write_failed ? s->cur_err : cerr, "cannot write");
@@ -1063,7 +1077,7 @@ static void on_file(rx_session *s, cur *c) {
     }
     strcpy(s->cur_id, id);
     s->cur_size = s->cur_left = size; s->cur_crc_want = crc; s->cur_crc = 0; s->cur_prot = prot;
-    s->cur_mark = 0; s->cur_open = 1; s->cur_write_failed = 0; s->in_data = 1;
+    s->cur_mark = 0; s->cur_open = 1; s->cur_write_failed = 0; s->cur_off = 0; s->in_data = 1;
     puts_(s, "GO "); puts_(s, id); puts_(s, "\n");
     emit(s, RX_EV_BEGIN, s->cur_id, s->cur_path, size, 0, 0);
     if (size == 0) finish_file(s);
@@ -1123,12 +1137,13 @@ int rx_feed(rx_session *s, const unsigned char *data, unsigned long n) {
             unsigned long room = PROGRESS_STEP - (done0 % PROGRESS_STEP);   /* cross one 16 KB mark per pass */
             unsigned long take = n < s->cur_left ? n : s->cur_left;
             if (take > room) take = room;
-            if (!s->cur_write_failed && s->fs->write(s->fs->ctx, data, take) != 0) { s->cur_write_failed = 1; s->cur_err = rx_ferr(s); }
+            rx_switch_changed(s);
+            if (!s->cur_off && !s->cur_write_failed && s->fs->write(s->fs->ctx, data, take) != 0) { s->cur_write_failed = 1; s->cur_err = rx_ferr(s); }
             s->cur_crc = rx_crc32_update(s->cur_crc, data, take);
             s->cur_left -= take; data += take; n -= take;
             {
                 unsigned long done = s->cur_size - s->cur_left;
-                if (s->cur_left && done / PROGRESS_STEP > s->cur_mark) {
+                if (s->cur_left && !s->cur_off && done / PROGRESS_STEP > s->cur_mark) {   /* a stopped file shows none */
                     s->cur_mark = done / PROGRESS_STEP;
                     emit(s, RX_EV_PROGRESS, s->cur_id, s->cur_path, s->cur_size, done, 0);
                 }
@@ -1156,8 +1171,8 @@ int rx_feed(rx_session *s, const unsigned char *data, unsigned long n) {
 void rx_disconnected(rx_session *s) {
     if (s->in_data) {
         if (s->cur_open) { s->fs->close_w(s->fs->ctx); s->cur_open = 0; }
-        s->fs->remove(s->fs->ctx, s->cur_tmp);
-        s->in_data = 0;
+        if (!s->cur_off) s->fs->remove(s->fs->ctx, s->cur_tmp);   /* an aborted file's temp went already */
+        s->in_data = 0; s->cur_off = 0;
         emit(s, RX_EV_FAILED, s->cur_id, s->cur_path, s->cur_size, 0, "connection lost");
     }
     if (s->up_phase != RX_UP_IDLE) up_finish(s, RX_EV_UP_FAILED, s->up_cancel ? "cancelled" : "connection lost", "local", 0);

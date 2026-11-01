@@ -691,6 +691,89 @@ static void the_rest_is_in_is_cut_to_79_bytes(void) {
     CHECK(strlen(strchr(strstr(ob, "79:"), ':') + 1) == 79 + 1, "79 bytes and the newline");
 }
 
+/* --- Transfer 2.7: writing switched off while an absolute FILE is received (plan 2026-11-01-transfer-2-7 Task 1) --- */
+static void writing_off_mid_replace_keeps_the_old_file(void) {
+    static char data[40000]; char l[400]; int i;
+    for (i = 0; i < 40000; i++) data[i] = (char)('a' + i % 26);
+    setup(1, 1); ff_put(&F, "Work:Keep.txt", "old", 3, 0, ""); hello4();
+    file4(l, "r", data, 40000, "Work:Keep.txt", "replace"); feed(l); drain();
+    CHECK(strcmp(ob, "GO r\n") == 0, ob);
+    feedn(data, 20000); drain();
+    Q.write = 0; rx_switch_changed(&S);
+    CHECK(!has("Work:" RX_TMP_NAME), "the temporary file goes at once");
+    { long w = F.written; int n0 = n_ev, k, progress = 0;
+      feedn(data + 20000, 19999); drain(); CHECK(ob_n == 0, "nothing answered before the last byte");
+      CHECK(F.written == w, "nothing written after the switch");
+      for (k = n0; k < n_ev; k++) if (ev[k].kind == RX_EV_PROGRESS) progress++;
+      CHECK(progress == 0, "no progress for a file already stopped (review minor 6)"); }
+    feedn(data + 39999, 1); drain();
+    CHECK(strcmp(ob, "ERR r readonly writing is off in Transfer\n") == 0, ob);
+    CHECK(holds("Work:Keep.txt", "old") && !has("Work:" RX_TMP_NAME), "the old file untouched");
+    { int k = last_ev(RX_EV_FAILED); CHECK(k >= 0 && strcmp(ev_text[k], "writing is off in Transfer") == 0, "the owner sees it"); }
+    CHECK(!rx_busy(&S), "idle");
+}
+static void browsing_off_stops_it_too(void) {
+    char l[400];
+    setup(1, 1); hello4();
+    file4(l, "k", "abcdef", 6, "Work:New.txt", "keep"); feed(l); feed("abc"); drain();
+    Q.browse = 0; Q.write = 0; rx_switch_changed(&S);
+    feed("def"); drain();
+    CHECK(strcmp(ob, "ERR k readonly writing is off in Transfer\n") == 0, ob);
+    CHECK(!has("Work:New.txt") && !has("Work:" RX_TMP_NAME), "nothing lands");
+}
+static void the_feed_checks_without_the_call(void) {   /* the core is safe even if a front end forgets */
+    char l[400];
+    setup(1, 1); hello4();
+    file4(l, "k", "abcdef", 6, "Work:New.txt", "keep"); feed(l); feed("abc"); drain();
+    Q.write = 0;
+    { long w = F.written; feed("def"); drain(); CHECK(F.written == w, "not written"); }
+    CHECK(strcmp(ob, "ERR k readonly writing is off in Transfer\n") == 0, ob);
+    CHECK(!has("Work:New.txt") && !has("Work:" RX_TMP_NAME), "nothing lands");
+}
+static void back_on_during_the_drain_still_fails(void) {
+    char l[400];
+    setup(1, 1); hello4();
+    file4(l, "k", "abcdef", 6, "Work:New.txt", "keep"); feed(l); feed("ab"); drain();
+    Q.write = 0; rx_switch_changed(&S); Q.write = 1; rx_switch_changed(&S);
+    feed("cdef"); drain();
+    CHECK(strcmp(ob, "ERR k readonly writing is off in Transfer\n") == 0, ob);
+    CHECK(!has("Work:New.txt") && !has("Work:" RX_TMP_NAME), "not resumed");
+}
+static void the_connection_is_usable_after_the_abort(void) {
+    char l[400];
+    setup(1, 1); hello4();
+    file4(l, "k", "abcdef", 6, "Work:New.txt", "keep"); feed(l); feed("abc"); drain();
+    Q.write = 0; rx_switch_changed(&S);
+    CHECK(!rx_hello_stale(&S), "not while the rest is drained");
+    CHECK(feed("def") == 0, "no protocol error"); drain();
+    CHECK(feed("PING\n") == 0, "a line after it"); drain(); CHECK(strcmp(ob, "PONG\n") == 0, ob);
+    file4(l, "a", "xyz", 3, "In.txt", ""); feed(l); feed("xyz"); drain();
+    CHECK(strcmp(ob, "GO a\nOK a 6:In.txt\n") == 0, "a relative file still lands");
+    CHECK(rx_hello_stale(&S), "idle now: the board reconnects to hear READY 4 1 0");
+    Q.write = 1;
+    file4(l, "b", "xyz", 3, "Work:B.txt", "keep"); feed(l); feed("xyz"); drain();
+    CHECK(strcmp(ob, "GO b\nOK b 10:Work:B.txt\n") == 0, "and an absolute one once writing is on");
+}
+static void a_relative_file_ignores_the_switch(void) {
+    char l[400];
+    setup(1, 1); hello4();
+    file4(l, "a", "abcdef", 6, "In.txt", ""); feed(l); feed("abc"); drain();
+    Q.write = 0; Q.browse = 0; rx_switch_changed(&S);
+    feed("def"); drain();
+    CHECK(strcmp(ob, "OK a 6:In.txt\n") == 0, ob);
+    CHECK(holds("In.txt", "abcdef"), "ReceiveDir is not the web app's writing");
+}
+static void a_lost_connection_during_the_drain(void) {
+    char l[400];
+    setup(1, 1); hello4();
+    file4(l, "k", "abcdef", 6, "Work:New.txt", "keep"); feed(l); feed("abc"); drain();
+    Q.write = 0; rx_switch_changed(&S);
+    { int n0 = n_ev; rx_disconnected(&S);
+      CHECK(n_ev == n0 + 1 && ev[n_ev - 1].kind == RX_EV_FAILED, "one FAILED"); }
+    CHECK(!has("Work:New.txt") && !has("Work:" RX_TMP_NAME), "nothing lands");
+    rx_switch_changed(&S); CHECK(!rx_busy(&S), "a no-op when idle");
+}
+
 int main(void) {
     RUN(a_protocol_4_hello_answers_both_switches); RUN(older_hellos_are_answered_as_before);
     RUN(a_changed_write_switch_makes_the_hello_stale);
@@ -709,6 +792,9 @@ int main(void) {
     RUN(switching_writing_off_stops_a_delete_between_steps); RUN(a_lost_connection_ends_a_delete);
     RUN(a_write_request_waits_behind_a_file); RUN(malformed_write_requests_are_bad); RUN(the_owners_words_for_writes);
     RUN(write_error_codes);
+    RUN(writing_off_mid_replace_keeps_the_old_file); RUN(browsing_off_stops_it_too); RUN(the_feed_checks_without_the_call);
+    RUN(back_on_during_the_drain_still_fails); RUN(the_connection_is_usable_after_the_abort);
+    RUN(a_relative_file_ignores_the_switch); RUN(a_lost_connection_during_the_drain);
     RUN(a_protocol_5_hello); RUN(delete_one_a_file); RUN(delete_one_an_empty_drawer);
     RUN(delete_one_a_full_drawer_is_notempty); RUN(delete_one_a_link); RUN(delete_one_refusals); RUN(one_on_protocol_4_is_bad);
     RUN(a_drawer_delete_hides_the_drawer_first); RUN(a_file_saved_by_the_old_path_survives); RUN(a_stop_renames_it_back);

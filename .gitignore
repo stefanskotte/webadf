@@ -23,6 +23,8 @@ dist/
 !tools/receive/dist/
 tools/receive/dist/*
 !tools/receive/dist/Transfer
+# ... and its icon, generated from tools/receive/icon/ (plan 2026-11-01 R14).
+!tools/receive/dist/Transfer.info
 # The pinned PaulaNET.device variant is committed (plan 2026-10-18 Task 6); its NDK download and work copies are not.
 !tools/paulanet-driver/dist/
 tools/paulanet-driver/dist/*
