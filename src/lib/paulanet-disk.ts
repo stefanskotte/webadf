@@ -6,21 +6,22 @@
  * (tools/paulanet-driver/, plan 2026-10-18) and its PaulaNET Config is his, unmodified: both used by his permission
  * under his terms (third-party/paulanet/); they are not MIT.
  */
-export const PAULANET_DISK_SHA256 = '026ed784c18d9709ab52cdfa0f25b30f9b21198ce82fa00794f5196aa7c17698';
+export const PAULANET_DISK_SHA256 = '184ca84b8fb9b158e84ae0199ee658a2d2946a8b48800a7a4b91f21763a50306';
 export const PAULANET_DISK_BYTES = 901_120;
 /**
- * The driver disk before Transfer 2.7 (2026-11-01: writing off stops a copy, a commodity with an icon): Transfer 2.6.
+ * The driver disk before Transfer 2.8 (2026-11-01: a repeated file is answered with the first copy's OK): Transfer 2.7.
  */
-export const PAULANET_DISK_PREVIOUS = '3c8c037d471cebfff2078b7952d400b46fb3a0ab69b57518ca62aa0916264a98';
+export const PAULANET_DISK_PREVIOUS = '026ed784c18d9709ab52cdfa0f25b30f9b21198ce82fa00794f5196aa7c17698';
 /**
- * Every older driver disk, newest first: PAULANET_DISK_PREVIOUS, then the disk before Transfer 2.6 (Transfer 2.5), then the disk before Transfer 2.5 (Transfer 2.4), then the disk before Transfer 2.4 (Transfer 2.3), then the disk before Transfer 2.3 (Transfer 2.2), then the disk before Transfer 2.2 (Transfer 2.1), then the disk before Transfer 2.1 (the LZ4 driver and
+ * Every older driver disk, newest first: PAULANET_DISK_PREVIOUS, then the disk before Transfer 2.7 (Transfer 2.6), then the disk before Transfer 2.6 (Transfer 2.5), then the disk before Transfer 2.5 (Transfer 2.4), then the disk before Transfer 2.4 (Transfer 2.3), then the disk before Transfer 2.3 (Transfer 2.2), then the disk before Transfer 2.2 (Transfer 2.1), then the disk before Transfer 2.1 (the LZ4 driver and
  * Receive 2), then the disk before Receive 2 (the LZ4 driver and Receive 1), then the disk before the LZ4 driver (Receive 1), then the disk before Receive (Phase 3). Each is still
  * valid: a board whose Amiga is online keeps it until the Amiga is off (driverDiskFor, R16), so it is served
  * (isDriverDisk: the board's net route and the person's /api/paulanet-disk?sha256=), kept by the blob GC
  * (ALWAYS_REFERENCED_BLOBS) and named on the card (driverDiskLine).
  */
 export const PAULANET_DISK_OLDER: readonly string[] = [
-  PAULANET_DISK_PREVIOUS, '4b1cc536e5ca9347c322eccbc191f3af14d295195c3210ec04735d922a5159da',
+  PAULANET_DISK_PREVIOUS, '3c8c037d471cebfff2078b7952d400b46fb3a0ab69b57518ca62aa0916264a98',
+  '4b1cc536e5ca9347c322eccbc191f3af14d295195c3210ec04735d922a5159da',
   '7b0c7ed5557f72d84e21f03fd7c54eccc773fd1d3dc4d749e60eede081b4fc12', '05a898caa137cb2e24f1aa0f30784126a3e88276aaf80387af446d1e204bbb45', '9f58337d1a8bde3da2cce4fc26e97eed9ca77f9c16b12c58fea0373e898699fa',
   '36bce70c114ad2eff6cdbb720ffaeabdbf79856592211080b437f7ac3110f796',
   '6e799db55e95a52900bff0ea6e3155b7787a44bcd5c5371510522cff0d5820f9',
