@@ -297,7 +297,16 @@ export async function recordSendRx(
     ? sql` or ${devices.browseOn} is distinct from ${flags.browseOn} or ${devices.writeOn} is distinct from ${flags.writeOn}${
       flags.rxProto !== undefined ? sql` or ${devices.rxProto} is distinct from ${flags.rxProto}` : sql``}`
     : sql``;
-  await db.update(devices).set({ sendRx: rx, sendRxAt: now, ...(flags ?? {}) })
+  // A copy onto a volume is in the queue text only while the board can write (sendQueueText): when that ability
+  // changes and such a copy waits, the text changed, so the cursor moves -- the board fetched at this version already and
+  // would otherwise never offer it (A500 bench 2026-11-01: a copy queued while the Amiga's network was down sat unsent
+  // in READY after Transfer connected with writing on). The old flags are the row's, read by the same statement.
+  const writesMoved = flags
+    ? sql`case when (coalesce(${devices.rxProto}, 0) >= 4 and ${devices.browseOn} and ${devices.writeOn}) is distinct from ${flags.writeOn}
+        and exists (select 1 from ${transfers} where ${transfers.deviceId} = ${devices.id}
+          and ${inArray(transfers.status, ACTIVE)} and ${isNotNull(transfers.amigaDest)}) then 1 else 0 end`
+    : sql`0`;
+  await db.update(devices).set({ sendRx: rx, sendRxAt: now, ...(flags ?? {}), sendVersion: sql`${devices.sendVersion} + ${writesMoved}` })
     .where(and(eq(devices.id, deviceId),
       sql`(${devices.sendRx} is distinct from ${rx} or ${devices.sendRxAt} is null or ${devices.sendRxAt} < ${new Date(now.getTime() - 30_000)}${capChanged})`));
 }
