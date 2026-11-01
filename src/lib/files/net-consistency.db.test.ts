@@ -185,3 +185,76 @@ describe('item 1: a get is placed once (m1, m5)', () => {
     expect(await getById(g.id)).toMatchObject({ status: 'done' });
   });
 });
+
+const BIG = 20_000;
+const big = () => new Uint8Array(BIG).map((_, k) => k & 0xff);
+/** The board took the get and sent its first chunk only (a file over one chunk): the upload id. */
+async function partly(rid: string) {
+  await takeWaiting(getDb(), 'w1');
+  await answerPiece(getDb(), 'w1', rid, { piece: 0, lines: [`GOT ${rid} 7`], last: true });
+  const up = await openUpload(getDb(), { deviceId: 'w1', orgId: 'o1' }, { size: BIG, date: '1.2.3', protection: 0, path: 'Work:big', comment: '', request: rid });
+  if (!up.ok) throw new Error(up.code);
+  expect((await storeChunk(getDb(), 'w1', up.id, 0, big().subarray(0, 16_384))).ok).toBe(true);
+  return up.id;
+}
+const timedOut = (rid: string) => getDb().update(remoteRequests).set({ status: 'failed', errorCode: 'timeout', errorText: 'stopped answering' }).where(eq(remoteRequests.id, rid));
+async function reopen(rid: string) {
+  await takeWaiting(getDb(), 'w1');
+  await answerPiece(getDb(), 'w1', rid, { piece: 0, lines: [`GOT ${rid} 8`], last: true });
+  return openUpload(getDb(), { deviceId: 'w1', orgId: 'o1' }, { size: BIG, date: '1.2.3', protection: 0, path: 'Work:big', comment: '', request: rid });
+}
+
+describe('item 2: resume keyed by the get (m2)', () => {
+  beforeEach(async () => { await remember('Work:', [ent('x', 2), ent('big', BIG)]); });
+
+  it('a re-run copy between volumes never resumes staging an earlier timed-out get left', async () => {
+    await op({ op: 'copy', sources: [W('big')], dest: 'NET:/w2/DF0', onClash: 'ask' });
+    const [g1] = await gets();
+    const first = await partly(g1.id);
+    await timedOut(g1.id);
+    await op({ op: 'copy', sources: [W('big')], dest: 'NET:/w2/DF0', onClash: 'ask' });
+    const g2 = (await gets()).find((g) => g.id !== g1.id)!;
+    const up = await reopen(g2.id);
+    expect(up.ok && up.id !== first && up.offset === 0).toBe(true);
+    expect((await getById(g1.id)).uploadId).toBe(first);
+  });
+
+  it('a re-run copy into STASH: resumes its row there, and the earlier get no longer names it', async () => {
+    await op({ op: 'copy', sources: [W('big')], dest: 'STASH:', onClash: 'ask' });
+    const [g1] = await gets();
+    const first = await partly(g1.id);
+    await timedOut(g1.id);
+    // The half-arrived row holds the name in STASH: already: the re-run says Replace.
+    await op({ op: 'copy', sources: [W('big')], dest: 'STASH:', onClash: 'replace' });
+    const g2 = (await gets()).find((g) => g.id !== g1.id)!;
+    const up = await reopen(g2.id);
+    expect(up.ok && up.id === first && up.offset === 16_384).toBe(true);
+    expect((await getById(g1.id)).uploadId).toBeNull();
+    expect((await storeChunk(getDb(), 'w1', first, 16_384, big().subarray(16_384))).ok).toBe(true);
+    expect((await closeUpload(getDb(), 'w1', first, crc32(big()) >>> 0)).ok).toBe(true);
+    await placeFetched(getDb(), first);
+    expect(await getById(g2.id)).toMatchObject({ status: 'done' });
+    expect(await getById(g1.id)).toMatchObject({ status: 'failed' });
+  });
+});
+
+describe('item 3: staging released when its get ends by an error (m3)', () => {
+  beforeEach(async () => { await remember('Work:', [ent('x', 2), ent('big', BIG)]); });
+
+  it('the board says the get failed mid-file: the staging row and its chunks go at once', async () => {
+    await op({ op: 'copy', sources: [W('big')], dest: 'NET:/w2/DF0', onClash: 'ask' });
+    const [g] = await gets();
+    const id = await partly(g.id);
+    expect(await answerPiece(getDb(), 'w1', g.id, { piece: 1, lines: [`ERR ${g.id} io 10:read error`], last: true })).toEqual({ ok: true });
+    expect((await uploads()).find((u) => u.id === id)).toMatchObject({ status: 'deleted' });
+    expect(await getDb().select().from(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id))).toEqual([]);
+  });
+
+  it('a copy into STASH: whose get failed keeps its row for the person (not staging)', async () => {
+    await op({ op: 'copy', sources: [W('big')], dest: 'STASH:', onClash: 'ask' });
+    const [g] = await gets();
+    const id = await partly(g.id);
+    await answerPiece(getDb(), 'w1', g.id, { piece: 1, lines: [`ERR ${g.id} io 10:read error`], last: true });
+    expect((await uploads()).find((u) => u.id === id)).toMatchObject({ status: 'receiving' });
+  });
+});

@@ -62,10 +62,16 @@ async function openRow(db: Db, dev: { deviceId: string; orgId: string }, a: Open
       .where(and(eq(amigaUploads.orgId, dev.orgId), eq(amigaUploads.deviceId, dev.deviceId), eq(amigaUploads.status, 'receiving'), eq(amigaUploads.path, path),
         eq(amigaUploads.sizeBytes, a.size), eq(amigaUploads.amigaDate, a.date), gt(amigaUploads.expiresAt, now),
         // Only a row of the same kind: a Receive upload never resumes into a staging row of the same name, nor back.
-        eq(amigaUploads.source, source)))
+        eq(amigaUploads.source, source),
+        // Staging is named by the file's base name only, so it resumes only the row this very get opened (plan
+        // 2026-11-01-net-consistency R2): never one an earlier, timed-out get of a file alike left.
+        ...(staging && rid ? [sql`exists (select 1 from remote_requests g where g.id = ${rid} and g.upload_id = ${amigaUploads.id})`] : [])))
       .orderBy(desc(amigaUploads.createdAt)).limit(1);
     if (same) {
       await tx.update(amigaUploads).set({ activeAt: now }).where(eq(amigaUploads.id, same.id));
+      // A copy into STASH: resumes its row at that path, which an earlier get may still name: that get lets go of it,
+      // so the close places it for this one (R2).
+      if (rid) await tx.update(remoteRequests).set({ uploadId: null }).where(and(eq(remoteRequests.uploadId, same.id), ne(remoteRequests.id, rid)));
       if (rid) await touchGet(tx, { id: rid }, now, same.id);
       return { ok: true as const, id: same.id, offset: same.received };
     }
