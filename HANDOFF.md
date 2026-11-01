@@ -1624,9 +1624,10 @@ board queue (spec 64).
   Agent rulings: bump on any flip; one file remembered; a repeat answers OK even if the re-sent bytes fail CRC.
   Deferred: Transfer forgets across a restart; skipping the re-send needs a protocol bump; the 75 s deadline could wait
   on unacknowledged bytes (needs an amiga_tcp.c socket query).
-- A500 state left: SYS:WBStartup/Transfer(+.info) is 2.7 (starts with Workbench -- copy 2.8 over it, or remove if
-  unwanted); Transfer 2.8 running from SYS:Downloads/Transfer28 (run from a NewShell); SYS:Downloads/Transfer(+.info)
-  (2.7), Dup.txt; Ram Disk:Keep.txt and Empty.txt.
+- A500 state left: SYS:WBStartup held Transfer 2.6 and an old 514 B Transfer.info without DONOTWAIT (NOT 2.7 as first
+  noted), so a reboot showed "has not yet returned". Fixed 2026-11-01: SYS:WBStartup/Transfer = 2.8 (60,336 B) and
+  Transfer.info = the 911 B shipped icon (DONOTWAIT, CX_POPUP=YES -- operator keeps the window showing at start);
+  reboot verified, no requester. SYS:Downloads: Transfer28, Transfer(+.info), Dup.txt; Ram Disk: lost on reboot.
 **Server/web step detail (was: branch feat/net-writes-web):**
 Spec docs/superpowers/specs/2026-10-31-net-volumes-writes-design.md, plan docs/superpowers/plans/2026-10-31-net-writes-web.md
 (rulings W1-W13 and the ledger there). **Migration 0054 (drizzle/0054_net_writes.sql) -- NOT yet applied to production:
