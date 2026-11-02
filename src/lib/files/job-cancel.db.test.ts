@@ -258,6 +258,21 @@ describe('cancelJob', () => {
     expect(await getDb().select().from(remoteRequests).where(and(eq(remoteRequests.fetchId, 'j8'), eq(remoteRequests.kind, 'dir')))).toEqual([]);
     expect(await jobOf('j8')).toMatchObject({ running: false, failed: [], cancelled: 2, cancel: { move: true } });
   });
+  it('a plain copy whose only live part is a file being placed: Cancel still marks the job, and the file queues nothing', async () => {
+    const data = new TextEncoder().encode('hello lone relay');
+    const sha = createHash('sha256').update(data).digest('hex');
+    await diskStore.put(sha, data, { overwrite: true });
+    await getDb().insert(amigaUploads).values([{ id: 'u6', orgId: 'o1', deviceId: 'b1', path: 'a', sizeBytes: data.length, receivedBytes: data.length,
+      amigaDate: '1.2.3', status: 'stored', source: 'staging', blobSha256: sha, expiresAt: later }]);
+    await getDb().insert(remoteRequests).values([rq('g6', { fetchId: 'j6', status: 'fetching', uploadId: 'u6', amigaPath: 'Work:a', activeAt: ago(500),
+      target: target({ rel: ['a'], userId: 'u1', relay: { deviceId: 'b2', dest: 'Work:T/a', onClash: 'keep' } }) })]);
+    let cancelled: unknown = null;
+    hooks.afterClaim = async () => { cancelled = await cancelJob(getDb(), 'o1', 'j6', NOW); };
+    await placeFetched(getDb(), 'u6', NOW);
+    expect(cancelled).toEqual({ ok: true, cancelled: 0 });
+    expect(await reqOf('g6')).toMatchObject({ status: 'failed', errorCode: 'cancelled' });
+    expect(await getDb().select().from(transfers).where(eq(transfers.jobId, 'j6'))).toEqual([]);
+  });
   it('a relayed file placed in a job never cancelled is queued as before', async () => {
     const data = new TextEncoder().encode('hello relay 2');
     const sha = createHash('sha256').update(data).digest('hex');

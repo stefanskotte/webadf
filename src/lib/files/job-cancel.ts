@@ -77,7 +77,10 @@ export async function cancelJob(db: Db, orgId: string, id: string, now = new Dat
     if (markedRows.length) await tx.update(transfers).set({ moveSource: null }).where(inArray(transfers.id, markedRows.map((x) => x.id)));
 
     const cancelled = withdraw.length + sending.length;
-    const stillRunning = reqs.some((r) => isWriteKind(r.kind) && (r.status === 'sent' || r.status === 'settling'));
+    // A write Transfer is running, or a file being placed between boards (relay() checks the marker and queues
+    // nothing): either still needs the marker, or a lone placing get of a plain copy would queue after Cancel.
+    const stillRunning = reqs.some((r) => (isWriteKind(r.kind) && (r.status === 'sent' || r.status === 'settling'))
+      || (r.kind === 'get' && r.status === 'placing'));
     if ((cancelled > 0 || marked.length > 0 || markedRows.length > 0 || stillRunning) && !reqs.some((r) => r.kind === CANCEL_KIND)) {
       // The board the job is about, by fetchProgress's own rule (the marker itself is never picked there).
       const board = rows[0]?.deviceId ?? reqs.find((r) => r.kind !== 'get')?.deviceId ?? reqs[0].deviceId;
