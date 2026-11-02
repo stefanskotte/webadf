@@ -27,7 +27,7 @@ import {
   NET_PICK_BOARD, NET_READ_ONLY,
 } from '@/lib/files/net-rules';
 import { errorWords } from '@/lib/remote-browse';
-import { COLLECTIONS_STAY, createAdfReason, filingNoun, filingReason, shelfOf, shelfOfRow, shelfReasons } from '@/lib/files/shelf-rules';
+import { COLLECTIONS_STAY, createAdfReason, diskCopyReason, DISKS_ONTO_VOLUME, DISKS_STAY_IN_LIBRARY, disksPicked, filingNoun, filingReason, listsDisks, placeReason, shelfOf, shelfOfRow, shelfReasons } from '@/lib/files/shelf-rules';
 import { stashPollMs, trackArriving, withStalls, type ArrivingSeen } from '@/lib/files/arriving';
 import { netDropRefusal, sendToBoard } from '@/lib/files/net-send';
 import type { UserPrefs } from '@/lib/user-prefs-schema';
@@ -731,6 +731,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const outOfNet = copyOutReason(src);
   function transferReason(op: 'copy' | 'move'): string | null {
     if (outOfNet) return outOfNet;
+    // DSK or TTL rows onto a volume: a drawer per disk (spec 2026-11-02), never a move.
+    const onto = diskCopyReason(op, picked, dst);
+    if (onto !== undefined) return onto;
     // Titles, or disk images from STASH:, onto LIBRARY: or a collection (Files 2 §3.2): the filing rules decide.
     const filing = filingReason(op, src, picked, shelfOf(dst));
     if (filing !== undefined) return filing;
@@ -749,6 +752,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const filingFrom = shelfOf(src) !== null && picked.length > 0 && picked.every((e) => e.kind === 'title');
   // A collection never leaves LIBRARY: (fix round 1): said before the picker opens.
   const collectionPicked = shelfOf(src) !== null && picked.some((e) => e.kind === 'collection');
+  // DSK rows: Copy to… walks to a volume (the picker checks where); no place takes a move of them.
+  const diskRows = disksPicked(src, picked);
   const reasons = {
     copy: transferReason('copy'),
     move: transferReason('move'),
@@ -764,8 +769,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       ?? (volume && (picked.length !== 1 || picked[0].kind !== 'file') ? 'Select one file to download' : null)
       ?? (downloadHref(picked, folderName).length > DOWNLOAD_URL_MAX ? 'Too many items to download at once — download their folder instead' : null),
     // The phone's Copy to… / Move to…: the place is picked afterwards, so only the source is checked here.
-    copyTo: collectionPicked ? COLLECTIONS_STAY : filingFrom ? null : outOfNet ?? sourceReason(false) ?? failedReason(picked),
-    moveTo: collectionPicked ? COLLECTIONS_STAY : filingFrom ? null : outOfNet ?? sourceReason(true) ?? failedReason(picked),
+    copyTo: collectionPicked ? COLLECTIONS_STAY : filingFrom || diskRows ? null : outOfNet ?? sourceReason(false) ?? failedReason(picked),
+    moveTo: collectionPicked ? COLLECTIONS_STAY : diskRows ? DISKS_STAY_IN_LIBRARY : filingFrom ? null : outOfNet ?? sourceReason(true) ?? failedReason(picked),
     // Disk images in STASH: into the library (R8).
     addlib: volumeRO ?? addToLibraryReason(src, picked),
     // A blank disk in STASH:, or a new title on LIBRARY: or in a collection (§4).
@@ -1345,7 +1350,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const shelf = shelfOf(l) !== null && indexes.every((i) => rows[i]?.kind === 'title' || rows[i]?.kind === 'collection');
     // A volume's rows drag too, as copies (NET: volumes, spec 2026-10-30 §5).
     const volumeRows = isNetVolume(l);
-    if ((!holdsFiles(l) && !shelf && !volumeRows) || paths.length === 0) { e.preventDefault(); return; }
+    // A title's DSK rows drag, to be copied onto a volume (spec 2026-11-02); the drop says when it is anywhere else.
+    if ((!holdsFiles(l) && !shelf && !volumeRows && !listsDisks(l)) || paths.length === 0) { e.preventDefault(); return; }
     activate(side);
     e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ from: side, paths }));
     e.dataTransfer.effectAllowed = volumeRows && !l!.writable ? 'copy' : 'copyMove';
@@ -1576,6 +1582,14 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     // A volume the board can write to gives a move too (phase 2).
     const op = e.shiftKey && (!isNetVolume(from) || from!.writable) ? 'move' : 'copy';
     const pickedHere = from?.entries.filter((x) => data.paths.includes(x.path)) ?? [];
+    // DSK or TTL rows onto a volume, or a drawer on it: a drawer per disk (spec 2026-11-02). Shift says they stay.
+    const onto = diskCopyReason(op, pickedHere, l);
+    if (onto) { toast.error(onto); return; }
+    if (onto === null) {
+      activate(side);
+      transfer('copy', data.paths, dest, where(l), null);
+      return;
+    }
     // Onto LIBRARY:, a collection, or a collection row (Files 2 §3.2): titles, or disk images from STASH:, are filed.
     const row = l?.entries.find((x) => x.path === dest) ?? null;
     const to = row ? shelfOfRow(row) : shelfOf(l);
@@ -1587,6 +1601,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       transfer(op, data.paths, dest, row ? row.name : where(l), null, filingNoun(from));
       return;
     }
+    if (disksPicked(from, pickedHere)) { toast.error(DISKS_ONTO_VOLUME); return; }
     if (!l || !acceptsCopies(l)) {
       toast.error(isNetVolume(l) ? refusalWords('read_only', l!.readOnlyReason ?? NET_READ_ONLY) : l && netReadOnly(l) ? readOnly(l) : 'Open a disk or STASH: to drop files into it');
       return;
@@ -1817,7 +1832,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       )}
       {dialog?.kind === 'pick' && (
         <CopyToPicker op={dialog.op} count={dialog.sources.length} start={dialog.start} busy={dialogBusy} list={settledListing}
-                      filing={(l) => filingReason(dialog.op, src, picked, shelfOf(l))}
+                      filing={(l) => placeReason(dialog.op, src, picked, l)}
                       onCancel={() => setDialog(null)} onPick={(l) => placePicked(dialog, l)} />
       )}
       {dialog?.kind === 'identity' && dialog.disk.tosecName && (

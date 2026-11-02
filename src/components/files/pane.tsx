@@ -13,7 +13,7 @@ import type { HelpTopicId } from '@/lib/help/topics';
 import { HelpTip } from '@/components/help/help-tip';
 import { Switch } from '@/components/ui/switch';
 import { acceptsCopies, addToLibraryReason, holdsFiles, netBoardOf } from '@/lib/files/pane-rules';
-import { shelfOf } from '@/lib/files/shelf-rules';
+import { listsDisks, shelfOf } from '@/lib/files/shelf-rules';
 import { isNetVolume, netTitle, readAgo } from '@/lib/files/net-rules';
 import { DIR_CUT } from '@/lib/remote-limits';
 
@@ -139,7 +139,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
   // collections do not move, and nothing is copied out of NET:.
   const shelf = shelfOf(listing) !== null;
   // A volume's rows drag out as copies (NET: volumes, spec 2026-10-30 §5).
-  const drags = holdsFiles(listing) || shelf || isNetVolume(listing);
+  const drags = holdsFiles(listing) || shelf || isNetVolume(listing) || listsDisks(listing);
   // A STASH: folder's disk images can each go into the library from their row (R8); not inside an archive.
   const addable = (e: FsEntry) => !!listing && !e.marks.includes('in the library') && addToLibraryReason(listing, [e]) === null;
   const rowAct = 'shrink-0 rounded-[4px] text-[11.5px] underline underline-offset-2 max-lg:min-h-11 max-lg:px-1 focus-visible:outline-2 focus-visible:outline-(--ring)';

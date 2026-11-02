@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { COPY_MAX_DISKS } from '@/lib/remote-limits';
 
 // Context help (spec docs/superpowers/specs/2026-10-05-context-help-design.md).
 // One source for the "?" popovers (title + short) and the /help page (body).
@@ -79,6 +80,8 @@ export const HELP_TOPICS = {
   // Files 2 (spec 2026-10-29-files-2-design.md): button-bank.tsx, bank.ts, shelf.ts/shelf-rules.ts, create-adf-dialog.tsx.
   // Progress: spec docs/superpowers/specs/2026-11-01-progress-panel-design.md; src/components/shell/transfers-panel.tsx,
   // src/lib/files/job-view.ts (the words), src/lib/files/job-cancel.ts (what Cancel the rest stops and keeps).
+  // Disks onto a volume: spec docs/superpowers/specs/2026-11-02-big-copies-disks-as-folders-design.md part 2;
+  // src/lib/files/disks-as-folders.ts (no title drawer, no drawer icon, what is refused), COPY_MAX_DISKS.
   files: {
     title: 'Files',
     short: 'Two panes for every file that is not a whole disk: STASH:, NET: and LIBRARY:. Pick files in the source pane and copy or move them to the other.',
@@ -98,6 +101,14 @@ export const HELP_TOPICS = {
           <strong>Filing.</strong> Move a title onto a collection to file it there and out of the one it was in (one already there is
           skipped); Copy files it in both. Move to LIBRARY: takes it out of its collection. Makedir on LIBRARY: makes a collection. Disk
           images copied from STASH: join the library. <em>Create ADF…</em> makes a blank disk.
+        </p>
+        <p>
+          <strong>Disks onto the Amiga.</strong> Copy a disk, or a title (all its disks), onto a volume: each disk arrives
+          as a folder named like its row, holding all its files, with no title folder around them. These folders have no
+          icons, so Workbench shows them only with Show All Files. Replace leaves other files in the folder; files of the
+          same name are overwritten. At most {COPY_MAX_DISKS} disks at a time. A disk that cannot be read as files, has a
+          damaged directory, or a name the Amiga cannot take is refused by name; the others still copy. Disks stay in the
+          library: there is no Move.
         </p>
         <p>
           <strong>Inside a disk.</strong> The strip shows the drive, <em>Mount</em>, <em>History</em> and{' '}

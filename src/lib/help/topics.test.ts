@@ -42,7 +42,8 @@ describe('help topics', () => {
       expect(words).toBeGreaterThanOrEqual(60);
       // files covers two panes, the bank, filing and (NET: volumes) browsing the Amiga: it alone may run longer.
       // ... and (NET: volumes phase 2) writing to them, in one short paragraph, with what a Move removes (§9): 415 for files.
-      expect(words).toBeLessThanOrEqual(id === 'files' ? 415 : 280);
+      // ... and what a disk copied onto a volume makes (spec 2026-11-02): 520.
+      expect(words).toBeLessThanOrEqual(id === 'files' ? 520 : 280);
       expect(text).not.toMatch(BANNED);
     });
   }
@@ -438,5 +439,10 @@ describe('Files help (increment 4)', () => {
 
   it('library says collection names must differ, ignoring case', () => {
     expect(bodyText('library').replace(/\s+/g, ' ')).toMatch(/names? must differ[^.]*case/i);
+  });
+
+  it('files: a disk copied onto a volume, in the words the person meets (spec 2026-11-02)', () => {
+    const text = bodyText('files');
+    for (const said of ['folder named like its row', 'Show All Files', 'Replace leaves other files in the folder', 'At most 8 disks at a time', 'damaged directory']) expect(text).toContain(said);
   });
 });
