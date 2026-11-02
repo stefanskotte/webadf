@@ -75,15 +75,22 @@ static void set_trust_button(gui *G, int on) {
 }
 /* Every board before 1.19.0 connects this way to send files down: said only once something is to go up (as shell.c). */
 #define OLD_FW "This board's firmware cannot receive files (update to 1.19.0)"
+/* The name column: an AmigaDOS name is 30 at most, narrower only where the window has no room (window_open). text[80] holds
+   the longest line: 30 + 1 + 7 + 1 + "to web: failed: " + 24. */
+#define NAME_MAX_W 30
+#define NAME_MIN_W 17
+static int name_w = NAME_MAX_W;
 static unsigned pct_of(unsigned long bytes, unsigned long size) {
     unsigned p = size ? (unsigned)(bytes / (size / 100 + 1)) : 0;
     return p > 99 ? 99 : p;
 }
 static void row_text(row *r) {
-    char nm[18], sz[16]; const char *base = strrchr(r->name, '/'); size_t l;
+    char nm[NAME_MAX_W + 1], sz[16]; const char *base = strrchr(r->name, '/'); size_t l;
+    /* Before the first '/', a volume's root: Work:a.txt shows as a.txt, as a drawer's file does. */
+    if (!base) base = strchr(r->name, ':');
     base = base ? base + 1 : r->name;
-    strncpy(nm, base, 17); nm[17] = 0;
-    l = strlen(nm); while (l < 17) nm[l++] = ' '; nm[17] = 0;
+    strncpy(nm, base, (size_t)name_w); nm[name_w] = 0;
+    l = strlen(nm); while (l < (size_t)name_w) nm[l++] = ' '; nm[name_w] = 0;
     /* A file waiting to go up has no size yet (the board's TAKE brings it): blank, not "0 KB". */
     if (!r->size && (r->state == ST_UP_WAITING || r->state == ST_UP_FAILED)) strcpy(sz, "       ");
     /* Files are 4 MB at most (4 digits of KB); a LIST from anyone on the LAN may say more: MB then (4 GB = 4096 MB). */
@@ -461,6 +468,10 @@ static int build(gui *G) {
     row2 = (UWORD)(wsend + wretry + wtrust + w + 3 * 6 + 12);   /* the second row's buttons, side by side */
     if (iw < row2) iw = row2;
     if (iw > G->scr->Width - 24) iw = (UWORD)(G->scr->Width - 24);
+    {   /* Characters in the list (its scroller about 20 px) less size, gaps and "to web: failed: connection lost". */
+        int cols = (iw - 12 - 20) / (mw ? mw : 8) - 9 - 31;
+        name_w = cols > NAME_MAX_W ? NAME_MAX_W : cols < NAME_MIN_W ? NAME_MIN_W : cols;
+    }
     top = (UWORD)(G->scr->WBorTop + fh + 1);   /* the title bar */
     x0 = (UWORD)(G->scr->WBorLeft + 6); right = (UWORD)(x0 + iw - 12); y = (UWORD)(top + 6); gh = (UWORD)(fh + 6);
     g = CreateContext(&gl);

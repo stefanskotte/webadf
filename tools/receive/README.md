@@ -21,6 +21,9 @@ of data (396 B) and 96 B of BSS (25,604 B); the Shell form opens no new library.
 by the window (and icon.library only for a moment, to read the tool types).
 Transfer 2.8 (a file sent again after a lost OK is not saved twice) adds 376 B of code (54,588 B) and 304 B of BSS
 (25,908 B): the file saved last, remembered across connections.
+Transfer 2.11 shows whole names in the window (up to 30 characters, narrower only on a screen with no room) and lists files
+waiting to go onto a volume, as it already did for files going to the folder: the next 32 show as waiting and roll over.
+The binary is 136 B larger (61,976 B); no new buffers.
 
 ## Using it
 
