@@ -41,9 +41,13 @@ export function collectionNameProblem(name: string): 'empty' | 'collection-too-l
 }
 
 /** The refusal details that read as a sentence of their own. */
+/** Why a disk stays behind: every surface puts the disk's name in front, so these do not repeat it. */
+export const UNREADABLE_DISK = 'It cannot be read as files';
+export const DAMAGED_DISK = 'Its directory is damaged, some files cannot be reached';
+
 export const SHELF_WORDS: readonly string[] = [
   TITLES_ON_LIBRARY_PAGE, IN_LIBRARY_ALREADY, NO_NESTED, NO_COLLECTION_IN_COLLECTION, ONLY_TITLES_FILED, FILE_ON_SHELF,
-  MAKEDIR_IN_DISK, COLLECTIONS_STAY, NOT_ON_NET, GO_UP, DISKS_STAY_IN_LIBRARY,
+  MAKEDIR_IN_DISK, COLLECTIONS_STAY, NOT_ON_NET, GO_UP, DISKS_STAY_IN_LIBRARY, UNREADABLE_DISK, DAMAGED_DISK,
 ];
 
 /** Where titles are filed: the LIBRARY: root (`null`) or a collection. */

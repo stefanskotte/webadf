@@ -16,7 +16,7 @@ vi.mock('@/lib/tosec-sweep', () => ({ sweep: async () => {} }));
 
 const { getDb, closeDb } = await import('@/db');
 const { migrate } = await import('drizzle-orm/node-postgres/migrator');
-const { eq } = await import('drizzle-orm');
+const { eq, getTableName } = await import('drizzle-orm');
 const { organization } = await import('@/db/schema/auth');
 const { devices } = await import('@/db/schema/devices');
 const { transfers } = await import('@/db/schema/transfers');
@@ -24,6 +24,8 @@ const { remoteRequests } = await import('@/db/schema/remote-requests');
 const { amigaUploads } = await import('@/db/schema/amiga-uploads');
 const { jobView, listJobs } = await import('./jobs');
 const { jobLine, jobTitle } = await import('./job-view');
+const { fetchProgress } = await import('./net-fetch');
+const { latestFor } = await import('@/lib/remote-requests');
 
 const NOW = new Date();
 const ago = (ms: number) => new Date(NOW.getTime() - ms);
@@ -200,6 +202,67 @@ describe('listJobs: Files jobs', () => {
     await getDb().update(devices).set({ lastSeenAt: ago(5 * 60_000) }).where(eq(devices.id, 'b2'));
     await getDb().insert(transfers).values([tr('r8', { jobId: 'j8', deviceId: 'b2', amigaDest: 'Data:a' })]);
     expect((await jobs())[0]).toMatchObject({ id: 'j8', offline: 'A1200', running: true });
+  });
+
+  it('I-1: rows past 24 h: not running, said as expired, finished when they lapsed, and no board named offline', async () => {
+    await getDb().update(devices).set({ lastSeenAt: ago(3600_000) }).where(eq(devices.id, 'b1'));
+    await getDb().insert(transfers).values([
+      tr('l1', { jobId: 'jl', amigaDest: 'Work:Pack/a', expiresAt: ago(30_000), createdAt: ago(90_000) }),
+      tr('l2', { jobId: 'jl', amigaDest: 'Work:Pack/b', status: 'sending', bytesSent: 200, expiresAt: ago(20_000), createdAt: ago(89_000) }),
+    ]);
+    const [j] = await jobs();
+    expect(j).toMatchObject({ id: 'jl', running: false, waiting: 0, total: 2, current: null, offline: null,
+      finishedAt: ago(20_000).toISOString(), bytes: { total: 2000, done: 2000 } });
+    expect(j.failed.map((f) => f.reason)).toEqual(['A500 did not take it within 24 h', 'A500 did not take it within 24 h']);
+    // The same through the job's own route (fetchProgress).
+    expect(await fetchProgress(getDb(), 'o1', 'jl', NOW)).toMatchObject({ waiting: 0, offline: null, failed: [{ name: 'a' }, { name: 'b' }] });
+  });
+  it('I-1: a row not past its expiry still runs; lapsed more than 2 minutes ago it is off the list', async () => {
+    await getDb().insert(transfers).values([
+      tr('r1', { jobId: 'live', amigaDest: 'Work:a', expiresAt: new Date(NOW.getTime() + 1000) }),
+      tr('r2', { jobId: 'gone', amigaDest: 'Work:b', expiresAt: ago(150_000), createdAt: ago(200_000) }),
+    ]);
+    expect((await jobs()).map((j) => [j.id, j.running])).toEqual([['live', true]]);
+  });
+  it('I-1: a move with one row lapsed ends too: its delivered rows wait for no removal the lapsed row holds up', async () => {
+    await getDb().insert(transfers).values([
+      tr('m1', { jobId: 'jm', amigaDest: 'Work:a', status: 'delivered', moveSource: 'STASH:/Pack', moveItem: 'Pack/a', finishedAt: ago(60_000) }),
+      tr('m2', { jobId: 'jm', amigaDest: 'Work:b', moveSource: 'STASH:/Pack', moveItem: 'Pack/b', expiresAt: ago(30_000) }),
+    ]);
+    const [j] = await jobs();
+    expect(j).toMatchObject({ id: 'jm', running: false, waiting: 0, done: 1, finishedAt: ago(30_000).toISOString() });
+    expect(j.failed).toHaveLength(1);
+  });
+  it('I-2: one look reads each table\'s rows of the job once, by named columns (the other reads are the move settle\'s, one value each)', async () => {
+    await getDb().insert(transfers).values(tr('c1', { jobId: 'jc', amigaDest: 'Work:a' }));
+    await getDb().insert(remoteRequests).values(rq('c2', { fetchId: 'jc', target: target() }));
+    const db = getDb();
+    const reads: { table: string; named: boolean }[] = [];
+    const select = db.select.bind(db) as (f?: unknown) => { from(t: unknown): unknown };
+    const spy = vi.spyOn(db, 'select').mockImplementation(((fields?: unknown) => {
+      const b = select(fields);
+      const from = b.from.bind(b);
+      b.from = (t: unknown) => { reads.push({ table: getTableName(t as typeof transfers), named: fields !== undefined }); return from(t); };
+      return b;
+    }) as never);
+    try { expect(await jobView(db, 'o1', 'jc', NOW)).toMatchObject({ id: 'jc' }); } finally { spy.mockRestore(); }
+    const of = (table: string) => reads.filter((r) => r.table === table);
+    expect(of('transfers')).toHaveLength(2);         // settleMovesOfJob's markers, then the job's rows
+    expect(of('remote_requests')).toHaveLength(2);
+    expect(reads.filter((r) => !r.named)).toEqual([]);
+  });
+  it('M-2: with no job, no expiry runs; a stale listing is expired by the pane that looks (latestFor)', async () => {
+    await getDb().insert(remoteRequests).values(rq('s1', { kind: 'dir', status: 'sent', sentAt: ago(120_000), createdAt: ago(120_000), amigaPath: 'Work:' }));
+    expect(await jobs()).toEqual([]);
+    const status = async () => (await getDb().select({ s: remoteRequests.status }).from(remoteRequests).where(eq(remoteRequests.id, 's1')))[0].s;
+    expect(await status()).toBe('sent');
+    await latestFor(getDb(), 'b1', 'dir', 'Work:', NOW);
+    expect(await status()).toBe('failed');
+  });
+  it('M-2: a job that only needs expiry still gets it from the listing', async () => {
+    await getDb().insert(remoteRequests).values(rq('s2', { fetchId: 'js', status: 'fetching', target: target({ rel: ['a.lha'] }), activeAt: ago(700_000), sentAt: ago(700_000), createdAt: ago(700_000) }));
+    const [j] = await jobs();
+    expect(j).toMatchObject({ id: 'js', running: false, failed: [{ name: 'a.lha', reason: 'A500 stopped answering' }] });
   });
 
   it('newest first', async () => {

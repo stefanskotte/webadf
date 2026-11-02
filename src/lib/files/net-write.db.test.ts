@@ -249,6 +249,15 @@ describe('copy onto a volume', () => {
     expect(l.entries.find((e) => e.name === 'b.lha')).toMatchObject({ kind: 'file', size: 3, marks: ['Waiting'] });
   });
 
+  it('I-1: a copy past its 24 h shows no Waiting mark on the pane', async () => {
+    await stash('In/b.lha', 'bee');
+    await op({ op: 'copy', sources: ['STASH:/In/b.lha'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' });
+    const mark = async () => (await netDriver.list(ctx, parsePath('NET:/w1/Work/Tools')!))!.entries.find((e) => e.name === 'b.lha');
+    expect(await mark()).toMatchObject({ marks: ['Waiting'] });
+    await getDb().update(transfers).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(transfers.deviceId, 'w1'));
+    expect(await mark()).toBeUndefined();
+  });
+
   it('a clash: ask returns it, skip leaves it, replace replaces, keep both renames; nothing remembered is a conflict', async () => {
     await stash('In/a.lha', 'new');
     const copy = (onClash: 'ask' | 'skip' | 'replace' | 'keep-both', dest = 'NET:/w1/Work/Tools') => op({ op: 'copy', sources: ['STASH:/In/a.lha'], dest, onClash });

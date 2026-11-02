@@ -14,6 +14,12 @@ import { XFER_FW, SEND_FILE_MAX, SEND_QUEUE_MAX_FILES, SEND_QUEUE_MAX_BYTES } fr
 
 export { XFER_FW, SEND_FILE_MAX, SEND_QUEUE_MAX_FILES, SEND_QUEUE_MAX_BYTES };
 export const SEND_QUEUE_BYTES = 6144;
+/**
+ * The rows a board's queue text lists = Transfer's RX_LIST_MAX (tools/receive/core/rx_proto.h): it keeps the first 32 of
+ * a LIST and ignores the rest. The board forwards the LIST unread and takes each file from NEXT alone, so a row further
+ * down the queue is not told apart from one past 32 today: it waits, and is offered when it comes to be NEXT.
+ */
+export const SEND_LIST_MAX = 32;
 export const SEND_CHUNK_MAX = 16_384;
 export const SEND_EXPIRE_MS = 24 * 3600_000;
 export const SEND_KEEP_FINISHED_MS = 7 * 24 * 3600_000;
@@ -139,6 +145,7 @@ export type QueueManyResult =
  * 1 byte to 4 MB each; sizes from the bytes a caller brings, else from the store, never the caller's word), then ONE
  * transaction counts the board's load as queueTransferFromBlob does, refuses `queue_full` past the queue limits
  * (send-limits.ts), inserts every row and bumps the board's cursor once. Rows are a millisecond apart in the order given, which is the order the board takes them.
+ * The count takes no lock (READ COMMITTED): two sends at once to one board can each pass it and together overshoot the limits.
  */
 export async function queueTransfers(db: Db, a: { orgId: string; deviceId: string; userId: string; files: QueueFile[]; now?: Date;
   /** The Files operation the rows belong to (plan W6): its progress reads them by it. */
@@ -200,7 +207,7 @@ export async function sendQueueText(db: Db, deviceId: string, now = new Date()):
     .from(transfers)
     .where(and(eq(transfers.deviceId, deviceId), inArray(transfers.status, ACTIVE), gt(transfers.expiresAt, now),
       ...(d && boardWrites(d) ? [] : [isNull(transfers.amigaDest)])))
-    .orderBy(asc(transfers.createdAt), asc(transfers.id));
+    .orderBy(asc(transfers.createdAt), asc(transfers.id)).limit(SEND_LIST_MAX);
   const queue = rows.map((r) => ({ ...r, onClash: r.onClash as ClashMode | null }));
   return formatQueue(queue[0] ?? null, queue);
 }
@@ -347,11 +354,16 @@ export type TransferRow = typeof transfers.$inferSelect;
 
 /** How many rows the Queue listing shows; counts and Cancel read the table, not this list. */
 export const QUEUE_LIST_MAX = 100;
-/** The board's rows for NET:/<board> (and GET /api/transfers): this org's only, newest first (finished rows live 7 days). */
+/**
+ * The board's rows for NET:/<board> (and GET /api/transfers): this org's only (finished rows live 7 days). Any row moving
+ * now first, then the newest: with a long queue the file on its way is the oldest row, and would not be among them.
+ */
 export async function listTransfers(db: Db, orgId: string, deviceId: string, limit = QUEUE_LIST_MAX): Promise<TransferRow[]> {
-  return db.select().from(transfers)
-    .where(and(eq(transfers.orgId, orgId), eq(transfers.deviceId, deviceId)))
+  const ofBoard = and(eq(transfers.orgId, orgId), eq(transfers.deviceId, deviceId));
+  const moving = await db.select().from(transfers).where(and(ofBoard, eq(transfers.status, 'sending'), gt(transfers.expiresAt, new Date())))
     .orderBy(desc(transfers.createdAt), desc(transfers.id)).limit(limit);
+  const newest = await db.select().from(transfers).where(ofBoard).orderBy(desc(transfers.createdAt), desc(transfers.id)).limit(limit);
+  return [...moving, ...newest.filter((r) => !moving.some((m) => m.id === r.id))].slice(0, limit);
 }
 
 /**

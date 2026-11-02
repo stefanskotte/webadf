@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createJobsStore, nextDelay, OFFLINE_POLL_MS, OPEN_KEY, POLL_MS, SEEN_KEY, SEEN_MAX, TRACK_MS, type JobsDeps } from './jobs-client';
+import { createJobsStore, IDLE_POLL_MS, nextDelay, OFFLINE_POLL_MS, OPEN_KEY, POLL_MS, SEEN_KEY, SEEN_MAX, TRACK_MS, type JobsDeps } from './jobs-client';
 import { timeLeft, WINDOW_MS, type JobView } from './job-view';
 
 const job = (o: Partial<JobView> = {}): JobView => ({
@@ -35,7 +35,8 @@ describe('nextDelay (spec §3)', () => {
     expect(nextDelay([job()], on)).toBe(POLL_MS);
     expect(nextDelay([job({ offline: 'A500' })], on)).toBe(OFFLINE_POLL_MS);
     expect(nextDelay([job({ offline: 'A500' }), job({ id: 'j2' })], on)).toBe(POLL_MS);
-    expect(nextDelay([finished()], on)).toBeNull();
+    expect(nextDelay([finished()], on)).toBe(IDLE_POLL_MS);
+    expect(nextDelay([], on)).toBe(IDLE_POLL_MS);
     expect(nextDelay([], { ...on, tracking: true })).toBe(POLL_MS);
     expect(nextDelay([job()], { ...on, visible: false })).toBeNull();
     expect(nextDelay([], { ...on, failed: true })).toBe(OFFLINE_POLL_MS);
@@ -43,11 +44,50 @@ describe('nextDelay (spec §3)', () => {
 });
 
 describe('createJobsStore polling', () => {
-  it('nothing runs: one load, then quiet', async () => {
+  it('IDLE_POLL_MS is 60 s', () => { expect(IDLE_POLL_MS).toBe(60_000); });
+  it('nothing runs: a look every 60 s while visible, none in between', async () => {
     const { store, load } = harness([[]]);
     store.start();
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(59_000);
     expect(load).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(load).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(load).toHaveBeenCalledTimes(3);
+    store.stop();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(load).toHaveBeenCalledTimes(3);
+  });
+  it('a hidden idle page asks nothing; shown again it asks at once, then every 60 s', async () => {
+    let vis = true;
+    const { store, load } = harness([[]], { visible: () => vis });
+    store.start();
+    await flush();
+    vis = false; store.onVisibility();
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(load).toHaveBeenCalledTimes(1);
+    vis = true; store.onVisibility();
+    await flush();
+    expect(load).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(load).toHaveBeenCalledTimes(3);
+  });
+  it('a job tracked during the idle wait does not leave a second poll behind', async () => {
+    const { store, load } = harness([[], [job()], [job()], [finished()]]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(30_000);
+    store.track('j1');
+    await flush();
+    expect(load).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(load).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(load).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(load).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(load).toHaveBeenCalledTimes(5);
   });
   it('a running job: every 2 s, and quiet once it finished', async () => {
     const { store, load } = harness([[job()], [job()], [finished()]]);
@@ -260,6 +300,19 @@ describe('createJobsStore state', () => {
     await vi.advanceTimersByTimeAsync(2_000);
     expect(store.getState().announce).toBe('Copied 2 to A500');
   });
+  it('two identical results are each announced: the live region text differs, to the eye it does not', async () => {
+    const { store } = harness([[job({ id: 'a' })], [finished({ id: 'a' })], [finished({ id: 'a' }), job({ id: 'b' })], [finished({ id: 'a' }), finished({ id: 'b' })]]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(2_000);
+    const first = store.getState().announce;
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(2_000);
+    const second = store.getState().announce;
+    expect(first).not.toBe(second);
+    expect(first.replace(/\u00a0/g, '')).toBe('Copied 2 to A500');
+    expect(second.replace(/\u00a0/g, '')).toBe('Copied 2 to A500');
+  });
   it('a job already finished when the page loads is not announced', async () => {
     const { store } = harness([[finished()]]);
     store.start();
@@ -274,6 +327,107 @@ describe('createJobsStore state', () => {
     expect(store.getState().seen).toEqual([]);
     store.fadeFinished(Date.now() + 6_000);
     expect(store.getState().seen).toEqual(['j1']);
+  });
+});
+
+describe('a kept card outlives the server\'s 2 minutes (final review C-1)', () => {
+  const failed = (o: Partial<JobView> = {}) => finished({ failed: [{ name: 'a', reason: 'r' }], ...o });
+  it('a failed card the idle poll no longer gets stays, with when it was first seen; dismissed, it does not come back', async () => {
+    const { store } = harness([[failed()], []]);
+    store.start();
+    await flush();
+    const at = store.getState().finishedSeenAt.j1;
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().jobs.map((j) => j.id)).toEqual(['j1']);
+    expect(store.getState().finishedSeenAt.j1).toBe(at);
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().jobs.map((j) => j.id)).toEqual(['j1']);
+    store.dismiss('j1');
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().jobs).toEqual([]);
+    expect(store.getState().seen).toEqual(['j1']);
+    expect(store.getState().finishedSeenAt.j1).toBeUndefined();
+  });
+  it('a cancelled card too', async () => {
+    const { store } = harness([[finished({ cancel: { move: false, source: null }, cancelled: 1 })], []]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().jobs.map((j) => j.id)).toEqual(['j1']);
+  });
+  it('a Queue card whose rows are in the board\'s newer Queue card goes; one that card does not hold, or another board\'s, stays', async () => {
+    const q = (board: string, created: number, startedAt: string, failures: number) => finished({
+      id: `queue:${board}:${created}`, kind: 'send', startedAt, failed: Array.from({ length: failures }, (_, i) => ({ name: `f${i}`, reason: 'r' })),
+    });
+    const t = (m: number) => `2026-11-01T10:${String(m).padStart(2, '0')}:00.000Z`;
+    const { store } = harness([
+      [q('d1', 1, t(0), 1), q('d2', 1, t(0), 1)],
+      [q('d1', 2, t(0), 2)],        // the same rows and one more, under the id of its newest row
+      [q('d1', 3, t(5), 1)],        // the queue drained first: a new send, the old card holds what this one does not
+    ]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().jobs.map((j) => j.id).sort()).toEqual(['queue:d1:2', 'queue:d2:1']);
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().jobs.map((j) => j.id).sort()).toEqual(['queue:d1:2', 'queue:d1:3', 'queue:d2:1']);
+  });
+  it('a clean finished card still goes with the answer', async () => {
+    const { store } = harness([[finished()], []]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().jobs).toEqual([]);
+  });
+  it('a running job the answer dropped is not kept: nothing says how it ended', async () => {
+    const { store } = harness([[job()], []]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(store.getState().jobs).toEqual([]);
+  });
+  it('stays while another job runs, the cards newest first; the answer wins for a job it holds', async () => {
+    const old = failed({ id: 'old', startedAt: '2026-11-01T09:00:00.000Z' });
+    const mid = failed({ id: 'mid', startedAt: '2026-11-01T09:30:00.000Z' });
+    const long = job({ id: 'long', startedAt: '2026-11-01T09:15:00.000Z' });
+    const { store } = harness([[mid, long, old], [long], [job({ id: 'mid', startedAt: mid.startedAt }), long]]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(store.getState().jobs.map((j) => j.id)).toEqual(['mid', 'long', 'old']);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(store.getState().jobs.map((j) => [j.id, j.running])).toEqual([['mid', true], ['long', true], ['old', false]]);
+  });
+  it('a kept card is said to no watcher, and never counts as listed for one', async () => {
+    const { store, loadOne } = harness([[failed()], []], { loadOne: async () => 'gone' as const });
+    const heard = vi.fn();
+    store.watch('j1', heard);
+    store.start();
+    await flush();
+    expect(heard).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(heard).toHaveBeenCalledTimes(1);
+    expect(loadOne).toHaveBeenCalledWith('j1');   // the list let it go: asked once on its own, as before
+  });
+  it('nothing is carried past a signed-out answer: the next answer may be another account\'s', async () => {
+    let vis = true;
+    const { store } = harness([[failed()], 'signed-out', []], { visible: () => vis });
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().signedOut).toBe(true);
+    vis = false; store.onVisibility();
+    vis = true; store.onVisibility();
+    await flush();
+    expect(store.getState().signedOut).toBe(false);
+    expect(store.getState().jobs).toEqual([]);
+  });
+  it('two jobs finishing in one poll are both announced (M-1)', async () => {
+    const { store } = harness([[job({ id: 'a' }), job({ id: 'b', board: 'A1200' })], [finished({ id: 'a' }), finished({ id: 'b', board: 'A1200' })]]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(store.getState().announce).toBe('Copied 2 to A500. Copied 2 to A1200');
   });
 });
 

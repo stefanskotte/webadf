@@ -9,7 +9,7 @@
 // answers (remote-requests.ts), remembered 2 minutes. Phase 2 (spec 2026-10-31 §4.1): a volume a board can write to is
 // writable -- Copy onto it, Makedir, Rename, Delete, Protect and comments go through net-write.ts -- and shows the files
 // of a copy still on their way as arriving rows. SERVER ONLY.
-import { and, eq, inArray, isNotNull, notInArray } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNotNull, notInArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { transfers } from '@/db/schema/transfers';
 import { cancelTransfer, clearTransfer, listTransfers, QUEUE_LIST_MAX, queueLoad, queueTransfers, sendSummaries, type QueueFile } from '@/lib/transfers';
@@ -155,6 +155,13 @@ async function listBoardRoot(ctx: FsCtx, t: SendTarget, now: number, opts: { fre
     meta: block ?? `${volumes.length} ${volumes.length === 1 ? 'volume' : 'volumes'}` };
 }
 
+/** What withArriving reads of a queue row: a board's queue holds up to 1,000, read at every look of a pane. */
+const ARRIVING = {
+  id: transfers.id, path: transfers.path, sizeBytes: transfers.sizeBytes, status: transfers.status, bytesSent: transfers.bytesSent, savedAs: transfers.savedAs,
+  errorCode: transfers.errorCode, errorText: transfers.errorText, createdAt: transfers.createdAt, finishedAt: transfers.finishedAt, expiresAt: transfers.expiresAt,
+  protection: transfers.protection, comment: transfers.comment, amigaDest: transfers.amigaDest, jobId: transfers.jobId,
+};
+
 /**
  * The files of a copy onto this drawer still on their way (spec 2026-10-31 §4.1, "as STASH: shows uploads"): each
  * waiting or moving queue row whose destination is in this drawer is a row marked with its state ("Waiting", "Sending 40
@@ -164,8 +171,8 @@ async function listBoardRoot(ctx: FsCtx, t: SendTarget, now: number, opts: { fre
  */
 async function withArriving(t: SendTarget, segs: string[], amiga: string, listed: FsEntry[], now: number): Promise<FsEntry[]> {
   const db = getDb();
-  const active = await db.select().from(transfers).where(and(eq(transfers.deviceId, t.id), inArray(transfers.status, ACTIVE_ROWS),
-    isNotNull(transfers.amigaDest)));
+  const active = await db.select(ARRIVING).from(transfers).where(and(eq(transfers.deviceId, t.id), inArray(transfers.status, ACTIVE_ROWS),
+    isNotNull(transfers.amigaDest), gt(transfers.expiresAt, new Date(now))));
   // Files of a copy between volumes still on their way up to the server: rows of this board's queue to come (item 10).
   const relayed = await relayedTo(db, t.id, [...COMING, 'failed']);
   const coming = relayed.filter((g) => COMING.includes(g.status));
@@ -173,7 +180,7 @@ async function withArriving(t: SendTarget, segs: string[], amiga: string, listed
   // The whole of each job still moving (plan 2026-11-01-net-consistency, item 10): its finished rows, so a drawer can say
   // how many of its files are through, and its gets not yet handed over, so the count does not grow as they arrive.
   const jobs = [...new Set([...active, ...coming.map((g) => ({ jobId: g.fetchId }))].flatMap((r) => (r.jobId ? [r.jobId] : [])))];
-  const through = jobs.length ? await db.select().from(transfers).where(and(eq(transfers.deviceId, t.id), inArray(transfers.jobId, jobs),
+  const through = jobs.length ? await db.select(ARRIVING).from(transfers).where(and(eq(transfers.deviceId, t.id), inArray(transfers.jobId, jobs),
     isNotNull(transfers.amigaDest), notInArray(transfers.status, ACTIVE_ROWS))) : [];
   const toCome = relayed.filter((g) => g.fetchId && jobs.includes(g.fetchId));
   const out = [...listed];

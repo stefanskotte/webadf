@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   askingAbout, barOf, canCancel, cardShown, commonDrawer, confirmWords, failureList, isClean, jobLine, jobNow, jobTitle, leftWords, panelLift,
-  pillWords, resultWords, sizeWords, timeLeft, type JobView, type Sample,
+  pillWords, QUEUE_JOB, resultWords, sizeWords, timeLeft, type JobView, type Sample,
 } from './job-view';
 
 const KB = 1024;
@@ -118,7 +118,7 @@ describe('resultWords (today\'s finished line, and Cancel\'s)', () => {
   it('cancelled: how far it got, and for a move where the rest is', () => {
     expect(resultWords(done({ done: 5, cancelled: 7, cancel: { move: false, source: null } }))).toBe('Cancelled: 5 of 12 copied');
     expect(resultWords(done({ kind: 'move', done: 5, cancelled: 7, cancel: { move: true, source: 'STASH:/Games' } })))
-      .toBe('Cancelled: 5 of 12 moved; the rest is still in STASH:/Games');
+      .toBe('Cancelled: 5 of 12 copied; the rest is still in STASH:/Games');
     expect(resultWords(done({ kind: 'write', total: 0, bytes: null, cancelled: 2, cancel: { move: false, source: null },
       writes: [w({ status: 'done' }), w({ status: 'failed', reason: 'cancelled' }), w({ status: 'failed', reason: 'cancelled' })] }))).toBe('Cancelled: 1 of 3 done');
   });
@@ -181,6 +181,16 @@ describe('canCancel and confirmWords (spec §5, §6)', () => {
     expect(confirmWords(job({ kind: 'move' }))).toBe('Cancel the rest of this move? What has arrived stays.');
     expect(confirmWords(job({ kind: 'send' }))).toBe('Cancel the rest of this send? What has arrived stays.');
     expect(confirmWords(job({ kind: 'write' }))).toBe('Cancel the rest of these changes? What is done stays.');
+  });
+  it('a cancelled move says copied: a file whose original was not removed still counts', () => {
+    expect(resultWords(done({ kind: 'move', total: 8, done: 2, cancelled: 6, cancel: { move: true, source: 'STASH:/x' } })))
+      .toBe('Cancelled: 2 of 8 copied; the rest is still in STASH:/x');
+  });
+  it('a Queue send says Cancel takes every file waiting for that board', () => {
+    const q = (waiting: number) => job({ id: `${QUEUE_JOB}d1:1`, kind: 'send', place: null, total: waiting, waiting });
+    expect(confirmWords(q(12))).toBe('Cancels all 12 files waiting for A500. What has arrived stays.');
+    expect(confirmWords(q(1))).toBe('Cancels the 1 file waiting for A500. What has arrived stays.');
+    expect(confirmWords(job({ kind: 'send' }))).toBe('Cancel the rest of this send? What has arrived stays.');
   });
   it('a write job whose drawer delete already runs says that drawer finishes first (spec §6 limit)', () => {
     const running = job({ kind: 'write', writes: [w({ status: 'running' }), w({ label: 'Work:B' })] });

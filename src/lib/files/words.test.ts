@@ -3,7 +3,7 @@ import type { RefusalCode } from './types';
 import { refusalWords } from './words';
 import { netEmpty } from './net-rules';
 import { queueFullWords } from '../send-limits';
-import { DISKS_STAY_IN_LIBRARY } from './shelf-rules';
+import { DAMAGED_DISK, DISKS_STAY_IN_LIBRARY, UNREADABLE_DISK } from './shelf-rules';
 
 // The type system forces this to list every RefusalCode.
 const ALL: Record<RefusalCode, true> = {
@@ -106,6 +106,10 @@ describe('refusalWords for writes to the Amiga', () => {
     expect(refusalWords('read_only', 'Transfer is not running on A500')).toBe('Transfer is not running on A500.');
     expect(refusalWords('conflict', 'List the drawer again and retry')).toBe('List the drawer again and retry.');
     expect(refusalWords('unsupported', 'Move within one volume')).toBe('Move within one volume.');
+    // Why a disk stays behind is a plain sentence, the name in front of it on every surface; anything else unknown keeps its prefix.
+    expect(refusalWords('unsupported', UNREADABLE_DISK)).toBe('It cannot be read as files.');
+    expect(refusalWords('unsupported', DAMAGED_DISK)).toBe('Its directory is damaged, some files cannot be reached.');
+    expect(refusalWords('unsupported', 'something else')).toBe('Not supported: something else.');
     // Spec 2026-10-31 §9: a Move off a volume on Transfer 2.5, and what a move kept.
     expect(refusalWords('unsupported', 'Move needs Transfer 2.6 — use Copy')).toBe('Move needs Transfer 2.6 — use Copy.');
     expect(refusalWords('conflict', 'Kept STASH:/Pack: something new is in it')).toBe('Kept STASH:/Pack: something new is in it.');

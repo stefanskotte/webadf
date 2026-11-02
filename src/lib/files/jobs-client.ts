@@ -1,13 +1,17 @@
 // src/lib/files/jobs-client.ts
 // The progress panel's store (spec 2026-11-01-progress-panel §3): the org's jobs as GET /api/files/jobs answers them,
-// asked once on load and then only while a job runs -- every 2 s while the page is visible, every 15 s while every
-// running job waits on a board that is offline, never while the tab is hidden. Files tells it about a job it just
-// started (track) and hears each answer for it (watch). The open/closed choice and the cards already put away are
-// remembered per browser, a convenience: storage that throws or is empty changes nothing else. CLIENT-SAFE.
-import { FADE_MS, isClean, resultWords, WINDOW_MS, type JobView, type Sample } from './job-view';
+// asked on load, then, while the page is visible: every 2 s while a job runs, every 15 s while every running job waits
+// on a board that is offline, every 60 s while nothing runs. A hidden tab asks nothing. Files tells it about a job it
+// just started (track) and hears each answer for it (watch). The server lists a finished job for 2 minutes only; a card
+// with a failure or a cancel stays here until it is closed (a reload forgets it). The open/closed choice and the cards
+// already put away are remembered per browser, a convenience: storage that throws or is empty changes nothing else.
+// CLIENT-SAFE.
+import { FADE_MS, isClean, QUEUE_JOB, resultWords, WINDOW_MS, type JobView, type Sample } from './job-view';
 
 export const POLL_MS = 2_000;
 export const OFFLINE_POLL_MS = 15_000;
+/** A visible page with nothing running looks this often, for a job started elsewhere (a hidden tab asks nothing). */
+export const IDLE_POLL_MS = 60_000;
 /** A job this tab just started is looked for this long before the store stops asking for it. */
 export const TRACK_MS = 10_000;
 /** How many times a failed one-off ask for a watched job is tried (OFFLINE_POLL_MS apart) before it is let go. */
@@ -64,7 +68,15 @@ export function nextDelay(jobs: JobView[], o: { tracking: boolean; visible: bool
   if (o.failed) return OFFLINE_POLL_MS;
   const running = jobs.filter((j) => j.running);
   if (o.tracking || running.some((j) => !j.offline)) return POLL_MS;
-  return running.length ? OFFLINE_POLL_MS : null;
+  return running.length ? OFFLINE_POLL_MS : IDLE_POLL_MS;
+}
+
+/**
+ * The live region's next text. A region announces only when its text changes, so the same words twice would be heard
+ * once: a trailing U+00A0 is toggled then. It is in the live region alone (sr-only); no card shows it.
+ */
+export function announced(previous: string, words: string): string {
+  return previous === words ? `${words}\u00a0` : words;
 }
 
 export function createJobsStore(deps: JobsDeps) {
@@ -100,17 +112,27 @@ export function createJobsStore(deps: JobsDeps) {
     const now = deps.now();
     const samples: Record<string, Sample[]> = {};
     const finishedSeenAt: Record<string, number> = {};
-    let announce = state.announce;
+    const words: string[] = [];
     for (const j of jobs) {
       if (j.running && j.bytes) {
         samples[j.id] = [...(state.samples[j.id] ?? []), { at: now, done: j.bytes.done }].filter((s) => s.at >= now - WINDOW_MS);
       }
       if (!j.running) {
         finishedSeenAt[j.id] = state.finishedSeenAt[j.id] ?? now;
-        if (state.jobs.some((x) => x.id === j.id && x.running)) announce = resultWords(j);
+        if (state.jobs.some((x) => x.id === j.id && x.running)) words.push(resultWords(j));
       }
     }
-    set({ jobs, samples, finishedSeenAt, announce, signedOut: false });
+    const announce = words.length ? announced(state.announce, words.join('. ')) : state.announce;
+    // A card that must stay until closed, which the answer let go (the server lists a finished job for 2 minutes). Past a
+    // signed-out answer none: this answer may be another account's. Kept out of `jobs`, what watchers below hear.
+    // A board's Queue card takes a new id with each newest row: one that started no later already holds this one's rows.
+    const queueOf = (j: JobView) => (j.id.startsWith(QUEUE_JOB) ? j.id.slice(0, j.id.lastIndexOf(':')) : null);
+    const heldByNewer = (j: JobView) => queueOf(j) !== null && jobs.some((x) => queueOf(x) === queueOf(j) && x.startedAt <= j.startedAt);
+    const kept = state.signedOut ? [] : state.jobs.filter((j) => !j.running && !isClean(j) && !state.seen.includes(j.id) && !jobs.some((x) => x.id === j.id) && !heldByNewer(j));
+    for (const j of kept) finishedSeenAt[j.id] = state.finishedSeenAt[j.id] ?? now;
+    // In the server's order (jobs.ts): the panel shows them newest first.
+    const shown = kept.length ? [...jobs, ...kept].sort((x, y) => y.startedAt.localeCompare(x.startedAt) || x.id.localeCompare(y.id)) : jobs;
+    set({ jobs: shown, samples, finishedSeenAt, announce, signedOut: false });
     for (const j of jobs) for (const w of [...(watchers.get(j.id) ?? [])]) w(j);
     // A watched job the list let go unseen (it finished while the tab was hidden, more than 2 minutes ago) or never
     // held: asked for on its own, once, so its watchers still hear how it ended (a Download, the panes read again).

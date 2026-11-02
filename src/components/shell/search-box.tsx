@@ -441,13 +441,13 @@ export function SearchBox() {
         // closes it (C7 Ruling 7: iOS's tap-away did not blur). Not a focus trap: this is a combobox popup.
         // Below sm it closes on click, not pointerdown: the scrim must still be the click target when the touch's
         // synthesized click arrives, or the click falls through to the link underneath. mousedown is cancelled there so
-        // the input does not blur (and unmount the scrim) first. z-30: under the tab bar (z-40), so a tab still takes
-        // its first tap. From sm, pointerdown closes as in C5.
+        // the input does not blur (and unmount the scrim) first. z-[31]: under the tab bar (z-40), so a tab still takes
+        // its first tap, and over the progress panel and the Library tray (z-30), which sit under the search below lg. From sm, pointerdown closes as in C5.
         <div data-testid="search-scrim" aria-hidden
              onPointerDown={() => { if (!isPhone()) setOpen(false); }}
              onMouseDown={(e) => { if (isPhone()) e.preventDefault(); }}
              onClick={() => setOpen(false)}
-             className="fixed inset-x-0 bottom-0 top-[60px] z-30 bg-transparent sm:bg-(--search-scrim) lg:z-40 lg:top-[72px]" />
+             className="fixed inset-x-0 bottom-0 top-[60px] z-[31] bg-transparent sm:bg-(--search-scrim) lg:z-40 lg:top-[72px]" />
       )}
 
       {panelOpen && (

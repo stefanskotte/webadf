@@ -18,7 +18,7 @@ import { formatPath, PANE_DEVICES, parsePath } from '@/lib/files/path';
 import type { OpItem, OpRequest } from '@/lib/files/ops';
 import type { Added } from '@/lib/files/driver';
 import {
-  acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, netVolumeReason, OTHER_PANE_OPENING, unsettled,
+  acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, netVolumeReason, OTHER_PANE_OPENING, PANE_OPENING, unsettled,
   offersUndo, placeOf,
 } from '@/lib/files/pane-rules';
 import { askUntilAnswered } from '@/lib/files/ask-listing';
@@ -1372,6 +1372,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    */
   function dropFromComputer(side: Side, e: React.DragEvent) {
     const l = panes[side].listing;
+    // As a drop of rows: on the pane's body while it opens another place, the listing it would land in is the one it left.
+    if (l && dropFolder(l, e) === l.path && unsettled(panes[side])) { toast.error(PANE_OPENING); return; }
     if (l && !l.disk && holdsFiles(l)) { dropIntoStash(side, l, e); return; }
     // Files from the computer go up to STASH: first; a copy from there puts them on the Amiga (phase 2).
     if (isNetVolume(l)) { toast.error(refusalWords('read_only', NET_DROP_TO_STASH)); return; }

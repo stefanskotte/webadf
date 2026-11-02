@@ -148,8 +148,54 @@ test('Cancel the rest asks first; what arrived stays, the rest never goes, and t
       expect((fs['Work:Tools/Pack'] ?? []).filter((e) => !e.dir)).toHaveLength(1);
       await new Promise((r) => setTimeout(r, 250));
     }
-    // A cancelled card stays until closed.
+    // A cancelled card stays until closed, past the server's 2 minutes: an answer that no longer lists it, as the server's
+    // will, is asked for at once by the store's visibility hook (no real 2-minute wait).
+    await page.route('**/api/files/jobs', (route) => route.fulfill({ json: { jobs: [] } }));
+    const noLonger = page.waitForResponse('**/api/files/jobs');
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await noLonger;
+    await page.waitForTimeout(250);
+    await expect(card.getByTestId('transfers-card-result')).toHaveText('Cancelled: 1 of 3 copied');
     await card.getByTestId('transfers-close').click();
     await expect(page.getByTestId('transfers-card')).toHaveCount(0);
+    // Closed, it does not come back with the next answer.
+    const next = page.waitForResponse('**/api/files/jobs');
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await next;
+    await page.waitForTimeout(250);
+    await expect(page.getByTestId('transfers-card')).toHaveCount(0);
   } finally { fakeBoardTiming.queueLimit = Infinity; await board.stop(); }
+});
+
+test('on a phone the panel sits above the page and under the search overlay', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const { deviceId, token } = await writable(page, request);
+  const fs = amiga();
+  const board = serving(request, token, fs);
+  try {
+    await openFiles(page, 'STASH:', `NET:/${deviceId}/Work/Tools`, 'left');
+    await expect(rowAt(page, 'right', 'x.lha')).toBeVisible({ timeout: LIVE });
+    await stashPack(page, ['one.txt', 'two.txt']);
+    fakeBoardTiming.queueHeld = true;
+    await rowAt(page, 'left', 'Pack').click();
+    await page.getByTestId('files-copy').click();
+    await expect(page.getByTestId('transfers-card').first()).toBeVisible({ timeout: LIVE });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/library');
+    const panel = page.getByTestId('transfers-panel');
+    await expect(panel).toBeVisible({ timeout: LIVE });
+    const centre = async () => { const b = (await panel.boundingBox())!; return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+    const hit = (c: { x: number; y: number }) => page.evaluate(({ x, y }) => {
+      const el = document.elementFromPoint(x, y);
+      return { inPanel: !!el?.closest('[data-testid="transfers-panel"]'), scrim: !!el?.closest('[data-testid="search-scrim"]') };
+    }, c);
+    // Nothing open: the panel is what a finger finds there.
+    expect((await hit(await centre())).inPanel).toBe(true);
+    await page.getByTestId('search-open').click();
+    await page.getByTestId('search-input').fill('zzz');
+    await expect(page.getByTestId('search-scrim')).toBeVisible();
+    const over = await hit(await centre());
+    expect(over.inPanel).toBe(false);
+    expect(over.scrim).toBe(true);
+  } finally { fakeBoardTiming.queueHeld = false; await board.stop(); }
 });

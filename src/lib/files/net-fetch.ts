@@ -361,7 +361,7 @@ export async function afterTransferDone(db: Db, transferId: string): Promise<voi
  * a copied file under it changed, a copied file's delete was refused, one the Amiga did not list again, an empty drawer
  * the copy into STASH: left out, an entry the move's fresh listing showed that the copy never walked; else no known cause.
  */
-function keptOnVolume(d: RemoteRow, reqs: RemoteRow[]): string {
+function keptOnVolume(d: JobReq, reqs: JobReq[]): string {
   const fold = (s: string) => s.toLowerCase();
   const base = fold(d.amigaPath);
   const under = (p: string) => fold(p).startsWith(`${base}/`);
@@ -417,22 +417,48 @@ export type FetchProgress = {
   offline: string | null;
 };
 
-/**
- * One copy's progress (§4.5), this org's only. A get the board has not fetched (offline) waits without a timeout of its
- * own; one sent and not done within 10 minutes fails "<board> stopped answering" (expireStale).
- */
+/** What a job's progress and its card read of its requests. Named: a poll asks this every 2 s of a job of up to 1,000 rows. */
+const JOB_REQ = {
+  kind: remoteRequests.kind, amigaPath: remoteRequests.amigaPath, status: remoteRequests.status, deviceId: remoteRequests.deviceId,
+  errorCode: remoteRequests.errorCode, errorText: remoteRequests.errorText, target: remoteRequests.target, uploadId: remoteRequests.uploadId,
+  createdAt: remoteRequests.createdAt, answeredAt: remoteRequests.answeredAt, answer: remoteRequests.answer,
+};
+const JOB_SENT = {
+  status: transfers.status, deviceId: transfers.deviceId, path: transfers.path, amigaDest: transfers.amigaDest, errorCode: transfers.errorCode,
+  errorText: transfers.errorText, moveSource: transfers.moveSource, moveItem: transfers.moveItem, sizeBytes: transfers.sizeBytes,
+  bytesSent: transfers.bytesSent, createdAt: transfers.createdAt, finishedAt: transfers.finishedAt, expiresAt: transfers.expiresAt,
+};
+export type JobReq = Pick<RemoteRow, 'kind' | 'amigaPath' | 'status' | 'deviceId' | 'errorCode' | 'errorText' | 'target' | 'uploadId' | 'createdAt' | 'answeredAt' | 'answer'>;
+export type JobSent = Pick<typeof transfers.$inferSelect, 'status' | 'deviceId' | 'path' | 'amigaDest' | 'errorCode' | 'errorText' | 'moveSource' | 'moveItem' | 'sizeBytes' | 'bytesSent' | 'createdAt' | 'finishedAt' | 'expiresAt'>;
+/** One look at a job: its progress and the rows it was worked out from (jobView reads them from here, not again). */
+export type JobRead = { progress: FetchProgress; reqs: JobReq[]; sent: JobSent[] };
+
+/** One copy's progress (§4.5), this org's only: fetchJob without its rows. */
 export async function fetchProgress(db: Db, orgId: string, fetchId: string, now: Date,
   opts: { expire?: boolean } = {}): Promise<FetchProgress | null> {
+  return (await fetchJob(db, orgId, fetchId, now, opts))?.progress ?? null;
+}
+
+/**
+ * A get the board has not fetched (offline) waits without a timeout of its own; one sent and not done within 10 minutes
+ * fails "<board> stopped answering" (expireStale).
+ */
+export async function fetchJob(db: Db, orgId: string, fetchId: string, now: Date,
+  opts: { expire?: boolean } = {}): Promise<JobRead | null> {
   // `expire: false` when the caller ran expireStale itself (listJobs: once for all its jobs, not once per job).
   if (opts.expire !== false) await expireStale(db, now);
   // A move whose parts all ended -- however they ended -- is settled here, so the job finishes (final review C2).
   // A settle that fails is logged and tried again at the next look (R3): the progress still answers.
   await settleMovesOfJob(db, orgId, fetchId).catch((e) => console.error('net-fetch: settling the moves of a job failed', e));
-  const reqs = await db.select().from(remoteRequests)
+  const reqs: JobReq[] = await db.select(JOB_REQ).from(remoteRequests)
     .where(and(eq(remoteRequests.fetchId, fetchId), eq(remoteRequests.orgId, orgId)))
     .orderBy(asc(remoteRequests.createdAt), asc(remoteRequests.id));
-  const sent = await db.select().from(transfers).where(and(eq(transfers.jobId, fetchId), eq(transfers.orgId, orgId)))
+  const rowsRead: JobSent[] = await db.select(JOB_SENT).from(transfers).where(and(eq(transfers.jobId, fetchId), eq(transfers.orgId, orgId)))
     .orderBy(asc(transfers.createdAt), asc(transfers.id));
+  // A row past its 24 h no longer waits: it says expired now, finished when it lapsed; the nightly cron writes that later.
+  // Only one already `sending` can still finish, and then its real row says so at the next look.
+  const lapsed = (x: JobSent) => (x.status === 'queued' || x.status === 'sending') && x.expiresAt.getTime() <= now.getTime();
+  const sent = rowsRead.map((x): JobSent => (lapsed(x) ? { ...x, status: 'expired', finishedAt: x.expiresAt } : x));
   if (reqs.length === 0 && sent.length === 0) return null;
   // The board the job is about: a copy onto a volume names the destination, a copy out the source.
   // A Cancel the rest marker (progress panel §6) is never the job's request: it names no board.
@@ -450,7 +476,7 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
   const offline = boards.find((x) => waitingOn.has(x.id) && !isOnline(x.lastSeenAt, now.getTime()))?.name ?? null;
   const board = nameOf(boardId);
   // A move's get is not finished until its source is deleted (net-moves.ts drops the marker after).
-  const moving = (r: RemoteRow) => r.status === 'done' && !!(r.target as GetTarget | null)?.moveSource;
+  const moving = (r: JobReq) => r.status === 'done' && !!(r.target as GetTarget | null)?.moveSource;
   // A relayed file is its queue row once handed over: the get then counts no more.
   const rows = reqs.filter((r) => r.kind === 'get' && !((r.target as GetTarget).relay && r.status === 'done'));
   const writes: JobWrite[] = reqs.filter((r) => (WRITE_KINDS as readonly string[]).includes(r.kind)).map((r) => {
@@ -475,8 +501,10 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
         ? writeErrorWords(x.errorCode!, x.errorCode === 'readonly' ? x.errorText ?? '' : '', board)
       : failureText(x.errorCode, x.errorText),
   }));
-  // A move's file is not finished until its source is removed (net-moves.ts clears the marker after).
-  const settling = (x: { status: string; moveSource: string | null }) => x.status === 'delivered' && x.moveSource !== null;
+  // A move's file is not finished until its source is removed (net-moves.ts clears the marker after). A move with a row
+  // lapsed removes nothing (settleMove: not every row delivered), so its delivered rows wait for no removal.
+  const noRemoval = new Set(rowsRead.filter(lapsed).map((x) => x.moveSource));
+  const settling = (x: { status: string; moveSource: string | null }) => x.status === 'delivered' && x.moveSource !== null && !noRemoval.has(x.moveSource);
   const sentCounts = {
     total: sent.length, done: sent.filter((x) => x.status === 'delivered' && !settling(x)).length,
     skipped: sent.filter((x) => x.status === 'skipped').length,
@@ -493,7 +521,7 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
     const reason = r.errorCode === 'timeout' ? `${nameOf(r.deviceId)} stopped answering` : errorWords(r.errorCode ?? '', r.errorText ?? '', nameOf(r.deviceId));
     return { name: rel[rel.length - 1], reason };
   });
-  return {
+  const progress: FetchProgress = {
     total: rows.length + sentCounts.total, done: rows.filter((r) => r.status === 'done' && !moving(r)).length + sentCounts.done,
     failed: [...failed, ...sentFailed],
     waiting: rows.filter((r) => (r.status !== 'done' && r.status !== 'failed') || moving(r)).length + sentCounts.waiting, board,
@@ -502,4 +530,5 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
     direction: sent.length || reqs.some((r) => r.kind === 'get' && (r.target as GetTarget).relay) ? 'to' : 'from',
     offline,
   };
+  return { progress, reqs, sent };
 }

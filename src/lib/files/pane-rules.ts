@@ -52,6 +52,7 @@ export function copyOutReason(l: Listing | null): string | null {
  */
 export const unsettled = (p: { loading: boolean; listing: Listing | null; path: string }) => p.loading && !!p.listing && p.listing.path !== p.path;
 export const OTHER_PANE_OPENING = 'The other pane is still opening its place';
+export const PANE_OPENING = 'This pane is still opening its place';
 
 /**
  * What every command that would write to a volume says when the board cannot write (spec 2026-10-31 §4.2: "Writing is
