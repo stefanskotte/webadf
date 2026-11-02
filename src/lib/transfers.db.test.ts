@@ -140,6 +140,18 @@ describe('transfers', () => {
     expect((await row(b)).errorText!.length).toBe(120);
   });
 
+  it('a file the board had in hand when it was cancelled: delivered is true and counts; a failure stays cancelled', async () => {
+    const d = await device();
+    const mk = async (n: number) => (await q(d, await blob(new Uint8Array([n]))) as { id: string }).id;
+    const arrived = await mk(45); const lost = await mk(46); const never = await mk(47);
+    for (const id of [arrived, lost, never]) await T.cancelTransfer(getDb(), 'org-a', id);
+    expect(await T.finishTransfer(getDb(), d, arrived, { ok: true, savedAs: 'Arrived.bin' })).toBe(true);
+    expect(await row(arrived)).toMatchObject({ status: 'delivered', savedAs: 'Arrived.bin' });
+    expect(await T.finishTransfer(getDb(), d, arrived, { ok: true, savedAs: 'Arrived.bin' })).toBe(false);   // a repeat stays refused
+    expect(await T.finishTransfer(getDb(), d, lost, { ok: false, code: 'crc', text: 'x' })).toBe(false);
+    expect((await row(lost)).status).toBe('cancelled');
+    expect((await row(never)).status).toBe('cancelled');
+  });
   it('cancels only an active row', async () => {
     const d = await device();
     const a = (await q(d, await blob(new Uint8Array([50]))) as { id: string }).id;
