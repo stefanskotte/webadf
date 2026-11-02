@@ -16,6 +16,7 @@ import { isNetVolumeDir, isNetVolumePath } from './net-write';
 import { startFetch, volumeToVolume } from './net-fetch';
 import { addDiskImages } from './add-to-library';
 import { createAdf, type CreateAdfRequest } from './create-adf';
+import { copyDisksOntoVolume } from './disks-as-folders';
 import { deleteOnShelf, fileOnShelf, makeCollection, renameOnShelf, shelfDest, shelfItem } from './shelf';
 import type { Refusal } from './types';
 import type { OpVersion } from './edit-rules';
@@ -84,6 +85,9 @@ async function dispatch(ctx: OpCtx, req: OpRequest): Promise<Outcome> {
       // LIBRARY: above the disks (the root, a collection, a title's disk list): filing, not a write (Files 2 §3.2).
       const shelf = await shelfDest(ctx, dest);
       if (shelf) return fileOnShelf(ctx, req as CopyMove, shelf);
+      // A disk or title row onto a volume: a drawer per disk (spec 2026-11-02), each disk answering for itself.
+      const asFolders = await copyDisksOntoVolume(ctx, req as CopyMove, dest);
+      if (asFolders) return asFolders;
       const dd = driverOf(dest);
       const srcs = req.sources.map(pathOf); srcs.forEach(driverOf);
       // C16: a send never takes the original away; Move into NET: is offered nowhere, and the engine says why.

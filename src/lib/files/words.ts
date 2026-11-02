@@ -48,7 +48,7 @@ export function refusalWords(code: RefusalCode, detail?: string): string {
       if (detail === STILL_ARRIVING) return 'That is still arriving from the Amiga.';
       if (detail === NET_COPY_OUT || detail === NET_MOVE_IN) return `${detail}.`;
       if (detail && /^.+ is empty$/.test(detail)) return `${detail} — nothing was sent.`;
-      if (detail && SHELF_WORDS.includes(detail)) return `${detail}.`;
+      if (detail && SHELF_WORDS.includes(detail)) return detail.endsWith('.') ? detail : `${detail}.`;
       return detail ? `Not supported: ${detail}.` : 'That is not supported.';
     case 'blob_unavailable': return 'The disk image could not be read. Try again in a moment.';
     case 'failed': return detail ? `Something went wrong: ${detail}.` : 'Something went wrong.';

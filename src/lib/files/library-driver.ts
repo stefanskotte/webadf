@@ -132,7 +132,7 @@ function protectionBits(s: string): number {
   return bits;
 }
 
-function walk(bytes: Uint8Array, e: AdfEntry, rel: string[], out: PlanItem[]) {
+export function walk(bytes: Uint8Array, e: AdfEntry, rel: string[], out: PlanItem[]) {
   checkName(e.name);
   const base = { rel, kind: e.kind, date: e.modifiedAt, protection: protectionBits(e.protection), comment: e.comment };
   if (e.kind === 'dir') {

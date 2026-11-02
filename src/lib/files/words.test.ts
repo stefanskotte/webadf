@@ -3,6 +3,7 @@ import type { RefusalCode } from './types';
 import { refusalWords } from './words';
 import { netEmpty } from './net-rules';
 import { queueFullWords } from '../send-limits';
+import { DISKS_STAY_IN_LIBRARY } from './shelf-rules';
 
 // The type system forces this to list every RefusalCode.
 const ALL: Record<RefusalCode, true> = {
@@ -13,6 +14,9 @@ const ALL: Record<RefusalCode, true> = {
 };
 
 describe('refusalWords', () => {
+  it('a disk moved onto a volume says its one sentence, ending once', () => {
+    expect(refusalWords('unsupported', DISKS_STAY_IN_LIBRARY)).toBe('Disks stay in the library: use Copy.');
+  });
   for (const code of Object.keys(ALL) as RefusalCode[]) {
     it(`${code} has words, with and without a detail`, () => {
       expect(refusalWords(code).trim().length).toBeGreaterThan(0);

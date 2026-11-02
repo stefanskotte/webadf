@@ -22,7 +22,7 @@ export type ResolvedDisk = { info: DiskInfo; bytes: Uint8Array; root: AdfEntry[]
 
 const ROOT: Crumb = { label: 'LIBRARY:', path: 'LIBRARY:' };
 const lib = libPath;
-const diskName = (d: { label: string | null; diskNo: number }) => d.label ?? `Disk ${d.diskNo}`;
+export const diskName = (d: { label: string | null; diskNo: number }) => d.label ?? `Disk ${d.diskNo}`;
 /** "1 folder", "2 folders": the listing's meta line counts in words. */
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 

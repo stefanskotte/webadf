@@ -17,6 +17,8 @@ export const FILE_ON_SHELF = 'Open LIBRARY: or a collection to file titles';
 export const MAKEDIR_IN_DISK = 'Open a disk or STASH: to make a folder in it';
 /** A collection copied or moved anywhere but onto a shelf: collections are LIBRARY:'s folders and never leave it. */
 export const COLLECTIONS_STAY = 'Collections stay in LIBRARY:';
+/** A disk or title moved onto a NET: volume: it is copied there as a drawer per disk (spec 2026-11-02), never taken away. */
+export const DISKS_STAY_IN_LIBRARY = 'Disks stay in the library: use Copy.';
 export const COLLECTION_EXISTS = 'A collection with that name already exists';
 /** A disk image added to the library while its target collection was deleted: in the library, filed nowhere. */
 export const ADDED_UNFILED = 'The collection is gone; the disk was added to the library, in no collection';
@@ -39,7 +41,7 @@ export function collectionNameProblem(name: string): 'empty' | 'collection-too-l
 /** The refusal details that read as a sentence of their own. */
 export const SHELF_WORDS: readonly string[] = [
   TITLES_ON_LIBRARY_PAGE, IN_LIBRARY_ALREADY, NO_NESTED, NO_COLLECTION_IN_COLLECTION, ONLY_TITLES_FILED, FILE_ON_SHELF,
-  MAKEDIR_IN_DISK, COLLECTIONS_STAY, NOT_ON_NET, GO_UP,
+  MAKEDIR_IN_DISK, COLLECTIONS_STAY, NOT_ON_NET, GO_UP, DISKS_STAY_IN_LIBRARY,
 ];
 
 /** Where titles are filed: the LIBRARY: root (`null`) or a collection. */
