@@ -28,7 +28,7 @@ The binary is 116 B larger (61956 B); no new buffers.
 Transfer 2.12 fixes copies stopping while its window was the active one: the window no longer asks for Intuition's ticks. Holding a
 list arrow no longer repeats; a click steps and the scroller drags.
 Transfer 2.13 draws the window's list at most every 5 s (at once for what you did yourself): on every event it took a copy of
-small files from 3.8 s to 6.7 s a file by 100 rows on the A500. The binary is 62,172 B.
+small files from 3.8 s to 6.7 s a file by 100 rows on the A500. The binary is 62,208 B.
 
 ## Using it
 

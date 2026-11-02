@@ -586,6 +586,7 @@ static void wait_window(gui *G) {
         ULONG sigs = Wait(gui_sigs(G) | SIGBREAKF_CTRL_C);
         if (sigs & SIGBREAKF_CTRL_C) break;
         on_signal(G, sigs);
+        if (G->list_dirty && G->win) draw_list(G);   /* no gui_pass here, and no traffic to protect */
     }
 }
 

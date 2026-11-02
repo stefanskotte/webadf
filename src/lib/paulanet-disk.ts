@@ -6,7 +6,7 @@
  * (tools/paulanet-driver/, plan 2026-10-18) and its PaulaNET Config is his, unmodified: both used by his permission
  * under his terms (third-party/paulanet/); they are not MIT.
  */
-export const PAULANET_DISK_SHA256 = '4b7311e852e53d77cb89b57e632e1be1045f7f166d53fe5509f443d1d023f68a';
+export const PAULANET_DISK_SHA256 = '6003773e42651f89f0c165d6111039f46b462d929f4a8877fe07187b73963439';
 export const PAULANET_DISK_BYTES = 901_120;
 /**
  * The driver disk before Transfer 2.13 (2026-11-03: the window's list draws at most every 5 s): Transfer 2.12 (copies no
