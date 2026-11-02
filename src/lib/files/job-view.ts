@@ -151,7 +151,8 @@ export function jobNow(j: JobView): string | null {
 /** A finished card's words: Cancel's, a send's, else today's finished line (jobStatus) and what was cancelled elsewhere. */
 export function resultWords(j: JobView): string {
   if (j.cancel) {
-    const verb = j.kind === 'move' ? 'moved' : j.kind === 'send' ? 'sent' : j.kind === 'write' ? 'done' : 'copied';
+    // A cancelled move says copied: a file counted done may still have its original (the rest stays in the source).
+    const verb = j.kind === 'send' ? 'sent' : j.kind === 'write' ? 'done' : 'copied';
     const counted = countedOf(j);
     const [done, total] = j.total > 0 ? [j.done, j.total] : [counted.filter((w) => w.status === 'done').length, counted.length];
     const fails = j.failed.length ? `, ${j.failed.length} failed` : '';
@@ -209,6 +210,10 @@ export function confirmWords(j: JobView): string {
     return j.writes.some((w) => w.kind === 'delete' && w.status === 'running')
       ? 'Cancel the rest of these changes? A drawer being deleted now finishes first; what is done stays.'
       : 'Cancel the rest of these changes? What is done stays.';
+  }
+  // A plain Queue send has no job of its own: its rows share one card, and Cancel takes all of that board's waiting files.
+  if (j.id.startsWith(QUEUE_JOB)) {
+    return `Cancels ${j.waiting === 1 ? 'the 1 file' : `all ${j.waiting} files`} waiting for ${j.board}. What has arrived stays.`;
   }
   return `Cancel the rest of this ${j.kind}? What has arrived stays.`;
 }

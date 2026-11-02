@@ -1,6 +1,6 @@
 // src/lib/files/jobs-client.ts
 // The progress panel's store (spec 2026-11-01-progress-panel §3): the org's jobs as GET /api/files/jobs answers them,
-// asked once on load and then only while a job runs -- every 2 s while the page is visible, every 15 s while every
+// asked on load and then every 2 s while a job runs (every 60 s while the page is visible and nothing runs) -- every 2 s while the page is visible, every 15 s while every
 // running job waits on a board that is offline, never while the tab is hidden. Files tells it about a job it just
 // started (track) and hears each answer for it (watch). The open/closed choice and the cards already put away are
 // remembered per browser, a convenience: storage that throws or is empty changes nothing else. CLIENT-SAFE.
@@ -8,6 +8,8 @@ import { FADE_MS, isClean, resultWords, WINDOW_MS, type JobView, type Sample } f
 
 export const POLL_MS = 2_000;
 export const OFFLINE_POLL_MS = 15_000;
+/** A visible page with nothing running looks this often, for a job started elsewhere (a hidden tab asks nothing). */
+export const IDLE_POLL_MS = 60_000;
 /** A job this tab just started is looked for this long before the store stops asking for it. */
 export const TRACK_MS = 10_000;
 /** How many times a failed one-off ask for a watched job is tried (OFFLINE_POLL_MS apart) before it is let go. */
@@ -64,7 +66,15 @@ export function nextDelay(jobs: JobView[], o: { tracking: boolean; visible: bool
   if (o.failed) return OFFLINE_POLL_MS;
   const running = jobs.filter((j) => j.running);
   if (o.tracking || running.some((j) => !j.offline)) return POLL_MS;
-  return running.length ? OFFLINE_POLL_MS : null;
+  return running.length ? OFFLINE_POLL_MS : IDLE_POLL_MS;
+}
+
+/**
+ * The live region's next text. A region announces only when its text changes, so the same words twice would be heard
+ * once: a trailing U+00A0 is toggled then. It is in the live region alone (sr-only); no card shows it.
+ */
+export function announced(previous: string, words: string): string {
+  return previous === words ? `${words}\u00a0` : words;
 }
 
 export function createJobsStore(deps: JobsDeps) {
@@ -107,7 +117,7 @@ export function createJobsStore(deps: JobsDeps) {
       }
       if (!j.running) {
         finishedSeenAt[j.id] = state.finishedSeenAt[j.id] ?? now;
-        if (state.jobs.some((x) => x.id === j.id && x.running)) announce = resultWords(j);
+        if (state.jobs.some((x) => x.id === j.id && x.running)) announce = announced(announce, resultWords(j));
       }
     }
     set({ jobs, samples, finishedSeenAt, announce, signedOut: false });

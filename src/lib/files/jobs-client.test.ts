@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createJobsStore, nextDelay, OFFLINE_POLL_MS, OPEN_KEY, POLL_MS, SEEN_KEY, SEEN_MAX, TRACK_MS, type JobsDeps } from './jobs-client';
+import { createJobsStore, IDLE_POLL_MS, nextDelay, OFFLINE_POLL_MS, OPEN_KEY, POLL_MS, SEEN_KEY, SEEN_MAX, TRACK_MS, type JobsDeps } from './jobs-client';
 import { timeLeft, WINDOW_MS, type JobView } from './job-view';
 
 const job = (o: Partial<JobView> = {}): JobView => ({
@@ -35,7 +35,8 @@ describe('nextDelay (spec §3)', () => {
     expect(nextDelay([job()], on)).toBe(POLL_MS);
     expect(nextDelay([job({ offline: 'A500' })], on)).toBe(OFFLINE_POLL_MS);
     expect(nextDelay([job({ offline: 'A500' }), job({ id: 'j2' })], on)).toBe(POLL_MS);
-    expect(nextDelay([finished()], on)).toBeNull();
+    expect(nextDelay([finished()], on)).toBe(IDLE_POLL_MS);
+    expect(nextDelay([], on)).toBe(IDLE_POLL_MS);
     expect(nextDelay([], { ...on, tracking: true })).toBe(POLL_MS);
     expect(nextDelay([job()], { ...on, visible: false })).toBeNull();
     expect(nextDelay([], { ...on, failed: true })).toBe(OFFLINE_POLL_MS);
@@ -43,11 +44,50 @@ describe('nextDelay (spec §3)', () => {
 });
 
 describe('createJobsStore polling', () => {
-  it('nothing runs: one load, then quiet', async () => {
+  it('IDLE_POLL_MS is 60 s', () => { expect(IDLE_POLL_MS).toBe(60_000); });
+  it('nothing runs: a look every 60 s while visible, none in between', async () => {
     const { store, load } = harness([[]]);
     store.start();
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(59_000);
     expect(load).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(load).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(load).toHaveBeenCalledTimes(3);
+    store.stop();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(load).toHaveBeenCalledTimes(3);
+  });
+  it('a hidden idle page asks nothing; shown again it asks at once, then every 60 s', async () => {
+    let vis = true;
+    const { store, load } = harness([[]], { visible: () => vis });
+    store.start();
+    await flush();
+    vis = false; store.onVisibility();
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(load).toHaveBeenCalledTimes(1);
+    vis = true; store.onVisibility();
+    await flush();
+    expect(load).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(load).toHaveBeenCalledTimes(3);
+  });
+  it('a job tracked during the idle wait does not leave a second poll behind', async () => {
+    const { store, load } = harness([[], [job()], [job()], [finished()]]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(30_000);
+    store.track('j1');
+    await flush();
+    expect(load).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(load).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(load).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(load).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(load).toHaveBeenCalledTimes(5);
   });
   it('a running job: every 2 s, and quiet once it finished', async () => {
     const { store, load } = harness([[job()], [job()], [finished()]]);
@@ -259,6 +299,19 @@ describe('createJobsStore state', () => {
     expect(store.getState().announce).toBe('');
     await vi.advanceTimersByTimeAsync(2_000);
     expect(store.getState().announce).toBe('Copied 2 to A500');
+  });
+  it('two identical results are each announced: the live region text differs, to the eye it does not', async () => {
+    const { store } = harness([[job({ id: 'a' })], [finished({ id: 'a' })], [finished({ id: 'a' }), job({ id: 'b' })], [finished({ id: 'a' }), finished({ id: 'b' })]]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(2_000);
+    const first = store.getState().announce;
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(2_000);
+    const second = store.getState().announce;
+    expect(first).not.toBe(second);
+    expect(first.replace(/\u00a0/g, '')).toBe('Copied 2 to A500');
+    expect(second.replace(/\u00a0/g, '')).toBe('Copied 2 to A500');
   });
   it('a job already finished when the page loads is not announced', async () => {
     const { store } = harness([[finished()]]);

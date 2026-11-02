@@ -2,7 +2,7 @@
 // The progress panel (spec 2026-11-01-progress-panel §3, §5, §6): every page's view of the org's running Files jobs.
 // From lg bottom right; below it a full-width strip above the tab bar; lifted above anything marked
 // data-transfers-anchor (the Files bar). Collapsed, a pill; open, one card per job, newest first. A region named
-// "Transfers"; each bar a progressbar; a finished job is announced once, politely; Cancel asks first. z-30: a dialog
+// "Transfers"; each bar a progressbar; a finished job is announced once, politely; Cancel asks first. z-30: under the search scrim (z-31, below lg), over the page; a dialog
 // (z-50) always covers it. Toasts sit above it (--transfers-top, read by the Toaster's offset).
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
