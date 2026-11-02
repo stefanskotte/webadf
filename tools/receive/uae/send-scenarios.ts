@@ -6,6 +6,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { BOARD_KEY, BOARD_KEY2, UploadStore, connect, rawConnect, type UploadResult } from '../fake-board';
 
+/** What `Version` must print: amiga/version.h, the one place the version lives. */
+const VERSION = /TRANSFER_VERSION "([^"]+)"/.exec(fs.readFileSync(path.join(import.meta.dirname, '../amiga/version.h'), 'utf8'))![1];
+
 const hd = process.argv[process.argv.indexOf('--hd') + 1];
 const up = (n: string) => fs.readFileSync(path.join(hd, 'Up', n));
 async function listening(ms = 180000) {
@@ -67,7 +70,7 @@ const logs: [string, RegExp[]][] = [
   ['s09', [/cannot receive files \(update to 1\.19\.0\)/, /rc=10/]], ['s10', [/Another board or computer connected -- not sending/, /rc=10/]],
   ['s11', [/Trusted board FEDC/, /rc=0/]], ['s12', [/Hello\.txt {2}21 bytes {2}OK/, /rc=0/]],
   // The direction is RECEIVE or SEND (2.1): both is refused before anything starts; and the version names the program.
-  ['s13', [/^Transfer: RECEIVE or SEND, not both$/m, /rc=10/]], ['ver', [/Transfer 2\.7/]],
+  ['s13', [/^Transfer: RECEIVE or SEND, not both$/m, /rc=10/]], ['ver', [new RegExp(`Transfer ${VERSION.replace('.', '\\.')}$`, 'm')]],
 ];
 
 let fail = 0;
