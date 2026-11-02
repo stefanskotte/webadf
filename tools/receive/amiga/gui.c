@@ -39,12 +39,15 @@ struct GfxBase *GfxBase = NULL;
 enum { G_DIR, G_CHOOSE, G_SEND, G_RETRY, G_TRUST, G_SAVE, G_WEBAPP, G_BROWSE, G_WRITE, G_STATUS, G_LIST, G_N };
 #define ROWS_MAX 96
 enum { ST_WAITING, ST_RECEIVING, ST_DONE, ST_FAILED, ST_UP_WAITING, ST_UP_MOVING, ST_UP_DONE, ST_UP_FAILED, ST_SKIPPED };
-typedef struct { struct Node node; char id[RX_ID_MAX + 1]; unsigned tag; char name[RX_PATH_MAX + 1];
-                 char local[RX_LOCAL_MAX + 1]; unsigned long size; int state; unsigned pct; char why[40]; char text[80]; } row;
+typedef struct { char id[RX_ID_MAX + 1]; unsigned tag; char name[RX_PATH_MAX + 1];
+                 char local[RX_LOCAL_MAX + 1]; unsigned long size; int state; unsigned pct; char why[40]; } row;
+/* What the list gadget walks: rebuilt only in draw_list, so rows may change between two draws. */
+typedef struct { struct Node node; char text[80]; } line;
 
 typedef struct {
     struct Window *win; struct Gadget *g[G_N]; APTR vi; struct Screen *scr;
-    struct List list; row rows[ROWS_MAX]; int n;
+    struct List list; row rows[ROWS_MAX]; line lines[ROWS_MAX]; int n;
+    int list_dirty; ULONG t_list;   /* the list is drawn at most every LIST_SECS (draw_list) */
     afs_ctx *ctx; rx_fs *fs; rx_session *s; rx_upq *q;
     struct MsgPort *app_port; struct AppWindow *app_win;
     char status[80]; char pending[256]; int has_pending; int quit; int connected;
@@ -84,7 +87,7 @@ static unsigned pct_of(unsigned long bytes, unsigned long size) {
     unsigned p = size ? (unsigned)(bytes / (size / 100 + 1)) : 0;
     return p > 99 ? 99 : p;
 }
-static void row_text(row *r) {
+static void row_text(const row *r, line *o) {
     char nm[NAME_MAX_W + 1], sz[16]; const char *base = strrchr(r->name, '/'); size_t l;
     /* Before the first '/', a volume's root: Work:a.txt shows as a.txt, as a drawer's file does. */
     if (!base) base = strchr(r->name, ':');
@@ -97,25 +100,37 @@ static void row_text(row *r) {
     else if (r->size <= 9999UL * 1024) sprintf(sz, "%4lu KB", (r->size + 1023) / 1024);
     else sprintf(sz, "%4lu MB", r->size / 1048576UL + 1);
     switch (r->state) {
-    case ST_WAITING: sprintf(r->text, "%s %s waiting", nm, sz); break;
-    case ST_RECEIVING: sprintf(r->text, "%s %s receiving %u%%", nm, sz, r->pct); break;
-    case ST_DONE: sprintf(r->text, "%s %s done", nm, sz); break;
-    case ST_FAILED: sprintf(r->text, "%s %s failed: %.30s", nm, sz, r->why); break;
-    case ST_UP_WAITING: sprintf(r->text, "%s %s to web: waiting", nm, sz); break;
-    case ST_UP_MOVING: sprintf(r->text, "%s %s to web: %u %%", nm, sz, r->pct); break;
-    case ST_UP_DONE: sprintf(r->text, "%s %s to web: done", nm, sz); break;
-    case ST_SKIPPED: sprintf(r->text, "%s %s skipped (it exists)", nm, sz); break;
-    default: sprintf(r->text, "%s %s to web: failed: %.24s", nm, sz, r->why); break;
+    case ST_WAITING: sprintf(o->text, "%s %s waiting", nm, sz); break;
+    case ST_RECEIVING: sprintf(o->text, "%s %s receiving %u%%", nm, sz, r->pct); break;
+    case ST_DONE: sprintf(o->text, "%s %s done", nm, sz); break;
+    case ST_FAILED: sprintf(o->text, "%s %s failed: %.30s", nm, sz, r->why); break;
+    case ST_UP_WAITING: sprintf(o->text, "%s %s to web: waiting", nm, sz); break;
+    case ST_UP_MOVING: sprintf(o->text, "%s %s to web: %u %%", nm, sz, r->pct); break;
+    case ST_UP_DONE: sprintf(o->text, "%s %s to web: done", nm, sz); break;
+    case ST_SKIPPED: sprintf(o->text, "%s %s skipped (it exists)", nm, sz); break;
+    default: sprintf(o->text, "%s %s to web: failed: %.24s", nm, sz, r->why); break;
     }
-    r->node.ln_Name = r->text;
+    o->node.ln_Name = o->text;
 }
-static void relist(gui *G) {
+/* The whole list costs 96 sprintfs and a redraw, on a machine sharing its CPU with the driver and the stack: drawn on every
+   event, a copy of small files went from 3.8 s a file to 6.7 s by 100 rows (A500 bench 2026-11-02). So at most every
+   LIST_SECS; the first change after a quiet spell shows at once, and gui_pass draws what is left. */
+#define LIST_SECS 5
+static void draw_list(gui *G) {
     int i;
-    if (G->win) GT_SetGadgetAttrs(G->g[G_LIST], G->win, NULL, GTLV_Labels, ~0UL, TAG_END);
+    G->list_dirty = 0; G->t_list = rx_now_secs();
+    GT_SetGadgetAttrs(G->g[G_LIST], G->win, NULL, GTLV_Labels, ~0UL, TAG_END);
     new_list(&G->list);
-    for (i = 0; i < G->n; i++) { row_text(&G->rows[i]); AddTail(&G->list, &G->rows[i].node); }
-    if (G->win) GT_SetGadgetAttrs(G->g[G_LIST], G->win, NULL, GTLV_Labels, (ULONG)&G->list, TAG_END);
+    for (i = 0; i < G->n; i++) { row_text(&G->rows[i], &G->lines[i]); AddTail(&G->list, &G->lines[i].node); }
+    GT_SetGadgetAttrs(G->g[G_LIST], G->win, NULL, GTLV_Labels, (ULONG)&G->list, TAG_END);
 }
+static void list_flush(gui *G) {
+    if (G->list_dirty && G->win && rx_now_secs() - G->t_list >= LIST_SECS) draw_list(G);
+}
+/* A row changed. */
+static void relist(gui *G) { G->list_dirty = 1; list_flush(G); }
+/* A row changed because the person did something: at once. */
+static void relist_now(gui *G) { G->list_dirty = 1; if (G->win) draw_list(G); }
 static int active(const row *r) {
     return r->state == ST_WAITING || r->state == ST_RECEIVING || r->state == ST_UP_WAITING || r->state == ST_UP_MOVING;
 }
@@ -150,7 +165,7 @@ static void add_path(gui *G, const char *path) {
             strcpy(r->why, G->q->lost ? "not enough memory" : G->q->n >= RX_UP_MAX ? "too many files" : "cannot read it");
         }
     }
-    relist(G);
+    relist_now(G);
     if (G->q->lost) {   /* spec 2026-10-31 §2.5: a failed malloc mid-walk says so */
         char t[60]; sprintf(t, "not enough memory: %u files not queued", G->q->lost); set_status(G, t);
     } else if (!G->connected && G->q->n) set_status(G, "Waiting for the board");
@@ -192,7 +207,7 @@ static void retry_failed(gui *G) {
         tag = rx_up_add(G->q, r->local, r->name);
         if (tag) { r->tag = tag; r->state = ST_UP_WAITING; r->pct = 0; r->why[0] = 0; }
     }
-    relist(G);
+    relist_now(G);
 }
 /* TRUST from `Transfer SEND TRUST ...` in a Shell, as shell.c: with no board yet, the next board's key is trusted. */
 static int gui_trust(void *u) { gui *G = u; if (rx_trust_now(G->s) != 0) G->q->trust_next = 1; return 0; }
@@ -285,7 +300,9 @@ static void on_link(void *u, int connected) {
 /* Spec §8: while the board holds the credit (or the last answer) for over 15 s, the web app is what the file waits for. */
 static int gui_pass(void *u, rx_session *s, int connected) {
     gui *G = u;
-    int waiting = connected && (s->up_phase == RX_UP_ENDED || (s->up_phase == RX_UP_DATA && s->up_sent >= s->up_credit));
+    int waiting;
+    list_flush(G);
+    waiting = connected && (s->up_phase == RX_UP_ENDED || (s->up_phase == RX_UP_DATA && s->up_sent >= s->up_credit));
     if (!waiting) {
         G->t_wait = 0;
         if (G->stalled) { G->stalled = 0; set_status(G, G->okstatus); }
@@ -559,6 +576,7 @@ static int show(gui *G) {
     if (!(G->scr = LockPubScreen(NULL)) || !(G->vi = GetVisualInfo(G->scr, TAG_END)) || build(G) != 0) { hide(G); return -1; }
     if (G->app_port) G->app_win = AddAppWindowA(0, 0, G->win, G->app_port, NULL);
     sync_sigs(G);
+    if (G->list_dirty) draw_list(G);   /* what changed while it was hidden */
     return 0;
 }
 
@@ -568,6 +586,7 @@ static void wait_window(gui *G) {
         ULONG sigs = Wait(gui_sigs(G) | SIGBREAKF_CTRL_C);
         if (sigs & SIGBREAKF_CTRL_C) break;
         on_signal(G, sigs);
+        if (G->list_dirty && G->win) draw_list(G);   /* no gui_pass here, and no traffic to protect */
     }
 }
 
