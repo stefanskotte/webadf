@@ -39,7 +39,7 @@ export type Crumb = { label: string; path: string };
 export type Listing = {
   path: string; crumbs: Crumb[]; entries: FsEntry[];
   writable: boolean; readOnlyReason: string | null; disk: DiskInfo | null; meta: string;
-  /** NET:/<board> only: what counts against the board's 32 files / 16 MB now (a drop checks it before uploading). */
+  /** NET:/<board> only: what counts against the board's queue limits now (send-limits.ts) (a drop checks it before uploading). */
   queue?: { deviceId: string; files: number; bytes: number };
   /**
    * LIBRARY: only: where the pane is (Files 2): the root, a collection, a title's disks, or inside a disk. At the root

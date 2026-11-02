@@ -24,6 +24,7 @@ const { asc, eq } = await import('drizzle-orm');
 const { organization } = await import('@/db/schema/auth');
 const { devices } = await import('@/db/schema/devices');
 const { transfers } = await import('@/db/schema/transfers');
+const { SEND_QUEUE_MAX_FILES } = await import('@/lib/send-limits');
 const { amigaUploads, amigaUploadChunks } = await import('@/db/schema/amiga-uploads');
 const { remoteRequests } = await import('@/db/schema/remote-requests');
 const { insertStash, listStash } = await import('@/lib/stash');
@@ -218,7 +219,7 @@ describe('staging is released however the get ends', () => {
   it('the destination queue refuses it (full): the get fails with the words, nothing stays anywhere', async () => {
     await op({ op: 'copy', sources: [W('x')], dest: 'NET:/w2/DF0', onClash: 'ask' });
     const later = new Date(Date.now() + 3600_000);
-    await getDb().insert(transfers).values(Array.from({ length: 32 }, (_, k) => ({ id: `full-${k}`, orgId: 'o1', deviceId: 'w2', createdByUserId: 'u1',
+    await getDb().insert(transfers).values(Array.from({ length: SEND_QUEUE_MAX_FILES }, (_, k) => ({ id: `full-${k}`, orgId: 'o1', deviceId: 'w2', createdByUserId: 'u1',
       path: `f${k}`, sizeBytes: 1, crc32: 0, blobSha256: 'f'.repeat(64), expiresAt: later })));
     const [g] = await gets();
     const id = await arrive(g.id, 'Work:x', bytes('xx'), stays(['mine.txt']));

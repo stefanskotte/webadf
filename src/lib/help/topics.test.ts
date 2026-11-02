@@ -390,7 +390,7 @@ describe('Files help (increment 4)', () => {
   });
   it('stash-net names the limits, archives, Add to library, the marks, sending by copy and the key digits', () => {
     const b = HELP_TOPICS['stash-net'].short + bodyText('stash-net').replace(/\s+/g, ' ');
-    for (const w of ['30 days', '500 files', '256 MB', '20 MB', '4 MB', '32 files', '16 MB', 'read-only', 'Add to library',
+    for (const w of ['30 days', '500 files', '256 MB', '20 MB', '4 MB', '1,000 files', '128 MB', 'read-only', 'Add to library',
       'dropped', '1.15.0', 'Delete cancels', 'key AB12', 'cannot be undone', 'paste a URL',
       'Nothing is copied out of a board’s Queue', 'On firmware 1.19.0 or newer a board s row shows four digits of its key'])
       expect(b).toContain(w);

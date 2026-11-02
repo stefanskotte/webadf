@@ -21,6 +21,8 @@ const { organization } = await import('@/db/schema/auth');
 const { devices } = await import('@/db/schema/devices');
 const { transfers } = await import('@/db/schema/transfers');
 const { diskStore } = await import('@/lib/storage');
+const { SEND_QUEUE_MAX_FILES } = await import('@/lib/send-limits');
+const { cancelQueueSends } = await import('@/lib/transfers');
 const { formatVolume } = await import('@/lib/adffs/format');
 const { addFile, makeDirectory } = await import('@/lib/adffs/write');
 const { ROOT_BLOCK } = await import('@/lib/adffs/constants');
@@ -49,6 +51,16 @@ async function stash(path: string, bytes: Uint8Array) {
     date: new Date(Date.UTC(2020, 0, 2)), protection: 0, comment: '' }]);
   if (!r.ok) throw new Error(r.code);
 }
+/** Waiting rows put straight into a board's queue (ids `fill*`, blob `f..f`), `count` of them; `unfill` takes them out again. */
+async function fill(count: number, deviceId = 'b1') {
+  const rows = Array.from({ length: count }, (_, i) => ({ id: `fill-${deviceId}-${i}`, orgId: 'o1', deviceId, createdByUserId: 'u1', path: `fill${i}`,
+    sizeBytes: 1, crc32: 0, protection: 0, comment: '', blobSha256: 'f'.repeat(64), expiresAt: new Date(Date.now() + 3600_000),
+    createdAt: new Date(Date.now() - 60_000 + i) }));
+  for (let k = 0; k < rows.length; k += 500) await getDb().insert(transfers).values(rows.slice(k, k + 500));
+}
+/** Fills b1's queue until only `room` more files fit, whatever already waits. */
+async function fillToRoom(room: number) { await fill(SEND_QUEUE_MAX_FILES - room - (await waiting()).length); }
+async function unfill(deviceId = 'b1') { await getDb().delete(transfers).where(and(eq(transfers.deviceId, deviceId), eq(transfers.blobSha256, 'f'.repeat(64)))); }
 /** Empties b1's queue between tests that count it. */
 async function emptyQueue() { await getDb().delete(transfers).where(eq(transfers.deviceId, 'b1')); }
 
@@ -129,7 +141,7 @@ describe('NET: listing', () => {
   it('an empty board queue says so', async () => {
     const l = (await netDriver.list(ctx, P('NET:/b2/Queue')))!;
     expect(l).toMatchObject({ path: 'NET:/b2/Queue', entries: [], writable: true, readOnlyReason: null, disk: null,
-      queue: { deviceId: 'b2', files: 0, bytes: 0 }, meta: '0 waiting · 0.0 of 16 MB' });
+      queue: { deviceId: 'b2', files: 0, bytes: 0 }, meta: '0 waiting · 0.0 of 128 MB' });
     expect(l.crumbs).toEqual([{ label: 'NET:', path: 'NET:' }, { label: 'Zed', path: 'NET:/b2' }, { label: 'Queue', path: 'NET:/b2/Queue' }]);
   });
 });
@@ -147,7 +159,7 @@ describe('copy into NET:', () => {
     expect(l.entries[0]).toMatchObject({ name: 'C/Assign', kind: 'file', path: `NET:/b1/Queue/${rows[0].id}`, size: 7, comment: 'cmd',
       protection: protectionString(5), date: rows[0].createdAt.toISOString(), marks: ['Waiting'] });
     expect(l.queue).toEqual({ deviceId: 'b1', files: 1, bytes: 7 });
-    expect(l.meta).toBe('1 waiting · 0.0 of 16 MB');
+    expect(l.meta).toBe('1 waiting · 0.0 of 128 MB');
     expect((await netDriver.list(ctx, P('NET:')))!.entries[0].marks).toEqual(['online', 'Transfer running', 'browsable', '1 waiting', 'key AB12']);
   });
   it('queues STASH: folders as relative paths, every file of every source in one go, and bumps the cursor once', async () => {
@@ -163,25 +175,30 @@ describe('copy into NET:', () => {
   });
   it('a folder over the queue limit queues nothing', async () => {
     const before = (await queued()).length;
+    await fillToRoom(32);   // STASH: holds 500 files: the queue is part full instead
     const v = await version('b1');
-    expect(await runOp(ctx, { op: 'copy', sources: ['STASH:/Many'], dest: 'NET:/b1', onClash: 'ask' }))
-      .toMatchObject({ kind: 'refused', status: 409, refusal: { code: 'queue_full' } });
-    expect((await queued()).length).toBe(before);
-    expect(await version('b1')).toBe(v);
+    try {
+      expect(await runOp(ctx, { op: 'copy', sources: ['STASH:/Many'], dest: 'NET:/b1', onClash: 'ask' }))
+        .toMatchObject({ kind: 'refused', status: 409, refusal: { code: 'queue_full' } });
+      await unfill();
+      expect((await queued()).length).toBe(before);
+      expect(await version('b1')).toBe(v);
+    } finally { await unfill(); }
   });
-  it('a disk folder of 40 files is refused before a single byte is stored', async () => {
+  it('a disk folder of 40 files over a part-full queue is refused before a single byte is stored', async () => {
     const before = (await queued()).length;
+    await fillToRoom(30);
     const spy = vi.spyOn(diskStore, 'put');
     try {
       expect(await runOp(ctx, { op: 'copy', sources: ['LIBRARY:/g1/d2/Lots'], dest: 'NET:/b1', onClash: 'ask' }))
         .toMatchObject({ kind: 'refused', status: 409, refusal: { code: 'queue_full' } });
       expect(spy).not.toHaveBeenCalled();
-    } finally { spy.mockRestore(); }
+    } finally { spy.mockRestore(); await unfill(); }
     expect((await queued()).length).toBe(before);
   });
   it("a copy that fits alone but not beside what the board already holds is refused before a byte is stored", async () => {
     const before = (await queued()).filter((x) => x.status === 'queued').length;
-    const fill = Array.from({ length: 30 - before }, (_, i) => ({ id: `fill${i}`, orgId: 'o1', deviceId: 'b1', createdByUserId: 'u1', path: `fill${i}`,
+    const fill = Array.from({ length: SEND_QUEUE_MAX_FILES - 2 - before }, (_, i) => ({ id: `part${i}`, orgId: 'o1', deviceId: 'b1', createdByUserId: 'u1', path: `fill${i}`,
       sizeBytes: 1, crc32: 0, protection: 0, comment: '', blobSha256: 'f'.repeat(64), expiresAt: new Date(Date.now() + 3600_000) }));
     await getDb().insert(transfers).values(fill);
     const spy = vi.spyOn(diskStore, 'put');
@@ -190,6 +207,18 @@ describe('copy into NET:', () => {
         .toMatchObject({ kind: 'refused', status: 409, refusal: { code: 'queue_full' } });
       expect(spy).not.toHaveBeenCalled();
     } finally { spy.mockRestore(); await getDb().delete(transfers).where(inArray(transfers.id, fill.map((f) => f.id))); }
+  });
+  it('a Queue listing of 150 waiting rows says so, shows the newest 100, and Cancel takes all 150', async () => {
+    await fill(150, 'b2');
+    try {
+      const l = (await netDriver.list(ctx, P('NET:/b2/Queue')))!;
+      expect(l.entries).toHaveLength(100);
+      expect(l.meta).toContain('150 waiting');
+      expect(l.meta).toContain('newest 100 shown');
+      expect(l.queue).toMatchObject({ files: 150 });
+      expect(await cancelQueueSends(getDb(), 'o1', 'b2')).toBe(150);
+      expect((await queued('b2')).filter((x) => x.status === 'queued')).toEqual([]);
+    } finally { await unfill('b2'); }
   });
   it('a file over 4 MB refuses the whole copy, naming it', async () => {
     const before = (await queued()).length;

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
+import { SEND_QUEUE_MAX_FILES } from '@/lib/send-limits';
 import { formatVolume } from '@/lib/adffs/format';
 import { addFile, makeDirectory, readVolume } from '@/lib/adffs';
 
@@ -172,7 +173,7 @@ describe('POST /api/transfers/from-disk', () => {
   });
   it('refuses the lot when it would overflow the board\'s queue, and queues nothing (Review Focus 3)', async () => {
     disk();
-    queueLoad.mockResolvedValue({ files: 31, bytes: 0 });
+    queueLoad.mockResolvedValue({ files: SEND_QUEUE_MAX_FILES - 1, bytes: 0 });
     const { POST } = await import('./from-disk/route');
     const vol = readVolume(store.values().next().value!); if (!vol.ok) throw new Error('x');
     const res = await POST(post({ deviceId: 'dev-1', diskId: 'k1', blocks: vol.root.map((e) => e.block) }));

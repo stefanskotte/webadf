@@ -31,6 +31,8 @@ const { openUpload, storeChunk, closeUpload } = await import('@/lib/amiga-upload
 const { finishTransfer, sendQueueText } = await import('@/lib/transfers');
 const { diskStore } = await import('@/lib/storage');
 const { runOp } = await import('./ops');
+const { copyOntoVolume } = await import('./net-write');
+const { SEND_QUEUE_MAX_FILES } = await import('@/lib/send-limits');
 const { netDriver } = await import('./net-driver');
 const { parsePath } = await import('./path');
 const { fetchProgress, placeFetched, afterTransferDone } = await import('./net-fetch');
@@ -65,6 +67,12 @@ async function stash(path: string, body: string | Uint8Array, kind: 'file' | 'di
     ? { path, kind, sha256: sha, sizeBytes: bytes.length, date: null, protection: 0, comment: '' }
     : { path, kind, sha256: null, sizeBytes: 0, date: null, protection: 0, comment: '' }]);
   if (!r.ok) throw new Error(r.code);
+}
+/** Waiting rows put straight into w1's queue: a thousand through a copy would take minutes. */
+async function fillQueue(count: number, deviceId = 'w1') {
+  const rows = Array.from({ length: count }, (_, i) => ({ id: `fill-${deviceId}-${i}`, orgId: 'o1', deviceId, createdByUserId: 'u1', path: `fill${i}`,
+    sizeBytes: 1, crc32: 0, protection: 0, comment: '', blobSha256: 'f'.repeat(64), expiresAt: new Date(Date.now() + 3600_000) }));
+  for (let k = 0; k < rows.length; k += 500) await getDb().insert(transfers).values(rows.slice(k, k + 500));
 }
 /** The board's side of one get, as in net-fetch.db.test.ts: GOT, the upload tied to it, the close; then the placement. */
 async function arrive(rid: string, amigaPath: string, bytes: Uint8Array, deviceId = 'w1') {
@@ -313,10 +321,32 @@ describe('copy onto a volume', () => {
     await stash('Big.bin', new Uint8Array(4 * 1024 * 1024 + 1));
     expect(await op({ op: 'copy', sources: ['STASH:/Big.bin'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' }))
       .toMatchObject({ kind: 'refused', refusal: { code: 'too_large' } });
+    // STASH: holds 500 files, so the queue is part full instead: SEND_QUEUE_MAX_FILES + 1 files in all.
+    await fillQueue(SEND_QUEUE_MAX_FILES - 32);
     for (let i = 0; i < 33; i++) await stash(`Many/f${i}`, `${i}`);
     expect(await op({ op: 'copy', sources: ['STASH:/Many'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' }))
       .toMatchObject({ kind: 'refused', refusal: { code: 'queue_full' } });
-    expect(await rows()).toEqual([]);
+    expect((await rows()).filter((r) => !r.path.startsWith('fill'))).toEqual([]);
+  });
+
+  it('copies 65 files: past the old 64-file limit of a copy onto a volume, each is a queue row', async () => {
+    for (let i = 0; i < 65; i++) await stash(`Sixty/f${i}`, `${i}`);
+    expect(await op({ op: 'copy', sources: ['STASH:/Sixty'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' }))
+      .toMatchObject({ kind: 'done', job: { files: 65 } });
+    expect(await rows()).toHaveLength(65);
+  });
+
+  it('over the limit with a part-full queue: queue_full before any file is stored', async () => {
+    await fillQueue(SEND_QUEUE_MAX_FILES - 1);
+    const spy = vi.spyOn(diskStore, 'put');
+    try {
+      const item = (name: string) => ({ rel: ['Disk', name], kind: 'file' as const, bytes: new TextEncoder().encode(name), date: null, protection: 0, comment: null });
+      const top = { source: 'LIBRARY:/g/d/Disk', items: [{ rel: ['Disk'], kind: 'dir' as const, date: null, protection: 0, comment: null }, item('a'), item('b')] };
+      await expect(copyOntoVolume({ ...ctx, versions: [] }, parsePath('NET:/w1/Work/Tools')!, [top], 'ask'))
+        .rejects.toMatchObject({ refusal: { code: 'queue_full' }, status: 409 });
+      expect(spy).not.toHaveBeenCalled();
+    } finally { spy.mockRestore(); }
+    expect((await rows()).filter((r) => !r.path.startsWith('fill'))).toEqual([]);
   });
 
   it('writing off: the copy is refused; one already queued fails readonly when the board says so', async () => {
@@ -656,6 +686,7 @@ describe('final review fixes: copies onto a volume', () => {
   });
 
   it('I-4: a copy the queue refuses makes no drawers on the Amiga', async () => {
+    await fillQueue(SEND_QUEUE_MAX_FILES - 32);
     for (let i = 0; i < 33; i++) await stash(`Many2/f${i}`, `${i}`);
     await stash('Many2/Empty', '', 'dir');
     expect(await op({ op: 'copy', sources: ['STASH:/Many2'], dest: 'NET:/w1/Work/Tools', onClash: 'ask' }))

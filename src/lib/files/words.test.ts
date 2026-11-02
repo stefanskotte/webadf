@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { RefusalCode } from './types';
 import { refusalWords } from './words';
 import { netEmpty } from './net-rules';
+import { queueFullWords } from '../send-limits';
 
 // The type system forces this to list every RefusalCode.
 const ALL: Record<RefusalCode, true> = {
@@ -78,7 +79,8 @@ describe('refusalWords', () => {
     expect(refusalWords('bad_name', 'collection-too-long')).toBe('Collection names are at most 80 characters.');
   });
   it('says the NET: things (increment 3)', () => {
-    expect(refusalWords('queue_full')).toBe("The board's queue holds 32 files / 16 MB; wait for it to empty or cancel some.");
+    expect(refusalWords('queue_full')).toBe("The board's queue holds 1,000 files / 128 MB; wait for it to empty or cancel some.");
+    expect(queueFullWords()).toBe(refusalWords('queue_full'));
     expect(refusalWords('unsupported', 'Files waiting for the Amiga cannot be copied out')).toBe('Files waiting for the Amiga cannot be copied out.');
     expect(refusalWords('unsupported', 'Files sent to the Amiga stay where they are — use Copy')).toBe('Files sent to the Amiga stay where they are — use Copy.');
     expect(refusalWords('read_only', 'Open a board to send files to it')).toBe('Open a board to send files to it.');

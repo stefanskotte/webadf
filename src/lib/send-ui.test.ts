@@ -139,7 +139,7 @@ describe('the card line and names', () => {
   });
   it('turns every refusal into a sentence', () => {
     expect(sendErrorText('too_large', 413)).toBe('Over 4 MB: too large to send.');
-    expect(sendErrorText('queue_full', 409)).toMatch(/32 files or 16 MB/);
+    expect(sendErrorText('queue_full', 409)).toMatch(/1,000 files or 128 MB/);
     expect(sendErrorText('not_finished', 409)).toBe('It is still waiting or on its way.');
     expect(sendErrorText('not_found', 404)).toBe('That file or disk is no longer there.');
     expect(sendErrorText('blob_unavailable', 503)).toBe('The disk could not be read just now. Try again.');
