@@ -17,6 +17,10 @@ export const FILE_ON_SHELF = 'Open LIBRARY: or a collection to file titles';
 export const MAKEDIR_IN_DISK = 'Open a disk or STASH: to make a folder in it';
 /** A collection copied or moved anywhere but onto a shelf: collections are LIBRARY:'s folders and never leave it. */
 export const COLLECTIONS_STAY = 'Collections stay in LIBRARY:';
+/** A disk or title moved onto a NET: volume: it is copied there as a drawer per disk (spec 2026-11-02), never taken away. */
+export const DISKS_STAY_IN_LIBRARY = 'Disks stay in the library: use Copy.';
+/** DSK rows anywhere but a NET: volume: a shelf says its own words (ONLY_TITLES_FILED), everywhere else says this. */
+export const DISKS_ONTO_VOLUME = 'Open a drawer on an Amiga volume to copy disks onto it';
 export const COLLECTION_EXISTS = 'A collection with that name already exists';
 /** A disk image added to the library while its target collection was deleted: in the library, filed nowhere. */
 export const ADDED_UNFILED = 'The collection is gone; the disk was added to the library, in no collection';
@@ -39,7 +43,7 @@ export function collectionNameProblem(name: string): 'empty' | 'collection-too-l
 /** The refusal details that read as a sentence of their own. */
 export const SHELF_WORDS: readonly string[] = [
   TITLES_ON_LIBRARY_PAGE, IN_LIBRARY_ALREADY, NO_NESTED, NO_COLLECTION_IN_COLLECTION, ONLY_TITLES_FILED, FILE_ON_SHELF,
-  MAKEDIR_IN_DISK, COLLECTIONS_STAY, NOT_ON_NET, GO_UP,
+  MAKEDIR_IN_DISK, COLLECTIONS_STAY, NOT_ON_NET, GO_UP, DISKS_STAY_IN_LIBRARY,
 ];
 
 /** Where titles are filed: the LIBRARY: root (`null`) or a collection. */
@@ -87,6 +91,39 @@ export function filingReason(op: 'copy' | 'move', src: Listing | null, picked: F
     return picked.every((e) => e.kind === 'file' && libraryEligible(e.name, e.size ?? 0)) ? null : SELECT_IMAGES;
   }
   return ONLY_TITLES_FILED;
+}
+
+/**
+ * DSK or TTL rows onto a NET: volume (big copies, spec 2026-11-02): null when they may go, the words when not, undefined
+ * when this is no such copy (`dst` is no volume, or something else is picked, a collection above all, so that
+ * COLLECTIONS_STAY still answers). Asked before filingReason, which would send titles to a shelf.
+ */
+export function diskCopyReason(op: 'copy' | 'move', picked: FsEntry[], dst: Listing | null): string | null | undefined {
+  if (!isNetVolume(dst) || picked.length === 0 || !picked.every((e) => e.kind === 'title' || e.kind === 'disk')) return undefined;
+  if (op === 'move') return DISKS_STAY_IN_LIBRARY;
+  return dst!.writable ? null : dst!.readOnlyReason ?? NET_READ_ONLY;
+}
+
+/** A pane on a title's disk list: its rows are DSK rows. */
+export const listsDisks = (l: Listing | null) => l?.library?.level === 'title';
+
+/**
+ * DSK rows picked on a title's disk list: Copy, Copy to… and a drag offer them, and only a volume takes them (the place
+ * is checked by placeReason, or at the drop).
+ */
+export const disksPicked = (src: Listing | null, picked: FsEntry[]) => listsDisks(src) && picked.length > 0 && picked.every((e) => e.kind === 'disk');
+
+/**
+ * What is picked onto a place, the desktop's Copy and the phone's Copy to… alike: null when it may go there, the words
+ * when not, undefined when the file rules decide. Disks never move; then a volume for disks and titles, then a shelf.
+ */
+export function placeReason(op: 'copy' | 'move', src: Listing | null, picked: FsEntry[], l: Listing | null): string | null | undefined {
+  if (op === 'move' && disksPicked(src, picked)) return DISKS_STAY_IN_LIBRARY;
+  const onto = diskCopyReason(op, picked, l);
+  if (onto !== undefined) return onto;
+  const filing = filingReason(op, src, picked, shelfOf(l));
+  if (filing !== undefined) return filing;
+  return disksPicked(src, picked) ? DISKS_ONTO_VOLUME : undefined;
 }
 
 /** Makedir, Rename and Delete above the disks (§3.2); null when the pane is not on LIBRARY: above a disk. */

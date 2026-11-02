@@ -25,6 +25,16 @@ describe('jobTitle (spec §3)', () => {
     expect(jobTitle(job({ kind: 'send', total: 3, place: null }))).toBe('Sending 3 files to A500');
     expect(jobTitle(job({ kind: 'send', total: 1, place: null }))).toBe('Sending 1 file to A500');
   });
+  it('a job of quiet drawers alone names the place they go, and counts them (M-3)', () => {
+    const quiet = [w({ kind: 'mkdir', label: 'Work:Monkey/Disk 1', quiet: true, status: 'done' }), w({ kind: 'mkdir', label: 'Work:Monkey/Disk 2', quiet: true })];
+    const j = job({ kind: 'write', place: 'Work:Monkey', total: 0, waiting: 0, bytes: null, writes: quiet });
+    expect(jobTitle(j)).toBe('Changing the disks of A500 · Work:Monkey');
+    expect(jobTitle({ ...j, place: null })).toBe('Changing the disks of A500');
+    expect(jobLine(j, null)).toBe('1 of 2 items');
+    expect(barOf(j)).toEqual({ value: 50, byBytes: false });
+    expect(resultWords(done({ kind: 'write', place: 'Work:Monkey', total: 0, bytes: null, cancel: { move: false, source: null },
+      writes: [quiet[0], w({ ...quiet[1], status: 'failed', reason: 'cancelled' })] }))).toBe('Cancelled: 1 of 2 done');
+  });
   it('a write job: its one object, or how many', () => {
     expect(jobTitle(job({ kind: 'write', writeKind: 'delete', total: 0, writes: [w(), w({ label: 'Workbench:Old.info', quiet: true })] })))
       .toBe('Deleting Workbench:Old on A500');

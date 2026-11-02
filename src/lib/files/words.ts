@@ -10,6 +10,12 @@ const REMOVE_FAILED = 'copied, but the original could not be removed';
 /** = StashBusy's message (stash.ts, server-only): a STASH: file the board has not finished sending. */
 const STILL_ARRIVING = 'still arriving from the Amiga';
 
+/** The detail of a refusal of two sources with one name: refusalWords says it with the name. */
+export const twoSourcesNamed = (name: string) => `two sources are named ${name}`;
+const TWO_NAMED = /^two sources are named (.+)$/;
+/** An entry's name inside a disk: amigaNameProblem's word, then where (disks-as-folders.ts). */
+const NAME_AT = /^(empty|too-long|bad-char) at (.+)$/;
+
 /** `detail` is whatever the engine sent (ops.ts); every code reads naturally with or without it. */
 export function refusalWords(code: RefusalCode, detail?: string): string {
   // A move whose copy landed but whose removal was refused: the code is the removal's.
@@ -28,18 +34,23 @@ export function refusalWords(code: RefusalCode, detail?: string): string {
       ? `This disk is in a drive (${detail}). Eject it to change it.` : 'This disk is in a drive. Eject it to change it.';
     case 'conflict': return 'The disk changed — the pane has been refreshed.';
     case 'cycle': return 'A folder cannot go inside itself.';
-    case 'bad_name':
+    case 'bad_name': {
+      const at = detail && NAME_AT.exec(detail);
+      if (at) return `${at[2]}: ${refusalWords('bad_name', at[1])}`;
       if (detail === 'comment') return 'Comments can only use Latin-1 characters.';
       if (detail === 'empty') return 'Type a name.';
       if (detail === 'too-long') return 'AmigaDOS names are at most 30 characters.';
       if (detail === 'collection-too-long') return 'Collection names are at most 80 characters.';
       if (detail === 'bad-char') return 'Names cannot contain : or /, or characters an Amiga cannot show.';
       return 'AmigaDOS names are at most 30 characters, without : or /.';
-    case 'name_exists':
+    }
+    case 'name_exists': {
       if (detail === 'same file') return 'That is the same file.';
-      if (detail === 'two sources share a name') return 'Two of the chosen items have the same name.';
+      const twin = detail && TWO_NAMED.exec(detail);
+      if (twin) return `Two of the chosen items are named ${twin[1]}.`;
       if (detail === COLLECTION_EXISTS) return `${COLLECTION_EXISTS}.`;
       return 'Something with that name is already there.';
+    }
     case 'comment_too_long': return 'Comments are at most 79 characters.';
     case 'not_found': return detail === ADDED_UNFILED ? `${ADDED_UNFILED}.` : 'That is no longer there.';
     case 'hfe_read_only': return 'HFE disks are read-only.';
@@ -48,7 +59,7 @@ export function refusalWords(code: RefusalCode, detail?: string): string {
       if (detail === STILL_ARRIVING) return 'That is still arriving from the Amiga.';
       if (detail === NET_COPY_OUT || detail === NET_MOVE_IN) return `${detail}.`;
       if (detail && /^.+ is empty$/.test(detail)) return `${detail} — nothing was sent.`;
-      if (detail && SHELF_WORDS.includes(detail)) return `${detail}.`;
+      if (detail && SHELF_WORDS.includes(detail)) return detail.endsWith('.') ? detail : `${detail}.`;
       return detail ? `Not supported: ${detail}.` : 'That is not supported.';
     case 'blob_unavailable': return 'The disk image could not be read. Try again in a moment.';
     case 'failed': return detail ? `Something went wrong: ${detail}.` : 'Something went wrong.';

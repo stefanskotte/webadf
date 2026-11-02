@@ -18,11 +18,12 @@ import type { FsCtx } from './driver';
 import type { Crumb, DiskInfo, FsEntry, Listing } from './types';
 
 export type { FsCtx };
-export type ResolvedDisk = { info: DiskInfo; bytes: Uint8Array; root: AdfEntry[]; rootBlock: number; intl: boolean };
+/** `truncated`, `warnings`: readVolume's say that `root` may not be the whole disk (a damaged entry is left out of it). */
+export type ResolvedDisk = { info: DiskInfo; bytes: Uint8Array; root: AdfEntry[]; rootBlock: number; intl: boolean; truncated: boolean; warnings: string[] };
 
 const ROOT: Crumb = { label: 'LIBRARY:', path: 'LIBRARY:' };
 const lib = libPath;
-const diskName = (d: { label: string | null; diskNo: number }) => d.label ?? `Disk ${d.diskNo}`;
+export const diskName = (d: { label: string | null; diskNo: number }) => d.label ?? `Disk ${d.diskNo}`;
 /** "1 folder", "2 folders": the listing's meta line counts in words. */
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -58,7 +59,8 @@ export async function loadDisk(ctx: FsCtx, gameId: string, diskId: string): Prom
     // same write (the Browse page's D-W-3 rule): only then is there an identity to lose.
     tosecName: row.matchState === 'matched' ? row.tosecName : null,
   };
-  return { info, bytes, root: vol.ok ? vol.root : [], rootBlock: vol.ok ? vol.rootBlock : 0, intl: vol.ok ? vol.volume.intl : false };
+  return { info, bytes, root: vol.ok ? vol.root : [], rootBlock: vol.ok ? vol.rootBlock : 0, intl: vol.ok ? vol.volume.intl : false,
+    truncated: vol.ok ? vol.truncated : false, warnings: vol.ok ? vol.warnings : [] };
 }
 
 /** Walk `names` down from the root. Takes only the tree, so ops.ts can resolve against an edit's own bytes too. */

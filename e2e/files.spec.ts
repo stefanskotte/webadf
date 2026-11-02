@@ -337,12 +337,181 @@ test("a pane's left edge goes up one level, as in Directory Opus; at the root it
   await expect(row(page, 'right', 'ReadMe')).toHaveCount(1);
   await edge.click({ position: { x: 3, y: 10 } });                 // the disk -> its title
   await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe(`LIBRARY:/${a.gameId}`);
+  // The address moves at once and the listing follows: up is counted from the listing shown, so wait for it.
+  await expect(page.getByTestId('pane-right').locator('[data-testid="pane-row"][data-kind="disk"]')).toHaveCount(1);
   await edge.click({ position: { x: 3, y: 10 } });                 // the title -> LIBRARY:
   await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe('LIBRARY:');
   await expect(edge).toHaveAttribute('data-up', 'false');
   await edge.click({ position: { x: 3, y: 10 } });                 // the root: nowhere further
   await expect(page.getByTestId('pane-right-crumb-0')).toHaveText('LIBRARY:');
   expect(new URL(page.url()).searchParams.get('right')).toBe('LIBRARY:');
+});
+
+/** C/Sub/Leaf under STANDARD: a pane two levels below the disk, with an empty folder S beside C. */
+const DEEP: BatchOp[] = [
+  ...STANDARD,
+  { op: 'mkdir', parentPath: 'C', name: 'Sub' },
+  { op: 'add', parentPath: 'C/Sub', name: 'Leaf', bytes: enc('leaf') },
+];
+const upRow = (page: Page, side: 'left' | 'right') => page.getByTestId(`pane-${side}-up-row`);
+const upButton = (page: Page, side: 'left' | 'right') => upRow(page, side).getByRole('button', { name: 'Up one level', exact: true });
+const placeOf = (page: Page, side: 'left' | 'right') => new URL(page.url()).searchParams.get(side);
+const picked = (page: Page, side: 'left' | 'right') => page.getByTestId(`pane-${side}`).locator('[data-testid="pane-row"][aria-selected="true"]');
+
+test('Up one level heads the listing: a click goes up one level, on every device below its root, in an empty folder and with a filter on (spec 2026-11-02, Part 2b)', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const a = await seedTitle(orgId, `UpRow-${runTag()}`, DEEP);
+  await openFiles(page, 'STASH:', `${a.path}/C/Sub`, 'right');
+  await expect(row(page, 'right', 'Leaf')).toHaveCount(1);
+  await expect(page.getByTestId('pane-right-up')).toHaveCount(0);   // the title bar's arrow is gone
+  await expect(upRow(page, 'right')).toContainText('Up one level');
+  await expect(upRow(page, 'right').getByRole('checkbox')).toHaveCount(0);
+  await expect(upRow(page, 'left')).toHaveCount(0);                 // STASH:'s root
+  // The first row of the body, and the columns under it do not move.
+  expect(await page.getByTestId('pane-right').locator('tbody tr').first().getAttribute('data-testid')).toBe('pane-right-up-row');
+  const nameX = (await page.getByTestId('pane-right-sort-name').boundingBox())!.x;
+  expect(Math.abs((await upRow(page, 'right').locator('td').nth(1).boundingBox())!.x - nameX)).toBeLessThan(1);
+
+  await upButton(page, 'right').click();
+  await expect.poll(() => placeOf(page, 'right')).toBe(`${a.path}/C`);
+  await expect(row(page, 'right', 'Sub')).toHaveCount(1);
+
+  // A click leaves the keys with the manager, not on the row's button: Enter opens the cursor's row (Sub), it does not climb again.
+  await expect(page.getByTestId('files-manager')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => placeOf(page, 'right')).toBe(`${a.path}/C/Sub`);
+  await expect(row(page, 'right', 'Leaf')).toHaveCount(1);
+  await upButton(page, 'right').click();
+  await expect.poll(() => placeOf(page, 'right')).toBe(`${a.path}/C`);
+  await expect(row(page, 'right', 'Sub')).toHaveCount(1);
+
+  // A filter that matches nothing.
+  await page.getByTestId('pane-right-filter').fill('zzz');
+  await expect(page.getByTestId('pane-right-no-match')).toBeVisible();
+  await expect(upRow(page, 'right')).toBeVisible();
+  await page.getByTestId('pane-right-filter').fill('');
+
+  // An empty folder.
+  await openFiles(page, 'STASH:', `${a.path}/S`, 'right');
+  await expect(page.getByTestId('pane-right')).toContainText('Nothing here.');
+  await upRow(page, 'right').click();                               // the whole row goes up, not only its words
+  await expect.poll(() => placeOf(page, 'right')).toBe(a.path);
+  await expect(row(page, 'right', 'ReadMe')).toHaveCount(1);
+});
+
+test('a double-click on Up one level goes up one level only, whenever the second click lands (spec 2026-11-02, Part 2b)', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const a = await seedTitle(orgId, `UpDbl-${runTag()}`, DEEP);
+  const title = `LIBRARY:/${a.gameId}`;
+
+  // A real double-click from two levels down.
+  await openFiles(page, 'STASH:', `${a.path}/C/Sub`, 'right');
+  await expect(row(page, 'right', 'Leaf')).toHaveCount(1);
+  await upButton(page, 'right').dblclick();
+  await expect(row(page, 'right', 'Sub')).toHaveCount(1);
+  await page.waitForTimeout(800);                                   // a second navigation would have landed by now
+  expect(placeOf(page, 'right')).toBe(`${a.path}/C`);
+  await expect(page.getByTestId('pane-right-crumb-3')).toHaveText('C');
+  await expect(upRow(page, 'right')).toHaveCount(1);
+  // The second click's mouse-down focused the row's button; the keys still end up with the manager.
+  await expect(page.getByTestId('files-manager')).toBeFocused();
+
+  /**
+   * The slow case, as measured: the listing arrives between the two clicks, so the second lands on whatever is under
+   * the pointer by then. down/up with clickCount 2 at the first click's spot is exactly that second click.
+   */
+  async function slowDouble(from: string, to: string, arrived: Locator) {
+    await openFiles(page, 'STASH:', from, 'right');
+    const b = (await upButton(page, 'right').boundingBox())!;
+    const x = b.x + 40, y = b.y + b.height / 2;
+    await page.mouse.click(x, y);
+    await expect(arrived).toHaveCount(1);
+    await expect.poll(() => placeOf(page, 'right')).toBe(to);
+    const under = await page.evaluate(([px, py]) => document.elementFromPoint(px, py)?.closest('tr')?.getAttribute('data-testid') ?? null, [x, y]);
+    await page.mouse.down({ clickCount: 2 });
+    await page.mouse.up({ clickCount: 2 });
+    await page.waitForTimeout(800);
+    expect(placeOf(page, 'right'), `after the second click, which landed on ${under}`).toBe(to);
+    await expect(picked(page, 'right')).toHaveCount(0);
+    return under;
+  }
+  // The row stays under the pointer: the same element takes the second click.
+  expect(await slowDouble(`${a.path}/C/Sub`, `${a.path}/C`, row(page, 'right', 'Sub'))).toBe('pane-right-up-row');
+  // Out of the disk: the strip goes, so the listing jumps under the pointer.
+  await slowDouble(a.path, title, page.getByTestId('pane-right').locator('[data-testid="pane-row"][data-kind="disk"]'));
+  // To the root: the row itself goes, and a real row takes its place. It neither opens nor gets picked.
+  expect(await slowDouble(title, 'LIBRARY:', page.getByTestId('pane-right').locator('[data-testid="pane-row"][data-kind="title"]'))).toBe('pane-row');
+});
+
+test('Up one level is not a row of the selection: Select all, the counts and the arrow keys leave it out (spec 2026-11-02, Part 2b)', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const a = await seedTitle(orgId, `UpSel-${runTag()}`, DEEP);
+  await openFiles(page, 'STASH:', a.path, 'right');
+  await expect(upRow(page, 'right')).toBeVisible();
+  const foot = page.getByTestId('pane-right-foot');
+
+  await page.getByTestId('pane-right-pick-all').check();
+  await expect(foot).toHaveText('3 of 3 selected · 6 B');
+  await expect(picked(page, 'right')).toHaveCount(3);
+  expect(await upRow(page, 'right').getAttribute('aria-selected')).toBeNull();
+  await page.getByTestId('pane-right-pick-all').uncheck();
+  await expect(picked(page, 'right')).toHaveCount(0);
+
+  // The cursor starts on the first real row: never on this one, however far up it is pushed.
+  const manager = page.getByTestId('files-manager');
+  await manager.focus();
+  await expect(row(page, 'right', 'C')).toHaveAttribute('data-cursor', 'true');
+  await page.keyboard.press('ArrowUp');
+  await expect(row(page, 'right', 'C')).toHaveAttribute('data-cursor', 'true');
+  await expect(row(page, 'right', 'C')).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('ArrowDown');
+  await expect(row(page, 'right', 'S')).toHaveAttribute('data-cursor', 'true');
+  await page.keyboard.press('ArrowUp');
+  await expect(row(page, 'right', 'C')).toHaveAttribute('data-cursor', 'true');
+  expect(await upRow(page, 'right').getAttribute('data-cursor')).toBeNull();
+
+  // Shift-range from the top row counts real rows only.
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.up('Shift');
+  await expect(foot).toHaveText('3 of 3 selected · 6 B');
+  expect(await upRow(page, 'right').getAttribute('aria-selected')).toBeNull();
+});
+
+test('Up one level by keyboard: Tab reaches it, Enter walks up, and at the root the keys still work (spec 2026-11-02, Part 2b)', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const a = await seedTitle(orgId, `UpKey-${runTag()}`, DEEP);
+  await openFiles(page, 'STASH:', `${a.path}/C/Sub`, 'right');
+  await expect(row(page, 'right', 'Leaf')).toHaveCount(1);
+
+  await page.getByTestId('pane-right-filter').focus();
+  const button = upButton(page, 'right');
+  let reached = false;
+  for (let i = 0; i < 40 && !reached; i++) {
+    await page.keyboard.press('Tab');
+    reached = await button.evaluate((el) => el === document.activeElement);
+  }
+  expect(reached, 'Tab from the filter reaches Up one level').toBe(true);
+
+  await page.keyboard.press('Enter');
+  await expect.poll(() => placeOf(page, 'right')).toBe(`${a.path}/C`);
+  await expect(row(page, 'right', 'Sub')).toHaveCount(1);
+  await expect(button).toBeFocused();                               // it stays put, so Enter walks on up
+  await page.keyboard.press('Enter');
+  await expect.poll(() => placeOf(page, 'right')).toBe(a.path);
+  await expect(row(page, 'right', 'ReadMe')).toHaveCount(1);
+  await page.keyboard.press('Enter');
+  await expect.poll(() => placeOf(page, 'right')).toBe(`LIBRARY:/${a.gameId}`);
+  await expect(page.getByTestId('pane-right').locator('[data-testid="pane-row"][data-kind="disk"]')).toHaveCount(1);
+  await page.keyboard.press('Enter');
+  await expect.poll(() => placeOf(page, 'right')).toBe('LIBRARY:');
+
+  // The row has gone from under the focus: the focus goes back to the manager, not to nowhere.
+  await expect(upRow(page, 'right')).toHaveCount(0);
+  await expect(page.getByTestId('files-manager')).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(picked(page, 'right')).toHaveCount(1);
 });
 
 test('a disk in a drive is read-only', async ({ page, request }) => {

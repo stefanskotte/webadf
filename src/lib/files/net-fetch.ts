@@ -34,9 +34,9 @@ import { addGameToCollection } from '@/lib/collections';
 import { formatPath, parsePath, type FsPath } from './path';
 import { refuse, skippedItem, type Clash, type CopyMove, type OpCtx, type OpItem, type Outcome } from './driver';
 import { browseOf, isNetVolumePath } from './net-driver';
-import { clashMode, joinAmiga, moveWithinVolume, mustRemoveOnVolume, placeOf, sameVolume, writableBoard } from './net-write';
+import { belowDrawer, clashMode, joinAmiga, moveWithinVolume, mustRemoveOnVolume, placeOf, sameVolume, writableBoard } from './net-write';
 import { settleMoveOfGet, settleMoveOfTransfer, settleMovesOfJob } from './net-moves';
-import { CANCEL_KIND, CANCELLED } from './job-view';
+import { CANCEL_KIND, CANCELLED, commonDrawer } from './job-view';
 import { shelfDest } from './shelf';
 import { ADDED_UNFILED } from './shelf-rules';
 import { keepBothName, sameStashName, stashFind, stashTree } from './stash-paths';
@@ -465,8 +465,10 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
       reason: status === 'failed' ? writeErrorWords(r.errorCode ?? '', text, nameOf(r.deviceId)) : null, entry, quiet: !!(t.icon || t.ensure),
       kept, keptWhy: kept ? t.keptWhy ?? keptOnVolume(r, reqs) : null, restIn: status === 'failed' && rest ? rest[1] : null };
   });
+  // A failed file by its path below the job's place (the drawer its card names): with many drawers its own name repeats.
+  const place = commonDrawer([...sent.map((x) => x.amigaDest), ...reqs.map((r) => (r.target as GetTarget | null)?.relay?.dest)].filter((x): x is string => !!x));
   const sentFailed = sent.filter((x) => x.status === 'failed' || x.status === 'expired' || x.status === 'cancelled').map((x) => ({
-    name: x.path, reason: x.status === 'expired' ? `${board} did not take it within 24 h` : x.status === 'cancelled' ? 'cancelled'
+    name: (place && x.amigaDest && belowDrawer(place, x.amigaDest)?.join('/')) || x.path, reason: x.status === 'expired' ? `${board} did not take it within 24 h` : x.status === 'cancelled' ? 'cancelled'
       // A copy onto a volume's FILE refusals (Transfer 2.5): busy there is the old file in use, not Transfer busy.
       : x.amigaDest && ['readonly', 'wprot', 'full', 'denied', 'busy'].includes(x.errorCode ?? '')
         // Transfer's own FILE refusals carry its text; only `readonly` (the server's) is said by that text (item 11).

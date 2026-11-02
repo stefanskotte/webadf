@@ -25,7 +25,7 @@ export type JobKind = 'copy' | 'move' | 'send' | 'write';
 /** One job (spec §4). `board`: the board the job is about (the destination between two boards); `from`: then the source's. */
 export type JobView = JobProgressView & {
   id: string; kind: JobKind; board: string; from: string | null;
-  /** The drawer the files go into ('to'), the STASH:/LIBRARY: place ('from'); null for writes and plain sends. */
+  /** The drawer the files go into ('to'), the STASH:/LIBRARY: place ('from'), where a job of quiet drawers alone makes them; else null for writes and plain sends. */
   place: string | null;
   /** A write job's one kind (delete, rename, …), null when it mixes kinds or is not a write job. */
   writeKind: string | null;
@@ -46,6 +46,8 @@ const MB = 1024 * 1024;
 const pct = (a: number, b: number) => Math.min(100, Math.max(0, Math.floor((a * 100) / b)));
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const loudOf = (j: JobView) => j.writes.filter((w) => !w.quiet);
+/** What a write job counts: its loud writes; a job of quiet drawers alone (an empty disk's) counts those. */
+const countedOf = (j: JobView) => { const loud = loudOf(j); return loud.length ? loud : j.writes; };
 const notCancelled = (j: JobView) => j.writes.filter((w) => w.reason !== CANCELLED);
 
 /**
@@ -78,7 +80,7 @@ export function jobTitle(j: JobView): string {
   if (j.kind === 'send') return `Sending ${plural(j.total, 'file', 'files')} to ${j.board}`;
   if (j.kind === 'write') {
     const loud = loudOf(j);
-    if (loud.length === 0) return `Changing the disks of ${j.board}`;
+    if (loud.length === 0) return `Changing the disks of ${j.board}${j.place ? ` · ${j.place}` : ''}`;
     if (loud.length === 1) return `${RUNNING_WORDS[loud[0].kind] ?? 'Changing'} ${loud[0].label} on ${j.board}`;
     return `${j.writeKind ? RUNNING_WORDS[j.writeKind] ?? 'Changing' : 'Changing'} ${loud.length} items on ${j.board}`;
   }
@@ -102,8 +104,8 @@ export function leftWords(sec: number): string {
 /** Files ended of all (a job with files), else its loud writes ended of all. */
 export function itemsOf(j: JobView): { ended: number; total: number; noun: 'files' | 'items' } {
   if (j.total > 0) return { ended: Math.max(0, j.total - j.waiting), total: j.total, noun: 'files' };
-  const loud = loudOf(j);
-  return { ended: loud.filter((w) => w.status === 'done' || w.status === 'failed').length, total: loud.length, noun: 'items' };
+  const counted = countedOf(j);
+  return { ended: counted.filter((w) => w.status === 'done' || w.status === 'failed').length, total: counted.length, noun: 'items' };
 }
 
 /** The bar (0-100): by bytes where they are known and not all empty, by items otherwise (spec §3). */
@@ -150,8 +152,8 @@ export function jobNow(j: JobView): string | null {
 export function resultWords(j: JobView): string {
   if (j.cancel) {
     const verb = j.kind === 'move' ? 'moved' : j.kind === 'send' ? 'sent' : j.kind === 'write' ? 'done' : 'copied';
-    const loud = loudOf(j);
-    const [done, total] = j.total > 0 ? [j.done, j.total] : [loud.filter((w) => w.status === 'done').length, loud.length];
+    const counted = countedOf(j);
+    const [done, total] = j.total > 0 ? [j.done, j.total] : [counted.filter((w) => w.status === 'done').length, counted.length];
     const fails = j.failed.length ? `, ${j.failed.length} failed` : '';
     const rest = j.kind === 'move' && j.cancel.source ? `; the rest is still in ${j.cancel.source}` : '';
     return `Cancelled: ${done} of ${total} ${verb}${fails}${rest}`;

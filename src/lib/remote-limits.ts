@@ -11,6 +11,8 @@ export const REQUEST_KEEP_MS = 24 * 3600_000;
 export const REQ_FETCH_MAX = 8;              // requests per GET /api/device/req
 export const FETCH_MAX_FILES = 64;
 export const FETCH_MAX_BYTES = 16 * 1024 * 1024;
+/** One Copy of DSK and TTL rows onto a volume (spec 2026-11-02): its disks must be decoded to know their files, so it is bounded by disks. */
+export const COPY_MAX_DISKS = 8;
 export const DIR_CUT = 1000;
 export const QUEUE_FOLDER = 'Queue';
 // NET: volumes phase 2 (spec 2026-10-31): writing to the Amiga's own disks.

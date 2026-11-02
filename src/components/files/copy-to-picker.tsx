@@ -24,8 +24,8 @@ export type CopyToPickerProps = {
   list(path: string): Promise<ListResult>;
   onPick(listing: Listing): void; onCancel(): void;
   /**
-   * Files 2: the manager's filing rule (filingReason) for a place -- null when what is picked may be filed there, the
-   * words when not, undefined when it is no filing and the file rules below decide.
+   * The manager's rule for a place (placeReason: DSK and TTL rows onto a volume, then filing, Files 2) -- null when what
+   * is picked may go there, the words when not, undefined when the file rules below decide.
    */
   filing?(l: Listing): string | null | undefined;
 };
@@ -33,7 +33,7 @@ export type CopyToPickerProps = {
 /**
  * Why the place shown cannot take the copy, or null when it can: a writable folder inside a disk or in STASH:, or a
  * board's queue for a copy (C16: a move into NET: is refused; NET: itself says to open a board). A filing onto LIBRARY:
- * or a collection follows `filing` (Files 2).
+ * or a collection, and disks or titles onto a volume, follow `filing`.
  */
 export function pickReason(op: 'copy' | 'move', l: Listing | null, filing?: (l: Listing) => string | null | undefined): string | null {
   if (!l) return null;

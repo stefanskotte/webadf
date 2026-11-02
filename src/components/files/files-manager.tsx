@@ -18,7 +18,7 @@ import { formatPath, PANE_DEVICES, parsePath } from '@/lib/files/path';
 import type { OpItem, OpRequest } from '@/lib/files/ops';
 import type { Added } from '@/lib/files/driver';
 import {
-  acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, netVolumeReason,
+  acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, netVolumeReason, OTHER_PANE_OPENING, unsettled,
   offersUndo, placeOf,
 } from '@/lib/files/pane-rules';
 import { askUntilAnswered } from '@/lib/files/ask-listing';
@@ -27,7 +27,7 @@ import {
   NET_PICK_BOARD, NET_READ_ONLY,
 } from '@/lib/files/net-rules';
 import { errorWords } from '@/lib/remote-browse';
-import { COLLECTIONS_STAY, createAdfReason, filingNoun, filingReason, shelfOf, shelfOfRow, shelfReasons } from '@/lib/files/shelf-rules';
+import { COLLECTIONS_STAY, createAdfReason, diskCopyReason, DISKS_ONTO_VOLUME, DISKS_STAY_IN_LIBRARY, disksPicked, filingNoun, filingReason, listsDisks, placeReason, shelfOf, shelfOfRow, shelfReasons } from '@/lib/files/shelf-rules';
 import { stashPollMs, trackArriving, withStalls, type ArrivingSeen } from '@/lib/files/arriving';
 import { netDropRefusal, sendToBoard } from '@/lib/files/net-send';
 import type { UserPrefs } from '@/lib/user-prefs-schema';
@@ -731,9 +731,12 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const outOfNet = copyOutReason(src);
   function transferReason(op: 'copy' | 'move'): string | null {
     if (outOfNet) return outOfNet;
-    // Titles, or disk images from STASH:, onto LIBRARY: or a collection (Files 2 §3.2): the filing rules decide.
-    const filing = filingReason(op, src, picked, shelfOf(dst));
-    if (filing !== undefined) return filing;
+    // Its title names the new place while `dst` is still the one it left: a copy now would land there.
+    if (unsettled(panes[otherSide(active)])) return OTHER_PANE_OPENING;
+    // DSK or TTL rows onto a volume (a drawer per disk, spec 2026-11-02, never a move); titles, or disk images from
+    // STASH:, onto LIBRARY: or a collection (Files 2 §3.2): those rules decide, as they do for the phone's picker.
+    const placed = placeReason(op, src, picked, dst);
+    if (placed !== undefined) return placed;
     // A STASH: file that failed to arrive holds no bytes: a copy would skip it and still say done.
     const r = sourceReason(op === 'move') ?? failedReason(picked);
     if (r) return r;
@@ -749,6 +752,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const filingFrom = shelfOf(src) !== null && picked.length > 0 && picked.every((e) => e.kind === 'title');
   // A collection never leaves LIBRARY: (fix round 1): said before the picker opens.
   const collectionPicked = shelfOf(src) !== null && picked.some((e) => e.kind === 'collection');
+  // DSK rows: Copy to… walks to a volume (the picker checks where); no place takes a move of them.
+  const diskRows = disksPicked(src, picked);
   const reasons = {
     copy: transferReason('copy'),
     move: transferReason('move'),
@@ -764,8 +769,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       ?? (volume && (picked.length !== 1 || picked[0].kind !== 'file') ? 'Select one file to download' : null)
       ?? (downloadHref(picked, folderName).length > DOWNLOAD_URL_MAX ? 'Too many items to download at once — download their folder instead' : null),
     // The phone's Copy to… / Move to…: the place is picked afterwards, so only the source is checked here.
-    copyTo: collectionPicked ? COLLECTIONS_STAY : filingFrom ? null : outOfNet ?? sourceReason(false) ?? failedReason(picked),
-    moveTo: collectionPicked ? COLLECTIONS_STAY : filingFrom ? null : outOfNet ?? sourceReason(true) ?? failedReason(picked),
+    copyTo: collectionPicked ? COLLECTIONS_STAY : filingFrom || diskRows ? null : outOfNet ?? sourceReason(false) ?? failedReason(picked),
+    moveTo: collectionPicked ? COLLECTIONS_STAY : diskRows ? DISKS_STAY_IN_LIBRARY : filingFrom ? null : outOfNet ?? sourceReason(true) ?? failedReason(picked),
     // Disk images in STASH: into the library (R8).
     addlib: volumeRO ?? addToLibraryReason(src, picked),
     // A blank disk in STASH:, or a new title on LIBRARY: or in a collection (§4).
@@ -798,7 +803,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    * a NET: volume, whose files the board fetches from now on (spec 2026-10-30 §4.5): GET /api/files/net/fetch/<id>.
    */
   type Fetching = { id: string; files: number };
-  type Outcome = { kind: 'done'; items: OpItem[]; versions: OpVersion[]; added: Added[]; queued?: number; fetching?: Fetching; job?: Fetching } | { kind: 'clashes'; clashes: Clash[] }
+  type Outcome = { kind: 'done'; items: OpItem[]; versions: OpVersion[]; added: Added[]; queued?: number; fetching?: Fetching; job?: Fetching } | { kind: 'clashes'; clashes: Clash[]; sources?: string[] }
     | { kind: 'refused'; words?: string };
 
   /** `inline`: a refusal code the caller says itself (a collection name clash, under the field): no toast for it. */
@@ -811,9 +816,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       // Signed out, the fetch lands on the sign-in page (a 200 that is not JSON): said so, and nothing changes.
       if (isSignedOutAnswer(res)) { toast.error(SIGNED_OUT_TEXT); return { kind: 'refused' }; }
       const body = (await res.json().catch(() => null)) as {
-        items?: OpItem[]; versions?: OpVersion[]; added?: Added[]; queued?: number; fetching?: Fetching; job?: Fetching; error?: unknown; detail?: unknown; clashes?: Clash[];
+        items?: OpItem[]; versions?: OpVersion[]; added?: Added[]; queued?: number; fetching?: Fetching; job?: Fetching; error?: unknown; detail?: unknown; clashes?: Clash[]; sources?: string[];
       } | null;
-      if (res.status === 409 && body?.error === 'clashes' && body.clashes) return { kind: 'clashes', clashes: body.clashes };
+      if (res.status === 409 && body?.error === 'clashes' && body.clashes) return { kind: 'clashes', clashes: body.clashes, ...(body.sources ? { sources: body.sources } : {}) };
       if (!res.ok || !body?.items) {
         if (inline && body?.error === inline) return { kind: 'refused', words: wordsFor(body.error, body.detail) };
         toast.error(wordsFor(body?.error, body?.detail));
@@ -874,7 +879,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
         ...(ok > 0 ? offer() : {}),
         description: (
           <ul data-testid="files-failures">
-            {failed.map((f) => <li key={f.source}>{baseName(f.source)}: {refusalWords(f.refusal.code, f.refusal.detail)}</li>)}
+            {failed.map((f) => <li key={f.source}>{f.name ?? baseName(f.source)}: {refusalWords(f.refusal.code, f.refusal.detail)}</li>)}
           </ul>
         ),
       });
@@ -1015,7 +1020,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
         continue;
       }
       if (r.kind === 'clashes') {
-        setDialog({ kind: 'clash', ...run, sources: g.sources, clashes: r.clashes, at: 0, choices: {}, rest: groups.slice(k + 1), done, versions });
+        // A title's clashes name its disks: the answers are kept against the disks the server says it acts on.
+        setDialog({ kind: 'clash', ...run, sources: r.sources ?? g.sources, clashes: r.clashes, at: 0, choices: {}, rest: groups.slice(k + 1), done, versions });
         return;
       }
       break;
@@ -1033,7 +1039,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       if (skipped) toast(skippedWords(skipped));
       if (failed.length) {
         toast.error(`${items(failed.length)} could not be copied.`, {
-          description: <ul data-testid="files-failures">{failed.map((f) => <li key={f.source}>{baseName(f.source)}: {refusalWords(f.refusal.code, f.refusal.detail)}</li>)}</ul>,
+          description: <ul data-testid="files-failures">{failed.map((f) => <li key={f.source}>{f.name ?? baseName(f.source)}: {refusalWords(f.refusal.code, f.refusal.detail)}</li>)}</ul>,
         });
       }
       return;
@@ -1344,7 +1350,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const shelf = shelfOf(l) !== null && indexes.every((i) => rows[i]?.kind === 'title' || rows[i]?.kind === 'collection');
     // A volume's rows drag too, as copies (NET: volumes, spec 2026-10-30 §5).
     const volumeRows = isNetVolume(l);
-    if ((!holdsFiles(l) && !shelf && !volumeRows) || paths.length === 0) { e.preventDefault(); return; }
+    // A title's DSK rows drag, to be copied onto a volume (spec 2026-11-02). A pane that takes copies and not disks says
+    // so at the drop; a pane that takes no copies does not accept the drag (pane.tsx), so no drop fires there.
+    if ((!holdsFiles(l) && !shelf && !volumeRows && !listsDisks(l)) || paths.length === 0) { e.preventDefault(); return; }
     activate(side);
     e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ from: side, paths }));
     e.dataTransfer.effectAllowed = volumeRows && !l!.writable ? 'copy' : 'copyMove';
@@ -1533,7 +1541,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const added = r.items.filter((i) => i.ok && !i.skipped).length;
     const lines = [
       ...r.renamed.map((x) => `${x.from} stored as ${x.to}`),
-      ...failed.map((f) => `${baseName(f.source)}: ${refusalWords(f.refusal.code, f.refusal.detail)}`),
+      ...failed.map((f) => `${f.name ?? baseName(f.source)}: ${refusalWords(f.refusal.code, f.refusal.detail)}`),
       ...r.refused.map((x) => `${x.path}: ${x.why}`),
       ...(r.stopped ? [r.stopped] : []),
     ];
@@ -1571,10 +1579,21 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const l = panes[side].listing;
     const from = panes[data.from]?.listing ?? null;
     const dest = l ? dropFolder(l, e) : '';
+    // On the pane's body while it is opening another place: the listing it would land in is the one it left. A drawer
+    // row is where the drop was aimed.
+    if (l && dest === l.path && unsettled(panes[side])) { toast.error(OTHER_PANE_OPENING); return; }
     // Out of a volume a drag always copies (spec 2026-10-30 §5): Shift asks for nothing a volume can give.
     // A volume the board can write to gives a move too (phase 2).
     const op = e.shiftKey && (!isNetVolume(from) || from!.writable) ? 'move' : 'copy';
     const pickedHere = from?.entries.filter((x) => data.paths.includes(x.path)) ?? [];
+    // DSK or TTL rows onto a volume, or a drawer on it: a drawer per disk (spec 2026-11-02). Shift says they stay.
+    const onto = diskCopyReason(op, pickedHere, l);
+    if (onto) { toast.error(onto); return; }
+    if (onto === null) {
+      activate(side);
+      transfer('copy', data.paths, dest, where(l), null);
+      return;
+    }
     // Onto LIBRARY:, a collection, or a collection row (Files 2 §3.2): titles, or disk images from STASH:, are filed.
     const row = l?.entries.find((x) => x.path === dest) ?? null;
     const to = row ? shelfOfRow(row) : shelfOf(l);
@@ -1586,6 +1605,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       transfer(op, data.paths, dest, row ? row.name : where(l), null, filingNoun(from));
       return;
     }
+    if (disksPicked(from, pickedHere)) { toast.error(op === 'move' ? DISKS_STAY_IN_LIBRARY : DISKS_ONTO_VOLUME); return; }
     if (!l || !acceptsCopies(l)) {
       toast.error(isNetVolume(l) ? refusalWords('read_only', l!.readOnlyReason ?? NET_READ_ONLY) : l && netReadOnly(l) ? readOnly(l) : 'Open a disk or STASH: to drop files into it');
       return;
@@ -1816,7 +1836,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       )}
       {dialog?.kind === 'pick' && (
         <CopyToPicker op={dialog.op} count={dialog.sources.length} start={dialog.start} busy={dialogBusy} list={settledListing}
-                      filing={(l) => filingReason(dialog.op, src, picked, shelfOf(l))}
+                      filing={(l) => placeReason(dialog.op, src, picked, l)}
                       onCancel={() => setDialog(null)} onPick={(l) => placePicked(dialog, l)} />
       )}
       {dialog?.kind === 'identity' && dialog.disk.tosecName && (

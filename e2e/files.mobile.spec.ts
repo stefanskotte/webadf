@@ -217,11 +217,12 @@ test('at 390: a tap on a folder row opens it; Move to… moves into a folder the
   await row(page, 'right', 'ReadMe').tap();   // let it go again
   await expect(row(page, 'right', 'ReadMe')).toHaveAttribute('aria-selected', 'false');
 
-  // A tap on a folder goes into it; the up button (44 px) comes back.
+  // A tap on a folder goes into it; the Up one level row (44 px) comes back.
   await row(page, 'right', 'src').tap();
   await expect(page.getByTestId('pane-right-crumb-3')).toHaveText('src');
-  expect((await page.getByTestId('pane-right-up').boundingBox())!.height).toBeGreaterThanOrEqual(44);
-  await page.getByTestId('pane-right-up').tap();
+  const upButton = page.getByTestId('pane-right-up-row').getByRole('button', { name: 'Up one level', exact: true });
+  expect((await upButton.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await upButton.tap();
   await expect(row(page, 'right', 'ReadMe')).toHaveCount(1);
 
   // Move to…: the picker starts on the disk (the other pane), drills into src, "Move here".
@@ -493,7 +494,7 @@ test('below lg: three device chips at the top of the shown pane, Create ADF… u
   for (const width of [390, 820]) {
     await page.setViewportSize({ width, height: 1000 });
     await expect(page.getByTestId('files-bank')).toBeHidden();
-    const targets = [page.getByTestId('pane-right-up'), page.getByTestId('pane-right-crumb-0'), ...await chips.all(),
+    const targets = [page.getByTestId('pane-right-crumb-0'), ...await chips.all(),
       page.getByTestId('files-phone-copy'), page.getByTestId('files-phone-move'), page.getByTestId('files-phone-delete'), page.getByTestId('files-more')];
     for (const t of targets) expect((await t.boundingBox())!.height, `${await t.getAttribute('data-testid')} at ${width}`).toBeGreaterThanOrEqual(44);
   }
@@ -525,3 +526,56 @@ test('below lg, while an operation runs the bar says what runs: described by the
   await page.unroute('**/api/files/ops');
 });
 
+test('at 390: the Up one level row is a finger wide, goes up one level, a double tap too, and picks nothing (spec 2026-11-02, Part 2b)', async ({ page }) => {
+  test.setTimeout(90_000);
+  const { orgId } = await signUpFresh(page);
+  const r = applyBatch([
+    { op: 'add', parentPath: '', name: 'ReadMe', bytes: new TextEncoder().encode('hello\n') },
+    { op: 'mkdir', parentPath: '', name: 'C' }, { op: 'mkdir', parentPath: 'C', name: 'Sub' }, { op: 'mkdir', parentPath: 'C', name: 'Other' },
+    { op: 'add', parentPath: 'C/Sub', name: 'Leaf', bytes: new TextEncoder().encode('leaf') },
+  ])(formatVolume({ filesystem: 'FFS', volumeName: 'UpRow' }));
+  if (!r.ok) throw new Error(r.reason);
+  const sha256 = createHash('sha256').update(r.adf).digest('hex');
+  await diskStore.put(sha256, r.adf);
+  const seeded = await seedDisk(orgId, { title: `UpRow-${runTag()}`, diskNo: 1, sha256, writeProtected: false });
+  const disk = `LIBRARY:/${seeded.gameId}/${seeded.diskId}`;
+  const at = () => new URL(page.url()).searchParams.get('right');
+  const up = page.getByTestId('pane-right-up-row');
+  const button = up.getByRole('button', { name: 'Up one level', exact: true });
+
+  await openFiles(page, 'STASH:', `${disk}/C/Sub`, 'right');
+  await expect(row(page, 'right', 'Leaf')).toBeVisible();
+  expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await expect(up).toContainText('Up one level');
+  await expect(up.getByRole('checkbox')).toHaveCount(0);
+  await noSideways(page);
+
+  // One tap: one level.
+  await button.tap();
+  await expect.poll(at).toBe(`${disk}/C`);
+  await expect(row(page, 'right', 'Sub')).toBeVisible();
+
+  // A double tap from two levels down: one level, not two, and it does not open what comes under the finger.
+  await openFiles(page, 'STASH:', `${disk}/C/Sub`, 'right');
+  await expect(row(page, 'right', 'Leaf')).toBeVisible();
+  // Mid-screen: the drop zones stand above the panes and the bottom bar sticks over the fold, and a raw tap checks nothing.
+  await button.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  const b = (await button.boundingBox())!;
+  expect(await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('tr')?.getAttribute('data-testid'), [b.x + b.width / 2, b.y + b.height / 2])).toBe('pane-right-up-row');
+  await page.touchscreen.tap(b.x + b.width / 2, b.y + b.height / 2);
+  await page.touchscreen.tap(b.x + b.width / 2, b.y + b.height / 2);
+  await expect(row(page, 'right', 'Sub')).toBeVisible();
+  await page.waitForTimeout(800);
+  expect(at()).toBe(`${disk}/C`);
+
+  // With nothing shown it still heads the listing, and at the top of the device it is gone.
+  await page.getByTestId('pane-right-filter').fill('zzz');
+  await expect(page.getByTestId('pane-right-no-match')).toBeVisible();
+  await expect(up).toBeVisible();
+  await page.getByTestId('pane-right-filter').fill('');
+  await page.getByTestId('pane-right-pick-all').check();
+  await expect(page.getByTestId('pane-right-foot')).toContainText('2 of 2 selected');
+  await page.getByTestId('pane-right-dev-STASH').tap();
+  await expect(page.getByTestId('pane-right-crumb-0')).toHaveText('STASH:');
+  await expect(up).toHaveCount(0);
+});

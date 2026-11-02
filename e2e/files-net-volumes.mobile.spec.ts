@@ -105,3 +105,26 @@ test('at 390: on a volume of firmware 1.22 Move to…, Delete, Rename and Makedi
   await expect(page.getByTestId('files-more-refresh')).not.toHaveAttribute('aria-disabled', 'true');
   await board.stop();
 });
+
+test('at 390: a NET: place with no listing has no Up one level row; its crumbs and the device chip are the way up (spec 2026-11-02, Part 2b)', async ({ page, request }) => {
+  test.setTimeout(90_000);
+  const { deviceId } = await browsable(page, request);
+  // No board answers: the place waits, then refuses.
+  await openFiles(page, `NET:/${deviceId}/Work`);
+  const up = page.getByTestId('pane-right-up-row');
+  const crumb = page.getByTestId('pane-right-crumb-1');
+  await expect(page.getByTestId('pane-pending')).toContainText('Reading Work: from A500');
+  await expect(up).toHaveCount(0);
+  await expect(page.getByTestId('files-parent')).toBeHidden();   // the bank is not on a phone
+  await expect(crumb).toHaveText('A500');
+  expect((await crumb.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+
+  await expect(page.getByTestId('pane-right-error')).toHaveText('A500 didn\'t answer — Refresh to try again', { timeout: 25_000 });
+  await expect(up).toHaveCount(0);
+  await expect(page.getByTestId('files-parent')).toBeHidden();
+  expect((await crumb.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await crumb.tap();
+  await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe(`NET:/${deviceId}`);
+  await page.getByTestId('pane-right-dev-NET').tap();
+  await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe('NET:');
+});

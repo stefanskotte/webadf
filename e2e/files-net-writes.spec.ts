@@ -88,7 +88,7 @@ test('writing off, or Transfer too old: the write buttons are greyed with the wo
   await rowAt(page, 'right', 'c.txt').click();
   await expect(page.getByTestId('files-delete')).toHaveAttribute('title', 'Transfer 2.5 or newer writes to the Amiga');
   // The board root says it too, under its volumes.
-  await page.getByTestId('pane-right-up').click();
+  await page.getByTestId('pane-right-up-row').click();
   await expect(page.getByTestId('net-browse-reason')).toHaveText('Transfer 2.5 or newer writes to the Amiga', { timeout: LIVE });
   await board.stop();
 });

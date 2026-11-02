@@ -47,6 +47,13 @@ export function copyOutReason(l: Listing | null): string | null {
 }
 
 /**
+ * A pane on its way to another place: `load` has set its path, while its listing is still the place it left. Copy and a
+ * drop on the pane must not aim at that listing. Refreshing the place it shows is not this, nor is a place it could not read.
+ */
+export const unsettled = (p: { loading: boolean; listing: Listing | null; path: string }) => p.loading && !!p.listing && p.listing.path !== p.path;
+export const OTHER_PANE_OPENING = 'The other pane is still opening its place';
+
+/**
  * What every command that would write to a volume says when the board cannot write (spec 2026-10-31 §4.2: "Writing is
  * off in Transfer", the Transfer or firmware it needs); null for a volume it can write to, and anywhere else.
  */

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { collectionNameProblem, SHELF_WORDS, MAKEDIR_IN_DISK, filingReason, shelfOf, shelfOfRow, shelfReasons, COLLECTIONS_STAY, filingNoun, createAdfReason } from './shelf-rules';
+import { collectionNameProblem, SHELF_WORDS, MAKEDIR_IN_DISK, filingReason, shelfOf, shelfOfRow, shelfReasons, COLLECTIONS_STAY, filingNoun, createAdfReason, diskCopyReason, placeReason, DISKS_STAY_IN_LIBRARY, DISKS_ONTO_VOLUME, FILE_ON_SHELF } from './shelf-rules';
 import { refusalWords } from './words';
 import type { FsEntry, Listing } from './types';
 
@@ -135,5 +135,50 @@ describe('Create ADF… (§4)', () => {
     expect(createAdfReason(L('LIBRARY:/g1/d1', { level: 'disk', collectionId: null }))).toBe('Go up to the library or a collection');
     expect(createAdfReason(L('STASH:/a.lha', undefined, { readOnlyReason: 'archive' }))).toBe('Archives are read-only — copy files out of them.');
     expect(createAdfReason(null)).toBe('Open STASH: or LIBRARY: first');
+  });
+});
+
+describe('disks and titles onto a NET: volume (big copies part 2)', () => {
+  const net = { board: 'b', boardName: 'A500', volume: 'Work', amigaPath: 'Work:', readAt: null, cut: false, browse: null };
+  const volume = L('NET:/b/Work', undefined, { writable: true, net });
+  const closed = L('NET:/b/Work', undefined, { writable: false, readOnlyReason: 'Writing is off in Transfer', net });
+  const dsk = E('Disk 1', 'disk', 'LIBRARY:/g1/d1');
+  const titleList = L('LIBRARY:/g1', { level: 'title', collectionId: null });
+
+  it('diskCopyReason: copy onto a writable volume goes', () => {
+    expect(diskCopyReason('copy', [dsk], volume)).toBeNull();
+    expect(diskCopyReason('copy', [title, E('Other', 'title', 'LIBRARY:/g2')], volume)).toBeNull();
+  });
+  it('diskCopyReason: a move is refused with the words, even onto a volume that cannot write', () => {
+    expect(diskCopyReason('move', [dsk], volume)).toBe(DISKS_STAY_IN_LIBRARY);
+    expect(diskCopyReason('move', [title], closed)).toBe(DISKS_STAY_IN_LIBRARY);
+  });
+  it('diskCopyReason: a volume that cannot write gives its own reason', () => {
+    expect(diskCopyReason('copy', [dsk], closed)).toBe('Writing is off in Transfer');
+  });
+  it('diskCopyReason: anywhere but a volume is not its business', () => {
+    for (const dst of [null, stash, root, demos, titleList, L('NET:/b/Queue', undefined, { writable: true })]) {
+      expect(diskCopyReason('copy', [dsk], dst)).toBeUndefined();
+    }
+  });
+  it('diskCopyReason: a selection holding a collection or a file is not its business either', () => {
+    const coll = E('Games', 'collection', 'LIBRARY:/c2');
+    expect(diskCopyReason('copy', [title, coll], volume)).toBeUndefined();
+    expect(filingReason('copy', root, [title, coll], shelfOf(volume))).toBe(COLLECTIONS_STAY);
+    expect(diskCopyReason('copy', [E('a.txt', 'file', 'STASH:/a.txt')], volume)).toBeUndefined();
+    expect(diskCopyReason('copy', [], volume)).toBeUndefined();
+  });
+
+  it('placeReason, what the phone\'s picker asks: disks onto a volume, titles still filed on a shelf, the rest by the file rules', () => {
+    expect(placeReason('copy', titleList, [dsk], volume)).toBeNull();
+    expect(placeReason('move', titleList, [dsk], volume)).toBe(DISKS_STAY_IN_LIBRARY);
+    expect(placeReason('copy', titleList, [dsk], stash)).toBe(DISKS_ONTO_VOLUME);
+    expect(placeReason('copy', titleList, [dsk], null)).toBe(DISKS_ONTO_VOLUME);
+    expect(placeReason('move', titleList, [dsk], stash)).toBe(DISKS_STAY_IN_LIBRARY);
+    expect(placeReason('move', titleList, [dsk], root)).toBe(DISKS_STAY_IN_LIBRARY);
+    expect(placeReason('copy', root, [title], volume)).toBeNull();
+    expect(placeReason('copy', root, [title], stash)).toBe(FILE_ON_SHELF);
+    expect(placeReason('move', demos, [title], games)).toBeNull();
+    expect(placeReason('copy', stash, [E('a.txt', 'file', 'STASH:/a.txt')], volume)).toBeUndefined();
   });
 });

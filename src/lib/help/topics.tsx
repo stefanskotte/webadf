@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { COPY_MAX_DISKS } from '@/lib/remote-limits';
 
 // Context help (spec docs/superpowers/specs/2026-10-05-context-help-design.md).
 // One source for the "?" popovers (title + short) and the /help page (body).
@@ -79,6 +80,8 @@ export const HELP_TOPICS = {
   // Files 2 (spec 2026-10-29-files-2-design.md): button-bank.tsx, bank.ts, shelf.ts/shelf-rules.ts, create-adf-dialog.tsx.
   // Progress: spec docs/superpowers/specs/2026-11-01-progress-panel-design.md; src/components/shell/transfers-panel.tsx,
   // src/lib/files/job-view.ts (the words), src/lib/files/job-cancel.ts (what Cancel the rest stops and keeps).
+  // Disks onto a volume: spec docs/superpowers/specs/2026-11-02-big-copies-disks-as-folders-design.md part 2;
+  // src/lib/files/disks-as-folders.ts (no title drawer, no drawer icon, what is refused), COPY_MAX_DISKS.
   files: {
     title: 'Files',
     short: 'Two panes for every file that is not a whole disk: STASH:, NET: and LIBRARY:. Pick files in the source pane and copy or move them to the other.',
@@ -92,12 +95,19 @@ export const HELP_TOPICS = {
         <p>
           <strong>Source and destination.</strong> The pane you last clicked is the source, with the dark title bar. <em>Copy</em> and <em>Move</em> go to the other pane; the device column takes it to
           STASH:, LIBRARY: or NET:. Dragging rows across copies; to move, hold Shift after the drag has started. When a
-          name is already there, choose Replace, Skip or Keep both.
+          name is there or coming, choose Replace, Skip or Keep both.
         </p>
         <p>
           <strong>Filing.</strong> Move a title onto a collection to file it there and out of the one it was in (one already there is
           skipped); Copy files it in both. Move to LIBRARY: takes it out of its collection. Makedir on LIBRARY: makes a collection. Disk
           images copied from STASH: join the library. <em>Create ADF…</em> makes a blank disk.
+        </p>
+        <p>
+          <strong>Disks onto the Amiga.</strong> Copy a disk, or a title (all its disks), onto a volume: each disk arrives
+          as a folder named like its row, with no title folder. These folders have no icons, so Workbench shows them only
+          with Show All Files. Replace leaves other files in the folder. At most {COPY_MAX_DISKS} disks at a time. A disk
+          is refused by name, while the others copy, if it cannot be read as files, has a damaged directory, a file over
+          4 MB or one that cannot be read whole, or a name the Amiga cannot take. Disks stay in the library: no Move.
         </p>
         <p>
           <strong>Inside a disk.</strong> The strip shows the drive, <em>Mount</em>, <em>History</em> and{' '}
@@ -116,8 +126,8 @@ export const HELP_TOPICS = {
         </p>
         <p>
           <strong>Keys.</strong> The box at the top of the tick column picks every row shown, or none. ↑ and ↓ move, Space picks, Enter opens, Backspace goes up, Tab switches pane, / filters,
-          F5 copies, F6 moves, F7 makes a folder, F2 renames, Delete deletes. A click on a pane&apos;s left edge goes up
-          one level too, as in Directory Opus.
+          F5 copies, F6 moves, F7 makes a folder, F2 renames, Delete deletes. <em>Up one level</em> heads a folder&apos;s
+          list; a click on a pane&apos;s left edge goes up too, as in Directory Opus.
         </p>
         <p>
           <strong>On a phone.</strong> One pane at a time: <em>Left</em> and <em>Right</em> switch.{' '}

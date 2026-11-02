@@ -112,7 +112,9 @@ export async function jobView(db: Db, orgId: string, id: string, now: Date, prog
   const loudKinds = [...new Set(p.writes.filter((w) => !w.quiet).map((w) => w.kind))];
   const dests = [...sent.map((x) => x.amigaDest), ...gets.map((g) => (g.target as GetTarget).relay?.dest ?? null)].filter((x): x is string => !!x);
   const first = gets[0]?.target as GetTarget | undefined;
-  const place = kind === 'write' ? null : p.direction === 'to' ? commonDrawer(dests) : first ? (first.library ? 'LIBRARY:' : first.dest) : null;
+  // Drawers alone (a copy of an empty disk: every write a quiet `ensure`) say where they go, as a copy's files do.
+  const quietOnly = kind === 'write' && loudKinds.length === 0;
+  const place = quietOnly ? commonDrawer(p.writes.map((w) => w.label)) : kind === 'write' ? null : p.direction === 'to' ? commonDrawer(dests) : first ? (first.library ? 'LIBRARY:' : first.dest) : null;
   const moving = sent.find((x) => x.status === 'sending');
   const fetching = gets.find((g) => g.status === 'fetching') ?? gets.find((g) => g.status === 'sent');
   const starts = [...reqs.map((r) => r.createdAt), ...sent.map((x) => x.createdAt)];

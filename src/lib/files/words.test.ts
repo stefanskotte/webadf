@@ -3,6 +3,7 @@ import type { RefusalCode } from './types';
 import { refusalWords } from './words';
 import { netEmpty } from './net-rules';
 import { queueFullWords } from '../send-limits';
+import { DISKS_STAY_IN_LIBRARY } from './shelf-rules';
 
 // The type system forces this to list every RefusalCode.
 const ALL: Record<RefusalCode, true> = {
@@ -13,6 +14,9 @@ const ALL: Record<RefusalCode, true> = {
 };
 
 describe('refusalWords', () => {
+  it('a disk moved onto a volume says its one sentence, ending once', () => {
+    expect(refusalWords('unsupported', DISKS_STAY_IN_LIBRARY)).toBe('Disks stay in the library: use Copy.');
+  });
   for (const code of Object.keys(ALL) as RefusalCode[]) {
     it(`${code} has words, with and without a detail`, () => {
       expect(refusalWords(code).trim().length).toBeGreaterThan(0);
@@ -50,10 +54,14 @@ describe('refusalWords', () => {
   it('bad_name for a comment says so', () => {
     expect(refusalWords('bad_name', 'comment')).toMatch(/comment/i);
   });
+  it('bad_name of an entry on a disk says which entry, then the usual words', () => {
+    expect(refusalWords('bad_name', 'bad-char at Files/in:ner.txt')).toBe(`Files/in:ner.txt: ${refusalWords('bad_name', 'bad-char')}`);
+    expect(refusalWords('bad_name', 'too-long at a/b')).toBe(`a/b: ${refusalWords('bad_name', 'too-long')}`);
+  });
   it('name_exists details', () => {
     expect(refusalWords('name_exists')).toMatch(/already/i);
     expect(refusalWords('name_exists', 'same file')).toMatch(/same file/i);
-    expect(refusalWords('name_exists', 'two sources share a name')).toMatch(/same name/i);
+    expect(refusalWords('name_exists', 'two sources are named Disk 1')).toBe('Two of the chosen items are named Disk 1.');
   });
   it('read_only reads the engine\'s reason, not just a mount', () => {
     expect(refusalWords('read_only', 'hfe_read_only')).toBe('HFE disks are read-only.');

@@ -42,7 +42,8 @@ describe('help topics', () => {
       expect(words).toBeGreaterThanOrEqual(60);
       // files covers two panes, the bank, filing and (NET: volumes) browsing the Amiga: it alone may run longer.
       // ... and (NET: volumes phase 2) writing to them, in one short paragraph, with what a Move removes (§9): 415 for files.
-      expect(words).toBeLessThanOrEqual(id === 'files' ? 415 : 280);
+      // ... and what a disk copied onto a volume makes (spec 2026-11-02): 520.
+      expect(words).toBeLessThanOrEqual(id === 'files' ? 520 : 280);
       expect(text).not.toMatch(BANNED);
     });
   }
@@ -379,6 +380,11 @@ describe('Files help (increment 4)', () => {
       'one new version', 'Undo', 'Eject to edit', 'Protect', 'Info', 'filter box', 'Show .info', 'F5', 'F6', 'F7', 'F2', '/ filters',
       'Space', 'Backspace', 'Tab', 'Left', 'Right', 'Copy to…', 'Move to…', 'Settings › Account › Files']) expect(b).toContain(w);
   });
+  it('files says how to go up: the Up one level row and the left edge, and no arrow in the title bar (spec 2026-11-02)', () => {
+    const b = bodyText('files').replace(/\s+/g, ' ');
+    for (const w of ['Up one level', 'left edge']) expect(b).toContain(w);
+    expect(b).not.toMatch(/title bar[^.]*(arrow|↑)|(arrow|↑)[^.]*title bar/);
+  });
   it('files names the source and destination, the device column, filing into collections and Create ADF (Files 2 §6)', () => {
     const b = bodyText('files').replace(/\s+/g, ' ');
     for (const w of ['source', 'dark title bar', 'device column', 'collections as folders', 'Move a title onto a collection',
@@ -438,5 +444,10 @@ describe('Files help (increment 4)', () => {
 
   it('library says collection names must differ, ignoring case', () => {
     expect(bodyText('library').replace(/\s+/g, ' ')).toMatch(/names? must differ[^.]*case/i);
+  });
+
+  it('files: a disk copied onto a volume, in the words the person meets (spec 2026-11-02)', () => {
+    const text = bodyText('files');
+    for (const said of ['folder named like its row', 'Show All Files', 'Replace leaves other files in the folder', 'At most 8 disks at a time', 'damaged directory', 'file over 4 MB', 'cannot be read whole']) expect(text).toContain(said);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { FsEntry, Listing } from '@/lib/files/types';
+import { DISKS_ONTO_VOLUME, DISKS_STAY_IN_LIBRARY, placeReason } from '@/lib/files/shelf-rules';
 import { hereLabel, pickReason, placesIn } from './copy-to-picker';
 
 const entry = (name: string, kind: FsEntry['kind']): FsEntry => ({
@@ -62,5 +63,21 @@ describe('CopyToPicker (Files increment 1, Task 10)', () => {
     const c = (name: string) => ({ ...entry(name, 'collection'), path: `LIBRARY:/${name}` });
     const l = listing({ path: 'LIBRARY:', disk: null, entries: [c('Zeta'), c('Alpha'), entry('Bravo', 'title'), entry('Able', 'title')] });
     expect(placesIn(l).map((e) => e.name)).toEqual(['Zeta', 'Alpha', 'Able', 'Bravo']);
+  });
+
+  it('DSK rows take a writable volume\'s directories and not STASH: (big copies part 2)', () => {
+    const net = { board: 'b', boardName: 'A500', volume: 'Work', amigaPath: 'Work:', readAt: null, cut: false, browse: null };
+    const dsk = entry('Disk 1', 'disk');
+    const titleList = listing({ path: 'LIBRARY:/g', disk: null, writable: false, library: { level: 'title', collectionId: null } });
+    const rule = (op: 'copy' | 'move') => (l: Listing) => placeReason(op, titleList, [dsk], l);
+    const drawer = listing({ path: 'NET:/b/Work/Monkey', disk: null, net });
+    expect(pickReason('copy', drawer, rule('copy'))).toBeNull();
+    expect(pickReason('copy', listing({ path: 'NET:/b/Work', disk: null, net }), rule('copy'))).toBeNull();
+    expect(pickReason('copy', listing({ path: 'NET:/b/Work', disk: null, net, writable: false, readOnlyReason: 'Writing is off in Transfer' }), rule('copy')))
+      .toBe('Writing is off in Transfer');
+    expect(pickReason('copy', listing({ path: 'STASH:', disk: null }), rule('copy'))).toBe(DISKS_ONTO_VOLUME);
+    expect(pickReason('copy', listing({}), rule('copy'))).toBe(DISKS_ONTO_VOLUME);   // inside another disk
+    expect(pickReason('copy', listing({ path: 'NET:/b/Queue', disk: null, queue: { deviceId: 'b', files: 0, bytes: 0 } }), rule('copy'))).toBe(DISKS_ONTO_VOLUME);
+    expect(pickReason('move', drawer, rule('move'))).toBe(DISKS_STAY_IN_LIBRARY);
   });
 });

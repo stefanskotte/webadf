@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type ReactNode, type Ref } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import type { FsEntry, Listing } from '@/lib/files/types';
 import { phoneSortAfter, type FilesSort, type FilesSortKey } from '@/lib/files/sort';
 import { headerCheck, type Selection } from '@/lib/files/selection';
@@ -13,7 +13,7 @@ import type { HelpTopicId } from '@/lib/help/topics';
 import { HelpTip } from '@/components/help/help-tip';
 import { Switch } from '@/components/ui/switch';
 import { acceptsCopies, addToLibraryReason, holdsFiles, netBoardOf } from '@/lib/files/pane-rules';
-import { shelfOf } from '@/lib/files/shelf-rules';
+import { listsDisks, shelfOf } from '@/lib/files/shelf-rules';
 import { isNetVolume, netTitle, readAgo } from '@/lib/files/net-rules';
 import { DIR_CUT } from '@/lib/remote-limits';
 
@@ -135,11 +135,11 @@ export function Pane({ filterRef, ...p }: PaneProps) {
   const foot = listing ? paneFoot({ base, shown: counts.shown, total: counts.total, infoHidden: counts.infoHidden, picked: picked.length, pickedSize: paneSize(pickedBytes) }) : '';
   const sideName = side === 'left' ? 'left' : 'right';
   const onlyInfo = view.hideInfo && !view.filter.trim() && counts.infoHidden > 0 && counts.shown === 0;
-  // Rows that hold files drag (C2), and titles on LIBRARY: or in a collection, to be filed (Files 2 §3.2); disks and
-  // collections do not move, and nothing is copied out of NET:.
+  // Rows that hold files drag (C2), titles on LIBRARY: or in a collection, to be filed (Files 2 §3.2), and a title's DSK
+  // rows, to be copied onto a volume (spec 2026-11-02). Collection rows do not drag.
   const shelf = shelfOf(listing) !== null;
   // A volume's rows drag out as copies (NET: volumes, spec 2026-10-30 §5).
-  const drags = holdsFiles(listing) || shelf || isNetVolume(listing);
+  const drags = holdsFiles(listing) || shelf || isNetVolume(listing) || listsDisks(listing);
   // A STASH: folder's disk images can each go into the library from their row (R8); not inside an archive.
   const addable = (e: FsEntry) => !!listing && !e.marks.includes('in the library') && addToLibraryReason(listing, [e]) === null;
   const rowAct = 'shrink-0 rounded-[4px] text-[11.5px] underline underline-offset-2 max-lg:min-h-11 max-lg:px-1 focus-visible:outline-2 focus-visible:outline-(--ring)';
@@ -149,10 +149,41 @@ export function Pane({ filterRef, ...p }: PaneProps) {
   const span = 5 + (p.showComment ? 1 : 0);
   const cellStyle = { borderColor: 'var(--hairline)' } as const;
 
+  // A double-click on Up one level goes up one level only, whenever its second click lands. The listing may have arrived
+  // by then, and the second click takes whatever is under the pointer: the row itself, or at a root, or once a disk's
+  // strip has gone, a real row that it would pick and open. So the rest of a click sequence (detail > 1, the browser's
+  // own count, so its own double-click time) that began by going up is the pane's to swallow, before any control sees it.
+  const wentUp = useRef(false);
+  const upHadFocus = useRef(false);
+  const sectionRef = useRef<HTMLElement>(null);
+  const focusManager = () => sectionRef.current?.closest<HTMLElement>('[tabindex]')?.focus({ preventScroll: true });
+  function goUp(ev: React.MouseEvent, path: string) {
+    // A mouse click leaves the keys on the manager, as a click on a row does: a browser that focuses a clicked button would
+    // have the next Enter or Space climb again. Enter on the button (detail 0) stays there, so it walks on up.
+    if (ev.detail >= 1) focusManager();
+    if (ev.detail > 1) return;   // the rest of a double-click on a folder, which brought this row under the pointer
+    wentUp.current = true;
+    upHadFocus.current = ev.currentTarget.contains(document.activeElement);
+    p.onNavigate(path);
+  }
+  function holdSecondClick(ev: React.MouseEvent) {
+    if (ev.detail <= 1) wentUp.current = false;
+    else if (wentUp.current) { ev.preventDefault(); ev.stopPropagation(); focusManager(); }   // its mouse-down focused what is under it
+  }
+  // Enter on the row can take the row away (a root, a refused place). The focus would fall to the page and the keys with
+  // it, so it goes where a click in the pane puts it: the manager, the nearest focusable thing around the pane.
+  const hasUpRow = !!listing && !!parent;
+  useEffect(() => {
+    if (hasUpRow || !upHadFocus.current) return;
+    upHadFocus.current = false;
+    if (document.activeElement === document.body) focusManager();
+  }, [hasUpRow]);
+
   return (
-    <section data-testid={`pane-${side}`} data-active={p.active ? 'true' : 'false'}
+    <section ref={sectionRef} data-testid={`pane-${side}`} data-active={p.active ? 'true' : 'false'}
              aria-label={side === 'left' ? 'Left pane' : 'Right pane'}
              onMouseDown={p.onActivate} onFocus={p.onActivate}
+             onClickCapture={holdSecondClick} onDoubleClickCapture={holdSecondClick}
              // Only a writable folder inside a disk or in STASH:, a board's queue, or LIBRARY: and a collection (where
              // titles and disk images are filed) take a drop; anywhere else the browser shows no-drop.
              onDragOver={(e) => { if ((acceptsCopies(listing) && listing!.writable) || shelf) e.preventDefault(); }}
@@ -163,12 +194,8 @@ export function Pane({ filterRef, ...p }: PaneProps) {
       <div data-testid={tid('title')} data-role={p.active ? 'source' : 'destination'}
            className="flex min-w-0 items-center gap-1.5 px-3.5 py-2 max-lg:rounded-t-[20px]"
            style={p.active ? { background: 'var(--ink)', color: 'var(--surface)' } : { background: 'var(--viewing-bg)', color: 'var(--ink)' }}>
-        <button type="button" aria-label="Up one level" title="Up one level" data-testid={tid('up')} disabled={!parent}
-                onClick={() => parent && p.onNavigate(parent.path)}
-                className="shrink-0 rounded-[6px] border px-1.5 font-mono text-[13px] max-lg:min-h-11 max-lg:min-w-11 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-(--ring)"
-                style={p.active ? { borderColor: 'var(--on-ink-fill)', color: 'var(--on-ink-2)' } : { borderColor: 'var(--line)', color: 'var(--muted)' }}>↑</button>
         {title ? (
-          // A volume (§5): "A500 · Work:Programs" in place of the crumbs; ↑, Parent and Root still walk up.
+          // A volume (§5): "A500 · Work:Programs" in place of the crumbs; the Up one level row, Parent and Root still walk up.
           <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 font-mono text-[13px]">
             <span data-testid={tid('net-title')} aria-current="location" className="font-medium [overflow-wrap:anywhere]">{title}</span>
             {ago && <span data-testid={tid('read-ago')} className="text-[12px]" style={{ color: p.active ? 'var(--on-ink-muted)' : 'var(--muted-2)' }}>{ago}</span>}
@@ -249,8 +276,8 @@ export function Pane({ filterRef, ...p }: PaneProps) {
       {listing && (
         <div className="relative flex min-h-0 flex-1 flex-col">
         {/* The left edge goes up one level, as Directory Opus's does (backlog 2026-10-30); at a root it goes nowhere.
-            The mouse's shortcut only: ↑ in the title bar is the way for the keyboard and a screen reader, and below lg
-            a finger at the edge is a scroll. */}
+            The mouse's shortcut only: the Up one level row is the way for the keyboard and a screen reader, and below
+            lg a finger at the edge is a scroll. */}
         <div aria-hidden="true" data-testid={tid('edge')} data-up={parent ? 'true' : 'false'}
              title={parent ? 'Up one level' : undefined} onClick={() => parent && p.onNavigate(parent.path)}
              className={`absolute inset-y-0 left-0 z-10 w-2 max-lg:hidden ${parent ? 'cursor-pointer hover:bg-(--track)' : ''}`} />
@@ -302,6 +329,26 @@ export function Pane({ filterRef, ...p }: PaneProps) {
               </tr>
             </thead>
             <tbody>
+              {/* Up one level (spec 2026-11-02, Part 2b): outside `rows`, so selection, Select all, the counts, the
+                  shift-range and the arrow keys' cursor, all indexes into `rows`, never meet it. The handler is the
+                  row's, so the whole row is the mouse's and a finger's; the button is the keyboard's and a screen
+                  reader's, its Enter a click (detail 0) that bubbles here. With no listing there is no row: the
+                  crumbs from the path and the bank's Parent and Root walk up from there. */}
+              {parent && (
+                <tr key="up-row" data-testid={tid('up-row')} onClick={(ev) => goUp(ev, parent.path)}
+                    className="cursor-pointer select-none hover:bg-[var(--surface-2)]">
+                  <td className={`${cell} max-lg:p-0`} style={cellStyle} />
+                  <td className={`${cell} max-lg:py-1.5`} style={cellStyle}>
+                    <button type="button" className="flex w-full min-w-0 items-center gap-[7px] rounded-[4px] text-left max-lg:min-h-11 focus-visible:outline-2 focus-visible:outline-(--ring)"
+                            style={{ color: 'var(--muted)' }}>
+                      <span aria-hidden="true" className="shrink-0 rounded-[4px] px-[5px] py-px font-mono text-[10px] font-semibold"
+                            style={{ background: 'var(--track)' }}>↑</span>
+                      <span className="truncate">Up one level</span>
+                    </button>
+                  </td>
+                  <td colSpan={span - 2} className={`${cell} max-lg:hidden`} style={cellStyle} />
+                </tr>
+              )}
               {/* A board whose volumes cannot be read (§5): one row saying why, above Queue, which still works. */}
               {/* At a board's root also why its volumes cannot be written to (phase 2, §4.2); a volume says it above. */}
               {(listing.net?.browse || (!listing.net?.volume && listing.net?.write)) && (

@@ -30,6 +30,6 @@ export async function POST(request: Request) {
     return Response.json({ items: r.items, versions: r.versions, ...(r.added ? { added: r.added } : {}), ...(r.queued !== undefined ? { queued: r.queued } : {}),
       ...(r.fetching ? { fetching: r.fetching } : {}), ...(r.job ? { job: r.job } : {}) });
   }
-  if (r.kind === 'clashes') return Response.json({ error: 'clashes', clashes: r.clashes }, { status: 409 });
+  if (r.kind === 'clashes') return Response.json({ error: 'clashes', clashes: r.clashes, ...(r.sources ? { sources: r.sources } : {}) }, { status: 409 });
   return Response.json({ error: r.refusal.code, detail: r.refusal.detail }, { status: r.status });
 }

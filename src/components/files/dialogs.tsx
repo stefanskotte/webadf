@@ -61,7 +61,7 @@ export function ClashDialog({ clash, remaining, busy, onChoose, onCancel }: {
            )}>
       <div className={body} style={ink}>
         <p data-testid="files-clash-text">
-          Something called <b className="font-semibold [overflow-wrap:anywhere]">{clash.name}</b> is already there.
+          Something called <b className="font-semibold [overflow-wrap:anywhere]">{clash.name}</b> is already there{clash.dest.startsWith('NET:') ? ' or on its way' : ''}.
           Replace it, skip this one, or keep both (the copy gets a new name)?
         </p>
         {remaining > 1 && (

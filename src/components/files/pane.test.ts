@@ -127,21 +127,99 @@ describe('Pane (Files increment 1, Task 7)', () => {
     expect(held).toContain('This disk is in a drive (mounted on &quot;A500 bench&quot;)');
   });
 
-  it('crumbs are buttons in a Path nav; ↑ is disabled at LIBRARY: and enabled below it', () => {
+  it('crumbs are buttons in a Path nav; the title bar has no ↑ any more', () => {
     const html = render();
     expect(html).toContain('aria-label="Path"');
     expect(tagOf(html, 'pane-left-crumb-0')).toMatch(/^<button\b/);
     expect(tagOf(html, 'pane-left-crumb-2')).toMatch(/^<button\b/);
-    expect(tagOf(html, 'pane-left-up')).not.toMatch(/\bdisabled=""/);
-    const root = render({ listing: rootListing });
-    expect(tagOf(root, 'pane-left-up')).toMatch(/\bdisabled=""/);
-    expect(tagOf(root, 'pane-left-crumb-1')).toBeUndefined();
+    expect(tagOf(html, 'pane-left-up')).toBeUndefined();
+    expect(tagOf(render({ listing: rootListing }), 'pane-left-crumb-1')).toBeUndefined();
+    const title = html.match(/data-testid="pane-left-title".*?<\/nav>/)![0];
+    expect(title).not.toContain('↑');
+  });
+
+  describe('the Up one level row (spec 2026-11-02, Part 2b)', () => {
+    const tbody = (html: string) => html.match(/<tbody>(.*)<\/tbody>/)![1];
+    const upRow = (html: string) => html.match(/<tr\b[^>]*data-testid="pane-left-up-row".*?<\/tr>/)?.[0];
+
+    it('heads the listing: the first row of the body, a button named Up one level, the chip ↑, muted and not bold', () => {
+      const html = render();
+      expect(tbody(html)).toMatch(/^<tr\b[^>]*data-testid="pane-left-up-row"/);
+      const row = upRow(html)!;
+      const button = row.match(/<button\b[^>]*>(.*?)<\/button>/)!;
+      expect(button[1].replace(/<[^>]+>/g, '')).toBe('↑Up one level');
+      // The chip is the row glyphs' chip, hidden from a screen reader so the button is named by its text alone.
+      expect(row).toMatch(/<span aria-hidden="true" class="shrink-0 rounded-\[4px\] px-\[5px\] py-px font-mono text-\[10px\] font-semibold"[^>]*>↑<\/span>/);
+      expect(button[0]).toContain('color:var(--muted)');
+      expect(row).not.toMatch(/<span[^>]*font-semibold[^>]*>Up one level/);
+    });
+
+    it('is no selectable row: no checkbox, date or size, no aria-selected, and outside the pane-row rows', () => {
+      const html = render();
+      const row = upRow(html)!;
+      expect(row).not.toContain('type="checkbox"');
+      expect(row).not.toContain('aria-selected');
+      expect(row).not.toContain('—');
+      expect(row).not.toContain('data-name');
+      expect(rows(html)).toHaveLength(diskListing.entries.length);
+    });
+
+    it('keeps the table square: its cells span every column, with the Comment column too', () => {
+      const cols = (html: string) => [...upRow(html)!.matchAll(/<td\b([^>]*)>/g)]
+        .reduce((n, m) => n + Number(attr(m[1], 'colSpan') ?? attr(m[1], 'colspan') ?? 1), 0);
+      expect(cols(render())).toBe(5);
+      expect(cols(render({ showComment: true }))).toBe(6);
+    });
+
+    it('is finger-sized below lg and stays in the Name column there', () => {
+      const row = upRow(render())!;
+      expect(row.match(/<button\b[^>]*>/)![0]).toContain('max-lg:min-h-11');
+      const cells = [...row.matchAll(/<td\b[^>]*>/g)].map((m) => m[0]);
+      expect(cells[0]).not.toContain('max-lg:hidden');
+      expect(cells[1]).not.toContain('max-lg:hidden');
+      expect(cells[2]).toContain('max-lg:hidden');
+    });
+
+    it('not at a device root', () => {
+      expect(upRow(render({ listing: rootListing }))).toBeUndefined();
+      expect(upRow(render({ listing: stashListing }))).toBeUndefined();
+    });
+
+    it('still heads an empty folder, above Nothing here.', () => {
+      const html = render({ listing: { ...diskListing, entries: [] } });
+      expect(upRow(html)).toBeDefined();
+      expect(html).toContain('Nothing here.');
+      expect(html.indexOf('pane-left-up-row')).toBeLessThan(html.indexOf('Nothing here.'));
+    });
+
+    it('still heads a filter that matches nothing', () => {
+      const html = render({ view: { filter: 'zzz', hideInfo: false } });
+      expect(upRow(html)).toBeDefined();
+      expect(rows(html)).toHaveLength(0);
+      expect(tagOf(html, 'pane-left-no-match')).toBeDefined();
+    });
+
+    it('stands above a board\'s reason row, and is on every device: NET:, inside STASH:', () => {
+      const board: Listing = { ...rootListing, path: 'NET:/b', crumbs: [{ label: 'NET:', path: 'NET:' }, { label: 'A500', path: 'NET:/b' }], entries: [],
+        net: { browse: 'Transfer is not running' } as Listing['net'] };
+      expect(tbody(render({ listing: board }))).toMatch(/^<tr\b[^>]*data-testid="pane-left-up-row"/);
+      const folder: Listing = { ...stashListing, path: 'STASH:/f', crumbs: [{ label: 'STASH:', path: 'STASH:' }, { label: 'f', path: 'STASH:/f' }] };
+      expect(upRow(render({ listing: folder }))).toBeDefined();
+    });
+
+    it('has no row while there is no listing to hold it: the crumbs from the path are the way up there', () => {
+      const html = render({ listing: null, error: 'A500 did not answer',
+        fallbackCrumbs: [{ label: 'NET:', path: 'NET:' }, { label: 'A500', path: 'NET:/b' }, { label: 'Work:', path: 'NET:/b/Work' }] });
+      expect(upRow(html)).toBeUndefined();
+      expect(tagOf(html, 'pane-left-crumb-1')).toMatch(/^<button\b/);
+      expect(tagOf(html, 'pane-left-crumb-1')).toContain('max-lg:min-h-11');
+    });
   });
 
   it('the left edge goes up one level, as in Directory Opus; at a root it is there but goes nowhere (backlog 2026-10-30)', () => {
     const edge = tagOf(render(), 'pane-left-edge')!;
     expect(edge).toBeDefined();
-    // The ↑ button is the way in for the keyboard and a screen reader; the edge is the mouse's shortcut.
+    // The Up one level row is the way for the keyboard and a screen reader; the edge is the mouse's shortcut.
     expect(attr(edge, 'aria-hidden')).toBe('true');
     expect(attr(edge, 'title')).toBe('Up one level');
     expect(attr(edge, 'data-up')).toBe('true');
@@ -220,7 +298,7 @@ describe('Pane (Files increment 1, Task 7)', () => {
 
   it('below lg the controls a finger presses are 44 px (Task 10)', () => {
     const html = render();
-    for (const id of ['pane-left-dev-STASH', 'pane-left-dev-LIBRARY', 'pane-left-up', 'pane-left-crumb-0']) expect(tagOf(html, id), id).toContain('max-lg:min-h-11');
+    for (const id of ['pane-left-dev-STASH', 'pane-left-dev-LIBRARY', 'pane-left-crumb-0']) expect(tagOf(html, id), id).toContain('max-lg:min-h-11');
   });
 
   it('below lg one sort button says the order in force, even one no phone column shows (Task 10 fix)', () => {
