@@ -1527,6 +1527,12 @@ started on another device until reload; panel above the phone search scrim; same
 Posted to Pillock (Discord WifiFloppy thread, 2026-11-02 01:33, as screemo, on the operator's instruction): the drawer icon
 (fw 1.24.0 + Transfer 2.9 via Install), the folder auto-save, Transfer 2.10, the progress panel, Select all, and the
 32-file queue limit; asked him to test (A600 too).
+(1e) **IN PROGRESS 2026-11-02 (operator's order, branch feat/big-copies, spec docs/superpowers/specs/2026-11-02-big-copies-disks-as-folders-design.md):**
+queue limit 1,000 files / 128 MB; DSK and TTL rows copied onto a volume as drawers named like the rows (no icons, no title folder), plus an
+"Up one level" row replacing the title bar's arrow; then the five panel minors. **Next after it, Transfer 2.11 (operator, 2026-11-02; Pillock's report):**
+Transfer's window cuts names at 17 characters (`tools/receive/amiga/gui.c:85`: `1200_GotekOLED_fillers.gcode` shows as `1200_GotekOLED_fi`; the file
+on the Amiga is named correctly). Use the room the window has. Needs a new driver disk. Pillock also confirmed 2026-11-02 13:00 that all five features he
+was asked to test work; his A600 run is still to come.
 (1b) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there. The two
 operator backlog items are SHIPPED 2026-11-01 (fc3aa195): a click on a pane's left edge goes up one level (Directory Opus;
 at a root nothing; lg and up only, the mouse's shortcut beside ↑), and History wears a caret (▾ closed, ▴ open).
