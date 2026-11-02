@@ -1524,6 +1524,9 @@ can't be copied in one go -- the board's send queue is capped at 32 files / 16 M
 .superpowers/sdd/2026-11-01-progress-panel/progress.md in the (removed) worktree is summarised here: cancelled-move count
 includes delivered-unsettled rows; Queue cancel takes all job-less waiting rows; an idle visible page doesn't see a job
 started on another device until reload; panel above the phone search scrim; same result text twice is announced once.
+Posted to Pillock (Discord WifiFloppy thread, 2026-11-02 01:33, as screemo, on the operator's instruction): the drawer icon
+(fw 1.24.0 + Transfer 2.9 via Install), the folder auto-save, Transfer 2.10, the progress panel, Select all, and the
+32-file queue limit; asked him to test (A600 too).
 (1b) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there. The two
 operator backlog items are SHIPPED 2026-11-01 (fc3aa195): a click on a pane's left edge goes up one level (Directory Opus;
 at a root nothing; lg and up only, the mouse's shortcut beside ↑), and History wears a caret (▾ closed, ▴ open).
