@@ -12,8 +12,9 @@ import { mapLimit } from '@/lib/pool';
 import { MOVE_OLD_TRANSFER, writeBlock } from '@/lib/remote-browse';
 import { addWrites, latestFor, type WriteReq } from '@/lib/remote-requests';
 import { amigaPathOf, newRequestId, type EntryInfo } from '@/lib/remote-wire';
-import { DRAWER_ICON_PROTO, FETCH_MAX_BYTES, FETCH_MAX_FILES, MOVE_PROTO, QUEUE_FOLDER } from '@/lib/remote-limits';
-import { SEND_FILE_MAX, queueTransfers, type ClashMode, type QueueFile } from '@/lib/transfers';
+import { DRAWER_ICON_PROTO, MOVE_PROTO, QUEUE_FOLDER } from '@/lib/remote-limits';
+import { SEND_QUEUE_MAX_BYTES, SEND_QUEUE_MAX_FILES } from '@/lib/send-limits';
+import { SEND_FILE_MAX, queueLoad, queueTransfers, type ClashMode, type QueueFile } from '@/lib/transfers';
 import { formatPath, parsePath, type FsPath } from './path';
 import {
   checkComment, checkName, refuse, skippedItem, type Clash, type FsCtx, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome,
@@ -21,7 +22,6 @@ import {
 import { keepBothName, sameStashName } from './stash-paths';
 
 export const RELIST = 'List the drawer again and retry';
-const MB = 1024 * 1024;
 const INFO = '.info';
 
 /** NET:/<board>/<Volume>/<entry>…: a file or drawer on a volume (not the volume itself, nor Queue). */
@@ -233,8 +233,8 @@ export const clashMode = (onClash: OnClash): ClashMode => (onClash === 'replace'
  * A copy (or move) onto a volume (spec 2026-10-31 §4.1, W5): one queue row per file, in the order the copy walked them,
  * with the absolute path and the clash mode; Makedirs (`ensure`) for the drawers that hold no file, so empty drawers
  * arrive too. Clashes are decided against the destination's remembered listing (plan W4); keep both renames the top now
- * (a drawer arrives beside the one there). The limits are phase 1's (64 files, 16 MB, 4 MB a file) and the board's
- * queue's. A move's sources go once their rows are delivered (`moveSource`, plan W7): nothing is `written` now.
+ * (a drawer arrives beside the one there). The limits are the board's queue's (send-limits.ts: files and bytes, counting what already waits)
+ * and 4 MB a file; a copy too big for the queue is refused before it stores anything. A move's sources go once their rows are delivered (`moveSource`, plan W7): nothing is `written` now.
  */
 export async function copyOntoVolume(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], onClash: OnClash, opts: { move?: boolean } = {}): Promise<Outcome> {
   const at = placeOf(dir);
@@ -267,8 +267,11 @@ export async function copyOntoVolume(ctx: OpCtx, dir: FsPath, tops: IncomingTop[
     if (size === undefined || (!i.bytes && !i.sha256)) refuse('failed', 500, `${rel.join('/')} came without its bytes`);
     if (size > SEND_FILE_MAX) refuse('too_large', 413, `${rel.join('/')} is over 4 MB`);
   }
-  if (files.length > FETCH_MAX_FILES) refuse('too_large', 413, `at most ${FETCH_MAX_FILES} files at a time`);
-  if (files.reduce((n, f) => n + (f.i.bytes?.length ?? f.i.size!), 0) > FETCH_MAX_BYTES) refuse('too_large', 413, `at most ${FETCH_MAX_BYTES / MB} MB at a time`);
+  // Over the board's queue, counting what already waits: refused before a byte is stored (queueTransfers holds the
+  // limit again in its transaction, against a send that lands meanwhile).
+  const load = await queueLoad(getDb(), t.id);
+  const total = files.reduce((n, f) => n + (f.i.bytes?.length ?? f.i.size!), 0);
+  if (load.files + files.length > SEND_QUEUE_MAX_FILES || load.bytes + total > SEND_QUEUE_MAX_BYTES) refuse('queue_full', 409);
 
   // Drawers holding no file arrive by a Makedir each, parents first; a drawer made meanwhile is as good (`ensure`).
   const holdsFile = (rel: string[]) => files.some((f) => f.rel.length > rel.length && rel.every((s, k) => sameStashName(s, f.rel[k])));

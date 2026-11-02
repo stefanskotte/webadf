@@ -13,7 +13,7 @@ import { and, eq, inArray, isNotNull, notInArray, sql } from 'drizzle-orm';
 import { remoteRequests } from '@/db/schema/remote-requests';
 import { getDb } from '@/db';
 import { transfers } from '@/db/schema/transfers';
-import { cancelTransfer, clearTransfer, listTransfers, queueLoad, queueTransfers, sendSummaries, type QueueFile } from '@/lib/transfers';
+import { cancelTransfer, clearTransfer, listTransfers, QUEUE_LIST_MAX, queueLoad, queueTransfers, sendSummaries, type QueueFile } from '@/lib/transfers';
 import { listSendTargets, findSendTarget } from '@/lib/send-targets';
 import { storeSendBytes, toView } from '@/lib/send-http';
 import { receiverRunning, targetState, transferState, type SendTarget } from '@/lib/send-ui';
@@ -92,7 +92,8 @@ async function listQueue(ctx: FsCtx, t: SendTarget, now: number): Promise<Listin
   });
   return { path: netPath(t.id, QUEUE_FOLDER), crumbs: [...boardCrumbs(t), { label: QUEUE_FOLDER, path: netPath(t.id, QUEUE_FOLDER) }],
     entries, writable: true, readOnlyReason: null, disk: null, queue: { deviceId: t.id, ...load },
-    meta: `${load.files} waiting · ${(load.bytes / MB).toFixed(1)} of ${SEND_QUEUE_MAX_BYTES / MB} MB` };
+    // The list is capped (newest first), the count and Cancel are not: say when the rows shown are not all of them.
+    meta: `${load.files} waiting · ${(load.bytes / MB).toFixed(1)} of ${SEND_QUEUE_MAX_BYTES / MB} MB${rows.length >= QUEUE_LIST_MAX ? ` · newest ${rows.length} shown` : ''}` };
 }
 
 const boardCrumbs = (t: SendTarget): Crumb[] => [ROOT, { label: t.name, path: netPath(t.id) }];
@@ -307,7 +308,7 @@ async function write(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], onClash: OnCl
     if (size > SEND_FILE_MAX) refuse('too_large', 413, `${path} is over 4 MB`);
     if (size === 0) refuse('unsupported', 400, netEmpty(path));
   }
-  // Over the board's queue (32 files / 16 MB, counting what already waits): refused before a byte is stored.
+  // Over the board's queue (the queue limits, counting what already waits): refused before a byte is stored.
   // queueTransfers holds the limit again in its transaction, against a send that lands meanwhile.
   const load = await queueLoad(getDb(), t.id);
   const bytes = files.reduce((n, { i }) => n + (i.bytes?.length ?? i.size!), 0);

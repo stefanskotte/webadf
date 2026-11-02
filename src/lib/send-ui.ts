@@ -1,5 +1,5 @@
 import type { TransferStatus } from '@/lib/transfers';
-import { SEND_FILE_MAX } from '@/lib/send-limits';
+import { SEND_FILE_MAX, SEND_QUEUE_MAX_BYTES, SEND_QUEUE_MAX_FILES } from '@/lib/send-limits';
 
 // Every word the web app says about sending to the Amiga (spec 2026-10-16 §4; plan 2026-10-17). Pure and
 // client-safe: the type import above is erased, so nothing server-side reaches the bundle.
@@ -170,7 +170,7 @@ export function adfSendName(d: { tosecName: string | null; sourceFilename: strin
 export function sendErrorText(code: string | undefined, status: number): string {
   switch (code) {
     case 'too_large': return `Over ${SEND_FILE_MAX / 1_048_576} MB: too large to send.`;
-    case 'queue_full': return 'The queue for this board is full (32 files or 16 MB). Wait for some to arrive.';
+    case 'queue_full': return `The queue for this board is full (${SEND_QUEUE_MAX_FILES.toLocaleString('en-US')} files or ${SEND_QUEUE_MAX_BYTES / 1_048_576} MB). Wait for some to arrive.`;
     case 'bad_name': return 'That name cannot be used on the Amiga.';
     case 'empty': return 'The file is empty.';
     case 'no_device': return 'That board cannot receive files.';

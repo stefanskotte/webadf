@@ -80,7 +80,7 @@ On the **Files** page:
 Each file waits under NET: and the board's **Queue**: waiting, sending, delivered with the name it was saved as, or failed
 and why. **Delete** on a waiting or sending file cancels it, and on a finished one clears it.
 
-- Up to 4 MB a file, and up to 32 files or 16 MB waiting for one board.
+- Up to 4 MB a file, and up to 1,000 files or 128 MB waiting for one board.
 - A file sent while Transfer is closed waits up to 24 hours, then expires.
 - Nothing is overwritten: a second `Foo.lha` arrives as `Foo_2.lha`.
 

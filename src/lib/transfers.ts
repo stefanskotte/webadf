@@ -136,9 +136,9 @@ export type QueueManyResult =
 
 /**
  * A copy into NET:/<board> (Files increment 3, R3): every file or none. Each is checked first (a path that cleans,
- * bytes in the store, 1 byte to 4 MB each, sizes from the store, not the caller), then ONE transaction counts the
- * board's load as queueTransferFromBlob does, refuses `queue_full` past 32 files / 16 MB, inserts every row and bumps
- * the board's cursor once. Rows are a millisecond apart in the order given, which is the order the board takes them.
+ * 1 byte to 4 MB each; sizes from the bytes a caller brings, else from the store, never the caller's word), then ONE
+ * transaction counts the board's load as queueTransferFromBlob does, refuses `queue_full` past the queue limits
+ * (send-limits.ts), inserts every row and bumps the board's cursor once. Rows are a millisecond apart in the order given, which is the order the board takes them.
  */
 export async function queueTransfers(db: Db, a: { orgId: string; deviceId: string; userId: string; files: QueueFile[]; now?: Date;
   /** The Files operation the rows belong to (plan W6): its progress reads them by it. */
@@ -147,13 +147,14 @@ export async function queueTransfers(db: Db, a: { orgId: string; deviceId: strin
   const [dev] = await db.select({ id: devices.id }).from(devices).where(and(eq(devices.id, a.deviceId), eq(devices.orgId, a.orgId)));
   if (!dev) return { ok: false, reason: 'no_device' };
   if (a.files.length === 0) return { ok: true, ids: [] };
-  // More files than any board's queue holds: refused before a single store call.
+  // More files than a board's queue holds: refused before a single store call.
   if (a.files.length > SEND_QUEUE_MAX_FILES) return { ok: false, reason: 'queue_full' };
   const paths = a.files.map((f) => (f.dest === undefined ? cleanAmigaPath(f.path)
     : cleanAmigaDest(f.dest) && cleanAmigaPath(f.dest.slice(Math.max(f.dest.lastIndexOf('/'), f.dest.indexOf(':')) + 1))));
   const bad = paths.findIndex((p) => !p);
   if (bad >= 0) return { ok: false, reason: 'bad_name', path: a.files[bad].path };
-  const stats = await mapLimit(a.files, 12, (f) => diskStore.stat(f.sha256));
+  // A file that came with its bytes (storeSendBytes just stored it) takes its size from them: no second round trip to the store.
+  const stats = await mapLimit(a.files, 12, async (f) => (f.bytes ? { sizeBytes: f.bytes.byteLength } : diskStore.stat(f.sha256)));
   const checked: { path: string; size: number; f: QueueFile }[] = [];
   for (const [k, f] of a.files.entries()) {
     const st = stats[k];
@@ -344,8 +345,10 @@ export async function queueLoad(db: Db, deviceId: string, now = new Date()): Pro
 
 export type TransferRow = typeof transfers.$inferSelect;
 
+/** How many rows the Queue listing shows; counts and Cancel read the table, not this list. */
+export const QUEUE_LIST_MAX = 100;
 /** The board's rows for NET:/<board> (and GET /api/transfers): this org's only, newest first (finished rows live 7 days). */
-export async function listTransfers(db: Db, orgId: string, deviceId: string, limit = 100): Promise<TransferRow[]> {
+export async function listTransfers(db: Db, orgId: string, deviceId: string, limit = QUEUE_LIST_MAX): Promise<TransferRow[]> {
   return db.select().from(transfers)
     .where(and(eq(transfers.orgId, orgId), eq(transfers.deviceId, deviceId)))
     .orderBy(desc(transfers.createdAt), desc(transfers.id)).limit(limit);

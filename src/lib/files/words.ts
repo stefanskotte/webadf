@@ -3,6 +3,7 @@ import { isMountedReason } from '../mount-wording';
 import type { RefusalCode } from './types';
 import { isNetWords, NET_COPY_OUT, NET_DROP_TO_STASH, NET_MOVE_IN, NET_OPEN_VOLUME, NET_PICK_BOARD, NET_READ_ONLY } from './net-rules';
 import { isKeptWords } from '../remote-browse';
+import { queueFullWords } from '../send-limits';
 import { ADDED_UNFILED, COLLECTION_EXISTS, SHELF_WORDS } from './shelf-rules';
 
 const REMOVE_FAILED = 'copied, but the original could not be removed';
@@ -52,7 +53,7 @@ export function refusalWords(code: RefusalCode, detail?: string): string {
     case 'blob_unavailable': return 'The disk image could not be read. Try again in a moment.';
     case 'failed': return detail ? `Something went wrong: ${detail}.` : 'Something went wrong.';
     case 'stash_full': return 'STASH: holds 500 files / 256 MB; delete some first.';
-    case 'queue_full': return "The board's queue holds 32 files / 16 MB; wait for it to empty or cancel some.";
+    case 'queue_full': return queueFullWords();
     case 'too_large': return detail ? `Too large — ${detail}.` : 'That file is too large.';
     case 'archive_unreadable': return "Can't open this archive. You can still download it.";
     case 'not_a_disk_image': return detail

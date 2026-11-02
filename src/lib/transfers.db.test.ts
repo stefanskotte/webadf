@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Client } from 'pg';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -29,6 +29,7 @@ const { devices } = await import('@/db/schema/devices');
 const { transfers } = await import('@/db/schema/transfers');
 const { diskStore } = await import('@/lib/storage');
 const T = await import('./transfers');
+const { SEND_QUEUE_MAX_FILES, SEND_QUEUE_MAX_BYTES } = await import('./send-limits');
 
 const sha = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
 async function blob(b: Uint8Array) { const s = sha(b); if (!(await diskStore.stat(s))) await diskStore.put(s, b); return s; }
@@ -37,6 +38,12 @@ async function device(orgId = 'org-a') {
   const id = `dev-${++n}`;
   await getDb().insert(devices).values({ id, orgId, name: id, tokenHash: `hash-${id}` });
   return id;
+}
+/** Waiting rows put straight into a board's queue (a thousand through the API would take minutes), `size` bytes each. */
+async function fill(deviceId: string, count: number, size = 1, orgId = 'org-a') {
+  const rows = Array.from({ length: count }, (_, i) => ({ id: crypto.randomUUID(), orgId, deviceId, createdByUserId: 'u1', path: `fill${i}`,
+    sizeBytes: size, crc32: 0, protection: 0, comment: '', blobSha256: 'f'.repeat(64), expiresAt: new Date(Date.now() + 3600_000) }));
+  for (let k = 0; k < rows.length; k += 500) await getDb().insert(transfers).values(rows.slice(k, k + 500));
 }
 const version = async (id: string) => (await getDb().select({ v: devices.sendVersion }).from(devices).where(eq(devices.id, id)))[0].v;
 const row = async (id: string) => (await getDb().select().from(transfers).where(eq(transfers.id, id)))[0];
@@ -73,12 +80,14 @@ describe('transfers', () => {
     expect(await q(d, await blob(new Uint8Array([2])), { path: '../..' })).toEqual({ ok: false, reason: 'bad_name' });
   });
 
-  it('keeps a board to 32 files and 16 MB', async () => {
+  it('keeps a board to SEND_QUEUE_MAX_FILES files and SEND_QUEUE_MAX_BYTES', async () => {
     const d = await device();
-    for (let i = 0; i < 32; i++) expect((await q(d, await blob(new Uint8Array([10, i])))).ok).toBe(true);
+    await fill(d, SEND_QUEUE_MAX_FILES - 1);
+    expect((await q(d, await blob(new Uint8Array([10, 1])))).ok).toBe(true);
     expect(await q(d, await blob(new Uint8Array([11])))).toEqual({ ok: false, reason: 'queue_full' });
     const d2 = await device();
-    for (let i = 0; i < 4; i++) expect((await q(d2, await blob(new Uint8Array(T.SEND_FILE_MAX).fill(i + 1)))).ok).toBe(true);
+    await fill(d2, 1, SEND_QUEUE_MAX_BYTES - T.SEND_FILE_MAX);
+    expect((await q(d2, await blob(new Uint8Array(T.SEND_FILE_MAX).fill(1)))).ok).toBe(true);
     expect(await q(d2, await blob(new Uint8Array(T.SEND_FILE_MAX).fill(9)))).toEqual({ ok: false, reason: 'queue_full' });
   });
 
@@ -307,17 +316,31 @@ describe('transfers', () => {
     expect(await version(d)).toBe(0);
   });
 
-  it('queueTransfers holds a board to 32 files and 16 MB counting what already waits, all or nothing', async () => {
+  it('queueTransfers holds a board to the queue limits counting what already waits, all or nothing', async () => {
     const d = await device();
-    for (let i = 0; i < 30; i++) expect((await q(d, await blob(new Uint8Array([20, i])))).ok).toBe(true);
+    await fill(d, SEND_QUEUE_MAX_FILES - 2);
     expect(await qs(d, [await file('a', 'qa'), await file('b', 'qb'), await file('c', 'qc')])).toEqual({ ok: false, reason: 'queue_full' });
-    expect(await T.queueLoad(getDb(), d)).toEqual({ files: 30, bytes: 60 });
+    expect(await T.queueLoad(getDb(), d)).toEqual({ files: SEND_QUEUE_MAX_FILES - 2, bytes: SEND_QUEUE_MAX_FILES - 2 });
     expect((await qs(d, [await file('a', 'qa'), await file('b', 'qb')])).ok).toBe(true);
     const d2 = await device();
+    await fill(d2, 1, SEND_QUEUE_MAX_BYTES - 4 * T.SEND_FILE_MAX);
     const files = await Promise.all([1, 2, 3, 4, 5].map(async (n) => ({ path: `big${n}`, protection: 0, comment: '',
       sha256: await blob(new Uint8Array(T.SEND_FILE_MAX).fill(30 + n)), sizeBytes: T.SEND_FILE_MAX })));
     expect(await qs(d2, files)).toEqual({ ok: false, reason: 'queue_full' });
     expect((await qs(d2, files.slice(0, 4))).ok).toBe(true);
+  });
+
+  it('queueTransfers: a file that comes with its bytes is not stat-ed again; one without is, and a missing blob is no_blob', async () => {
+    const d = await device();
+    const present = await file('P.txt', 'present', { bytes: new TextEncoder().encode('present') });
+    const spy = vi.spyOn(diskStore, 'stat');
+    try {
+      expect((await qs(d, [present])).ok).toBe(true);
+      expect(spy).not.toHaveBeenCalled();
+      const absent = { path: 'Gone.txt', sha256: 'd'.repeat(64), sizeBytes: 3, protection: 0, comment: '' };
+      expect(await qs(d, [absent])).toEqual({ ok: false, reason: 'no_blob', path: 'Gone.txt' });
+      expect(spy).toHaveBeenCalled();
+    } finally { spy.mockRestore(); }
   });
 
   it('queueTransfers with no files queues nothing and leaves the cursor', async () => {

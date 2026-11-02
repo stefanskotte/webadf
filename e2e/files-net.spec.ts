@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { transfers } from '@/db/schema/transfers';
 import { devices } from '@/db/schema/devices';
+import { SEND_QUEUE_MAX_FILES } from '@/lib/send-limits';
 import { signUpFresh } from './helpers';
 import { cleanupSeeded, pairDevice } from './device-helpers';
 import { synthDrop } from './drag-drop-helpers';
@@ -239,20 +240,27 @@ test("the Send zone's line follows the board's queue: a send makes files wait, a
   await expect(line).toHaveText('• The Amiga does not answer', { timeout: LIVE });
 });
 
-test('more than 32 files for one board are refused whole: from the computer, and by Copy from STASH:', async ({ page, request }) => {
+test('more files than the board\'s queue has room for are refused whole: from the computer, and by Copy from STASH:', async ({ page, request }) => {
   test.setTimeout(90_000);
   const { orgId } = await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request, 'Bench');
   await boardSays(request, token);
+  // Room for 32 more only: 1,000 files through the browser would take minutes, so the rest of the queue is seeded.
+  const seeded = Array.from({ length: SEND_QUEUE_MAX_FILES - 32 }, (_, i) => ({ id: crypto.randomUUID(), orgId, deviceId, createdByUserId: 'seed',
+    path: `seed${String(i).padStart(4, '0')}`, sizeBytes: 1, crc32: 0, protection: 0, comment: '', blobSha256: 'e'.repeat(64),
+    expiresAt: new Date(Date.now() + 3600_000) }));
+  for (let k = 0; k < seeded.length; k += 500) await getDb().insert(transfers).values(seeded.slice(k, k + 500));
+  const board = await boardQueue(request, token);
+  const mine = async () => Object.keys(await queued(orgId, deviceId)).filter((p) => !p.startsWith('seed'));
   await openFiles(page, 'STASH:', `NET:/${deviceId}/Queue`, 'left');
-  const words = "The board's queue holds 32 files / 16 MB; wait for it to empty or cancel some.";
+  const words = "The board's queue holds 1,000 files / 128 MB; wait for it to empty or cancel some.";
   const many = Array.from({ length: 33 }, (_, i) => ({ name: `f${String(i).padStart(2, '0')}.txt`, content: `file ${i}` }));
 
   // 33 picked on the Send zone: nothing goes up.
   await page.getByTestId('files-send-input').setInputFiles(many.map((f) => ({ name: f.name, mimeType: 'text/plain', buffer: Buffer.from(f.content) })));
   await expect(toast(page, words)).toBeVisible({ timeout: LIVE });
-  expect(await queued(orgId, deviceId)).toEqual({});
-  expect(await boardQueue(request, token)).toBe('NEXT -\nLIST 0\n');
+  expect(await mine()).toEqual([]);
+  expect(await boardQueue(request, token)).toBe(board);
   await expect(toast(page, words)).toHaveCount(0, { timeout: 20_000 });   // gone, so the next one is the copy's
 
   // A folder of 33 in STASH: copied into the board: refused whole by the server, nothing queued, the folder kept.
@@ -261,9 +269,9 @@ test('more than 32 files for one board are refused whole: from the computer, and
   await rowAt(page, 'left', 'Many').click();
   await page.getByTestId('files-copy').click();
   await expect(toast(page, words)).toBeVisible({ timeout: LIVE });
-  expect(await queued(orgId, deviceId)).toEqual({});
-  expect(await boardQueue(request, token)).toBe('NEXT -\nLIST 0\n');
-  await expect(page.getByTestId('pane-right').getByTestId('pane-row')).toHaveCount(0);
+  expect(await mine()).toEqual([]);
+  expect(await boardQueue(request, token)).toBe(board);
+  await expect(rowAt(page, 'right', 'Many/f00.txt')).toHaveCount(0);   // the seeded rows are all the queue shows
   await expect(rowAt(page, 'left', 'Many')).toBeVisible();
 });
 

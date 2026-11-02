@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { arrivesIn, netPollMs, planNetSend, NET_REFRESH_ACTIVE_MS, NET_REFRESH_IDLE_MS, readAgo, nextAsk, netTitle, isNetVolume, netBoardRoot, boardNameFor, NET_READ_ONLY, listingRefusal, netCrumbs } from './net-rules';
 import type { Listing } from './types';
+import { SEND_QUEUE_MAX_FILES, SEND_QUEUE_MAX_BYTES } from '@/lib/send-limits';
 
 const L = (path: string, marks: string[][] = []): Listing => ({ path, crumbs: [], writable: true, readOnlyReason: null, disk: null, meta: '',
   entries: marks.map((m, i) => ({ name: `f${i}`, kind: 'file', path: `${path}/t${i}`, size: 1, date: null, protection: null, comment: null, marks: m })) });
@@ -48,17 +49,17 @@ describe('arrivesIn', () => {
 describe('planNetSend', () => {
   const MB = 1024 * 1024;
   it('fits, or names why not', () => {
-    expect(planNetSend([MB, MB], { files: 30, bytes: 0 })).toEqual({ ok: true });
-    expect(planNetSend([MB, MB, MB], { files: 30, bytes: 0 })).toEqual({ ok: false, why: 'queue_full' });
-    expect(planNetSend([10 * MB], { files: 0, bytes: 7 * MB })).toEqual({ ok: false, why: 'queue_full' });
+    expect(planNetSend([MB, MB], { files: SEND_QUEUE_MAX_FILES - 2, bytes: 0 })).toEqual({ ok: true });
+    expect(planNetSend([MB, MB, MB], { files: SEND_QUEUE_MAX_FILES - 2, bytes: 0 })).toEqual({ ok: false, why: 'queue_full' });
+    expect(planNetSend([10 * MB], { files: 0, bytes: SEND_QUEUE_MAX_BYTES - 7 * MB })).toEqual({ ok: false, why: 'queue_full' });
     expect(planNetSend([MB, 5 * MB], { files: 0, bytes: 0 })).toEqual({ ok: false, why: 'too_large', index: 1 });
     expect(planNetSend([0], { files: 0, bytes: 0 })).toEqual({ ok: false, why: 'empty', index: 0 });
     expect(planNetSend([], { files: 0, bytes: 0 })).toEqual({ ok: false, why: 'empty' });
   });
-  it('takes exactly 4 MB a file and exactly 32 files / 16 MB a board', () => {
-    expect(planNetSend([4 * MB], { files: 0, bytes: 12 * MB })).toEqual({ ok: true });
+  it('takes exactly 4 MB a file and exactly SEND_QUEUE_MAX_FILES files / SEND_QUEUE_MAX_BYTES a board', () => {
+    expect(planNetSend([4 * MB], { files: 0, bytes: SEND_QUEUE_MAX_BYTES - 4 * MB })).toEqual({ ok: true });
     expect(planNetSend([4 * MB + 1], { files: 0, bytes: 0 })).toEqual({ ok: false, why: 'too_large', index: 0 });
-    expect(planNetSend([1, 1], { files: 30, bytes: 0 })).toEqual({ ok: true });
+    expect(planNetSend([1, 1], { files: SEND_QUEUE_MAX_FILES - 2, bytes: 0 })).toEqual({ ok: true });
   });
 });
 

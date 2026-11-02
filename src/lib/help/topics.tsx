@@ -548,7 +548,7 @@ export const HELP_TOPICS = {
   // and open read-only), increment 3 rulings R1-R8 (NET: rows, Delete cancels or clears, no move into NET:, the key on
   // the board's row), increment 4 R8 (the "dropped" mark); stash-drop-zone.tsx (the zone's title, Paste a URL),
   // stash-driver.ts (marks: dropped, no board mark since 2026-11-01; "kept 30 days"), net-driver.ts (boards on XFER_FW, `key ABCD`),
-  // amiga-upload-limits.ts (500 files, 256 MB, 30 days, 4 MB), stash-paths.ts (20 MB), send-limits.ts (4 MB, 32, 16 MB);
+  // amiga-upload-limits.ts (500 files, 256 MB, 30 days, 4 MB), stash-paths.ts (20 MB), send-limits.ts (4 MB, 1,000, 128 MB);
   // net-driver.ts remove (Delete cancels a waiting or sending row), stash url/route.ts (a pasted URL is source 'browser').
   'stash-net': {
     title: 'STASH: and NET:',
@@ -576,7 +576,7 @@ export const HELP_TOPICS = {
         </p>
         <GoodToKnow items={[
           'STASH: holds up to 500 files or 256 MB for your organization, and keeps each file 30 days. A file can be 20 MB from your computer, 4 MB from the Amiga.',
-          'Up to 4 MB a file, and 32 files or 16 MB waiting for one board.',
+          'Up to 4 MB a file, and 1,000 files or 128 MB waiting for one board.',
           'Nothing is copied out of a board’s Queue, and a copy into it leaves the original where it was.',
           'STASH: keeps no versions: a delete there cannot be undone.',
         ]} />
@@ -651,7 +651,7 @@ export const HELP_TOPICS = {
           <em>NET:</em> and the board: waiting, sending, delivered with its saved name, or failed, and why.
         </p>
         <GoodToKnow items={[
-          'Up to 4 MB a file, and up to 32 files or 16 MB waiting for one board.',
+          'Up to 4 MB a file, and up to 1,000 files or 128 MB waiting for one board.',
           'A file sent while Transfer is closed waits up to 24 hours, then expires.',
           'Nothing is overwritten: a second Foo.lha arrives as Foo_2.lha.',
           'Delete on a waiting or sending file cancels it; on a finished one it clears it. To send a failed file again, copy it into NET: again.',
