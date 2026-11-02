@@ -95,7 +95,7 @@ export const HELP_TOPICS = {
         <p>
           <strong>Source and destination.</strong> The pane you last clicked is the source, with the dark title bar. <em>Copy</em> and <em>Move</em> go to the other pane; the device column takes it to
           STASH:, LIBRARY: or NET:. Dragging rows across copies; to move, hold Shift after the drag has started. When a
-          name is already there, choose Replace, Skip or Keep both.
+          name is there or coming, choose Replace, Skip or Keep both.
         </p>
         <p>
           <strong>Filing.</strong> Move a title onto a collection to file it there and out of the one it was in (one already there is

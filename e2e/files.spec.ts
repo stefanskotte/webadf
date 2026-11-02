@@ -376,6 +376,15 @@ test('Up one level heads the listing: a click goes up one level, on every device
   await expect.poll(() => placeOf(page, 'right')).toBe(`${a.path}/C`);
   await expect(row(page, 'right', 'Sub')).toHaveCount(1);
 
+  // A click leaves the keys with the manager, not on the row's button: Enter opens the cursor's row (Sub), it does not climb again.
+  await expect(page.getByTestId('files-manager')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => placeOf(page, 'right')).toBe(`${a.path}/C/Sub`);
+  await expect(row(page, 'right', 'Leaf')).toHaveCount(1);
+  await upButton(page, 'right').click();
+  await expect.poll(() => placeOf(page, 'right')).toBe(`${a.path}/C`);
+  await expect(row(page, 'right', 'Sub')).toHaveCount(1);
+
   // A filter that matches nothing.
   await page.getByTestId('pane-right-filter').fill('zzz');
   await expect(page.getByTestId('pane-right-no-match')).toBeVisible();
@@ -404,6 +413,8 @@ test('a double-click on Up one level goes up one level only, whenever the second
   expect(placeOf(page, 'right')).toBe(`${a.path}/C`);
   await expect(page.getByTestId('pane-right-crumb-3')).toHaveText('C');
   await expect(upRow(page, 'right')).toHaveCount(1);
+  // The second click's mouse-down focused the row's button; the keys still end up with the manager.
+  await expect(page.getByTestId('files-manager')).toBeFocused();
 
   /**
    * The slow case, as measured: the listing arrives between the two clicks, so the second lands on whatever is under

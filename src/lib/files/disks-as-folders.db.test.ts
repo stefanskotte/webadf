@@ -59,7 +59,8 @@ let n = 0;
 async function remember(amigaPath: string, entries: ReturnType<typeof ent>[]) {
   const now = new Date();
   await getDb().insert(remoteRequests).values({ id: `dir-${++n}`, orgId: 'o1', deviceId: 'w1', kind: 'dir', amigaPath,
-    status: 'done', answer: { volumes: [], entries }, createdAt: now, sentAt: now, answeredAt: now });
+    // The newest answer wins (latestFor), and two made in one millisecond would tie: each is a millisecond on.
+    status: 'done', answer: { volumes: [], entries }, createdAt: new Date(now.getTime() + n), sentAt: now, answeredAt: now });
 }
 async function seed(gameId: string, title: string, diskId: string, diskNo: number, adf: Uint8Array, label: string | null = null) {
   const sha = createHash('sha256').update(adf).digest('hex');
@@ -81,6 +82,19 @@ function fullDisk(volumeName: string) {
 }
 const emptyDisk = (volumeName: string) => formatVolume({ filesystem: 'OFS', volumeName });
 const nonDos = (fill: number) => new Uint8Array(901_120).fill(fill);
+/** `name` on the disk spelt `to` (one length), as no tool here would write it: the header's name byte and its checksum. */
+function misnamed(adf: Uint8Array, block: number, name: string, to: string) {
+  const out = adf.slice();
+  const at = block * 512;
+  expect(String.fromCharCode(...out.subarray(at + 433, at + 433 + name.length))).toBe(name);
+  out.set(text(to), at + 433);
+  const v = new DataView(out.buffer, at, 512);
+  v.setUint32(20, 0);
+  let sum = 0;
+  for (let i = 0; i < 512; i += 4) sum = (sum + v.getUint32(i)) >>> 0;
+  v.setUint32(20, (-sum) >>> 0);
+  return out;
+}
 
 beforeAll(async () => {
   await admin(`drop database if exists ${DB} with (force)`);
@@ -156,6 +170,11 @@ describe('a TTL row onto a volume', () => {
     expect(await copy(['LIBRARY:/c1/g1'])).toMatchObject({ kind: 'done', items: [{ source: 'LIBRARY:/c1/g1/d1', ok: true }] });
   });
 
+  it('M-6: a title with no disks is reported by its name', async () => {
+    await getDb().insert(games).values({ id: 'g0', orgId: 'o1', title: 'Hollow Title', sortTitle: 'hollow title' });
+    expect(await copy(['LIBRARY:/g0'])).toMatchObject({ kind: 'done', items: [{ source: 'LIBRARY:/g0', name: 'Hollow Title', ok: false, refusal: { code: 'not_found' } }] });
+  });
+
   it('a title with no disks here, or none at all, is that item not found', async () => {
     await seed('g1', 'Monkey', 'd1', 1, fullDisk('M1'));
     expect(await copy(['LIBRARY:/nope', 'LIBRARY:/g1'])).toMatchObject({ kind: 'done', items: [
@@ -203,10 +222,10 @@ describe('what a copy of disks refuses whole', () => {
     expect(await rows()).toEqual([]);
   });
 
-  it('two disks share a name: refused name_exists', async () => {
+  it('two disks share a name: refused name_exists, naming it', async () => {
     await seed('g1', 'Monkey', 'd1', 1, fullDisk('M1'));
     await seed('g2', 'Loom', 'd2', 1, fullDisk('L1'));
-    expect(await copy([DISK('g1', 'd1'), DISK('g2', 'd2')])).toMatchObject({ kind: 'refused', refusal: { code: 'name_exists' } });
+    expect(await copy([DISK('g1', 'd1'), DISK('g2', 'd2')])).toMatchObject({ kind: 'refused', refusal: { code: 'name_exists', detail: 'two sources are named Disk 1' } });
     expect(await rows()).toEqual([]);
   });
 });
@@ -237,6 +256,17 @@ describe('each disk by itself', () => {
     await seed('g1', 'Monkey', 'd2', 2, fullDisk('M2'));
     expect(await copy(['LIBRARY:/g1'])).toMatchObject({ kind: 'done', items: [
       { source: DISK('g1', 'd1'), name: 'Foo: Bar', ok: false, refusal: { code: 'bad_name' } }, { source: DISK('g1', 'd2'), ok: true }] });
+    expect((await dests()).every((d) => d!.startsWith('Work:Monkey/Disk 2/'))).toBe(true);
+  });
+
+  it('M-5: a nested name the Amiga cannot take is refused by its path on the disk; the other disk goes', async () => {
+    const adf = fullDisk('M1');
+    const files = (readVolume(adf) as { ok: true; root: { name: string; kind: string; children: { name: string; block: number }[] }[] }).root.find((e) => e.name === 'Files')!;
+    await seed('g1', 'Monkey', 'd1', 1, misnamed(adf, files.children[0].block, 'inner', 'in:er'));
+    await seed('g1', 'Monkey', 'd2', 2, fullDisk('M2'));
+    expect(await copy(['LIBRARY:/g1'])).toMatchObject({ kind: 'done', items: [
+      { source: DISK('g1', 'd1'), name: 'Disk 1', ok: false, refusal: { code: 'bad_name', detail: 'bad-char at Files/in:er.txt' } },
+      { source: DISK('g1', 'd2'), ok: true }] });
     expect((await dests()).every((d) => d!.startsWith('Work:Monkey/Disk 2/'))).toBe(true);
   });
 
@@ -333,6 +363,49 @@ describe('clashes', () => {
     const done = await post('replace');
     expect(done.status).toBe(200);
     expect((await done.json()).items).toMatchObject([{ source: DISK('g1', 'd1'), name: 'Bad One', ok: false }, { source: DISK('g1', 'd2'), ok: true }]);
+  });
+});
+
+// Whole-branch review I-1: title A's disks queued, Disk 1 begun; title B's same names ask for every disk, not only the one
+// already on the Amiga, and nothing lands in A's drawers unasked.
+describe('a disk on its way counts as a clash', () => {
+  beforeEach(async () => {
+    await seed('ga', 'Monkey', 'a1', 1, fullDisk('A1'));
+    await seed('ga', 'Monkey', 'a2', 2, fullDisk('A2'));
+    await seed('gb', 'Loom', 'b1', 1, fullDisk('B1'));
+    await seed('gb', 'Loom', 'b2', 2, fullDisk('B2'));
+  });
+
+  it('the second title asks for each disk: the one that has begun arriving and the one still waiting', async () => {
+    expect(await copy(['LIBRARY:/ga'])).toMatchObject({ kind: 'done', job: { files: 4 } });
+    await remember('Work:Monkey', [ent('Disk 1', 0, true)]);
+    const before = await dests();
+    expect(await copy(['LIBRARY:/gb'])).toEqual({ kind: 'clashes', sources: [DISK('gb', 'b1'), DISK('gb', 'b2')], clashes: [
+      { source: DISK('gb', 'b1'), name: 'Disk 1', dest: DEST }, { source: DISK('gb', 'b2'), name: 'Disk 2', dest: DEST }] });
+    expect(await dests()).toEqual(before);
+  });
+
+  it('Copy again on one disk before its first file lands asks; Skip sends nothing', async () => {
+    await copy([DISK('ga', 'a1')]);
+    const before = await dests();
+    expect(await copy([DISK('ga', 'a1')])).toMatchObject({ kind: 'clashes', clashes: [{ name: 'Disk 1' }] });
+    expect(await copy([DISK('ga', 'a1')], 'skip')).toMatchObject({ kind: 'done', items: [{ ok: true, skipped: true }] });
+    expect(await dests()).toEqual(before);
+  });
+
+  it('Keep both makes a drawer of its own beside the queued one; Replace writes into the queued one', async () => {
+    await copy(['LIBRARY:/ga']);
+    await copy([DISK('gb', 'b1')], 'keep-both');
+    await copy([DISK('gb', 'b2')], 'replace');
+    const all = await rows();
+    expect(all.filter((r) => r.amigaDest!.startsWith('Work:Monkey/Disk 1_1/')).map((r) => r.onClash)).toEqual(['keep', 'keep']);
+    expect(all.filter((r) => r.amigaDest!.startsWith('Work:Monkey/Disk 2/')).map((r) => r.onClash).sort()).toEqual(['keep', 'keep', 'replace', 'replace']);
+  });
+
+  it('an empty disk on its way by its Makedir alone asks too', async () => {
+    await seed('gc', 'Void', 'c1', 1, emptyDisk('C1'));
+    await copy([DISK('gc', 'c1')]);
+    expect(await copy([DISK('gc', 'c1')])).toMatchObject({ kind: 'clashes', clashes: [{ name: 'Disk 1' }] });
   });
 });
 

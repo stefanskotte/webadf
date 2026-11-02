@@ -9,8 +9,7 @@
 // answers (remote-requests.ts), remembered 2 minutes. Phase 2 (spec 2026-10-31 §4.1): a volume a board can write to is
 // writable -- Copy onto it, Makedir, Rename, Delete, Protect and comments go through net-write.ts -- and shows the files
 // of a copy still on their way as arriving rows. SERVER ONLY.
-import { and, eq, inArray, isNotNull, notInArray, sql } from 'drizzle-orm';
-import { remoteRequests } from '@/db/schema/remote-requests';
+import { and, eq, inArray, isNotNull, notInArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { transfers } from '@/db/schema/transfers';
 import { cancelTransfer, clearTransfer, listTransfers, QUEUE_LIST_MAX, queueLoad, queueTransfers, sendSummaries, type QueueFile } from '@/lib/transfers';
@@ -29,7 +28,7 @@ import { formatPath, parsePath, type FsPath } from './path';
 import { Pending, refuse, type FsCtx, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome, type VolumeDriver } from './driver';
 import { NET_COPY_OUT, NET_OPEN_VOLUME, NET_PICK_BOARD, netEmpty, DELETE_LEFTOVER, isDeleteLeftover } from './net-rules';
 import {
-  copyOntoVolume, isNetVolumeDir, isNetVolumePath, makedirOnVolume, mustRemoveOnVolume, removeOnVolume, renameOnVolume,
+  belowDrawer, COMING, copyOntoVolume, isNetVolumeDir, isNetVolumePath, makedirOnVolume, mustRemoveOnVolume, relayedTo, removeOnVolume, renameOnVolume,
   setMetaOnVolume, writeOf,
 } from './net-write';
 import type { Crumb, FsEntry, Listing } from './types';
@@ -168,8 +167,7 @@ async function withArriving(t: SendTarget, segs: string[], amiga: string, listed
   const active = await db.select().from(transfers).where(and(eq(transfers.deviceId, t.id), inArray(transfers.status, ACTIVE_ROWS),
     isNotNull(transfers.amigaDest)));
   // Files of a copy between volumes still on their way up to the server: rows of this board's queue to come (item 10).
-  const relayed = await db.select().from(remoteRequests).where(and(eq(remoteRequests.kind, 'get'),
-    inArray(remoteRequests.status, [...COMING, 'failed']), sql`${remoteRequests.target}->'relay'->>'deviceId' = ${t.id}`));
+  const relayed = await relayedTo(db, t.id, [...COMING, 'failed']);
   const coming = relayed.filter((g) => COMING.includes(g.status));
   if (active.length === 0 && coming.length === 0) return listed;
   // The whole of each job still moving (plan 2026-11-01-net-consistency, item 10): its finished rows, so a drawer can say
@@ -179,11 +177,7 @@ async function withArriving(t: SendTarget, segs: string[], amiga: string, listed
     isNotNull(transfers.amigaDest), notInArray(transfers.status, ACTIVE_ROWS))) : [];
   const toCome = relayed.filter((g) => g.fetchId && jobs.includes(g.fetchId));
   const out = [...listed];
-  const here = amiga.toLowerCase();
-  const below = (dest: string) => {
-    if (!(here.endsWith(':') ? dest.toLowerCase().startsWith(here) : dest.toLowerCase().startsWith(`${here}/`))) return null;
-    return dest.slice(here.length + (here.endsWith(':') ? 0 : 1)).split('/');
-  };
+  const below = (dest: string) => belowDrawer(amiga, dest);
   const at = (name: string) => out.findIndex((e) => e.name.toLowerCase() === name.toLowerCase());
   type Count = { name: string; total: number; done: number; failed: number; sending: boolean };
   const drawers = new Map<string, Count>();
@@ -222,8 +216,6 @@ async function withArriving(t: SendTarget, segs: string[], amiga: string, listed
   }
   return out;
 }
-/** A get of a copy between volumes whose file has not reached the destination's queue yet. */
-const COMING = ['waiting', 'sent', 'fetching', 'placing'];
 
 /** The free space of the volume a pane is in, from a remembered volumes answer (never asked for on its own). */
 async function volumeFree(t: SendTarget, volume: string, now: number): Promise<string> {

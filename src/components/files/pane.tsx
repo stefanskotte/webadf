@@ -156,7 +156,11 @@ export function Pane({ filterRef, ...p }: PaneProps) {
   const wentUp = useRef(false);
   const upHadFocus = useRef(false);
   const sectionRef = useRef<HTMLElement>(null);
+  const focusManager = () => sectionRef.current?.closest<HTMLElement>('[tabindex]')?.focus({ preventScroll: true });
   function goUp(ev: React.MouseEvent, path: string) {
+    // A mouse click leaves the keys on the manager, as a click on a row does: a browser that focuses a clicked button would
+    // have the next Enter or Space climb again. Enter on the button (detail 0) stays there, so it walks on up.
+    if (ev.detail >= 1) focusManager();
     if (ev.detail > 1) return;   // the rest of a double-click on a folder, which brought this row under the pointer
     wentUp.current = true;
     upHadFocus.current = ev.currentTarget.contains(document.activeElement);
@@ -164,7 +168,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
   }
   function holdSecondClick(ev: React.MouseEvent) {
     if (ev.detail <= 1) wentUp.current = false;
-    else if (wentUp.current) { ev.preventDefault(); ev.stopPropagation(); }
+    else if (wentUp.current) { ev.preventDefault(); ev.stopPropagation(); focusManager(); }   // its mouse-down focused what is under it
   }
   // Enter on the row can take the row away (a root, a refused place). The focus would fall to the page and the keys with
   // it, so it goes where a click in the pane puts it: the manager, the nearest focusable thing around the pane.
@@ -172,7 +176,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
   useEffect(() => {
     if (hasUpRow || !upHadFocus.current) return;
     upHadFocus.current = false;
-    if (document.activeElement === document.body) sectionRef.current?.closest<HTMLElement>('[tabindex]')?.focus({ preventScroll: true });
+    if (document.activeElement === document.body) focusManager();
   }, [hasUpRow]);
 
   return (

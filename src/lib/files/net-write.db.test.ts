@@ -694,3 +694,128 @@ describe('final review fixes: copies onto a volume', () => {
     expect(await writes()).toEqual([]);
   });
 });
+
+// Whole-branch review I-1: what is on its way to a drawer is as good as there. Without this, a second copy of a name
+// not on the Amiga yet went ahead unasked and arrived as _1 files in the first copy's drawer.
+describe('a name on its way counts as a clash', () => {
+  const TOOLS = 'NET:/w1/Work/Tools';
+  const copy = (source: string, onClash: 'ask' | 'skip' | 'replace' | 'keep-both' = 'ask', dest = TOOLS) => op({ op: 'copy', sources: [source], dest, onClash });
+  const dests = async () => (await rows()).map((x) => [x.amigaDest, x.onClash]);
+  /** A row in a queue, straight into the table: a state or a place a copy could not make here. */
+  const queued = (id: string, amigaDest: string, o: Partial<typeof transfers.$inferInsert> = {}) => getDb().insert(transfers).values({ id, orgId: 'o1', deviceId: 'w1',
+    createdByUserId: 'u1', path: id, sizeBytes: 1, crc32: 0, protection: 0, comment: '', blobSha256: 'f'.repeat(64), expiresAt: new Date(Date.now() + 3600_000), amigaDest, ...o });
+  const mkdir = (id: string, amigaPath: string, status = 'waiting', deviceId = 'w1') => getDb().insert(remoteRequests).values({ id, orgId: 'o1', deviceId, kind: 'mkdir', amigaPath,
+    status, target: { label: amigaPath }, fetchId: 'jm', createdAt: new Date() });
+  beforeEach(async () => { await remember('Work:Tools', [ent('a.lha', 3)]); await stash('In/b.lha', 'bee'); });
+
+  it('a second copy while the first is queued asks; Skip sends nothing', async () => {
+    expect(await copy('STASH:/In/b.lha')).toMatchObject({ kind: 'done', job: { files: 1 } });
+    expect(await copy('STASH:/In/b.lha')).toEqual({ kind: 'clashes', clashes: [{ source: 'STASH:/In/b.lha', name: 'b.lha', dest: TOOLS }] });
+    expect(await copy('STASH:/In/b.lha', 'skip')).toMatchObject({ kind: 'done', items: [{ source: 'STASH:/In/b.lha', ok: true, skipped: true }] });
+    expect(await rows()).toHaveLength(1);
+  });
+
+  it('a row being sent counts as well as a waiting one', async () => {
+    await queued('s1', 'Work:Tools/b.lha', { status: 'sending' });
+    expect(await copy('STASH:/In/b.lha')).toMatchObject({ kind: 'clashes' });
+  });
+
+  it('a drawer on its way: a second copy asks; Keep both makes a drawer free in the listing and the queue, Replace writes into it', async () => {
+    await stash('Pack/one.txt', '1');
+    await stash('Pack/Sub/two.txt', '2');
+    await remember('Work:Tools', [ent('a.lha', 3), ent('Pack_1', 0, true)]);
+    expect(await copy('STASH:/Pack')).toMatchObject({ kind: 'done', job: { files: 2 } });
+    expect(await copy('STASH:/Pack')).toMatchObject({ kind: 'clashes', clashes: [{ name: 'Pack' }] });
+    expect(await rows()).toHaveLength(2);
+    expect(await copy('STASH:/Pack', 'keep-both')).toMatchObject({ kind: 'done', job: { files: 2 } });   // Pack_1 is on the Amiga
+    expect(await copy('STASH:/Pack', 'keep-both')).toMatchObject({ kind: 'done', job: { files: 2 } });   // Pack_2 is on its way
+    expect(await copy('STASH:/Pack', 'replace')).toMatchObject({ kind: 'done', job: { files: 2 } });
+    expect((await dests()).map(([d, m]) => `${d} ${m}`).sort()).toEqual([
+      'Work:Tools/Pack/Sub/two.txt keep', 'Work:Tools/Pack/Sub/two.txt replace', 'Work:Tools/Pack/one.txt keep', 'Work:Tools/Pack/one.txt replace',
+      'Work:Tools/Pack_2/Sub/two.txt keep', 'Work:Tools/Pack_2/one.txt keep', 'Work:Tools/Pack_3/Sub/two.txt keep', 'Work:Tools/Pack_3/one.txt keep']);
+  });
+
+  it('a Makedir not yet answered counts, its deepest path by its first drawer; an answered one does not', async () => {
+    await stash('New/one.txt', '1');
+    await stash('Odd/one.txt', '1');
+    await stash('Gone/one.txt', '1');
+    await stash('Empty/inner.txt', '1');
+    await mkdir('m1', 'Work:Tools/New');
+    await mkdir('m2', 'Work:Tools/Odd/Deep', 'sent');
+    await mkdir('m3', 'Work:Tools/Gone', 'failed');
+    await mkdir('m4', 'Work:Tools/Empty', 'done');
+    expect(await copy('STASH:/New')).toMatchObject({ kind: 'clashes', clashes: [{ name: 'New' }] });
+    expect(await copy('STASH:/Odd')).toMatchObject({ kind: 'clashes', clashes: [{ name: 'Odd' }] });
+    expect(await copy('STASH:/Gone')).toMatchObject({ kind: 'done' });
+    expect(await copy('STASH:/Empty')).toMatchObject({ kind: 'done' });
+  });
+
+  it('a drawer with no files on its way by Makedir alone asks too', async () => {
+    await stash('Hollow', '', 'dir');
+    expect(await copy('STASH:/Hollow')).toMatchObject({ kind: 'done', job: { files: 0, writes: 1 } });
+    expect(await copy('STASH:/Hollow')).toMatchObject({ kind: 'clashes', clashes: [{ name: 'Hollow' }] });
+  });
+
+  it('a file coming from another volume counts', async () => {
+    await getDb().insert(remoteRequests).values({ id: 'g1', orgId: 'o1', deviceId: 'w2', kind: 'get', amigaPath: 'Data:b.lha', status: 'fetching', fetchId: 'jg',
+      target: { dest: 'STASH:', rel: ['b.lha'], replace: false, library: null, relay: { deviceId: 'w1', dest: 'Work:Tools/b.lha', onClash: 'keep' } }, createdAt: new Date() });
+    expect(await copy('STASH:/In/b.lha')).toMatchObject({ kind: 'clashes' });
+  });
+
+  it.each(['delivered', 'cancelled', 'failed', 'skipped', 'expired'])('a %s row does not count', async (status) => {
+    await queued('f1', 'Work:Tools/b.lha', { status, finishedAt: new Date() });
+    expect(await copy('STASH:/In/b.lha')).toMatchObject({ kind: 'done', job: { files: 1 } });
+  });
+
+  it('a row past its time that nothing has swept yet does not count', async () => {
+    await queued('f1', 'Work:Tools/b.lha', { expiresAt: new Date(Date.now() - 1000) });
+    expect(await copy('STASH:/In/b.lha')).toMatchObject({ kind: 'done', job: { files: 1 } });
+  });
+
+  it('another board\'s row does not count', async () => {
+    await queued('o1', 'Work:Tools/b.lha', { deviceId: 'w2' });
+    await mkdir('m1', 'Work:Tools/b.lha', 'waiting', 'w2');
+    expect(await copy('STASH:/In/b.lha')).toMatchObject({ kind: 'done', job: { files: 1 } });
+  });
+
+  it('another directory\'s row does not count: above, beside, a longer name, or inside a drawer of another name', async () => {
+    await queued('r1', 'Work:b.lha');
+    await queued('r2', 'Work:Other/b.lha');
+    await queued('r3', 'Work:Tools2/b.lha');
+    await queued('r4', 'Work:Tools/Sub/b.lha');
+    await queued('r5', 'Data:Tools/b.lha');
+    await queued('r6', 'b.lha', { amigaDest: null });   // a plain Queue send has no place
+    expect(await copy('STASH:/In/b.lha')).toMatchObject({ kind: 'done', job: { files: 1 } });
+    expect((await rows()).filter((x) => x.onClash === 'keep').map((x) => x.amigaDest)).toEqual(['Work:Tools/b.lha']);
+  });
+
+  it('the row under a volume\'s root is under that root, with nothing to slip past', async () => {
+    await remember('Work:', []);
+    await queued('r1', 'Work:b.lha');
+    expect(await copy('STASH:/In/b.lha', 'ask', 'NET:/w1/Work')).toMatchObject({ kind: 'clashes' });
+    await queued('r2', 'Work:Sub/b.lha');
+    await stash('Sub/z.txt', 'z');
+    expect(await copy('STASH:/Sub', 'ask', 'NET:/w1/Work')).toMatchObject({ kind: 'clashes' });
+  });
+
+  it('case differences count, in the row\'s place and in its name, and in Keep both\'s choice', async () => {
+    await queued('r1', 'WORK:TOOLS/B.LHA');
+    expect(await copy('STASH:/In/b.lha')).toMatchObject({ kind: 'clashes', clashes: [{ name: 'b.lha' }] });
+    await queued('r2', 'work:tools/B_1.LHA');
+    expect(await copy('STASH:/In/b.lha', 'keep-both')).toMatchObject({ kind: 'done' });
+    expect((await rows()).at(-1)?.amigaDest).toBe('Work:Tools/b_2.lha');
+  });
+
+  it('a move asks the same', async () => {
+    await queued('r1', 'Work:Tools/b.lha');
+    expect(await op({ op: 'move', sources: ['STASH:/In/b.lha'], dest: TOOLS, onClash: 'ask' })).toMatchObject({ kind: 'clashes' });
+    expect(await listStash(getDb(), 'o1')).not.toEqual([]);
+  });
+
+  it('M-1: two sources with one name: the refusal says the name', async () => {
+    await stash('A/same.txt', '1');
+    await stash('B/same.txt', '2');
+    expect(await op({ op: 'copy', sources: ['STASH:/A/same.txt', 'STASH:/B/same.txt'], dest: TOOLS, onClash: 'ask' }))
+      .toMatchObject({ kind: 'refused', refusal: { code: 'name_exists', detail: 'two sources are named same.txt' } });
+  });
+});

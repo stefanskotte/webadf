@@ -23,6 +23,7 @@ const { transfers } = await import('@/db/schema/transfers');
 const { remoteRequests } = await import('@/db/schema/remote-requests');
 const { amigaUploads } = await import('@/db/schema/amiga-uploads');
 const { jobView, listJobs } = await import('./jobs');
+const { jobLine, jobTitle } = await import('./job-view');
 
 const NOW = new Date();
 const ago = (ms: number) => new Date(NOW.getTime() - ms);
@@ -111,6 +112,49 @@ describe('listJobs: Files jobs', () => {
     expect(j.writes.map((w) => [w.label, w.status, w.quiet])).toEqual([['Work:Old', 'waiting', false], ['Work:Old.info', 'waiting', true]]);
   });
 
+  it('M-3: a copy of nothing but drawers says where they go, and counts them', async () => {
+    await getDb().insert(remoteRequests).values([
+      rq('e1', { fetchId: 'j9', kind: 'mkdir', amigaPath: 'Work:Monkey/Disk 1', target: { label: 'Work:Monkey/Disk 1', ensure: true } }),
+      rq('e2', { fetchId: 'j9', kind: 'mkdir', amigaPath: 'Work:Monkey/Disk 1/Empty', target: { label: 'Work:Monkey/Disk 1/Empty', ensure: true }, status: 'done', answeredAt: ago(1000), createdAt: ago(9_999) }),
+      rq('e3', { fetchId: 'j9', kind: 'mkdir', amigaPath: 'Work:Monkey/Disk 2', target: { label: 'Work:Monkey/Disk 2', ensure: true }, createdAt: ago(9_998) }),
+    ]);
+    const [j] = await jobs();
+    expect(j).toMatchObject({ id: 'j9', kind: 'write', place: 'Work:Monkey', total: 0, running: true });
+    expect(jobTitle(j)).toBe('Changing the disks of A500 · Work:Monkey');
+    expect(jobLine(j, null)).toBe('1 of 3 items');
+  });
+
+  it('M-3: a Makedir of the person\'s own names itself, with no place beside it', async () => {
+    await getDb().insert(remoteRequests).values([rq('e1', { fetchId: 'j9', kind: 'mkdir', amigaPath: 'Work:New', target: { label: 'Work:New' } })]);
+    const [j] = await jobs();
+    expect(j).toMatchObject({ place: null });
+    expect(jobTitle(j)).toBe('Making Work:New on A500');
+  });
+
+  it('M-4: a failed file of several drawers is said by its path below the job\'s place', async () => {
+    const failed = { jobId: 'j8', status: 'failed', errorCode: 'full', finishedAt: ago(1000) };
+    await getDb().insert(transfers).values([
+      tr('r1', { ...failed, path: 'Disk.info', amigaDest: 'Work:Monkey/Disk 1/Disk.info' }),
+      tr('r2', { ...failed, path: 'Disk.info', amigaDest: 'Work:Monkey/Disk 2/Disk.info' }),
+      tr('r3', { ...failed, path: 'x', amigaDest: 'WORK:monkey/Disk 2/C/x' }),
+    ]);
+    const [j] = await jobs();
+    expect(j.place).toBe('Work:Monkey');
+    expect(j.failed.map((f) => f.name)).toEqual(['Disk 1/Disk.info', 'Disk 2/Disk.info', 'Disk 2/C/x']);
+  });
+
+  it('M-4: one failed file keeps its own name, in a drawer or at a volume\'s root; a plain send too', async () => {
+    const failed = { jobId: 'j8', status: 'failed', errorCode: 'full', finishedAt: ago(1000) };
+    await getDb().insert(transfers).values([tr('r1', { ...failed, path: 'a.txt', amigaDest: 'Work:Tools/Deep/a.txt' })]);
+    expect((await jobs())[0].failed.map((f) => f.name)).toEqual(['a.txt']);
+    await getDb().delete(transfers);
+    await getDb().insert(transfers).values([tr('r2', { ...failed, path: 'b.txt', amigaDest: 'Work:b.txt' })]);
+    expect((await jobs())[0].failed.map((f) => f.name)).toEqual(['b.txt']);
+    await getDb().delete(transfers);
+    await getDb().insert(transfers).values([tr('r3', { ...failed, path: 'dir/c.txt', amigaDest: null })]);
+    expect((await jobs())[0].failed.map((f) => f.name)).toEqual(['dir/c.txt']);
+  });
+
   it('finished within 2 minutes stays, with its finish time; older is gone', async () => {
     await getDb().insert(transfers).values([
       tr('r5', { jobId: 'j5', status: 'delivered', finishedAt: ago(90_000), amigaDest: 'Work:a', createdAt: ago(100_000) }),
@@ -149,7 +193,7 @@ describe('listJobs: Files jobs', () => {
     ]);
     const [j] = await jobs();
     expect(j).toMatchObject({ cancelled: 1, running: false });
-    expect(j.failed.map((f) => f.name)).toEqual(['r3']);
+    expect(j.failed.map((f) => f.name)).toEqual(['c']);   // by its destination below the job's place (M-4)
   });
 
   it('a board it waits on that is offline is named', async () => {

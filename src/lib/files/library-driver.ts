@@ -23,6 +23,7 @@ import {
   checkComment, checkName, groupBy, itemResult, keepBothName, REMOVE_FAILED, refuse, Refused, skippedItem,
   type CopyMove, type FsCtx, type IncomingItem, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome, type VolumeDriver,
 } from './driver';
+import { twoSourcesNamed } from './words';
 
 type Run = OpCtx;
 
@@ -184,7 +185,7 @@ async function copyOrMove(ctx: Run, req: CopyMove): Promise<Outcome> {
     const clash = noop ? null : dest.children.find((c) => same(c.name, s.hit.entry.name)) ?? null;
     const item = itemResult(s.raw, () => {
       checkName(s.hit.entry.name);
-      if (!noop && placed.some((n) => same(n, s.hit.entry.name))) refuse('name_exists', 409, 'two sources share a name');
+      if (!noop && placed.some((n) => same(n, s.hit.entry.name))) refuse('name_exists', 409, twoSourcesNamed(s.hit.entry.name));
     });
     if (!item.ok) { results.set(s.raw, item); continue; }
     placed.push(s.hit.entry.name);
@@ -467,7 +468,7 @@ async function write(ctx: Run, dir: FsPath, tops: IncomingTop[], onClash: OnClas
         if (i.kind === 'file' && !i.bytes && !i.sha256) refuse('failed', 500, `${i.rel.join('/')} came without its bytes`);
       }
       checkName(name);
-      if (placed.some((n) => same(n, name))) refuse('name_exists', 409, 'two sources share a name');
+      if (placed.some((n) => same(n, name))) refuse('name_exists', 409, twoSourcesNamed(name));
     });
     if (!item.ok) { results.set(top.source, item); continue; }
     placed.push(name);

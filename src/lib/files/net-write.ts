@@ -4,7 +4,10 @@
 // PROTECT, NOTE), and one queue row per file of a copy onto a volume (the extended FILE). Every request and row of one
 // operation shares a job id; the pane follows the job (jobProgress). Nothing here waits for the Amiga: an op answers
 // once its requests are queued, and refuses at once when the board cannot write (writeBlock). SERVER ONLY.
+import { and, eq, gt, inArray, isNotNull, sql } from 'drizzle-orm';
 import { getDb, type Db } from '@/db';
+import { remoteRequests } from '@/db/schema/remote-requests';
+import { transfers } from '@/db/schema/transfers';
 import { findSendTarget } from '@/lib/send-targets';
 import { targetState, type SendTarget } from '@/lib/send-ui';
 import { storeSendBytes } from '@/lib/send-http';
@@ -20,6 +23,7 @@ import {
   checkComment, checkName, refuse, skippedItem, type Clash, type FsCtx, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome,
 } from './driver';
 import { keepBothName, sameStashName } from './stash-paths';
+import { twoSourcesNamed } from './words';
 
 export const RELIST = 'List the drawer again and retry';
 const INFO = '.info';
@@ -78,6 +82,39 @@ async function mustRemember(boardId: string, amiga: string): Promise<EntryInfo[]
   return e;
 }
 const has = (entries: EntryInfo[] | null, name: string) => !!entries?.some((e) => sameStashName(e.name, name));
+
+/** Where an Amiga path is below a drawer, by names (`Work:a` + `Work:a/b/c` = b, c), null when it is not; any case, as AmigaDOS compares. */
+export function belowDrawer(drawer: string, path: string): string[] | null {
+  const here = drawer.toLowerCase();
+  const root = here.endsWith(':');
+  if (!path.toLowerCase().startsWith(root ? here : `${here}/`)) return null;
+  const rest = path.slice(here.length + (root ? 0 : 1));
+  return rest ? rest.split('/') : null;
+}
+
+/** A get of a copy between volumes whose file has not reached the destination's queue yet. */
+export const COMING = ['waiting', 'sent', 'fetching', 'placing'];
+/** The gets in these states of a copy between volumes whose files go to this board's queue. */
+export const relayedTo = (db: Db, boardId: string, statuses: string[]) => db.select().from(remoteRequests).where(and(eq(remoteRequests.kind, 'get'),
+  inArray(remoteRequests.status, statuses), sql`${remoteRequests.target}->'relay'->>'deviceId' = ${boardId}`));
+
+/**
+ * The names in a drawer that are on their way there, as the pane's Waiting marks have them (net-driver.ts withArriving):
+ * each active queue row's, each Makedir not yet answered, each file still coming from another volume, by the first name
+ * below the drawer. A row finished, cancelled, failed or past its time is not on its way.
+ */
+async function arrivingNames(db: Db, boardId: string, amiga: string, now = new Date()): Promise<string[]> {
+  const [queued, made, coming] = await Promise.all([
+    db.select({ dest: transfers.amigaDest }).from(transfers).where(and(eq(transfers.deviceId, boardId), inArray(transfers.status, ['queued', 'sending']),
+      gt(transfers.expiresAt, now), isNotNull(transfers.amigaDest))),
+    db.select({ dest: remoteRequests.amigaPath }).from(remoteRequests).where(and(eq(remoteRequests.deviceId, boardId), eq(remoteRequests.kind, 'mkdir'),
+      inArray(remoteRequests.status, ['waiting', 'sent']))),
+    relayedTo(db, boardId, COMING),
+  ]);
+  const dests = [...queued.map((r) => r.dest!), ...made.map((r) => r.dest),
+    ...coming.flatMap((g) => (g.target as { relay?: { dest: string } } | null)?.relay?.dest ?? [])];
+  return dests.flatMap((d) => belowDrawer(amiga, d)?.[0] ?? []);
+}
 const isInfo = (name: string) => name.toLowerCase().endsWith(INFO) && name.length > INFO.length;
 
 /**
@@ -232,8 +269,9 @@ export const clashMode = (onClash: OnClash): ClashMode => (onClash === 'replace'
 /**
  * A copy (or move) onto a volume (spec 2026-10-31 §4.1, W5): one queue row per file, in the order the copy walked them,
  * with the absolute path and the clash mode; Makedirs (`ensure`) for the drawers that hold no file, so empty drawers
- * arrive too. Clashes are decided against the destination's remembered listing (plan W4); keep both renames the top now
- * (a drawer arrives beside the one there). The limits are the board's queue's (send-limits.ts: files and bytes, counting what already waits)
+ * arrive too. Clashes are decided against the destination's remembered listing (plan W4) and what is on its way there
+ * (arrivingNames: a copy not yet landed would otherwise be joined unasked); keep both renames the top now (a drawer
+ * arrives beside the one there). The limits are the board's queue's (send-limits.ts: files and bytes, counting what already waits)
  * and 4 MB a file; a copy too big for the queue is refused before it stores anything. A move's sources go once their rows are delivered (`moveSource`, plan W7): nothing is `written` now.
  */
 export async function copyOntoVolume(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], onClash: OnClash, opts: { move?: boolean } = {}): Promise<Outcome> {
@@ -242,15 +280,17 @@ export async function copyOntoVolume(ctx: OpCtx, dir: FsPath, tops: IncomingTop[
   const t = await writableBoard(ctx, at.board);
   if (!ctx.userId) refuse('unsupported', 400, 'signed-in person required');
   const entries = await mustRemember(t.id, at.amiga);
+  const arriving = await arrivingNames(getDb(), t.id, at.amiga);
+  const there = (n: string) => has(entries, n) || arriving.some((a) => sameStashName(a, n));
   const results = new Map<string, OpItem>();
   const clashes: Clash[] = [];
   const going: { top: IncomingTop; name: string; mode: ClashMode }[] = [];
-  const taken = (n: string) => has(entries, n) || going.some((g) => sameStashName(g.name, n));
+  const taken = (n: string) => there(n) || going.some((g) => sameStashName(g.name, n));
   for (const top of tops) {
     const name = top.items[0]?.rel[0];
     if (!name) { results.set(top.source, { source: top.source, ok: true }); continue; }
-    if (going.some((g) => sameStashName(g.name, name))) refuse('name_exists', 409, 'two sources share a name');
-    if (!has(entries, name)) { going.push({ top, name, mode: clashMode(onClash) }); continue; }
+    if (going.some((g) => sameStashName(g.name, name))) refuse('name_exists', 409, twoSourcesNamed(name));
+    if (!there(name)) { going.push({ top, name, mode: clashMode(onClash) }); continue; }
     if (onClash === 'ask') { clashes.push({ source: top.source, name, dest: formatPath(dir) }); continue; }
     if (onClash === 'skip') { results.set(top.source, skippedItem(top.source)); continue; }
     if (onClash === 'replace') { going.push({ top, name, mode: 'replace' }); continue; }

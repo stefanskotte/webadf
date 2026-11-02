@@ -20,6 +20,7 @@ import {
   checkComment, checkName, itemResult, refuse, Refused, REMOVE_FAILED, skippedItem,
   type CopyMove, type FileBytes, type FsCtx, type IncomingItem, type IncomingTop, type OnClash, type OpCtx, type OpItem, type Outcome, type VolumeDriver,
 } from './driver';
+import { twoSourcesNamed } from './words';
 import type { Crumb, FsEntry, Listing } from './types';
 
 const ROOT: Crumb = { label: 'STASH:', path: 'STASH:' };
@@ -348,7 +349,7 @@ export async function writeStash(ctx: OpCtx, dir: FsPath, tops: IncomingTop[], o
         if (size === undefined || (!i.bytes && !i.sha256)) refuse('failed', 500, `${i.rel.join('/')} came without its bytes`);
         if (size > STASH_FILE_MAX) refuse('too_large', 413, '20 MB per file');
       }
-      if (placed.some((n) => same(n, name))) refuse('name_exists', 409, 'two sources share a name');
+      if (placed.some((n) => same(n, name))) refuse('name_exists', 409, twoSourcesNamed(name));
     });
     if (!item.ok) { results.set(top.source, item); continue; }
     placed.push(name);
@@ -412,7 +413,7 @@ async function moveWithin(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
     const parent = src.shown.slice(0, -1);
     const noop = parent.length === folder.shown.length && shownWithin(parent, folder.shown);   // moved to where it is
     const item = itemResult(src.raw, () => {
-      if (!noop && placed.some((n) => same(n, name))) refuse('name_exists', 409, 'two sources share a name');
+      if (!noop && placed.some((n) => same(n, name))) refuse('name_exists', 409, twoSourcesNamed(name));
     });
     if (!item.ok) { results.set(src.raw, item); continue; }
     placed.push(name);

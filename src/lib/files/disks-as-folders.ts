@@ -5,6 +5,7 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements, games } from '@/db/schema/catalog';
+import type { AdfEntry } from '@/lib/adffs';
 import { mapLimit } from '@/lib/pool';
 import { COPY_MAX_DISKS } from '@/lib/remote-limits';
 import { isLocal } from '@/lib/remote-hidden';
@@ -14,7 +15,7 @@ import { BlobUnavailableError, diskName, loadDisk, type ResolvedDisk } from './l
 import { walk } from './library-driver';
 import { libPath, opMemo, placeInLibrary, type LibraryPlace } from './library-paths';
 import { copyOntoVolume, isNetVolumeDir } from './net-write';
-import { parsePath, type FsPath } from './path';
+import { amigaNameProblem, parsePath, type FsPath } from './path';
 import { COLLECTIONS_STAY, DISKS_STAY_IN_LIBRARY } from './shelf-rules';
 
 const NOT_ROWS = 'disks and titles go on their own';
@@ -35,6 +36,16 @@ async function disksOfTitles(ctx: OpCtx, gameIds: string[]) {
   return groupBy(rows, (r) => r.gameId);
 }
 
+/** A name on the disk the Amiga cannot take, refused by its path there: the item's own name says which disk. */
+function checkEntryNames(entries: AdfEntry[], at: string[] = []) {
+  for (const e of entries) {
+    const path = [...at, e.name];
+    const problem = amigaNameProblem(e.name);
+    if (problem) refuse('bad_name', 400, `${problem} at ${path.join('/')}`);
+    if (e.kind === 'dir') checkEntryNames(e.children, path);
+  }
+}
+
 /** One disk as a copy's top, or the item that says why it cannot go. */
 async function collectDisk(ctx: OpCtx, { source, gameId, diskId, name }: OneDisk): Promise<IncomingTop | OpItem> {
   let d: ResolvedDisk | null;
@@ -50,6 +61,7 @@ async function collectDisk(ctx: OpCtx, { source, gameId, diskId, name }: OneDisk
     // A damaged entry is left out of the tree: copying what remains would say ok with files missing.
     if (disk.truncated || disk.warnings.length) refuse('unsupported', 400, `${name}: its directory is damaged, some files cannot be reached`);
     checkName(name);
+    checkEntryNames(disk.root);
     items.push({ rel: [name], kind: 'dir', date: null, protection: 0, comment: null });
     for (const entry of disk.root) walk(disk.bytes, entry, [name, entry.name], items);
     const big = items.find((i) => (i.bytes?.length ?? 0) > SEND_FILE_MAX);
@@ -76,15 +88,19 @@ export async function copyDisksOntoVolume(ctx: OpCtx, req: CopyMove, dest: FsPat
 
   const rows = places as (TitleRow | DiskRow)[];
   const byTitle = await disksOfTitles(ctx, [...new Set(rows.map((at) => at.gameId))]);
+  // A title with no disks here is reported as its row is named.
+  const hollow = rows.filter((at) => at.level === 'title' && !byTitle.has(at.gameId)).map((at) => at.gameId);
+  const titles = new Map(hollow.length ? (await getDb().select({ id: games.id, title: games.title }).from(games)
+    .where(and(inArray(games.id, hollow), eq(games.orgId, ctx.orgId)))).map((g) => [g.id, g.title] as const) : []);
   // In source order, a title in place of its disks; a row that is not here (null) is that item's refusal.
-  const wanted: { source: string; disk: OneDisk | null }[] = rows.flatMap((at, i) => {
+  const wanted: { source: string; disk: OneDisk | null; name?: string }[] = rows.flatMap((at, i) => {
     const here = byTitle.get(at.gameId) ?? [];
     if (at.level === 'disk') {
       const r = here.find((x) => x.id === at.diskId);
       const source = req.sources[i];
       return [{ source, disk: r ? { source, gameId: at.gameId, diskId: r.id, name: diskName(r) } : null }];
     }
-    if (!here.length) return [{ source: req.sources[i], disk: null }];
+    if (!here.length) return [{ source: req.sources[i], disk: null, name: titles.get(at.gameId) }];
     return here.map((r) => {
       const source = libPath(...at.prefix, at.gameId, r.id);
       return { source, disk: { source, gameId: at.gameId, diskId: r.id, name: diskName(r) } };
@@ -96,7 +112,7 @@ export async function copyDisksOntoVolume(ctx: OpCtx, req: CopyMove, dest: FsPat
   const tops: IncomingTop[] = [];
   const results = new Map<string, OpItem>();
   for (const w of wanted) {
-    const got = w.disk ? await collectDisk(ctx, w.disk) : notFound(w.source);
+    const got = w.disk ? await collectDisk(ctx, w.disk) : notFound(w.source, w.name);
     if ('items' in got) tops.push(got); else results.set(w.source, got);
   }
   if (!tops.length) return { kind: 'done', items: wanted.map((w) => results.get(w.source)!), written: [] };

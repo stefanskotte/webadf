@@ -54,10 +54,14 @@ describe('refusalWords', () => {
   it('bad_name for a comment says so', () => {
     expect(refusalWords('bad_name', 'comment')).toMatch(/comment/i);
   });
+  it('bad_name of an entry on a disk says which entry, then the usual words', () => {
+    expect(refusalWords('bad_name', 'bad-char at Files/in:ner.txt')).toBe(`Files/in:ner.txt: ${refusalWords('bad_name', 'bad-char')}`);
+    expect(refusalWords('bad_name', 'too-long at a/b')).toBe(`a/b: ${refusalWords('bad_name', 'too-long')}`);
+  });
   it('name_exists details', () => {
     expect(refusalWords('name_exists')).toMatch(/already/i);
     expect(refusalWords('name_exists', 'same file')).toMatch(/same file/i);
-    expect(refusalWords('name_exists', 'two sources share a name')).toMatch(/same name/i);
+    expect(refusalWords('name_exists', 'two sources are named Disk 1')).toBe('Two of the chosen items are named Disk 1.');
   });
   it('read_only reads the engine\'s reason, not just a mount', () => {
     expect(refusalWords('read_only', 'hfe_read_only')).toBe('HFE disks are read-only.');
