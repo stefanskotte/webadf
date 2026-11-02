@@ -25,6 +25,8 @@ Transfer 2.11 shows whole names in the window (up to 30 characters, narrower onl
 to go onto a volume stay out of the window on purpose: listing them stalled a fresh Transfer's first file and slowed each
 file on the A500 (bench 2026-11-02, about 4-6 s a file against 2-3 s).
 The binary is 116 B larger (61956 B); no new buffers.
+Transfer 2.12 fixes copies stopping while its window was the active one: the window no longer asks for Intuition's ticks. Holding a
+list arrow no longer repeats; a click steps and the scroller drags.
 
 ## Using it
 

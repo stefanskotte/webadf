@@ -531,7 +531,11 @@ static int build(gui *G) {
         WA_NewLookMenus, (ULONG)(newlook ? TRUE : FALSE), WA_PubScreen, (ULONG)G->scr, WA_Gadgets, (ULONG)gl,
         WA_InnerWidth, iw, WA_InnerHeight, (ULONG)(y + lh + 6 - top),
         WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
-        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_MENUPICK | BUTTONIDCMP | STRINGIDCMP | LISTVIEWIDCMP, TAG_END);
+        /* No INTUITICKS, which LISTVIEWIDCMP asks for: Intuition sends them only to the active window, about 10 a second, and
+           each one wakes WaitSelect in net.c. With this window active, a copy stopped within seconds until it was
+           deactivated (A500 bench 2026-11-02, twice; without ticks 66 files, none stopped). The cost: holding a list arrow
+           no longer repeats; a click steps and the scroller drags. */
+        WA_IDCMP, (IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_MENUPICK | BUTTONIDCMP | STRINGIDCMP | LISTVIEWIDCMP) & ~IDCMP_INTUITICKS, TAG_END);
     if (!G->win) return -1;
     if (G->menu) SetMenuStrip(G->win, G->menu);
     GT_RefreshWindow(G->win, NULL);
