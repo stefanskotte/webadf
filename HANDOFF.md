@@ -1504,6 +1504,26 @@ cx run failed its two first checks, the re-run passed: boot timing); A500: Maked
 SYS:Downloads/Transfer_3 (WBStartup has 2.9, updated by the operator). Next: the progress panel (spec
 docs/superpowers/specs/2026-11-01-progress-panel-design.md, APPROVED by the operator); the header select-all
 checkbox (Pillock; awaiting go).
+(1d) **SHIPPED 2026-11-02 (night, unattended; operator asleep): the progress panel + Select all** -- merge 653fbf57,
+live on production. Spec docs/superpowers/specs/2026-11-01-progress-panel-design.md (operator-approved), plan
+docs/superpowers/plans/2026-11-01-progress-panel.md (7 tasks) + Task 8 (Select all, controller brief on the operator's
+instruction). Subagent-driven: every task reviewed; fix rounds on Task 3 (relay re-created a move marker after Cancel --
+fixed with a lock + settleMove refusing removal for a cancelled job) and Task 4 (unguarded localStorage accessor);
+whole-branch review (opus) "with fixes": a Download finishing while the tab is hidden >2 min was lost -- fixed (the
+store asks a watched job once on its own; a failed ask retries every 15 s, 5x; only a 404 lets go), plus expireStale
+once per listing, per-job try/catch, relay reads the blob outside the lock, a placing file after Cancel queues nothing
+(also for a plain copy's lone last file: controller fix 2a9aa9b8), dialog/help wording. Final runs: unit 4248, DB 386,
+e2e 62 (transfers-panel, net-writes, files, net-volumes(+mobile), net(+mobile), stash). No migration (a `size` key
+in a get's target; a remote_requests row kind `cancel`, status done, never served). **A500 bench PASSED 2026-11-02**:
+Makedir Workbench:Monkey1 (+ Monkey1.info, protocol 6 on prod), Select all on Monkey Island Disk 1/Rooms (8 files,
+642 KB), Copy -> card "1 of 8 files · 191 of 642 KB · about 1 min left", bar 29 %, pill "1 job · 29 %"; Cancel the rest
+at 2 of 8 -> "Cancelled: 2 of 8 copied", card kept with a close; the Amiga held exactly sample.dat + music.dat, the
+in-flight disk01.lec left nothing; then Monkey1 deleted (shown in the panel too). Finding: a whole Monkey Island disk
+can't be copied in one go -- the board's send queue is capped at 32 files / 16 MB ("The board's queue holds 32 files /
+16 MB"); Disk 1 has more files than that with its drawers. Deferred minors and every ruling: the ledger
+.superpowers/sdd/2026-11-01-progress-panel/progress.md in the (removed) worktree is summarised here: cancelled-move count
+includes delivered-unsettled rows; Queue cancel takes all job-less waiting rows; an idle visible page doesn't see a job
+started on another device until reload; panel above the phone search scrim; same result text twice is announced once.
 (1b) **Files follow-ups:** the A500 bench items in §4-files; the pre-existing master e2e failures listed there. The two
 operator backlog items are SHIPPED 2026-11-01 (fc3aa195): a click on a pane's left edge goes up one level (Directory Opus;
 at a root nothing; lg and up only, the mouse's shortcut beside ↑), and History wears a caret (▾ closed, ▴ open).
