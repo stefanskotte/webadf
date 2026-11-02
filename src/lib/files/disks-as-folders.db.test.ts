@@ -14,6 +14,7 @@ async function admin(stmt: string) { const c = new Client({ connectionString: ba
 
 vi.mock('next/server', () => ({ after: () => {} }));
 vi.mock('@/lib/tosec-sweep', () => ({ sweep: async () => {} }));
+vi.mock('@/lib/session', () => ({ requireOrg: async () => ({ orgId: 'o1', userId: 'u1' }) }));
 // No file on a floppy reaches the real 4 MB: the limit is lowered so one on a real ADF can cross it.
 vi.mock('@/lib/transfers', async (orig) => ({ ...(await orig<typeof import('@/lib/transfers')>()), SEND_FILE_MAX: 20_000 }));
 
@@ -36,6 +37,8 @@ const { copyDisksOntoVolume } = await import('./disks-as-folders');
 const { parsePath } = await import('./path');
 const { DISKS_STAY_IN_LIBRARY, COLLECTIONS_STAY } = await import('./shelf-rules');
 const { COPY_MAX_DISKS } = await import('@/lib/remote-limits');
+const { clashGroups } = await import('./transfer');
+const { POST: POST_OPS } = await import('@/app/api/files/ops/route');
 
 const ctx = { orgId: 'o1', userId: 'u1' };
 const DATE = '2020-01-02T00:00:00.000Z';
@@ -214,7 +217,7 @@ describe('each disk by itself', () => {
     await seed('g1', 'Monkey', 'd2', 2, fullDisk('M2'));
     const r = await copy(['LIBRARY:/g1']);
     expect(r).toMatchObject({ kind: 'done', job: { files: 2 }, items: [
-      { source: DISK('g1', 'd1'), ok: false, refusal: { code: 'unsupported', detail: 'Disk 1 cannot be read as files' } },
+      { source: DISK('g1', 'd1'), name: 'Disk 1', ok: false, refusal: { code: 'unsupported', detail: 'Disk 1 cannot be read as files' } },
       { source: DISK('g1', 'd2'), ok: true }] });
     expect((await dests()).every((d) => d!.startsWith('Work:Monkey/Disk 2/'))).toBe(true);
   });
@@ -233,7 +236,7 @@ describe('each disk by itself', () => {
     await seed('g1', 'Monkey', 'd1', 1, fullDisk('M1'), 'Foo: Bar');
     await seed('g1', 'Monkey', 'd2', 2, fullDisk('M2'));
     expect(await copy(['LIBRARY:/g1'])).toMatchObject({ kind: 'done', items: [
-      { source: DISK('g1', 'd1'), ok: false, refusal: { code: 'bad_name' } }, { source: DISK('g1', 'd2'), ok: true }] });
+      { source: DISK('g1', 'd1'), name: 'Foo: Bar', ok: false, refusal: { code: 'bad_name' } }, { source: DISK('g1', 'd2'), ok: true }] });
     expect((await dests()).every((d) => d!.startsWith('Work:Monkey/Disk 2/'))).toBe(true);
   });
 
@@ -243,7 +246,25 @@ describe('each disk by itself', () => {
     await seed('g1', 'Monkey', 'd1', 1, big);
     await seed('g1', 'Monkey', 'd2', 2, fullDisk('M2'));
     expect(await copy(['LIBRARY:/g1'])).toMatchObject({ kind: 'done', items: [
-      { source: DISK('g1', 'd1'), ok: false, refusal: { code: 'too_large', detail: 'Disk 1: huge.dat is over 4 MB' } }, { source: DISK('g1', 'd2'), ok: true }] });
+      { source: DISK('g1', 'd1'), name: 'Disk 1', ok: false, refusal: { code: 'too_large', detail: 'Disk 1: huge.dat is over 4 MB' } }, { source: DISK('g1', 'd2'), ok: true }] });
+  });
+
+  it('a damaged directory refuses its disk, rather than copying what is left of it', async () => {
+    let adf = formatVolume({ filesystem: 'FFS', volumeName: 'Hurt' });
+    adf = must(addFile(adf, ROOT_BLOCK, 'a.txt', text('a')));
+    adf = must(addFile(adf, ROOT_BLOCK, 'b.txt', text('b')));
+    const header = (readVolume(adf) as { ok: true; root: { name: string; block: number }[] }).root.find((e) => e.name === 'a.txt')!.block;
+    adf = adf.slice();
+    adf[header * 512 + 40] ^= 0xff;   // inside the data table's unused part: only the checksum tells
+    const v = readVolume(adf) as { ok: true; root: { name: string }[]; warnings: string[] };
+    expect(v.root.map((e) => e.name)).toEqual(['b.txt']);
+    expect(v.warnings).not.toEqual([]);
+    await seed('g1', 'Monkey', 'd1', 1, adf);
+    await seed('g1', 'Monkey', 'd2', 2, fullDisk('M2'));
+    expect(await copy(['LIBRARY:/g1'])).toMatchObject({ kind: 'done', items: [
+      { source: DISK('g1', 'd1'), name: 'Disk 1', ok: false, refusal: { code: 'unsupported', detail: 'Disk 1: its directory is damaged, some files cannot be reached' } },
+      { source: DISK('g1', 'd2'), ok: true }] });
+    expect((await dests()).every((d) => d!.startsWith('Work:Monkey/Disk 2/'))).toBe(true);
   });
 
   it('a store failure is that disk\'s refusal; the other goes', async () => {
@@ -257,7 +278,7 @@ describe('each disk by itself', () => {
     });
     try {
       expect(await copy(['LIBRARY:/g1'])).toMatchObject({ kind: 'done', items: [
-        { source: DISK('g1', 'd1'), ok: false, refusal: { code: 'blob_unavailable' } }, { source: DISK('g1', 'd2'), ok: true }] });
+        { source: DISK('g1', 'd1'), name: 'Disk 1', ok: false, refusal: { code: 'blob_unavailable' } }, { source: DISK('g1', 'd2'), ok: true }] });
     } finally { spy.mockRestore(); }
   });
 });
@@ -266,7 +287,7 @@ describe('clashes', () => {
   it('asks with the disk path as source; replace then writes into the drawer and deletes nothing', async () => {
     await remember('Work:Monkey', [ent('Disk 1', 0, true)]);
     await seed('g1', 'Monkey', 'd1', 1, fullDisk('M1'));
-    expect(await copy([DISK('g1', 'd1')])).toEqual({ kind: 'clashes', clashes: [{ source: DISK('g1', 'd1'), name: 'Disk 1', dest: DEST }] });
+    expect(await copy([DISK('g1', 'd1')])).toEqual({ kind: 'clashes', sources: [DISK('g1', 'd1')], clashes: [{ source: DISK('g1', 'd1'), name: 'Disk 1', dest: DEST }] });
     expect(await rows()).toEqual([]);
     expect(await writes()).toEqual([]);
     expect(await copy([DISK('g1', 'd1')], 'replace')).toMatchObject({ kind: 'done', job: { files: 2 } });
@@ -274,12 +295,44 @@ describe('clashes', () => {
     expect((await writes()).filter((w) => w.kind === 'delete')).toEqual([]);
   });
 
-  it('a clash through a title names each disk path', async () => {
+  it('a clash through a title names each disk path, and says every disk the title stands for', async () => {
     await remember('Work:Monkey', [ent('Disk 2', 0, true)]);
+    await seed('g1', 'Monkey', 'd1', 1, nonDos(1));
+    await seed('g1', 'Monkey', 'd2', 2, fullDisk('M2'));
+    await seed('g1', 'Monkey', 'd3', 3, fullDisk('M3'));
+    const sources = [DISK('g1', 'd1'), DISK('g1', 'd2'), DISK('g1', 'd3')];
+    expect(await copy(['LIBRARY:/g1'])).toEqual({ kind: 'clashes', sources, clashes: [{ source: DISK('g1', 'd2'), name: 'Disk 2', dest: DEST }] });
+    expect(await rows()).toEqual([]);
+  });
+
+  it('a title answered Skip for one disk and Replace for the other queues only the other', async () => {
+    await remember('Work:Monkey', [ent('Disk 1', 0, true), ent('Disk 2', 0, true)]);
     await seed('g1', 'Monkey', 'd1', 1, fullDisk('M1'));
     await seed('g1', 'Monkey', 'd2', 2, fullDisk('M2'));
-    expect(await copy(['LIBRARY:/g1'])).toEqual({ kind: 'clashes', clashes: [{ source: DISK('g1', 'd2'), name: 'Disk 2', dest: DEST }] });
-    expect(await rows()).toEqual([]);
+    const asked = await copy(['LIBRARY:/g1']);
+    if (asked.kind !== 'clashes' || !asked.sources) throw new Error('expected the disks a title stands for');
+    const groups = clashGroups(asked.sources, asked.clashes.map((c) => c.source), { [DISK('g1', 'd1')]: 'skip', [DISK('g1', 'd2')]: 'replace' });
+    expect(groups).toEqual([{ onClash: 'replace', sources: [DISK('g1', 'd2')] }]);
+    for (const g of groups) await copy(g.sources, g.onClash as 'replace');
+    const all = await dests();
+    expect(all.filter((d) => d!.startsWith('Work:Monkey/Disk 2/'))).toHaveLength(2);
+    expect(all.filter((d) => d!.startsWith('Work:Monkey/Disk 1/'))).toEqual([]);
+    expect((await rows()).map((r) => r.onClash)).toEqual(['replace', 'replace']);
+  });
+
+  it('the disks a clash stands for and a failed disk\'s name reach the client through the route', async () => {
+    await remember('Work:Monkey', [ent('Disk 2', 0, true)]);
+    await seed('g1', 'Monkey', 'd1', 1, nonDos(1), 'Bad One');
+    await seed('g1', 'Monkey', 'd2', 2, fullDisk('M2'));
+    const post = (onClash: string) => POST_OPS(new Request('http://localhost/api/files/ops', { method: 'POST',
+      body: JSON.stringify({ op: 'copy', sources: ['LIBRARY:/g1'], dest: DEST, onClash }) }));
+    const clash = await post('ask');
+    expect(clash.status).toBe(409);
+    expect(await clash.json()).toEqual({ error: 'clashes', sources: [DISK('g1', 'd1'), DISK('g1', 'd2')],
+      clashes: [{ source: DISK('g1', 'd2'), name: 'Disk 2', dest: DEST }] });
+    const done = await post('replace');
+    expect(done.status).toBe(200);
+    expect((await done.json()).items).toMatchObject([{ source: DISK('g1', 'd1'), name: 'Bad One', ok: false }, { source: DISK('g1', 'd2'), ok: true }]);
   });
 });
 

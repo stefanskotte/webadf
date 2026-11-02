@@ -10,8 +10,11 @@ export type FsCtx = { orgId: string; userId: string | null };
 /** The caller's context while an op runs, collecting every history version its edits save. */
 export type OpCtx = FsCtx & { versions: OpVersion[] };
 export type OnClash = 'ask' | 'replace' | 'skip' | 'keep-both';
-/** `skipped`: a clash answered Skip left the item as it was (nothing written, a move's source kept). */
-export type OpItem = { source: string; ok: true; skipped?: true } | { source: string; ok: false; refusal: Refusal };
+/**
+ * `skipped`: a clash answered Skip left the item as it was (nothing written, a move's source kept). `name`: what to call
+ * a failed item when its source's last segment is no name (a library disk's path ends in its id).
+ */
+export type OpItem = { source: string; ok: true; skipped?: true } | { source: string; ok: false; refusal: Refusal; name?: string };
 export type Clash = { source: string; name: string; dest: string };
 /** A disk image Add to library placed (Task 5). */
 export type Added = { source: string; gameId: string; diskId: string };
@@ -22,11 +25,13 @@ export type Added = { source: string; gameId: string; diskId: string };
  * §4.5): the fetch id its progress is read by, and how many files it asked the Amiga for. `job`: an operation that changes
  * the Amiga's own disks (NET: volumes phase 2, spec 2026-10-31 §4.1): its id (the progress of its requests and queue
  * rows, plus its gets when it fetches too), how many files it copies onto a volume and how many one-line writes it made.
+ * A clashes answer's `sources`: every source the op acts on, when that is not what was asked (a title stands for its
+ * disks, spec 2026-11-02): the clashes name those, so the answers must be kept against them, not against the title.
  */
 export type Outcome =
   | { kind: 'done'; items: OpItem[]; added?: Added[]; written?: string[]; queued?: number; fetching?: { id: string; files: number };
     job?: { id: string; files: number; writes: number } }
-  | { kind: 'clashes'; clashes: Clash[] };
+  | { kind: 'clashes'; clashes: Clash[]; sources?: string[] };
 export type FileBytes = { name: string; bytes: Uint8Array; date: Date | null; protection: string; comment: string | null };
 /**
  * One entry of a copy, a folder before what it holds; rel[0] is the copied entry's own name. `sha256` when the bytes are

@@ -798,7 +798,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    * a NET: volume, whose files the board fetches from now on (spec 2026-10-30 §4.5): GET /api/files/net/fetch/<id>.
    */
   type Fetching = { id: string; files: number };
-  type Outcome = { kind: 'done'; items: OpItem[]; versions: OpVersion[]; added: Added[]; queued?: number; fetching?: Fetching; job?: Fetching } | { kind: 'clashes'; clashes: Clash[] }
+  type Outcome = { kind: 'done'; items: OpItem[]; versions: OpVersion[]; added: Added[]; queued?: number; fetching?: Fetching; job?: Fetching } | { kind: 'clashes'; clashes: Clash[]; sources?: string[] }
     | { kind: 'refused'; words?: string };
 
   /** `inline`: a refusal code the caller says itself (a collection name clash, under the field): no toast for it. */
@@ -811,9 +811,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       // Signed out, the fetch lands on the sign-in page (a 200 that is not JSON): said so, and nothing changes.
       if (isSignedOutAnswer(res)) { toast.error(SIGNED_OUT_TEXT); return { kind: 'refused' }; }
       const body = (await res.json().catch(() => null)) as {
-        items?: OpItem[]; versions?: OpVersion[]; added?: Added[]; queued?: number; fetching?: Fetching; job?: Fetching; error?: unknown; detail?: unknown; clashes?: Clash[];
+        items?: OpItem[]; versions?: OpVersion[]; added?: Added[]; queued?: number; fetching?: Fetching; job?: Fetching; error?: unknown; detail?: unknown; clashes?: Clash[]; sources?: string[];
       } | null;
-      if (res.status === 409 && body?.error === 'clashes' && body.clashes) return { kind: 'clashes', clashes: body.clashes };
+      if (res.status === 409 && body?.error === 'clashes' && body.clashes) return { kind: 'clashes', clashes: body.clashes, ...(body.sources ? { sources: body.sources } : {}) };
       if (!res.ok || !body?.items) {
         if (inline && body?.error === inline) return { kind: 'refused', words: wordsFor(body.error, body.detail) };
         toast.error(wordsFor(body?.error, body?.detail));
@@ -874,7 +874,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
         ...(ok > 0 ? offer() : {}),
         description: (
           <ul data-testid="files-failures">
-            {failed.map((f) => <li key={f.source}>{baseName(f.source)}: {refusalWords(f.refusal.code, f.refusal.detail)}</li>)}
+            {failed.map((f) => <li key={f.source}>{f.name ?? baseName(f.source)}: {refusalWords(f.refusal.code, f.refusal.detail)}</li>)}
           </ul>
         ),
       });
@@ -1015,7 +1015,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
         continue;
       }
       if (r.kind === 'clashes') {
-        setDialog({ kind: 'clash', ...run, sources: g.sources, clashes: r.clashes, at: 0, choices: {}, rest: groups.slice(k + 1), done, versions });
+        // A title's clashes name its disks: the answers are kept against the disks the server says it acts on.
+        setDialog({ kind: 'clash', ...run, sources: r.sources ?? g.sources, clashes: r.clashes, at: 0, choices: {}, rest: groups.slice(k + 1), done, versions });
         return;
       }
       break;
@@ -1033,7 +1034,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       if (skipped) toast(skippedWords(skipped));
       if (failed.length) {
         toast.error(`${items(failed.length)} could not be copied.`, {
-          description: <ul data-testid="files-failures">{failed.map((f) => <li key={f.source}>{baseName(f.source)}: {refusalWords(f.refusal.code, f.refusal.detail)}</li>)}</ul>,
+          description: <ul data-testid="files-failures">{failed.map((f) => <li key={f.source}>{f.name ?? baseName(f.source)}: {refusalWords(f.refusal.code, f.refusal.detail)}</li>)}</ul>,
         });
       }
       return;
@@ -1533,7 +1534,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const added = r.items.filter((i) => i.ok && !i.skipped).length;
     const lines = [
       ...r.renamed.map((x) => `${x.from} stored as ${x.to}`),
-      ...failed.map((f) => `${baseName(f.source)}: ${refusalWords(f.refusal.code, f.refusal.detail)}`),
+      ...failed.map((f) => `${f.name ?? baseName(f.source)}: ${refusalWords(f.refusal.code, f.refusal.detail)}`),
       ...r.refused.map((x) => `${x.path}: ${x.why}`),
       ...(r.stopped ? [r.stopped] : []),
     ];

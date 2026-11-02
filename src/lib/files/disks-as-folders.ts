@@ -24,7 +24,7 @@ type DiskRow = Extract<LibraryPlace, { level: 'disk' }>;
 const isRow = (at: LibraryPlace | null): at is TitleRow | DiskRow => at?.level === 'title' || (at?.level === 'disk' && at.names.length === 0);
 
 type OneDisk = { source: string; gameId: string; diskId: string; name: string };
-const notFound = (source: string): OpItem => ({ source, ok: false, refusal: { code: 'not_found' } });
+const notFound = (source: string, name?: string): OpItem => ({ source, ok: false, refusal: { code: 'not_found' }, ...(name ? { name } : {}) });
 
 /** The disks a title shows in its list, by title, in `diskNo` order. Reads no image. */
 async function disksOfTitles(ctx: OpCtx, gameIds: string[]) {
@@ -39,21 +39,23 @@ async function disksOfTitles(ctx: OpCtx, gameIds: string[]) {
 async function collectDisk(ctx: OpCtx, { source, gameId, diskId, name }: OneDisk): Promise<IncomingTop | OpItem> {
   let d: ResolvedDisk | null;
   try { d = await loadDisk(ctx, gameId, diskId); } catch (e) {
-    if (e instanceof BlobUnavailableError) return { source, ok: false, refusal: { code: 'blob_unavailable', detail: diskId } };
+    if (e instanceof BlobUnavailableError) return { source, name, ok: false, refusal: { code: 'blob_unavailable', detail: diskId } };
     throw e;
   }
-  if (!d) return notFound(source);
+  if (!d) return notFound(source, name);
   const disk = d;
   const items: IncomingItem[] = [];
   const checked = itemResult(source, () => {
     if (!disk.info.filesystem) refuse('unsupported', 400, `${name} cannot be read as files`);
+    // A damaged entry is left out of the tree: copying what remains would say ok with files missing.
+    if (disk.truncated || disk.warnings.length) refuse('unsupported', 400, `${name}: its directory is damaged, some files cannot be reached`);
     checkName(name);
     items.push({ rel: [name], kind: 'dir', date: null, protection: 0, comment: null });
     for (const entry of disk.root) walk(disk.bytes, entry, [name, entry.name], items);
     const big = items.find((i) => (i.bytes?.length ?? 0) > SEND_FILE_MAX);
     if (big) refuse('too_large', 413, `${name}: ${big.rel.slice(1).join('/')} is over 4 MB`);
   });
-  return checked.ok ? { source, items } : checked;
+  return checked.ok ? { source, items } : { ...checked, name };
 }
 
 /**
@@ -100,7 +102,7 @@ export async function copyDisksOntoVolume(ctx: OpCtx, req: CopyMove, dest: FsPat
   if (!tops.length) return { kind: 'done', items: wanted.map((w) => results.get(w.source)!), written: [] };
 
   const out = await copyOntoVolume(ctx, dest, tops, req.onClash);
-  if (out.kind !== 'done') return out;
+  if (out.kind !== 'done') return { ...out, sources: wanted.map((w) => w.source) };
   for (const it of out.items) results.set(it.source, it);
   return { ...out, items: wanted.map((w) => results.get(w.source)!) };
 }
