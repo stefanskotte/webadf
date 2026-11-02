@@ -43,6 +43,13 @@ static void list_items(void) {
     CHECK_EQ_INT(last_ev[n_ev - 1].kind, RX_EV_LIST);
     feed("LIST 0\n"); CHECK_EQ_INT(S.list_n, 0);
 }
+static void list_holds_rows_bound_for_a_volume(void) {
+    setup();
+    feed("LIST 4\na1 5 24:Work:Monkey/Disk 1/.info\nb2 5 11:Work:a.info\nc3 5 14:Work:../x.info\nd4 5 5:Work:\n");
+    CHECK_EQ_INT(S.list_n, 2);
+    CHECK(strcmp(S.list[0].path, "Work:Monkey/Disk 1/.info") == 0, "a drawer on a volume");
+    CHECK(strcmp(S.list[1].path, "Work:a.info") == 0, "a volume's root");
+}
 static void list_split_across_feeds_and_bad_line_skipped(void) {
     setup();
     feed("LIST 3\na1 5 3:a"); feed("bc\n../bad line\nc3 9 1:z\n");
@@ -604,7 +611,7 @@ static void without_a_queue_nothing_is_remembered(void) {
     CHECK(strcmp(out(), "GO e5\nOK e5 3:N_2\n") == 0, "protocol 1 front end: as before");
 }
 int main(void) {
-    RUN(hello_and_ping); RUN(list_items); RUN(list_split_across_feeds_and_bad_line_skipped); RUN(one_file);
+    RUN(hello_and_ping); RUN(list_items); RUN(list_holds_rows_bound_for_a_volume); RUN(list_split_across_feeds_and_bad_line_skipped); RUN(one_file);
     RUN(line_and_data_in_one_feed_then_next_line); RUN(collision); RUN(subfolder_made); RUN(bad_crc);
     RUN(refusals); RUN(write_failure_consumes_data); RUN(zero_length); RUN(meta_and_comment);
     RUN(disconnect_mid_file); RUN(garbage_ignored_overflow_closes); RUN(progress_every_16k);

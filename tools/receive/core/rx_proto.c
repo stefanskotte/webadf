@@ -1129,7 +1129,8 @@ static void on_list_item(rx_session *s, cur *c) {
     if (!tok(c, &t, &n) || !id_ok(t, n)) return;
     memcpy(it.id, t, n); it.id[n] = 0;
     if (!tok(c, &t, &n) || !num(t, n, 10, &it.size)) return;
-    if (!lenstr(c, it.path, sizeof it.path, 0) || !rx_path_ok(it.path)) return;
+    /* A copy onto a volume waits under its absolute path (Work:Monkey/a): listed too, so the window shows what is to come. */
+    if (!lenstr(c, it.path, sizeof it.path, 0) || (!rx_path_ok(it.path) && !rx_abs_path_ok(it.path))) return;
     if (s->list_n < RX_LIST_MAX) s->list[s->list_n++] = it;
 }
 
