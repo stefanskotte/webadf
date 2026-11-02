@@ -148,8 +148,21 @@ test('Cancel the rest asks first; what arrived stays, the rest never goes, and t
       expect((fs['Work:Tools/Pack'] ?? []).filter((e) => !e.dir)).toHaveLength(1);
       await new Promise((r) => setTimeout(r, 250));
     }
-    // A cancelled card stays until closed.
+    // A cancelled card stays until closed, past the server's 2 minutes: an answer that no longer lists it, as the server's
+    // will, is asked for at once by the store's visibility hook (no real 2-minute wait).
+    await page.route('**/api/files/jobs', (route) => route.fulfill({ json: { jobs: [] } }));
+    const noLonger = page.waitForResponse('**/api/files/jobs');
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await noLonger;
+    await page.waitForTimeout(250);
+    await expect(card.getByTestId('transfers-card-result')).toHaveText('Cancelled: 1 of 3 copied');
     await card.getByTestId('transfers-close').click();
+    await expect(page.getByTestId('transfers-card')).toHaveCount(0);
+    // Closed, it does not come back with the next answer.
+    const next = page.waitForResponse('**/api/files/jobs');
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await next;
+    await page.waitForTimeout(250);
     await expect(page.getByTestId('transfers-card')).toHaveCount(0);
   } finally { fakeBoardTiming.queueLimit = Infinity; await board.stop(); }
 });

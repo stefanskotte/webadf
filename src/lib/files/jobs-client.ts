@@ -1,9 +1,11 @@
 // src/lib/files/jobs-client.ts
 // The progress panel's store (spec 2026-11-01-progress-panel §3): the org's jobs as GET /api/files/jobs answers them,
-// asked on load and then every 2 s while a job runs (every 60 s while the page is visible and nothing runs) -- every 2 s while the page is visible, every 15 s while every
-// running job waits on a board that is offline, never while the tab is hidden. Files tells it about a job it just
-// started (track) and hears each answer for it (watch). The open/closed choice and the cards already put away are
-// remembered per browser, a convenience: storage that throws or is empty changes nothing else. CLIENT-SAFE.
+// asked on load, then, while the page is visible: every 2 s while a job runs, every 15 s while every running job waits
+// on a board that is offline, every 60 s while nothing runs. A hidden tab asks nothing. Files tells it about a job it
+// just started (track) and hears each answer for it (watch). The server lists a finished job for 2 minutes only; a card
+// with a failure or a cancel stays here until it is closed (a reload forgets it). The open/closed choice and the cards
+// already put away are remembered per browser, a convenience: storage that throws or is empty changes nothing else.
+// CLIENT-SAFE.
 import { FADE_MS, isClean, resultWords, WINDOW_MS, type JobView, type Sample } from './job-view';
 
 export const POLL_MS = 2_000;
@@ -110,17 +112,24 @@ export function createJobsStore(deps: JobsDeps) {
     const now = deps.now();
     const samples: Record<string, Sample[]> = {};
     const finishedSeenAt: Record<string, number> = {};
-    let announce = state.announce;
+    const words: string[] = [];
     for (const j of jobs) {
       if (j.running && j.bytes) {
         samples[j.id] = [...(state.samples[j.id] ?? []), { at: now, done: j.bytes.done }].filter((s) => s.at >= now - WINDOW_MS);
       }
       if (!j.running) {
         finishedSeenAt[j.id] = state.finishedSeenAt[j.id] ?? now;
-        if (state.jobs.some((x) => x.id === j.id && x.running)) announce = announced(announce, resultWords(j));
+        if (state.jobs.some((x) => x.id === j.id && x.running)) words.push(resultWords(j));
       }
     }
-    set({ jobs, samples, finishedSeenAt, announce, signedOut: false });
+    const announce = words.length ? announced(state.announce, words.join('. ')) : state.announce;
+    // A card that must stay until closed, which the answer let go (the server lists a finished job for 2 minutes). Past a
+    // signed-out answer none: this answer may be another account's. Kept out of `jobs`, what watchers below hear.
+    const kept = state.signedOut ? [] : state.jobs.filter((j) => !j.running && !isClean(j) && !state.seen.includes(j.id) && !jobs.some((x) => x.id === j.id));
+    for (const j of kept) finishedSeenAt[j.id] = state.finishedSeenAt[j.id] ?? now;
+    // In the server's order (jobs.ts): the panel shows them newest first.
+    const shown = kept.length ? [...jobs, ...kept].sort((x, y) => y.startedAt.localeCompare(x.startedAt) || x.id.localeCompare(y.id)) : jobs;
+    set({ jobs: shown, samples, finishedSeenAt, announce, signedOut: false });
     for (const j of jobs) for (const w of [...(watchers.get(j.id) ?? [])]) w(j);
     // A watched job the list let go unseen (it finished while the tab was hidden, more than 2 minutes ago) or never
     // held: asked for on its own, once, so its watchers still hear how it ended (a Download, the panes read again).

@@ -330,6 +330,90 @@ describe('createJobsStore state', () => {
   });
 });
 
+describe('a kept card outlives the server\'s 2 minutes (final review C-1)', () => {
+  const failed = (o: Partial<JobView> = {}) => finished({ failed: [{ name: 'a', reason: 'r' }], ...o });
+  it('a failed card the idle poll no longer gets stays, with when it was first seen; dismissed, it does not come back', async () => {
+    const { store } = harness([[failed()], []]);
+    store.start();
+    await flush();
+    const at = store.getState().finishedSeenAt.j1;
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().jobs.map((j) => j.id)).toEqual(['j1']);
+    expect(store.getState().finishedSeenAt.j1).toBe(at);
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().jobs.map((j) => j.id)).toEqual(['j1']);
+    store.dismiss('j1');
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().jobs).toEqual([]);
+    expect(store.getState().seen).toEqual(['j1']);
+    expect(store.getState().finishedSeenAt.j1).toBeUndefined();
+  });
+  it('a cancelled card too', async () => {
+    const { store } = harness([[finished({ cancel: { move: false, source: null }, cancelled: 1 })], []]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().jobs.map((j) => j.id)).toEqual(['j1']);
+  });
+  it('a clean finished card still goes with the answer', async () => {
+    const { store } = harness([[finished()], []]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().jobs).toEqual([]);
+  });
+  it('a running job the answer dropped is not kept: nothing says how it ended', async () => {
+    const { store } = harness([[job()], []]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(store.getState().jobs).toEqual([]);
+  });
+  it('stays while another job runs, the cards newest first; the answer wins for a job it holds', async () => {
+    const old = failed({ id: 'old', startedAt: '2026-11-01T09:00:00.000Z' });
+    const mid = failed({ id: 'mid', startedAt: '2026-11-01T09:30:00.000Z' });
+    const long = job({ id: 'long', startedAt: '2026-11-01T09:15:00.000Z' });
+    const { store } = harness([[mid, long, old], [long], [job({ id: 'mid', startedAt: mid.startedAt }), long]]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(store.getState().jobs.map((j) => j.id)).toEqual(['mid', 'long', 'old']);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(store.getState().jobs.map((j) => [j.id, j.running])).toEqual([['mid', true], ['long', true], ['old', false]]);
+  });
+  it('a kept card is said to no watcher, and never counts as listed for one', async () => {
+    const { store, loadOne } = harness([[failed()], []], { loadOne: async () => 'gone' as const });
+    const heard = vi.fn();
+    store.watch('j1', heard);
+    store.start();
+    await flush();
+    expect(heard).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(heard).toHaveBeenCalledTimes(1);
+    expect(loadOne).toHaveBeenCalledWith('j1');   // the list let it go: asked once on its own, as before
+  });
+  it('nothing is carried past a signed-out answer: the next answer may be another account\'s', async () => {
+    let vis = true;
+    const { store } = harness([[failed()], 'signed-out', []], { visible: () => vis });
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().signedOut).toBe(true);
+    vis = false; store.onVisibility();
+    vis = true; store.onVisibility();
+    await flush();
+    expect(store.getState().signedOut).toBe(false);
+    expect(store.getState().jobs).toEqual([]);
+  });
+  it('two jobs finishing in one poll are both announced (M-1)', async () => {
+    const { store } = harness([[job({ id: 'a' }), job({ id: 'b', board: 'A1200' })], [finished({ id: 'a' }), finished({ id: 'b', board: 'A1200' })]]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(store.getState().announce).toBe('Copied 2 to A500. Copied 2 to A1200');
+  });
+});
+
 describe('remembered per browser', () => {
   function memory() {
     const m = new Map<string, string>();
