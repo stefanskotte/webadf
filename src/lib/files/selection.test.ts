@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY_SELECTION, moveCursor, selectAll, selectClick, togglePick, type Selection } from './selection';
+import { EMPTY_SELECTION, headerCheck, moveCursor, selectAll, selectClick, togglePick, type Selection } from './selection';
 
 const none = { shift: false, toggle: false };
 const picked = (s: Selection) => [...s.picked].sort((a, b) => a - b);
@@ -77,5 +77,20 @@ describe('selectAll (Files 2 §2.3, the bank\'s All)', () => {
     expect([...selectAll(3).picked]).toEqual([0, 1, 2]);
     expect(selectAll(3).cursor).toBe(0);
     expect(selectAll(0)).toEqual(EMPTY_SELECTION);
+  });
+});
+
+describe('headerCheck', () => {
+  it('has no box for a pane without rows', () => {
+    expect(headerCheck(0, 0)).toBeNull();
+    expect(headerCheck(3, 0)).toBeNull();
+  });
+  it('is none, some or all by how many shown rows are picked', () => {
+    expect(headerCheck(0, 4)).toBe('none');
+    expect(headerCheck(2, 4)).toBe('some');
+    expect(headerCheck(4, 4)).toBe('all');
+  });
+  it('counts stale picks beyond the rows as all', () => {
+    expect(headerCheck(5, 4)).toBe('all');
   });
 });

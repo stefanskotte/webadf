@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode, type Ref } from 'react';
 import type { FsEntry, Listing } from '@/lib/files/types';
 import { phoneSortAfter, type FilesSort, type FilesSortKey } from '@/lib/files/sort';
-import type { Selection } from '@/lib/files/selection';
+import { headerCheck, type Selection } from '@/lib/files/selection';
 import { refusalWords } from '@/lib/files/words';
 import { entryGlyph } from '@/lib/disk-files-look';
 import { ProtectionCells } from '@/components/disks/protection-cells';
@@ -37,6 +37,8 @@ export type PaneProps = {
   onActivate(): void; onNavigate(path: string): void; onSort(key: FilesSortKey): void;
   /** Below lg: the one sort button's next order (phoneSortAfter). */
   onSetSort(sort: FilesSort): void;
+  /** The header's Select all: every shown row, or (false) none. */
+  onPickAll(all: boolean): void;
   onRowClick(index: number, mods: { shift: boolean; toggle: boolean }): void; onRowOpen(index: number, how?: 'dblclick' | 'key'): void;
   onDragStartRows(indexes: number[], e: React.DragEvent): void; onDropRows(e: React.DragEvent): void;
   /** A disk image's own Add to library on its STASH: row (R8): that one row, whatever is picked. */
@@ -123,6 +125,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
   const parent = crumbs.length > 1 ? crumbs[crumbs.length - 2] : null;
 
   const picked = [...selection.picked].filter((i) => i < rows.length).sort((a, b) => a - b);
+  const allState = headerCheck(picked.length, rows.length);
   const pickedBytes = picked.reduce((n, i) => n + (rows[i].size ?? 0), 0);
   // A writable STASH: folder takes files from the computer, and a board's queue sends them (increment 3, C2): said
   // where the eye ends up, with nothing picked.
@@ -256,7 +259,18 @@ export function Pane({ filterRef, ...p }: PaneProps) {
                  className="w-full border-collapse text-[13px] max-lg:table-fixed">
             <thead>
               <tr style={{ background: 'var(--modal-foot)', color: 'var(--muted-2)' }}>
-                <th className={`${cell} w-6 max-lg:w-11 max-lg:px-0`} style={cellStyle}><span className="sr-only">Select</span></th>
+                <th className={`${cell} w-6 max-lg:w-11 max-lg:px-0`} style={cellStyle}>
+                  {allState === null ? <span className="sr-only">Select</span> : (
+                    <label className="max-lg:flex max-lg:min-h-12 max-lg:items-center max-lg:justify-center" onClick={(ev) => ev.stopPropagation()}>
+                      {/* indeterminate is a DOM property, not an attribute: set from the ref callback on every render. */}
+                      <input type="checkbox" data-testid={tid('pick-all')} aria-label="Select all in this pane"
+                             checked={allState === 'all'} ref={(el) => { if (el) el.indeterminate = allState === 'some'; }}
+                             onClick={(ev) => ev.stopPropagation()}
+                             onChange={() => { p.onActivate(); p.onPickAll(allState !== 'all'); }}
+                             className="h-3.5 w-3.5 align-middle max-lg:h-5 max-lg:w-5" style={{ accentColor: 'var(--accent-amber)' }} />
+                    </label>
+                  )}
+                </th>
                 {COLUMNS.map((c) => {
                   const on = sort.key === c.key;
                   return (

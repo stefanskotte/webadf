@@ -106,8 +106,8 @@ describe('startFetch: one get per file', () => {
     expect(r.fetching).toMatchObject({ files: 2 });
     const rows = await gets();
     expect(rows.map((g) => [g.amigaPath, g.fetchId, g.status, g.target]).sort()).toEqual([
-      ['Work:Sub/b.txt', r.fetching!.id, 'waiting', { dest: 'STASH:/In', rel: ['Sub', 'b.txt'], replace: false, library: null }],
-      ['Work:a.lha', r.fetching!.id, 'waiting', { dest: 'STASH:/In', rel: ['a.lha'], replace: false, library: null }],
+      ['Work:Sub/b.txt', r.fetching!.id, 'waiting', { dest: 'STASH:/In', rel: ['Sub', 'b.txt'], replace: false, library: null, size: 10 }],
+      ['Work:a.lha', r.fetching!.id, 'waiting', { dest: 'STASH:/In', rel: ['a.lha'], replace: false, library: null, size: 1000 }],
     ]);
     expect(await version()).toBe(v0 + 1);
   });
@@ -161,7 +161,7 @@ describe('startFetch: one get per file', () => {
     expect(r).toMatchObject({ kind: 'done', items: [{ source: W('Games.adf'), ok: true },
       { source: W('a.lha'), ok: false, refusal: { code: 'not_a_disk_image' } }], fetching: { files: 1 } });
     const rows = await gets();
-    expect(rows.map((g) => g.target)).toEqual([{ dest: 'STASH:', rel: ['Games.adf'], replace: false, library: { collectionId: null } }]);
+    expect(rows.map((g) => g.target)).toEqual([{ dest: 'STASH:', rel: ['Games.adf'], replace: false, library: { collectionId: null }, size: 901120 }]);
   });
 
   // Final review: a drawer onto LIBRARY: is refused as a folder without being walked -- even one whose listing is not

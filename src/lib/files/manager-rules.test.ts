@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  asksBeforeCopy, createClosesDialog, dropBlocked, fetchStatus, jobStatus, navTargets, pickGone, fetchDownload, oneAtATime, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems, TOO_BIG_WORDS, BUSY_DROP, DIALOG_DROP,
+  asksBeforeCopy, createClosesDialog, dropBlocked, fetchStatus, jobStatus, runningWriteLine, navTargets, pickGone, fetchDownload, oneAtATime, opTitle, reloadsBoth, skippedItems, stashTitle, stripDiskOf, tallyItems, TOO_BIG_WORDS, BUSY_DROP, DIALOG_DROP,
 } from './manager-rules';
 import type { OpItem } from './driver';
 import type { Listing } from './types';
@@ -250,5 +250,22 @@ describe('jobStatus', () => {
     expect(jobStatus(p({ total: 2, done: 2, direction: 'from' }), 'A500').line).toBe('Copied 2');
     expect(jobStatus(p({ total: 1, done: 1, direction: 'from', writes: [w({ label: 'Work:x', removed: 1 })] }), 'A500').line).toBe('Copied 1 · Deleted Work:x');
     expect(jobStatus(p({ writes: [w({ label: 'Work:a' }), w({ label: 'Work:b' }), w({ label: 'Work:c' })] }), 'A500').line).toBe('Deleted 3 items');
+  });
+});
+
+// Progress panel (spec 2026-11-01 §3): the write a job runs now, as the card's second line says it.
+describe('runningWriteLine', () => {
+  type W = Parameters<typeof jobStatus>[0]['writes'][number];
+  const w = (o: Partial<W>): W => ({ kind: 'delete', label: 'Work:Big', to: null, status: 'running', removed: 0, reason: null, entry: null, quiet: false, ...o });
+  const p = (writes: W[], waiting = 0): Parameters<typeof jobStatus>[0] => ({ total: 0, done: 0, failed: [], waiting, skipped: 0, writes, direction: 'to' });
+  it('a running delete with how far it got', () => {
+    expect(runningWriteLine(p([w({ removed: 50 })]), 'A500')).toBe('Deleting Work:Big on A500… removed 50 so far');
+  });
+  it('a waiting write once no file waits', () => {
+    expect(runningWriteLine(p([w({ status: 'waiting' })]), 'A500')).toBe('Deleting Work:Big on A500…');
+  });
+  it('none while files still wait, or when only quiet writes run', () => {
+    expect(runningWriteLine(p([w({ status: 'waiting' })], 2), 'A500')).toBeNull();
+    expect(runningWriteLine(p([w({ quiet: true })]), 'A500')).toBeNull();
   });
 });

@@ -26,6 +26,7 @@ import { queueTransfers, type ClashMode } from '@/lib/transfers';
 import { FETCH_MAX_BYTES, FETCH_MAX_FILES } from '@/lib/remote-limits';
 import { UPLOAD_FILE_MAX } from '@/lib/amiga-upload-limits';
 import { releaseStaging } from '@/lib/amiga-uploads';
+import { diskStore } from '@/lib/storage';
 import { libraryEligible } from '@/lib/from-amiga-ui';
 import { listStash } from '@/lib/stash';
 import { addUploadToLibrary } from '@/lib/stash-library';
@@ -35,6 +36,7 @@ import { refuse, skippedItem, type Clash, type CopyMove, type OpCtx, type OpItem
 import { browseOf, isNetVolumePath } from './net-driver';
 import { clashMode, joinAmiga, moveWithinVolume, mustRemoveOnVolume, placeOf, sameVolume, writableBoard } from './net-write';
 import { settleMoveOfGet, settleMoveOfTransfer, settleMovesOfJob } from './net-moves';
+import { CANCEL_KIND, CANCELLED } from './job-view';
 import { shelfDest } from './shelf';
 import { ADDED_UNFILED } from './shelf-rules';
 import { keepBothName, sameStashName, stashFind, stashTree } from './stash-paths';
@@ -149,7 +151,7 @@ export async function startFetch(ctx: OpCtx, req: CopyMove): Promise<Outcome> {
     ...(left(top).length ? { moveLeft: left(top) } : {}),
     moveSeen: { size: f.size, date: f.date }, ...(ctx.userId ? { userId: ctx.userId } : {}) }) : () => ({});
   const files = tops.flatMap((top) => top.files.map((f) => ({ amigaPath: f.amigaPath,
-    target: { dest: formatPath(dest), rel: f.rel, replace: replace.has(top), library, ...move(top, f) } satisfies GetTarget })));
+    target: { dest: formatPath(dest), rel: f.rel, replace: replace.has(top), library, size: f.size, ...move(top, f) } satisfies GetTarget })));
   await addGets(getDb(), { orgId: ctx.orgId, deviceId: t.id, fetchId, files }, now);
   for (const top of tops) if (!results.has(top.source)) results.set(top.source, { source: top.source, ok: true });
   return { kind: 'done', items: req.sources.map((s) => results.get(s)!), ...(files.length ? { fetching: { id: fetchId, files: files.length } } : {}) };
@@ -205,7 +207,7 @@ export async function volumeToVolume(ctx: OpCtx, req: CopyMove): Promise<Outcome
   const job = newRequestId();
   const gets = tops.flatMap((top) => top.files.map((f) => {
     const rel = [top.name, ...f.rel.slice(1)];
-    return { amigaPath: f.amigaPath, target: { dest: 'STASH:', rel: [rel[rel.length - 1]], replace: false, library: null,
+    return { amigaPath: f.amigaPath, target: { dest: 'STASH:', rel: [rel[rel.length - 1]], replace: false, library: null, size: f.size,
       relay: { deviceId: dt.id, dest: joinAmiga(to.amiga, ...rel), onClash: top.mode, ...(req.op === 'move' ? { moveSource: top.source } : {}) },
       ...(req.op === 'move' && top.drawers.length ? { moveDrawers: top.drawers } : {}),
       ...(req.op === 'move' ? { moveSeen: { size: f.size, date: f.date } } : {}),
@@ -303,9 +305,28 @@ async function relay(db: Db, g: RemoteRow, target: GetTarget, uploadId: string, 
   const [u] = await db.select().from(amigaUploads).where(eq(amigaUploads.id, uploadId));
   const fail = async (code: string, text: string) => { await releaseStaging(db, uploadId); await settleGet(db, g.id, { ok: false, code, text }, now, PLACING); };
   if (!u?.blobSha256 || !target.userId) return fail('io', 'it could not be placed');
-  const q = await queueTransfers(db, { orgId: g.orgId, deviceId: r.deviceId, userId: target.userId, jobId: g.fetchId ?? undefined, now, files: [{
-    path: target.rel[target.rel.length - 1], sha256: u.blobSha256, sizeBytes: u.sizeBytes, protection: Number(u.protection), comment: u.comment,
-    dest: r.dest, onClash: r.onClash, ...(r.moveSource ? { moveSource: r.moveSource } : {}) }] });
+  const { blobSha256, sizeBytes, protection, comment } = u;
+  const userId = target.userId;
+  // The bytes are read before the get's lock is taken: up to 4 MB from the store must not hold it (queueTransfers takes
+  // them as they are). None read: queueTransfers reads (and refuses a missing blob) itself.
+  const bytes = await diskStore.read(blobSha256).catch(() => undefined);
+  // The move marker as the get carries it NOW, read under the get's lock in the queue's own transaction: `target` is the
+  // claim's copy, and a Cancel the rest since (which locks the same get) took the marker off -- the row then is a copy.
+  // A Cancel the rest that landed while the file was being placed (its marker, under the same lock) queues nothing more:
+  // the get says cancelled, as the parts Cancel withdrew do (final review M4).
+  const q = await db.transaction(async (tx) => {
+    const [cur] = await tx.select({ target: remoteRequests.target }).from(remoteRequests).where(eq(remoteRequests.id, g.id)).for('update');
+    if (g.fetchId) {
+      const [marker] = await tx.select({ id: remoteRequests.id }).from(remoteRequests)
+        .where(and(eq(remoteRequests.fetchId, g.fetchId), eq(remoteRequests.orgId, g.orgId), eq(remoteRequests.kind, CANCEL_KIND))).limit(1);
+      if (marker) return { ok: false as const, reason: CANCELLED };
+    }
+    const moveSource = (cur?.target as GetTarget | undefined)?.relay?.moveSource;
+    return queueTransfers(tx as unknown as Db, { orgId: g.orgId, deviceId: r.deviceId, userId, jobId: g.fetchId ?? undefined, now, files: [{
+      path: target.rel[target.rel.length - 1], sha256: blobSha256, sizeBytes, protection: Number(protection), comment,
+      dest: r.dest, onClash: r.onClash, ...(bytes ? { bytes } : {}), ...(moveSource ? { moveSource } : {}) }] });
+  });
+  if (!q.ok && q.reason === CANCELLED) return fail(CANCELLED, CANCELLED);
   if (!q.ok) {
     const words = q.reason === 'queue_full' ? "the board's queue is full" : q.reason === 'empty' ? 'it is empty' : 'it could not be queued';
     return fail(q.reason, words);
@@ -400,8 +421,10 @@ export type FetchProgress = {
  * One copy's progress (§4.5), this org's only. A get the board has not fetched (offline) waits without a timeout of its
  * own; one sent and not done within 10 minutes fails "<board> stopped answering" (expireStale).
  */
-export async function fetchProgress(db: Db, orgId: string, fetchId: string, now: Date): Promise<FetchProgress | null> {
-  await expireStale(db, now);
+export async function fetchProgress(db: Db, orgId: string, fetchId: string, now: Date,
+  opts: { expire?: boolean } = {}): Promise<FetchProgress | null> {
+  // `expire: false` when the caller ran expireStale itself (listJobs: once for all its jobs, not once per job).
+  if (opts.expire !== false) await expireStale(db, now);
   // A move whose parts all ended -- however they ended -- is settled here, so the job finishes (final review C2).
   // A settle that fails is logged and tried again at the next look (R3): the progress still answers.
   await settleMovesOfJob(db, orgId, fetchId).catch((e) => console.error('net-fetch: settling the moves of a job failed', e));
@@ -412,7 +435,9 @@ export async function fetchProgress(db: Db, orgId: string, fetchId: string, now:
     .orderBy(asc(transfers.createdAt), asc(transfers.id));
   if (reqs.length === 0 && sent.length === 0) return null;
   // The board the job is about: a copy onto a volume names the destination, a copy out the source.
-  const boardId = sent[0]?.deviceId ?? reqs.find((r) => r.kind !== 'get')?.deviceId ?? reqs[0].deviceId;
+  // A Cancel the rest marker (progress panel §6) is never the job's request: it names no board.
+  const parts = reqs.filter((r) => r.kind !== CANCEL_KIND);
+  const boardId = sent[0]?.deviceId ?? parts.find((r) => r.kind !== 'get')?.deviceId ?? (parts[0] ?? reqs[0]).deviceId;
   // Every board of the job by name: a write's words name the board it ran on (item 13: a cross-board move's removal is
   // the source board's), the files the board the job is about.
   const ids = [...new Set([boardId, ...reqs.map((r) => r.deviceId), ...sent.map((x) => x.deviceId)])];

@@ -77,6 +77,8 @@ export const HELP_TOPICS = {
   // the drag has begun, increment-1 ledger Task 11), disk-strip.tsx (drive chip, Mount or Eject to edit, History, ⬇ ADF),
   // dialogs.tsx (Replace, Skip, Keep both), keys.ts (the keys), view.ts (filter, Show .info, folders copied whole).
   // Files 2 (spec 2026-10-29-files-2-design.md): button-bank.tsx, bank.ts, shelf.ts/shelf-rules.ts, create-adf-dialog.tsx.
+  // Progress: spec docs/superpowers/specs/2026-11-01-progress-panel-design.md; src/components/shell/transfers-panel.tsx,
+  // src/lib/files/job-view.ts (the words), src/lib/files/job-cancel.ts (what Cancel the rest stops and keeps).
   files: {
     title: 'Files',
     short: 'Two panes for every file that is not a whole disk: STASH:, NET: and LIBRARY:. Pick files in the source pane and copy or move them to the other.',
@@ -107,7 +109,13 @@ export const HELP_TOPICS = {
           <em>The Amiga’s disks</em>.
         </p>
         <p>
-          <strong>Keys.</strong> ↑ and ↓ move, Space picks, Enter opens, Backspace goes up, Tab switches pane, / filters,
+          <strong>Progress.</strong> Copies and moves to and from the Amiga, its deletes and changes, and files sent to it
+          show in the <em>Transfers</em> panel at the bottom right, on every page: a bar, the files and megabytes so far
+          and, after a few seconds, the time left. <em>Cancel the rest</em> stops what has not gone yet. What has arrived
+          stays, and a move keeps the sources of what has not moved yet. A drawer being deleted finishes first.
+        </p>
+        <p>
+          <strong>Keys.</strong> The box at the top of the tick column picks every row shown, or none. ↑ and ↓ move, Space picks, Enter opens, Backspace goes up, Tab switches pane, / filters,
           F5 copies, F6 moves, F7 makes a folder, F2 renames, Delete deletes. A click on a pane&apos;s left edge goes up
           one level too, as in Directory Opus.
         </p>

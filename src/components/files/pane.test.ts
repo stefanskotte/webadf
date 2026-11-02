@@ -39,7 +39,7 @@ function render(o: Partial<PaneProps> = {}): string {
   const props: PaneProps = {
     side: 'left', active: true, listing: diskListing, loading: false, error: null,
     sort: { key: 'name', dir: 'asc' }, selection: EMPTY_SELECTION, showComment: false,
-    onActivate: noop, onNavigate: noop, onSort: noop, onSetSort: noop, onRowClick: noop, onRowOpen: noop,
+    onActivate: noop, onNavigate: noop, onSort: noop, onSetSort: noop, onRowClick: noop, onPickAll: noop, onRowOpen: noop,
     onDragStartRows: noop, onDropRows: noop, onAddToLibrary: noop,
     view: { filter: '', hideInfo: false }, onFilter: noop, onShowInfo: noop, help: 'files', ...o,
   };

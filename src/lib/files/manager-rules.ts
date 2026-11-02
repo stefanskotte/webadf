@@ -148,13 +148,13 @@ export function fetchStatus(p: { total: number; done: number; failed: { name: st
   return { line: `Copied ${p.done}${failed}`, finished: true };
 }
 
-type JobWriteView = { kind: string; label: string; to: string | null; status: 'waiting' | 'running' | 'done' | 'failed'; removed: number;
+export type JobWriteView = { kind: string; label: string; to: string | null; status: 'waiting' | 'running' | 'done' | 'failed'; removed: number;
   reason: string | null; entry: string | null; quiet: boolean;
   /** A move's removal that kept a drawer something new is in (spec 2026-10-31 §9). */
   kept?: boolean; restIn?: string | null;
   /** Why it was kept, when the server knows (plan 2026-11-01-net-consistency, item 9). */
   keptWhy?: string | null };
-const RUNNING: Record<string, string> = { delete: 'Deleting', mkdir: 'Making', rename: 'Renaming', protect: 'Protecting', note: 'Setting the comment on' };
+export const RUNNING_WORDS: Record<string, string> = { delete: 'Deleting', mkdir: 'Making', rename: 'Renaming', protect: 'Protecting', note: 'Setting the comment on' };
 
 /** One finished write in words: "Deleted Work:old (137)", "Made Work:New", "Renamed Work:a to Work:b". */
 function doneWords(w: JobWriteView): string {
@@ -179,18 +179,27 @@ export function jobStatus(p: JobProgressView, board: string): { line: string; fi
   // A board the job waits on is offline (plan 2026-11-01-net-consistency, item 14): said while it waits.
   return !s.finished && p.offline ? { ...s, line: `${s.line} — ${p.offline} is offline` } : s;
 }
-type JobProgressView = { total: number; done: number; failed: { name: string; reason: string }[]; waiting: number; skipped: number;
+export type JobProgressView = { total: number; done: number; failed: { name: string; reason: string }[]; waiting: number; skipped: number;
   writes: JobWriteView[]; direction: 'to' | 'from';
   /** The board something of the job still waits on that is offline, if any. */
   offline?: string | null };
 
-function jobLine(p: JobProgressView, board: string): { line: string; finished: boolean } {
+/**
+ * The write a job runs now, in words ("Deleting Work:old on A500… removed 37 so far"): the loud write on its way, or
+ * -- once no file waits -- the next loud one. Null when none: the progress panel's second line then names the file.
+ */
+export function runningWriteLine(p: JobProgressView, board: string): string | null {
   const loud = p.writes.filter((w) => !w.quiet);
   const running = loud.find((w) => w.status === 'running') ?? (p.waiting === 0 ? loud.find((w) => w.status === 'waiting') : undefined);
-  if (running) {
-    const so = running.kind === 'delete' && running.removed > 0 ? ` removed ${running.removed} so far` : '';
-    return { line: `${RUNNING[running.kind] ?? 'Changing'} ${running.label} on ${board}…${so}`, finished: false };
-  }
+  if (!running) return null;
+  const so = running.kind === 'delete' && running.removed > 0 ? ` removed ${running.removed} so far` : '';
+  return `${RUNNING_WORDS[running.kind] ?? 'Changing'} ${running.label} on ${board}…${so}`;
+}
+
+function jobLine(p: JobProgressView, board: string): { line: string; finished: boolean } {
+  const loud = p.writes.filter((w) => !w.quiet);
+  const running = runningWriteLine(p, board);
+  if (running) return { line: running, finished: false };
   if (p.waiting > 0) {
     const n = Math.min(p.done + p.failed.length + p.skipped + 1, p.total);
     return { line: `Copying ${n} of ${p.total} ${p.direction === 'to' ? 'to' : 'from'} ${board}…`, finished: false };

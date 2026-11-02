@@ -50,6 +50,11 @@ describe('help topics', () => {
 
 // Final review fixes (2026-10-05): claims that were wrong, incomplete or unverifiable.
 describe('help topics say what the app really does', () => {
+  it('files says where progress shows: the Transfers panel on every page, and what Cancel the rest keeps (spec 2026-11-01)', () => {
+    const b = bodyText('files').replace(/\s+/g, ' ');
+    for (const w of ['Transfers', 'on every page', 'Cancel the rest', 'What has arrived stays', 'keeps the sources of what has not moved yet',
+      'A drawer being deleted finishes first']) expect(b).toContain(w);
+  });
   it('from-amiga names the firmware, the three ways to send, the key digits and the limits (spec 2026-10-18)', () => {
     const b = HELP_TOPICS['from-amiga'].short + bodyText('from-amiga');
     for (const w of ['1.19.0', 'Install', 'Send…', 'Transfer SEND', 'Trusted board AB12', 'Trust this board', 'TRUST',

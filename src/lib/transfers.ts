@@ -274,6 +274,20 @@ export async function cancelTransfer(db: Db, orgId: string, id: string): Promise
   });
 }
 
+/**
+ * Cancel the rest of a board's plain Queue sends (the progress panel, spec 2026-11-01 §6): its job-less rows that wait
+ * or move, as Delete in the Queue cancels one; the board hears it once. How many were cancelled.
+ */
+export async function cancelQueueSends(db: Db, orgId: string, deviceId: string, now = new Date()): Promise<number> {
+  return db.transaction(async (tx) => {
+    const done = await tx.update(transfers).set({ status: 'cancelled', finishedAt: now })
+      .where(and(eq(transfers.orgId, orgId), eq(transfers.deviceId, deviceId), isNull(transfers.jobId), inArray(transfers.status, ACTIVE)))
+      .returning({ id: transfers.id });
+    if (done.length) await tx.update(devices).set({ sendVersion: sql`${devices.sendVersion} + 1` }).where(eq(devices.id, deviceId));
+    return done.length;
+  });
+}
+
 export async function expireTransfers(db: Db, now = new Date()): Promise<{ expired: number; deleted: number }> {
   return db.transaction(async (tx) => {
     // queued AND sending: a row whose board vanished mid-file would otherwise stay 'sending' for ever, hidden from the

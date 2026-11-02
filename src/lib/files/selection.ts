@@ -36,3 +36,10 @@ export function moveCursor(s: Selection, delta: number, count: number, extend: b
 export function selectAll(count: number): Selection {
   return count <= 0 ? EMPTY_SELECTION : { anchor: 0, cursor: 0, picked: range(0, count - 1) };
 }
+
+/** The pane header's Select all box: null when the pane has no rows, else how much of what is shown is picked. */
+export function headerCheck(picked: number, rows: number): 'all' | 'some' | 'none' | null {
+  if (rows <= 0) return null;
+  if (picked >= rows) return 'all';
+  return picked > 0 ? 'some' : 'none';
+}

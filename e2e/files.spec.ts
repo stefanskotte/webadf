@@ -176,6 +176,45 @@ test('delete asks first', async ({ page }) => {
   expect(at((await stored(a.diskId)).root, 'ReadMe')).toBeNull();
 });
 
+test("Select all in a pane's header picks every shown row, none, or is indeterminate (Task 8)", async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const tag = runTag();
+  const a = await seedTitle(orgId, `PickAll-${tag}`);
+  const empty = await seedTitle(orgId, `PickNone-${tag}`, []);
+  await openFiles(page, 'STASH:', a.path, 'right');
+  const all = page.getByTestId('pane-right-pick-all');
+  const foot = page.getByTestId('pane-right-foot');
+  const boxes = page.getByTestId('pane-right').getByTestId('pane-row').getByRole('checkbox');
+  await expect(boxes).toHaveCount(3);
+
+  await all.check();
+  await expect(foot).toHaveText('3 of 3 selected · 6 B');
+  for (const b of await boxes.all()) await expect(b).toBeChecked();
+  await all.uncheck();
+  await expect(page.getByTestId('pane-right').locator('[data-testid="pane-row"][aria-selected="true"]')).toHaveCount(0);
+
+  // One row picked: mixed, not checked; a click picks all.
+  await row(page, 'right', 'ReadMe').getByRole('checkbox').check();
+  await expect(all).not.toBeChecked();
+  expect(await all.evaluate((el: HTMLInputElement) => el.indeterminate)).toBe(true);
+  await all.click();
+  await expect(foot).toHaveText('3 of 3 selected · 6 B');
+  await expect(all).toBeChecked();
+  expect(await all.evaluate((el: HTMLInputElement) => el.indeterminate)).toBe(false);
+  await all.uncheck();
+
+  // Only the rows the name filter shows.
+  await page.getByTestId('pane-right-filter').fill('Read');
+  await expect.poll(() => rowNames(page, 'right')).toEqual(['ReadMe']);
+  await all.check();
+  await expect(foot).toContainText('1 of 1 selected');
+
+  // A pane with no rows has no box.
+  await openFiles(page, 'STASH:', empty.path, 'right');
+  await expect(page.getByTestId('pane-right').getByTestId('pane-row')).toHaveCount(0);
+  await expect(page.getByTestId('pane-right-pick-all')).toHaveCount(0);
+});
+
 test('sort headers flip asc/desc and are remembered', async ({ page }) => {
   const { orgId } = await signUpFresh(page);
   const a = await seedTitle(orgId, `Sort-${runTag()}`, [

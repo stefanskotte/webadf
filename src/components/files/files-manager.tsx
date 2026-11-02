@@ -34,7 +34,7 @@ import type { UserPrefs } from '@/lib/user-prefs-schema';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { clashGroups, downloadHref, DOWNLOAD_URL_MAX, type TransferGroup } from '@/lib/files/transfer';
 import { diskRelative, identityToConfirm, undoTarget, withAddedIn, type OpVersion } from '@/lib/files/edit-rules';
-import { asksBeforeCopy, createClosesDialog, dropBlocked, fetchDownload, jobStatus, navTargets, pickGone, oneAtATime, opTitle, reloadsBoth, skippedItems, skippedWords, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
+import { asksBeforeCopy, createClosesDialog, dropBlocked, fetchDownload, navTargets, pickGone, oneAtATime, opTitle, reloadsBoth, skippedItems, skippedWords, stashTitle, stripDiskOf, tallyItems } from '@/lib/files/manager-rules';
 import { addedIn } from '@/lib/disk-history/added-in';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
 import { isFileDrag } from '@/components/disks/native-drop';
@@ -50,6 +50,7 @@ import type { SendTarget } from '@/lib/send-ui';
 import { useStashUpload, type StashUploadResult } from './use-stash-upload';
 import { sameStashName } from '@/lib/files/stash-paths';
 import { isSignedOutAnswer, SIGNED_OUT_TEXT } from '@/lib/signed-out';
+import { useJobsStore } from '@/components/shell/jobs-provider';
 import { QUEUE_FOLDER } from '@/lib/remote-limits';
 import {
   ClashDialog, ConfirmDeleteDialog, InfoDialog, NameDialog, ProtectDialog, placeName, type Clash, type ClashChoice,
@@ -164,8 +165,6 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<RefusalCode>([
 ]);
 /** What Rename, Makedir and Protect say in NET:, where the rows are queue rows. */
 const NOT_IN_NET = 'Not in NET:';
-/** How often a job's progress is asked while a board it waits on is offline (item 14). */
-const OFFLINE_POLL_MS = 15_000;
 /** Enter and Space belong to a focused control; the manager must not open or pick a row as well. */
 const CONTROL = 'button, a, [role="button"], [role="checkbox"]';
 
@@ -338,10 +337,11 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   // The lock as it is NOW, for a step that starts outside a click (a finished Download's file, Task 8 fix round 1):
   // it takes the lock only when it is free, and so never clears another operation's.
   const busyNow = useRef<string | null>(null);
-  const setBusy = (label: string | null) => { busyNow.current = label; setOpBusy(label); };
-  // Copies out of NET: volumes, as the board fetches them (spec 2026-10-30 §4.5): one status line each, after the busy
-  // line. Several may run at once (they queue on the board); a finished one's summary stays until the next one starts.
-  const [fetchLines, setFetchLines] = useState<{ id: string; line: string; finished: boolean }[]>([]);
+  // A NET: job's progress is the progress panel's (spec 2026-11-01-progress-panel); the status row keeps Files' own
+  // short operations and a note of why one could not start (a drawer that could not be read), until the next starts.
+  const [note, setNote] = useState<string | null>(null);
+  const setBusy = (label: string | null) => { busyNow.current = label; setOpBusy(label); if (label !== null) setNote(null); };
+  const jobsStore = useJobsStore();
   // Files from the computer into STASH: (the top drop zone, or a pane in STASH:) keep the manager busy as an op does.
   const stash = useStashUpload();
   const busy = opBusy ?? stash.busy;
@@ -375,8 +375,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const seq = useRef<Record<Side, number>>({ left: 0, right: 0 });
   // False once the manager unmounts: a NET: listing still being asked for stops re-asking (askUntilAnswered's `wanted`).
   const alive = useRef(true);
-  // The progress polls' timers (watchFetch), cleared on unmount.
-  const fetchTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  // The jobs this manager listens to (watchFetch), let go on unmount.
+  const watchStops = useRef(new Set<() => void>());
   // For the popstate listener and the NET: poll, which outlive a render.
   // R5: where a pane the address does not name opens (Back to a bare /files too).
   const defaults = paneDefaults(prefs.files.panes);
@@ -515,8 +515,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       const p = latest.current.panes[s];
       if (p.pending !== null && !p.listing) void load(s, p.path);
     }
-    const timers = fetchTimers.current;
-    return () => { alive.current = false; timers.forEach(clearTimeout); timers.clear(); };
+    const stops = watchStops.current;
+    return () => { alive.current = false; stops.forEach((stop) => stop()); stops.clear(); };
     // Once, on mount: `load` reads refs and state setters only.
   }, []);
 
@@ -924,7 +924,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     setBusy(`Reading ${baseName(vol.drawers[0] ?? vol.from)}…`);
     const failed = await askBeforeCopy(vol, sources, resend);
     setBusy(null);
-    if (failed) showFetchLine(`walk-${Date.now()}`, failed, true);
+    if (failed) setNote(failed);
     return failed === null;
   }
 
@@ -942,7 +942,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     setBusy(null);
     if (r === null) return false;
     if ('listing' in r) return true;
-    showFetchLine(`into-${Date.now()}`, 'gone' in r ? GONE : r.error, true);
+    setNote('gone' in r ? GONE : r.error);
     return false;
   }
 
@@ -964,60 +964,37 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     return null;
   }
 
-  /** One copy's line in the status row; a new copy's first line lets go of the summaries of those already finished. */
-  function showFetchLine(id: string, line: string, finished: boolean) {
-    setFetchLines((cur) => {
-      const i = cur.findIndex((x) => x.id === id);
-      if (i >= 0) return cur.map((x, k) => (k === i ? { id, line, finished } : x));
-      return [...cur.filter((x) => !x.finished), { id, line, finished }];
-    });
-  }
-
   /**
-   * A copy out of a volume as the board fetches it (§4.5): GET /api/files/net/fetch/<id> every second, its fetchStatus
-   * in the status row, until it is finished or the manager unmounts. Then the summary stays, a pane showing `dest` reads
-   * it again, and `then` hears the last progress (Download, P8). The busy lock is not held: the person may go on.
+   * A job the board carries out (a copy out of a volume, §4.5; phase 2's copies onto a volume and its writes): the
+   * progress panel shows it (spec 2026-11-01-progress-panel), from the jobs store this tells about it now. Here only
+   * what the panes do: a pane at the destination re-reads while files arrive there, both sides read again once it is
+   * through, and `then` hears the last progress (Download, P8). The busy lock is not held: the person may go on.
    */
   function watchFetch(f: Fetching, dest: string, then?: (p: { done: number; arrived: string[] }) => void) {
     let first = true;
-    // While a board the job waits on is offline (plan 2026-11-01-net-consistency, item 14) it is asked every 15 s, not
-    // every second; once the board is back, every second again.
-    let every = 1000;
-    const again = () => {
+    const sides = ['left', 'right'] as const;
+    const stop = jobsStore.watch(f.id, (j) => {
       if (!alive.current) return;
-      const t = setTimeout(() => { fetchTimers.current.delete(t); void tick(); }, every);
-      fetchTimers.current.add(t);
-    };
-    const tick = async () => {
-      let res: Response;
-      try { res = await fetch(`/api/files/net/fetch/${encodeURIComponent(f.id)}`, { cache: 'no-store' }); } catch { again(); return; }
-      if (!alive.current) return;
-      if (isSignedOutAnswer(res)) { showFetchLine(f.id, SIGNED_OUT_TEXT, true); return; }
-      const p = (await res.json().catch(() => null)) as (Parameters<typeof jobStatus>[0] & { board: string; arrived: string[] }) | null;
-      if (!res.ok || !p) { if (res.status >= 500) { again(); return; } showFetchLine(f.id, refusalWords('failed'), true); return; }
-      const s = jobStatus({ ...p, skipped: p.skipped ?? 0, writes: p.writes ?? [], direction: p.direction ?? 'from' }, p.board);
-      every = p.offline ? OFFLINE_POLL_MS : 1000;
-      showFetchLine(f.id, s.line, s.finished);
       const { panes: cur } = latest.current;
-      const sides = ['left', 'right'] as const;
       // A copy onto a volume (phase 2, spec 2026-10-31 §4.1): a pane at its destination, or at a drawer above it, shows
-      // its files arriving at once (A500 bench 2026-10-31: "Nothing here." until a Refresh); their marks keep it
-      // re-reading (netPollMs) until they are through. Between boards the destination's rows appear only as each file
-      // reaches the server (review I-1): a pane there without an arriving mark yet is read again each tick.
-      if (!s.finished && p.direction === 'to') {
+      // its files arriving at once (A500 bench 2026-10-31); their marks keep it re-reading (netPollMs) until they are
+      // through. Between boards a pane there without an arriving mark yet is read again each answer (review I-1).
+      if (j.running && j.direction === 'to') {
         for (const side of sides) if (arrivesIn(cur[side].path, dest) && (first || netPollMs(cur[side].listing) === null)) void refresh(side);
       }
       first = false;
-      if (!s.finished) { again(); return; }
-      // A job that changed the Amiga's disks (phase 2) changed drawers on both sides maybe: both read again (the
-      // server let their memory go). Where the copy arrived the Amiga is asked afresh, so its own rows replace the
-      // arriving ones even when the memory outlived the copy. A copy out of a volume changed only its destination.
-      if ((p.writes ?? []).length || p.direction === 'to') {
-        for (const side of sides) void load(side, cur[side].path, { fresh: p.direction === 'to' && arrivesIn(cur[side].path, dest) });
+      if (j.running) return;
+      stop();
+      watchStops.current.delete(stop);
+      // A job that changed the Amiga's disks changed drawers on both sides maybe: both read again (the server let their
+      // memory go); where the copy arrived the Amiga is asked afresh. A copy out of a volume changed only its destination.
+      if (j.writes.length || j.direction === 'to') {
+        for (const side of sides) void load(side, cur[side].path, { fresh: j.direction === 'to' && arrivesIn(cur[side].path, dest) });
       } else for (const side of sides) if (cur[side].path === dest) void refresh(side);
-      then?.(p);
-    };
-    void tick();
+      then?.(j);
+    });
+    watchStops.current.add(stop);
+    jobsStore.track(f.id);
   }
 
   /**
@@ -1667,6 +1644,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
               help={paneHelpTopic(p.listing?.path ?? p.path)}
               onActivate={() => activate(side)} onNavigate={(path) => navigate(side, path)}
               onSort={(key) => changeSort(side, key)} onSetSort={(next) => applySort(side, next)}
+              onPickAll={(all) => setSelection(side, () => (all ? selectAll(rowsOf(side).length) : EMPTY_SELECTION))}
               onRowClick={(i, mods) => rowClick(side, i, mods)}
               onRowOpen={(i, how) => openRow(side, i, how)}
               onDragStartRows={(ix, e) => dragStart(side, ix, e)} onDropRows={(e) => drop(side, e)}
@@ -1742,7 +1720,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
                     onDevice={(d) => navigate(active, `${d}:`)} onCommand={bank} />
         {/* Below lg the phone bar and the status row stick to the bottom together; from lg the wrapper is not a box
             (contents), the bar is gone and the status row is the manager's last row, under the bank. */}
-        <div className="files-bar max-lg:rounded-b-[20px] lg:contents" style={{ background: 'var(--surface-2)' }}>
+        {/* data-transfers-anchor: the progress panel sits above the bank (lg) or this bar (below lg), never over them. */}
+        <div data-transfers-anchor="" className="files-bar max-lg:rounded-b-[20px] lg:contents" style={{ background: 'var(--surface-2)' }}>
           <div data-testid="files-actions" role="group" aria-label="File actions"
                className="flex flex-wrap gap-1.5 border-t p-2 lg:hidden" style={{ borderColor: 'var(--line)' }}>
             {/* The phone bar: one row of four, the rest under More. */}
@@ -1778,10 +1757,11 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          {/* The one status row (§2.3): progress such as "Copying 3 of 12…". */}
+          {/* The one status row (§2.3): Files' own operation running ("Copying 3 items…"), or why one could not start.
+              A NET: job's progress is the progress panel's (spec 2026-11-01-progress-panel). */}
           <p role="status" id="files-busy" data-testid="files-busy"
              className="px-3 py-0.5 text-[12px] max-lg:pb-2 max-lg:text-center max-lg:empty:hidden lg:min-h-[22px] lg:border-t"
-             style={{ borderColor: 'var(--line)', color: 'var(--muted)' }}>{busy ?? fetchLines.map((x) => x.line).join(' · ')}</p>
+             style={{ borderColor: 'var(--line)', color: 'var(--muted)' }}>{busy ?? note ?? ''}</p>
         </div>
       </div>
 

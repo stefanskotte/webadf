@@ -307,11 +307,15 @@
   --search-scrim:  rgb(36 33 27 / 0.12);   /* the light scrim under the open search panel; decoration */
   --bar-ok:        #4F9D4A;   /* the green fill of the admin coverage and firmware bars; decoration beside a number */
   --toast-bottom:  24px;      /* sonner's bottom offset from lg; below lg it clears the tab bar (C7 spec §3.4) */
+  --transfers-base: 24px;     /* the progress panel's bottom from lg; below lg it clears the tab bar (spec 2026-11-01 §3) */
 }
 
 /* Below lg the tab bar is fixed at the bottom: toasts sit above it, not over the tabs (C7 spec §3.4, Ruling 15). */
 @media (width < 64rem) {
-  :root { --toast-bottom: calc(4.75rem + env(safe-area-inset-bottom)); }
+  :root {
+    --toast-bottom: calc(4.75rem + env(safe-area-inset-bottom));
+    --transfers-base: calc(4.5rem + env(safe-area-inset-bottom) + 8px);
+  }
 }
 
 @theme inline {
