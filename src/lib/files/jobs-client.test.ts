@@ -355,6 +355,23 @@ describe('a kept card outlives the server\'s 2 minutes (final review C-1)', () =
     await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
     expect(store.getState().jobs.map((j) => j.id)).toEqual(['j1']);
   });
+  it('a Queue card whose rows are in the board\'s newer Queue card goes; one that card does not hold, or another board\'s, stays', async () => {
+    const q = (board: string, created: number, startedAt: string, failures: number) => finished({
+      id: `queue:${board}:${created}`, kind: 'send', startedAt, failed: Array.from({ length: failures }, (_, i) => ({ name: `f${i}`, reason: 'r' })),
+    });
+    const t = (m: number) => `2026-11-01T10:${String(m).padStart(2, '0')}:00.000Z`;
+    const { store } = harness([
+      [q('d1', 1, t(0), 1), q('d2', 1, t(0), 1)],
+      [q('d1', 2, t(0), 2)],        // the same rows and one more, under the id of its newest row
+      [q('d1', 3, t(5), 1)],        // the queue drained first: a new send, the old card holds what this one does not
+    ]);
+    store.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().jobs.map((j) => j.id).sort()).toEqual(['queue:d1:2', 'queue:d2:1']);
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS);
+    expect(store.getState().jobs.map((j) => j.id).sort()).toEqual(['queue:d1:2', 'queue:d1:3', 'queue:d2:1']);
+  });
   it('a clean finished card still goes with the answer', async () => {
     const { store } = harness([[finished()], []]);
     store.start();

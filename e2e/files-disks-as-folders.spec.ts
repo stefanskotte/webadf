@@ -3,7 +3,7 @@ import { fakeBoardTiming, type FakeEntry } from './amiga-board';
 import { cleanupSeeded } from './device-helpers';
 import { synthDrop } from './drag-drop-helpers';
 import { cards, LIVE, queuedPerDest, rowAt, seedTitle, serving, writable } from './files-disks-helpers';
-import { OTHER_PANE_OPENING } from '@/lib/files/pane-rules';
+import { OTHER_PANE_OPENING, PANE_OPENING } from '@/lib/files/pane-rules';
 import { DISKS_ONTO_VOLUME, DISKS_STAY_IN_LIBRARY } from '@/lib/files/shelf-rules';
 
 /**
@@ -116,9 +116,9 @@ test('a drawer still being read: Copy and a drop on the pane wait, then the disk
     const copy = page.getByTestId('files-copy');
     await expect(copy).toHaveAttribute('aria-disabled', 'true');
     await expect(copy).toHaveAttribute('title', OTHER_PANE_OPENING);
-    // Files from the computer dropped on that pane: the same words, before anything is read of the old listing.
+    // Files from the computer dropped on that pane: said of this pane, before anything is read of the old listing.
     await synthDrop(page, [{ name: 'x.txt', kind: 'file', content: 'x' }], '[data-testid="pane-right"]');
-    const opening = page.locator('[data-sonner-toast]').filter({ hasText: OTHER_PANE_OPENING });
+    const opening = page.locator('[data-sonner-toast]').filter({ hasText: PANE_OPENING });
     await expect(opening).toBeVisible({ timeout: LIVE });
     await expect(opening).toBeHidden({ timeout: LIVE });   // gone, so the drop below is what says it next
     await dragRows(page, rowAt(page, 'left', 'Disk 1'), rowAt(page, 'right', 'c.txt'));

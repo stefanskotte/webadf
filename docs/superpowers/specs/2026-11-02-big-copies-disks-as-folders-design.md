@@ -61,6 +61,12 @@ the sentence from the constants so it cannot drift. The Queue meter in `net-driv
 and always sends NEXT; Transfer keeps the next 32 waiting (`RX_LIST_MAX`) and drops rows that leave the list. The
 operator accepts the Transfer window rolling over at 32.
 
+**Corrected in the final review:** the server now lists 32 rows (`.limit(32)`), and Transfer never lists a row for a
+volume, because `rx_path_ok` rejects `:` (`tools/receive/core/rx_proto.c:1126-1134`). So a copy onto a volume shows no
+waiting rows in Transfer: one receiving row, and done rows piling up to `ROWS_MAX` 96, after which the oldest falls off.
+The rollover at 32 applies only to plain sends to the receive folder. Nothing depends on the list: the next file comes
+from NEXT.
+
 **The one risk, to measure before anything else in this part:** the server stores every file of a copy (`storeSendBytes`,
 then `diskStore.stat` and a CRC per file in `queueTransfers`) inside one request with `maxDuration` 60 s. A 214-file
 disk, and four large disks together, must be timed against the real Blob store. Target: under 30 s for the four largest
@@ -176,7 +182,7 @@ Update `pane.test.ts` and `e2e/files-net-writes.spec.ts:91`.
 - Unit, DB and the touched e2e pass.
 - Timing measured and reported for part 1.
 - A500 bench, in this order, on production: make `Monkey` with Makedir, go in, Copy Monkey Island Disk 1 (over 32
-  files): the drawer `Disk 1` arrives whole, compared with the ADF's file list; Transfer's window rolls over; Cancel the
+  files): the drawer `Disk 1` arrives whole, compared with the ADF's file list; Transfer's window shows the receiving row and done rows, with no waiting list; Cancel the
   rest on a second disk leaves exactly what was reported; the four disks from the TTL row arrive as four drawers;
   `Disk.info`'s look on Workbench reported.
 - `HANDOFF.md` §4 and its Current order updated; Pillock told, as the operator instructs.

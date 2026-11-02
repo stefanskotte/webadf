@@ -6,7 +6,7 @@
 // with a failure or a cancel stays here until it is closed (a reload forgets it). The open/closed choice and the cards
 // already put away are remembered per browser, a convenience: storage that throws or is empty changes nothing else.
 // CLIENT-SAFE.
-import { FADE_MS, isClean, resultWords, WINDOW_MS, type JobView, type Sample } from './job-view';
+import { FADE_MS, isClean, QUEUE_JOB, resultWords, WINDOW_MS, type JobView, type Sample } from './job-view';
 
 export const POLL_MS = 2_000;
 export const OFFLINE_POLL_MS = 15_000;
@@ -125,7 +125,10 @@ export function createJobsStore(deps: JobsDeps) {
     const announce = words.length ? announced(state.announce, words.join('. ')) : state.announce;
     // A card that must stay until closed, which the answer let go (the server lists a finished job for 2 minutes). Past a
     // signed-out answer none: this answer may be another account's. Kept out of `jobs`, what watchers below hear.
-    const kept = state.signedOut ? [] : state.jobs.filter((j) => !j.running && !isClean(j) && !state.seen.includes(j.id) && !jobs.some((x) => x.id === j.id));
+    // A board's Queue card takes a new id with each newest row: one that started no later already holds this one's rows.
+    const queueOf = (j: JobView) => (j.id.startsWith(QUEUE_JOB) ? j.id.slice(0, j.id.lastIndexOf(':')) : null);
+    const heldByNewer = (j: JobView) => queueOf(j) !== null && jobs.some((x) => queueOf(x) === queueOf(j) && x.startedAt <= j.startedAt);
+    const kept = state.signedOut ? [] : state.jobs.filter((j) => !j.running && !isClean(j) && !state.seen.includes(j.id) && !jobs.some((x) => x.id === j.id) && !heldByNewer(j));
     for (const j of kept) finishedSeenAt[j.id] = state.finishedSeenAt[j.id] ?? now;
     // In the server's order (jobs.ts): the panel shows them newest first.
     const shown = kept.length ? [...jobs, ...kept].sort((x, y) => y.startedAt.localeCompare(x.startedAt) || x.id.localeCompare(y.id)) : jobs;

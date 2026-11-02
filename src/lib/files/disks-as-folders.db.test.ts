@@ -236,7 +236,7 @@ describe('each disk by itself', () => {
     await seed('g1', 'Monkey', 'd2', 2, fullDisk('M2'));
     const r = await copy(['LIBRARY:/g1']);
     expect(r).toMatchObject({ kind: 'done', job: { files: 2 }, items: [
-      { source: DISK('g1', 'd1'), name: 'Disk 1', ok: false, refusal: { code: 'unsupported', detail: 'Disk 1 cannot be read as files' } },
+      { source: DISK('g1', 'd1'), name: 'Disk 1', ok: false, refusal: { code: 'unsupported', detail: 'It cannot be read as files' } },
       { source: DISK('g1', 'd2'), ok: true }] });
     expect((await dests()).every((d) => d!.startsWith('Work:Monkey/Disk 2/'))).toBe(true);
   });
@@ -276,7 +276,7 @@ describe('each disk by itself', () => {
     await seed('g1', 'Monkey', 'd1', 1, big);
     await seed('g1', 'Monkey', 'd2', 2, fullDisk('M2'));
     expect(await copy(['LIBRARY:/g1'])).toMatchObject({ kind: 'done', items: [
-      { source: DISK('g1', 'd1'), name: 'Disk 1', ok: false, refusal: { code: 'too_large', detail: 'Disk 1: huge.dat is over 4 MB' } }, { source: DISK('g1', 'd2'), ok: true }] });
+      { source: DISK('g1', 'd1'), name: 'Disk 1', ok: false, refusal: { code: 'too_large', detail: 'huge.dat is over 4 MB' } }, { source: DISK('g1', 'd2'), ok: true }] });
   });
 
   it('a damaged directory refuses its disk, rather than copying what is left of it', async () => {
@@ -292,7 +292,7 @@ describe('each disk by itself', () => {
     await seed('g1', 'Monkey', 'd1', 1, adf);
     await seed('g1', 'Monkey', 'd2', 2, fullDisk('M2'));
     expect(await copy(['LIBRARY:/g1'])).toMatchObject({ kind: 'done', items: [
-      { source: DISK('g1', 'd1'), name: 'Disk 1', ok: false, refusal: { code: 'unsupported', detail: 'Disk 1: its directory is damaged, some files cannot be reached' } },
+      { source: DISK('g1', 'd1'), name: 'Disk 1', ok: false, refusal: { code: 'unsupported', detail: 'Its directory is damaged, some files cannot be reached' } },
       { source: DISK('g1', 'd2'), ok: true }] });
     expect((await dests()).every((d) => d!.startsWith('Work:Monkey/Disk 2/'))).toBe(true);
   });

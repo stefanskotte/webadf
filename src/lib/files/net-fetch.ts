@@ -455,7 +455,8 @@ export async function fetchJob(db: Db, orgId: string, fetchId: string, now: Date
     .orderBy(asc(remoteRequests.createdAt), asc(remoteRequests.id));
   const rowsRead: JobSent[] = await db.select(JOB_SENT).from(transfers).where(and(eq(transfers.jobId, fetchId), eq(transfers.orgId, orgId)))
     .orderBy(asc(transfers.createdAt), asc(transfers.id));
-  // A row past its 24 h never moves again: it says expired now, finished when it lapsed. The nightly cron writes that later.
+  // A row past its 24 h no longer waits: it says expired now, finished when it lapsed; the nightly cron writes that later.
+  // Only one already `sending` can still finish, and then its real row says so at the next look.
   const lapsed = (x: JobSent) => (x.status === 'queued' || x.status === 'sending') && x.expiresAt.getTime() <= now.getTime();
   const sent = rowsRead.map((x): JobSent => (lapsed(x) ? { ...x, status: 'expired', finishedAt: x.expiresAt } : x));
   if (reqs.length === 0 && sent.length === 0) return null;

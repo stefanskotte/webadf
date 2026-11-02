@@ -16,7 +16,7 @@ import { walk } from './library-driver';
 import { libPath, opMemo, placeInLibrary, type LibraryPlace } from './library-paths';
 import { copyOntoVolume, isNetVolumeDir } from './net-write';
 import { amigaNameProblem, parsePath, type FsPath } from './path';
-import { COLLECTIONS_STAY, DISKS_STAY_IN_LIBRARY } from './shelf-rules';
+import { COLLECTIONS_STAY, DAMAGED_DISK, DISKS_STAY_IN_LIBRARY, UNREADABLE_DISK } from './shelf-rules';
 
 const NOT_ROWS = 'disks and titles go on their own';
 
@@ -57,15 +57,15 @@ async function collectDisk(ctx: OpCtx, { source, gameId, diskId, name }: OneDisk
   const disk = d;
   const items: IncomingItem[] = [];
   const checked = itemResult(source, () => {
-    if (!disk.info.filesystem) refuse('unsupported', 400, `${name} cannot be read as files`);
+    if (!disk.info.filesystem) refuse('unsupported', 400, UNREADABLE_DISK);
     // A damaged entry is left out of the tree: copying what remains would say ok with files missing.
-    if (disk.truncated || disk.warnings.length) refuse('unsupported', 400, `${name}: its directory is damaged, some files cannot be reached`);
+    if (disk.truncated || disk.warnings.length) refuse('unsupported', 400, DAMAGED_DISK);
     checkName(name);
     checkEntryNames(disk.root);
     items.push({ rel: [name], kind: 'dir', date: null, protection: 0, comment: null });
     for (const entry of disk.root) walk(disk.bytes, entry, [name, entry.name], items);
     const big = items.find((i) => (i.bytes?.length ?? 0) > SEND_FILE_MAX);
-    if (big) refuse('too_large', 413, `${name}: ${big.rel.slice(1).join('/')} is over 4 MB`);
+    if (big) refuse('too_large', 413, `${big.rel.slice(1).join('/')} is over 4 MB`);
   });
   return checked.ok ? { source, items } : { ...checked, name };
 }
