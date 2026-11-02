@@ -17,9 +17,10 @@ async function loadJobs(): Promise<JobsAnswer | 'signed-out' | null> {
 }
 
 /** One job on its own, as the listing says it: null when there is none or no answer (the store forgets it then). */
-async function loadOneJob(id: string): Promise<JobView | null> {
+async function loadOneJob(id: string): Promise<JobView | 'gone' | null> {
   let res: Response;
   try { res = await fetch(`/api/files/net/fetch/${encodeURIComponent(id)}`, { cache: 'no-store' }); } catch { return null; }
+  if (res.status === 404) return 'gone';
   if (!res.ok) return null;
   const body = (await res.json().catch(() => null)) as { job?: JobView | null } | null;
   return body?.job ?? null;

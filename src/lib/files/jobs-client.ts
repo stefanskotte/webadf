@@ -10,6 +10,8 @@ export const POLL_MS = 2_000;
 export const OFFLINE_POLL_MS = 15_000;
 /** A job this tab just started is looked for this long before the store stops asking for it. */
 export const TRACK_MS = 10_000;
+/** How many times a failed one-off ask for a watched job is tried (OFFLINE_POLL_MS apart) before it is let go. */
+export const ONE_TRIES = 5;
 export const OPEN_KEY = 'webadf:transfers-open';
 export const SEEN_KEY = 'webadf:transfers-seen';
 export const SEEN_MAX = 50;
@@ -23,7 +25,8 @@ export type JobsDeps = {
    * One job on its own (GET /api/files/net/fetch/<id>), null when there is none: asked once for a watched job the list
    * no longer holds (it finished more than 2 minutes ago, while the tab was hidden) or never held within TRACK_MS.
    */
-  loadOne(id: string): Promise<JobView | null>;
+  /** One job by its id: the job; 'gone' when the server no longer has it (404); null when the ask failed. */
+  loadOne(id: string): Promise<JobView | 'gone' | null>;
   now(): number;
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(t: unknown): void;
@@ -72,6 +75,8 @@ export function createJobsStore(deps: JobsDeps) {
   /** Each watched job: when it was first watched, and whether an answer has held it. */
   const watched = new Map<string, { since: number; listed: boolean }>();
   const fetching = new Set<string>();
+  /** Failed one-off asks per job, so a flaky network is tried again (ONE_TRIES at most) but never forever. */
+  const oneFails = new Map<string, number>();
   let timer: unknown = null;
   let inFlight = false;
   let again = false;
@@ -117,10 +122,18 @@ export function createJobsStore(deps: JobsDeps) {
 
   async function fetchOne(id: string) {
     fetching.add(id);
-    let j: JobView | null = null;
-    try { j = await deps.loadOne(id); } catch { j = null; }
+    let a: JobView | 'gone' | null = null;
+    try { a = await deps.loadOne(id); } catch { a = null; }
     fetching.delete(id);
     if (stopped) return;
+    if (a === null) {
+      // The ask failed (network, 5xx): tried again on its own timer -- with nothing running the store asks nothing.
+      const n = (oneFails.get(id) ?? 0) + 1;
+      oneFails.set(id, n);
+      if (n < ONE_TRIES && watched.has(id)) { deps.setTimer(() => { if (!stopped && !fetching.has(id) && watched.has(id)) void fetchOne(id); }, OFFLINE_POLL_MS); return; }
+    }
+    oneFails.delete(id);
+    const j = a === 'gone' ? null : a;
     if (j) for (const w of [...(watchers.get(id) ?? [])]) w(j);
     // Still running (a list that missed it): watched as if just begun. Else it is forgotten: nothing more will come.
     const w = watched.get(id);

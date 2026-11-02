@@ -165,6 +165,33 @@ describe('createJobsStore state', () => {
     expect(loadOne).toHaveBeenCalledTimes(1);
     expect(heard).toEqual([false]);
   });
+  it('a one-off ask that fails is tried again every 15 s (5 times at most); a job the server no longer has is let go', async () => {
+    let calls = 0;
+    const done = finished({ id: 'j9' });
+    const { store, loadOne } = harness([[]], { loadOne: async () => (++calls < 3 ? null : done) });
+    const heard: boolean[] = [];
+    store.watch('j9', (j) => heard.push(j.running));
+    store.track('j9');
+    store.start();
+    await vi.advanceTimersByTimeAsync(TRACK_MS + 5_000);
+    expect(loadOne).toHaveBeenCalledTimes(1);
+    expect(heard).toEqual([]);
+    await vi.advanceTimersByTimeAsync(2 * OFFLINE_POLL_MS);
+    expect(loadOne).toHaveBeenCalledTimes(3);
+    expect(heard).toEqual([false]);
+    const gone = harness([[]], { loadOne: async () => 'gone' as const });
+    gone.store.watch('j8', () => { throw new Error('never heard'); });
+    gone.store.track('j8');
+    gone.store.start();
+    await vi.advanceTimersByTimeAsync(TRACK_MS + 5 * OFFLINE_POLL_MS);
+    expect(gone.loadOne).toHaveBeenCalledTimes(1);
+    const failing = harness([[]], { loadOne: async () => null });
+    failing.store.watch('j7', () => {});
+    failing.store.track('j7');
+    failing.store.start();
+    await vi.advanceTimersByTimeAsync(TRACK_MS + 10 * OFFLINE_POLL_MS);
+    expect(failing.loadOne).toHaveBeenCalledTimes(5);
+  });
   it('a watched job still listed is never fetched on its own', async () => {
     const { store, loadOne } = harness([[job()], [job()], [finished()]]);
     store.watch('j1', () => {});
