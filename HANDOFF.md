@@ -1527,9 +1527,18 @@ started on another device until reload; panel above the phone search scrim; same
 Posted to Pillock (Discord WifiFloppy thread, 2026-11-02 01:33, as screemo, on the operator's instruction): the drawer icon
 (fw 1.24.0 + Transfer 2.9 via Install), the folder auto-save, Transfer 2.10, the progress panel, Select all, and the
 32-file queue limit; asked him to test (A600 too).
-(1e) **IN PROGRESS 2026-11-02 (operator's order, branch feat/big-copies, spec docs/superpowers/specs/2026-11-02-big-copies-disks-as-folders-design.md):**
-queue limit 1,000 files / 128 MB; DSK and TTL rows copied onto a volume as drawers named like the rows (no icons, no title folder), plus an
-"Up one level" row replacing the title bar's arrow; then the five panel minors. **Next after it, Transfer 2.11 (operator, 2026-11-02; Pillock's report):**
+(1e) **SHIPPED 2026-11-02: big copies (merges 934703fe, a8bb2946, 8f89658e; spec docs/superpowers/specs/2026-11-02-big-copies-disks-as-folders-design.md).**
+Queue limit 1,000 files / 128 MB; DSK and TTL rows copied onto a volume as drawers named like the rows, at most 8 disks at once (no icons, no title folder; a TTL's disks go straight
+into the destination; Move refused); "Up one level" row replacing the title bar's arrow; the five panel minors. No migration, firmware, Transfer or driver disk change. The final
+review also fixed: queued names count as clashes; Copy waits while the other pane opens a place (it went to the parent); a failed card stays past the server's 2 minutes; rows past
+24 h read as expired; the board's queue read lists 32.
+**Owed:** (a) A500 bench per the spec's "Done means"; (b) hosted timing of an 8-disk copy (POST /api/files/ops against `maxDuration` 60; the only number is 25 s for the 4 largest from the Mac; if over about 45 s lower `COPY_MAX_DISKS`);
+(c) iOS Safari double tap on the Up row; NBSP re-announce with a real screen reader; a disk with an empty drawer on a copy over 60 s (`expireStale` could fail its `ensure`, unproven).
+**Known, left on purpose (rulings):** Transfer never lists volume rows (`rx_path_ok` rejects `:`), so a copy onto a volume shows no waiting list, only a receiving row and done rows up to 96; a damaged directory refuses the disk;
+`volumeToVolume` still checks only the listing for clashes though help says "there or coming"; left edge goes up two levels on a double-click; "Cancels all N files" counts plain Queue rows only, as approved; poll still reads a job's rows whole once (about 140 KB/s at 1,000 rows, estimate; aggregates would cut it).
+**Next fix worth scheduling (Important, pre-existing):** a job that fails while its tab is hidden, finishing more than 2 minutes before the person returns, gets no card: in `take`, for a job that was running and is absent from the answer, call `loadOne` and add it if not clean.
+**Minors left:** a hidden tab keeps an old account's kept card across a sign-in elsewhere; a stale Keep both/Skip answer if the drawer lands while the dialog is open (`files-manager.tsx:1069`); an orphan `sent` listing can show a one-off timeout after M-2 (`latestFor`); a waiting write can run late when a board returns (`takeWaiting` has no age check); two tabs can overshoot the queue limit; `files-net-writes:198` fails on master and before part 1 (Copy says "Select something first" after a row click: a pane reload seems to drop the selection, unproven); `files-net:48`, `send-to-amiga:83`, `transfers-panel:98`, `files-net-writes:137,424` run close to their limits against the production DB.
+**Next: Transfer 2.11 (operator, 2026-11-02; Pillock's report):**
 Transfer's window cuts names at 17 characters (`tools/receive/amiga/gui.c:85`: `1200_GotekOLED_fillers.gcode` shows as `1200_GotekOLED_fi`; the file
 on the Amiga is named correctly). Use the room the window has. Needs a new driver disk. Pillock also confirmed 2026-11-02 13:00 that all five features he
 was asked to test work; his A600 run is still to come.
