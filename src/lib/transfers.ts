@@ -258,12 +258,15 @@ export type SendOutcome = { ok: true; savedAs: string } | { ok: false; code: str
 
 export async function finishTransfer(db: Db, deviceId: string, id: string, o: SendOutcome, now = new Date()): Promise<boolean> {
   return db.transaction(async (tx) => {
+    // A file the board already had when Cancel marked its row is on the Amiga all the same: its delivery still counts, so
+    // the card says what arrived. Any other late outcome leaves the row cancelled.
+    const finishable = o.ok ? [...ACTIVE, 'cancelled' as const] : ACTIVE;
     // Transfer's SKIP (a copy onto a volume whose name was there, mode skip) is reported as code `skipped`: not a failure.
     const done = await tx.update(transfers).set(o.ok
       ? { status: 'delivered', savedAs: o.savedAs.slice(0, 255), finishedAt: now }
       : o.code === 'skipped' ? { status: 'skipped', finishedAt: now }
       : { status: 'failed', errorCode: o.code.slice(0, 16), errorText: o.text.slice(0, 120), finishedAt: now })
-      .where(and(eq(transfers.id, id), eq(transfers.deviceId, deviceId), inArray(transfers.status, ACTIVE)))
+      .where(and(eq(transfers.id, id), eq(transfers.deviceId, deviceId), inArray(transfers.status, finishable)))
       .returning({ id: transfers.id });
     if (done.length === 0) return false;
     await tx.update(devices).set({ sendVersion: sql`${devices.sendVersion} + 1` }).where(eq(devices.id, deviceId));
