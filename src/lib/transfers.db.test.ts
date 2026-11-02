@@ -227,6 +227,36 @@ describe('transfers', () => {
     expect(await T.listTransfers(getDb(), 'org-b', d)).toEqual([]);
   });
 
+  it('M-3: past the cap the row moving now is still shown, first, and the cap holds', async () => {
+    const d = await device();
+    await fill(d, 150);
+    const t0 = Date.now();
+    const rows = await getDb().select({ id: transfers.id }).from(transfers).where(eq(transfers.deviceId, d));
+    const [oldest, lapsed] = rows;
+    await getDb().update(transfers).set({ status: 'sending', createdAt: new Date(t0 - 60_000) }).where(eq(transfers.id, oldest.id));
+    await getDb().update(transfers).set({ status: 'sending', createdAt: new Date(t0 - 90_000), expiresAt: new Date(t0 - 1000) }).where(eq(transfers.id, lapsed.id));
+    const list = await T.listTransfers(getDb(), 'org-a', d);
+    expect(list).toHaveLength(T.QUEUE_LIST_MAX);
+    expect(list[0].id).toBe(oldest.id);
+    expect(list.filter((r) => r.id === oldest.id)).toHaveLength(1);
+    expect(list.some((r) => r.id === lapsed.id)).toBe(false);   // past its expiry it never moves again: not pinned
+    expect(await T.listTransfers(getDb(), 'org-b', d)).toEqual([]);
+  });
+
+  it('I-3: LIST carries the next 32 rows, the most Transfer keeps; NEXT and the order are as before', async () => {
+    const d = await device();
+    const t0 = Date.now();
+    await fill(d, 40);
+    const all = await getDb().select({ id: transfers.id }).from(transfers).where(eq(transfers.deviceId, d));
+    for (const [k, r] of all.entries()) await getDb().update(transfers).set({ createdAt: new Date(t0 - 100_000 + k) }).where(eq(transfers.id, r.id));
+    const text = await T.sendQueueText(getDb(), d);
+    const lines = text.trimEnd().split('\n');
+    expect(T.SEND_LIST_MAX).toBe(32);
+    expect(lines[0]).toContain(`NEXT ${all[0].id} `);
+    expect(lines[1]).toBe('LIST 32');
+    expect(lines.slice(2).map((l) => l.split(' ')[0])).toEqual(all.slice(0, 32).map((r) => r.id));
+  });
+
   it('clearFinishedTransfers deletes this board\'s finished and lapsed rows only, and leaves the board\'s queue and cursor alone', async () => {
     const d = await device(); const other = await device();
     const mk = async (dev: string, p: string) => (await q(dev, await blob(new TextEncoder().encode(`clear-${dev}-${p}`)), { path: p }) as { id: string }).id;
