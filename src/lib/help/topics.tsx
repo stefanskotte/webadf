@@ -126,8 +126,8 @@ export const HELP_TOPICS = {
         </p>
         <p>
           <strong>Keys.</strong> The box at the top of the tick column picks every row shown, or none. ↑ and ↓ move, Space picks, Enter opens, Backspace goes up, Tab switches pane, / filters,
-          F5 copies, F6 moves, F7 makes a folder, F2 renames, Delete deletes. A click on a pane&apos;s left edge goes up
-          one level too, as in Directory Opus.
+          F5 copies, F6 moves, F7 makes a folder, F2 renames, Delete deletes. <em>Up one level</em> heads a folder&apos;s
+          list; a click on a pane&apos;s left edge goes up too, as in Directory Opus.
         </p>
         <p>
           <strong>On a phone.</strong> One pane at a time: <em>Left</em> and <em>Right</em> switch.{' '}
