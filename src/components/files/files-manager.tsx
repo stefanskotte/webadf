@@ -1372,6 +1372,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    */
   function dropFromComputer(side: Side, e: React.DragEvent) {
     const l = panes[side].listing;
+    // As a drop of rows: on the pane's body while it opens another place, the listing it would land in is the one it left.
+    if (l && dropFolder(l, e) === l.path && unsettled(panes[side])) { toast.error(OTHER_PANE_OPENING); return; }
     if (l && !l.disk && holdsFiles(l)) { dropIntoStash(side, l, e); return; }
     // Files from the computer go up to STASH: first; a copy from there puts them on the Amiga (phase 2).
     if (isNetVolume(l)) { toast.error(refusalWords('read_only', NET_DROP_TO_STASH)); return; }

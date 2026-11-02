@@ -106,6 +106,10 @@ describe('refusalWords for writes to the Amiga', () => {
     expect(refusalWords('read_only', 'Transfer is not running on A500')).toBe('Transfer is not running on A500.');
     expect(refusalWords('conflict', 'List the drawer again and retry')).toBe('List the drawer again and retry.');
     expect(refusalWords('unsupported', 'Move within one volume')).toBe('Move within one volume.');
+    // A disk with no filesystem is a plain sentence (final review); anything else unknown keeps its prefix.
+    expect(refusalWords('unsupported', 'Disk 1 cannot be read as files')).toBe('Disk 1 cannot be read as files.');
+    expect(refusalWords('unsupported', 'Disk 1: its directory is damaged, some files cannot be reached')).toBe('Not supported: Disk 1: its directory is damaged, some files cannot be reached.');
+    expect(refusalWords('unsupported', 'something else')).toBe('Not supported: something else.');
     // Spec 2026-10-31 §9: a Move off a volume on Transfer 2.5, and what a move kept.
     expect(refusalWords('unsupported', 'Move needs Transfer 2.6 — use Copy')).toBe('Move needs Transfer 2.6 — use Copy.');
     expect(refusalWords('conflict', 'Kept STASH:/Pack: something new is in it')).toBe('Kept STASH:/Pack: something new is in it.');
