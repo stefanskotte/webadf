@@ -135,8 +135,8 @@ export function Pane({ filterRef, ...p }: PaneProps) {
   const foot = listing ? paneFoot({ base, shown: counts.shown, total: counts.total, infoHidden: counts.infoHidden, picked: picked.length, pickedSize: paneSize(pickedBytes) }) : '';
   const sideName = side === 'left' ? 'left' : 'right';
   const onlyInfo = view.hideInfo && !view.filter.trim() && counts.infoHidden > 0 && counts.shown === 0;
-  // Rows that hold files drag (C2), and titles on LIBRARY: or in a collection, to be filed (Files 2 §3.2); disks and
-  // collections do not move, and nothing is copied out of NET:.
+  // Rows that hold files drag (C2), titles on LIBRARY: or in a collection, to be filed (Files 2 §3.2), and a title's DSK
+  // rows, to be copied onto a volume (spec 2026-11-02). Collection rows do not drag.
   const shelf = shelfOf(listing) !== null;
   // A volume's rows drag out as copies (NET: volumes, spec 2026-10-30 §5).
   const drags = holdsFiles(listing) || shelf || isNetVolume(listing) || listsDisks(listing);

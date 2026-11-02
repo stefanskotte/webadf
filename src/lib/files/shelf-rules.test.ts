@@ -173,6 +173,9 @@ describe('disks and titles onto a NET: volume (big copies part 2)', () => {
     expect(placeReason('copy', titleList, [dsk], volume)).toBeNull();
     expect(placeReason('move', titleList, [dsk], volume)).toBe(DISKS_STAY_IN_LIBRARY);
     expect(placeReason('copy', titleList, [dsk], stash)).toBe(DISKS_ONTO_VOLUME);
+    expect(placeReason('copy', titleList, [dsk], null)).toBe(DISKS_ONTO_VOLUME);
+    expect(placeReason('move', titleList, [dsk], stash)).toBe(DISKS_STAY_IN_LIBRARY);
+    expect(placeReason('move', titleList, [dsk], root)).toBe(DISKS_STAY_IN_LIBRARY);
     expect(placeReason('copy', root, [title], volume)).toBeNull();
     expect(placeReason('copy', root, [title], stash)).toBe(FILE_ON_SHELF);
     expect(placeReason('move', demos, [title], games)).toBeNull();

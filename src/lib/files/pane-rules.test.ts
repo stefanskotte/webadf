@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { holdsFiles, addToLibraryReason, offersUndo, placeOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly, failedReason, FAILED_ROW, deleteText, deleteWhere, netVolumeReason } from './pane-rules';
+import { unsettled, holdsFiles, addToLibraryReason, offersUndo, placeOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly, failedReason, FAILED_ROW, deleteText, deleteWhere, netVolumeReason } from './pane-rules';
 import { NET_OPEN_VOLUME, NET_READ_ONLY } from './net-rules';
 import type { FsEntry, Listing } from './types';
 
@@ -185,5 +185,15 @@ describe('LIBRARY: above the disks (Files 2 §3.2)', () => {
   it('filing may take a disk image the library already has (R4); Add to library still says so', () => {
     expect(addToLibraryReason(L('STASH:'), [E('Old.adf', 'file', { marks: ['in the library'] })], { filing: true })).toBeNull();
     expect(addToLibraryReason(L('STASH:'), [E('Old.adf', 'file', { marks: ['in the library'] })])).toBe('Already in the library');
+  });
+});
+
+describe('unsettled: a pane on its way to another place', () => {
+  const listing = { path: 'NET:/b/Work' } as Listing;
+  it('is unsettled only while loading another place than its listing', () => {
+    expect(unsettled({ loading: true, listing, path: 'NET:/b/Work/Monkey' })).toBe(true);
+    expect(unsettled({ loading: false, listing, path: 'NET:/b/Work/Monkey' })).toBe(false);   // clears itself
+    expect(unsettled({ loading: true, listing, path: 'NET:/b/Work' })).toBe(false);           // a refresh of the same place
+    expect(unsettled({ loading: true, listing: null, path: 'NET:/b/Work' })).toBe(false);     // nothing to aim at
   });
 });

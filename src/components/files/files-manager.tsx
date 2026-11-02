@@ -18,7 +18,7 @@ import { formatPath, PANE_DEVICES, parsePath } from '@/lib/files/path';
 import type { OpItem, OpRequest } from '@/lib/files/ops';
 import type { Added } from '@/lib/files/driver';
 import {
-  acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, netVolumeReason,
+  acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, netVolumeReason, OTHER_PANE_OPENING, unsettled,
   offersUndo, placeOf,
 } from '@/lib/files/pane-rules';
 import { askUntilAnswered } from '@/lib/files/ask-listing';
@@ -731,12 +731,12 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const outOfNet = copyOutReason(src);
   function transferReason(op: 'copy' | 'move'): string | null {
     if (outOfNet) return outOfNet;
-    // DSK or TTL rows onto a volume: a drawer per disk (spec 2026-11-02), never a move.
-    const onto = diskCopyReason(op, picked, dst);
-    if (onto !== undefined) return onto;
-    // Titles, or disk images from STASH:, onto LIBRARY: or a collection (Files 2 §3.2): the filing rules decide.
-    const filing = filingReason(op, src, picked, shelfOf(dst));
-    if (filing !== undefined) return filing;
+    // Its title names the new place while `dst` is still the one it left: a copy now would land there.
+    if (unsettled(panes[otherSide(active)])) return OTHER_PANE_OPENING;
+    // DSK or TTL rows onto a volume (a drawer per disk, spec 2026-11-02, never a move); titles, or disk images from
+    // STASH:, onto LIBRARY: or a collection (Files 2 §3.2): those rules decide, as they do for the phone's picker.
+    const placed = placeReason(op, src, picked, dst);
+    if (placed !== undefined) return placed;
     // A STASH: file that failed to arrive holds no bytes: a copy would skip it and still say done.
     const r = sourceReason(op === 'move') ?? failedReason(picked);
     if (r) return r;
@@ -1350,7 +1350,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const shelf = shelfOf(l) !== null && indexes.every((i) => rows[i]?.kind === 'title' || rows[i]?.kind === 'collection');
     // A volume's rows drag too, as copies (NET: volumes, spec 2026-10-30 §5).
     const volumeRows = isNetVolume(l);
-    // A title's DSK rows drag, to be copied onto a volume (spec 2026-11-02); the drop says when it is anywhere else.
+    // A title's DSK rows drag, to be copied onto a volume (spec 2026-11-02). A pane that takes copies and not disks says
+    // so at the drop; a pane that takes no copies does not accept the drag (pane.tsx), so no drop fires there.
     if ((!holdsFiles(l) && !shelf && !volumeRows && !listsDisks(l)) || paths.length === 0) { e.preventDefault(); return; }
     activate(side);
     e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ from: side, paths }));
@@ -1578,6 +1579,9 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const l = panes[side].listing;
     const from = panes[data.from]?.listing ?? null;
     const dest = l ? dropFolder(l, e) : '';
+    // On the pane's body while it is opening another place: the listing it would land in is the one it left. A drawer
+    // row is where the drop was aimed.
+    if (l && dest === l.path && unsettled(panes[side])) { toast.error(OTHER_PANE_OPENING); return; }
     // Out of a volume a drag always copies (spec 2026-10-30 §5): Shift asks for nothing a volume can give.
     // A volume the board can write to gives a move too (phase 2).
     const op = e.shiftKey && (!isNetVolume(from) || from!.writable) ? 'move' : 'copy';
@@ -1601,7 +1605,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       transfer(op, data.paths, dest, row ? row.name : where(l), null, filingNoun(from));
       return;
     }
-    if (disksPicked(from, pickedHere)) { toast.error(DISKS_ONTO_VOLUME); return; }
+    if (disksPicked(from, pickedHere)) { toast.error(op === 'move' ? DISKS_STAY_IN_LIBRARY : DISKS_ONTO_VOLUME); return; }
     if (!l || !acceptsCopies(l)) {
       toast.error(isNetVolume(l) ? refusalWords('read_only', l!.readOnlyReason ?? NET_READ_ONLY) : l && netReadOnly(l) ? readOnly(l) : 'Open a disk or STASH: to drop files into it');
       return;

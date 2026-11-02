@@ -2,7 +2,8 @@ import { test, expect, type Locator, type Page } from '@playwright/test';
 import { fakeBoardTiming, type FakeEntry } from './amiga-board';
 import { cleanupSeeded } from './device-helpers';
 import { cards, LIVE, queuedPerDest, rowAt, seedTitle, serving, writable } from './files-disks-helpers';
-import { DISKS_STAY_IN_LIBRARY } from '@/lib/files/shelf-rules';
+import { OTHER_PANE_OPENING } from '@/lib/files/pane-rules';
+import { DISKS_ONTO_VOLUME, DISKS_STAY_IN_LIBRARY } from '@/lib/files/shelf-rules';
 
 /**
  * Big copies part 2 (spec 2026-11-02): DSK and TTL rows copied onto a NET: volume arrive as a drawer per disk. The
@@ -16,7 +17,7 @@ test.afterAll(cleanupSeeded);
 const FOUR = ['Disk 1', 'Disk 2', 'Disk 3', 'Disk 4'];
 const inDisk = ['C', 'Disk.info', 'Empty', 'ReadMe'];
 const names = (fs: Record<string, FakeEntry[]>, at: string) => (fs[at] ?? []).map((e) => e.name).sort();
-/** A drawer's rows after the copy: every file and drawer of the disk, and no icon for the drawer itself. */
+/** A drawer's rows after the copy: every file and drawer of the disk. */
 const arrivedWhole = (fs: Record<string, FakeEntry[]>, at: string) => {
   expect(names(fs, at)).toEqual(inDisk);
   expect(names(fs, `${at}/C`)).toEqual(['Assign']);
@@ -63,16 +64,15 @@ test('four disks in Monkey: two DSK rows copied into a drawer made here arrive a
     await page.getByTestId('files-name-save').click();
     await expect(rowAt(page, 'right', 'Monkey')).toBeVisible({ timeout: LIVE });
     await rowAt(page, 'right', 'Monkey').dblclick();
-    // The drawer's own listing, not only its name in the title bar: until it is read Copy still aims at Work:.
     await expect(page.getByTestId('pane-right')).toContainText('Work:Monkey', { timeout: LIVE });
-    await expect(rowAt(page, 'right', 'c.txt')).toHaveCount(0, { timeout: LIVE });
 
     // Held, so what arrives is seen on its way, without a Refresh.
     fakeBoardTiming.queueHeld = true;
     await rowAt(page, 'left', 'Disk 1').click();
     await rowAt(page, 'left', 'Disk 2').click({ modifiers: ['ControlOrMeta'] });
     await expect(rowAt(page, 'left', 'Disk 2')).toHaveAttribute('aria-selected', 'true');
-    await expect(page.getByTestId('files-copy')).not.toHaveAttribute('aria-disabled', 'true');
+    // Copy waits for the drawer's own listing (the test below), then aims there.
+    await expect(page.getByTestId('files-copy')).not.toHaveAttribute('aria-disabled', 'true', { timeout: LIVE });
     const before = await cards(page).count();
     await page.getByTestId('files-copy').click();
     // From the click: the drawer read fresh, the disks decoded and stored, the pane read again.
@@ -87,10 +87,47 @@ test('four disks in Monkey: two DSK rows copied into a drawer made here arrive a
     await expect(cards(page)).toHaveCount(before + 1);
     arrivedWhole(fs, 'Work:Monkey/Disk 1');
     arrivedWhole(fs, 'Work:Monkey/Disk 2');
-    // Only the two picked, each its own drawer, and no icon beside them (the operator's ruling).
+    // Only the two picked, each its own drawer.
     expect(names(fs, 'Work:Monkey')).toEqual(['Disk 1', 'Disk 2']);
     await expect(rowAt(page, 'left', 'Disk 1')).toBeVisible();   // the library keeps them
   } finally { fakeBoardTiming.queueHeld = false; await board.stop(); }
+});
+
+// A500 flow, review of Task 3: a drawer is entered and Copy pressed before the Amiga has answered. The pane's title names
+// the drawer while its listing is still the parent, and the disks went to the parent.
+test('a drawer still being read: Copy and a drop on the pane wait, then the disks go into that drawer, not its parent', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  const { orgId, deviceId, token } = await writable(page, request);
+  const { gameId } = await seedTitle(orgId, 'Monkey Island', ['Disk 1', 'Disk 2']);
+  const fs = amiga();
+  fs['Work:'].push({ name: 'Monkey', dir: true });
+  fs['Work:Monkey'] = [];
+  let board = serving(request, token, fs);
+  try {
+    await openFiles(page, `LIBRARY:/${gameId}`, `NET:/${deviceId}/Work`, 'right');
+    await expect(rowAt(page, 'right', 'Monkey')).toBeVisible({ timeout: LIVE });
+    // No board now: the read of a drawer never read before waits for it.
+    await board.stop();
+    await rowAt(page, 'right', 'Monkey').dblclick();
+    await expect(page.getByTestId('pane-right')).toContainText('Work:Monkey', { timeout: LIVE });
+    await expect(rowAt(page, 'right', 'c.txt')).toBeVisible();   // the parent's rows, still shown
+    await rowAt(page, 'left', 'Disk 1').click();
+    const copy = page.getByTestId('files-copy');
+    await expect(copy).toHaveAttribute('aria-disabled', 'true');
+    await expect(copy).toHaveAttribute('title', OTHER_PANE_OPENING);
+    await dragRows(page, rowAt(page, 'left', 'Disk 1'), rowAt(page, 'right', 'c.txt'));
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: OTHER_PANE_OPENING })).toBeVisible({ timeout: LIVE });
+    expect(await queuedPerDest(orgId, deviceId)).toEqual({});
+
+    board = serving(request, token, fs);
+    await expect(copy).not.toHaveAttribute('aria-disabled', 'true', { timeout: LIVE });
+    await copy.click();
+    await expect(cards(page).first()).toContainText('Work:Monkey', { timeout: 45_000 });
+    await expect(cards(page).first()).toContainText('Copied 3 to A500', { timeout: 60_000 });
+    const dests = Object.keys(await queuedPerDest(orgId, deviceId)).sort();
+    expect(dests).toEqual(['C/Assign', 'Disk.info', 'ReadMe'].map((f) => `Work:Monkey/Disk 1/${f}`));
+    expect(names(fs, 'Work:')).toEqual(['Monkey', 'c.txt']);
+  } finally { await board.stop(); }
 });
 
 test('Copy from a TTL row: each disk straight into the destination; Move says the disks stay, on TTL and DSK rows', async ({ page, request }) => {
@@ -119,6 +156,12 @@ test('Copy from a TTL row: each disk straight into the destination; Move says th
     await expect(page.getByTestId('files-move')).toHaveAttribute('aria-disabled', 'true');
     await expect(page.getByTestId('files-move')).toHaveAttribute('title', DISKS_STAY_IN_LIBRARY);
     await expect(page.getByTestId('files-copy')).not.toHaveAttribute('aria-disabled', 'true');
+
+    // With a non-volume opposite, Copy says where disks go and Move still says they stay.
+    await openFiles(page, `LIBRARY:/${gameId}`, 'STASH:', 'left');
+    await rowAt(page, 'left', 'Disk 1').click();
+    await expect(page.getByTestId('files-copy')).toHaveAttribute('title', DISKS_ONTO_VOLUME);
+    await expect(page.getByTestId('files-move')).toHaveAttribute('title', DISKS_STAY_IN_LIBRARY);
   } finally { await board.stop(); }
 });
 
@@ -146,7 +189,7 @@ test('a DSK row dragged onto a volume copies it; with Shift it says the disks st
     await openFiles(page, `LIBRARY:/${gameId}`, 'STASH:', 'left');
     await expect(rowAt(page, 'left', 'Disk 2')).toBeVisible({ timeout: LIVE });
     await dragRows(page, rowAt(page, 'left', 'Disk 2'), page.getByTestId('pane-right'));
-    await expect(toast('Open a drawer on an Amiga volume to copy disks onto it')).toBeVisible({ timeout: LIVE });
+    await expect(toast(DISKS_ONTO_VOLUME)).toBeVisible({ timeout: LIVE });
   } finally { await board.stop(); }
 });
 

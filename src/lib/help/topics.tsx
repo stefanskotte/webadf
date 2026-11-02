@@ -104,11 +104,10 @@ export const HELP_TOPICS = {
         </p>
         <p>
           <strong>Disks onto the Amiga.</strong> Copy a disk, or a title (all its disks), onto a volume: each disk arrives
-          as a folder named like its row, holding all its files, with no title folder around them. These folders have no
-          icons, so Workbench shows them only with Show All Files. Replace leaves other files in the folder; files of the
-          same name are overwritten. At most {COPY_MAX_DISKS} disks at a time. A disk that cannot be read as files, has a
-          damaged directory, or a name the Amiga cannot take is refused by name; the others still copy. Disks stay in the
-          library: there is no Move.
+          as a folder named like its row, with no title folder. These folders have no icons, so Workbench shows them only
+          with Show All Files. Replace leaves other files in the folder. At most {COPY_MAX_DISKS} disks at a time. A disk
+          is refused by name, while the others copy, if it cannot be read as files, has a damaged directory, a file over
+          4 MB or one that cannot be read whole, or a name the Amiga cannot take. Disks stay in the library: no Move.
         </p>
         <p>
           <strong>Inside a disk.</strong> The strip shows the drive, <em>Mount</em>, <em>History</em> and{' '}

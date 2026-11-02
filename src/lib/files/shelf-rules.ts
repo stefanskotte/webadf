@@ -108,16 +108,17 @@ export function diskCopyReason(op: 'copy' | 'move', picked: FsEntry[], dst: List
 export const listsDisks = (l: Listing | null) => l?.library?.level === 'title';
 
 /**
- * DSK rows picked on a title's disk list: Copy to… and a drag offer them, and only a volume takes them (the place is
- * checked by placeReason, or at the drop).
+ * DSK rows picked on a title's disk list: Copy, Copy to… and a drag offer them, and only a volume takes them (the place
+ * is checked by placeReason, or at the drop).
  */
 export const disksPicked = (src: Listing | null, picked: FsEntry[]) => listsDisks(src) && picked.length > 0 && picked.every((e) => e.kind === 'disk');
 
 /**
- * The phone's Copy to… / Move to… on a place: null when what is picked may go there, the words when not, undefined when
- * the file rules decide. The same order as the desktop's Copy: a volume for disks and titles, then a shelf.
+ * What is picked onto a place, the desktop's Copy and the phone's Copy to… alike: null when it may go there, the words
+ * when not, undefined when the file rules decide. Disks never move; then a volume for disks and titles, then a shelf.
  */
-export function placeReason(op: 'copy' | 'move', src: Listing | null, picked: FsEntry[], l: Listing): string | null | undefined {
+export function placeReason(op: 'copy' | 'move', src: Listing | null, picked: FsEntry[], l: Listing | null): string | null | undefined {
+  if (op === 'move' && disksPicked(src, picked)) return DISKS_STAY_IN_LIBRARY;
   const onto = diskCopyReason(op, picked, l);
   if (onto !== undefined) return onto;
   const filing = filingReason(op, src, picked, shelfOf(l));

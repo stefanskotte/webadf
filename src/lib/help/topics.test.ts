@@ -443,6 +443,6 @@ describe('Files help (increment 4)', () => {
 
   it('files: a disk copied onto a volume, in the words the person meets (spec 2026-11-02)', () => {
     const text = bodyText('files');
-    for (const said of ['folder named like its row', 'Show All Files', 'Replace leaves other files in the folder', 'At most 8 disks at a time', 'damaged directory']) expect(text).toContain(said);
+    for (const said of ['folder named like its row', 'Show All Files', 'Replace leaves other files in the folder', 'At most 8 disks at a time', 'damaged directory', 'file over 4 MB', 'cannot be read whole']) expect(text).toContain(said);
   });
 });
