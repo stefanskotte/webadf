@@ -4,7 +4,7 @@
 // the jobs store asks here for a watched job the listing let go while the tab was hidden.
 import { getDb } from '@/db';
 import { requireOrg } from '@/lib/session';
-import { fetchProgress } from '@/lib/files/net-fetch';
+import { fetchJob } from '@/lib/files/net-fetch';
 import { jobView } from '@/lib/files/jobs';
 
 export async function GET(_request: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -12,8 +12,8 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
   const { id } = await ctx.params;
   const db = getDb();
   const now = new Date();
-  const p = await fetchProgress(db, orgId, id, now);
-  if (!p) return Response.json({ error: 'not_found' }, { status: 404 });
-  const job = await jobView(db, orgId, id, now, p);
-  return Response.json({ ...p, job }, { headers: { 'cache-control': 'no-store' } });
+  const read = await fetchJob(db, orgId, id, now);
+  if (!read) return Response.json({ error: 'not_found' }, { status: 404 });
+  const job = await jobView(db, orgId, id, now, read);
+  return Response.json({ ...read.progress, job }, { headers: { 'cache-control': 'no-store' } });
 }

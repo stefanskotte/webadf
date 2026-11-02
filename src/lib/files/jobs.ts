@@ -3,7 +3,7 @@
 // 2 minutes -- every Files job (transfers.job_id, remote_requests.fetch_id) with fetchProgress's fields, its bytes and
 // what its card's title names; and per board one job for the plain Queue sends, which have no job id. Plain Postgres
 // queries over transfers, remote_requests and amiga_uploads: nothing hosted-only, no table of its own. SERVER ONLY.
-import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, or } from 'drizzle-orm';
+import { and, eq, gt, gte, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 import type { Db } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { transfers } from '@/db/schema/transfers';
@@ -11,9 +11,9 @@ import { remoteRequests } from '@/db/schema/remote-requests';
 import { amigaUploads } from '@/db/schema/amiga-uploads';
 import { isOnline } from '@/lib/device-state';
 import { failureText } from '@/lib/send-ui';
-import { expireStale, type GetTarget, type RemoteRow } from '@/lib/remote-requests';
+import { expireStale, type GetTarget } from '@/lib/remote-requests';
 import { jobStatus } from './manager-rules';
-import { fetchProgress, type FetchProgress } from './net-fetch';
+import { fetchJob, type JobRead, type JobReq, type JobSent } from './net-fetch';
 import { CANCEL_KIND, CANCELLED, commonDrawer, JOB_SHOWN_MS, QUEUE_JOB, type JobKind, type JobView } from './job-view';
 
 type TransferRow = typeof transfers.$inferSelect;
@@ -26,15 +26,19 @@ const latest = (ds: Date[]) => (ds.length ? iso(new Date(Math.max(...ds.map((d) 
 /** The org's jobs, newest first. */
 export async function listJobs(db: Db, orgId: string, now = new Date()): Promise<JobView[]> {
   const since = new Date(now.getTime() - JOB_SHOWN_MS);
+  // A row waiting or moving is the job's until 2 minutes past its expiry: fetchJob says it expired from then on.
   const a = await db.selectDistinct({ id: transfers.jobId }).from(transfers)
-    .where(and(eq(transfers.orgId, orgId), isNotNull(transfers.jobId), or(inArray(transfers.status, ACTIVE), gte(transfers.finishedAt, since))));
+    .where(and(eq(transfers.orgId, orgId), isNotNull(transfers.jobId),
+      or(and(inArray(transfers.status, ACTIVE), gte(transfers.expiresAt, since)), gte(transfers.finishedAt, since))));
   const b = await db.selectDistinct({ id: remoteRequests.fetchId }).from(remoteRequests)
     .where(and(eq(remoteRequests.orgId, orgId), isNotNull(remoteRequests.fetchId),
       or(inArray(remoteRequests.status, LIVE), gte(remoteRequests.answeredAt, since))));
   const ids = [...new Set([...a, ...b].map((r) => r.id!))];
   const out: JobView[] = [];
-  // Requests sent and not answered in time fail once here for every job, not once per job (fetchProgress would).
-  await expireStale(db, now);
+  // Requests sent and not answered in time fail once here for every job, not once per job (fetchProgress would). With
+  // no job there is nothing to say: every request of a job not ended is in `ids`, and a listing with no job is expired by
+  // the pane that looks at it (latestFor).
+  if (ids.length) await expireStale(db, now);
   for (const id of ids) {
     // One job whose card cannot be worked out is left out (and logged), not the whole listing.
     let j: JobView | null;
@@ -54,7 +58,7 @@ async function boardNames(db: Db, ids: string[]): Promise<Map<string, string>> {
   return new Map(rows.map((r) => [r.id, r.name] as const));
 }
 
-async function uploadsOf(db: Db, orgId: string, gets: RemoteRow[]): Promise<Map<string, { size: number; received: number }>> {
+async function uploadsOf(db: Db, orgId: string, gets: JobReq[]): Promise<Map<string, { size: number; received: number }>> {
   const ids = gets.map((g) => g.uploadId).filter((x): x is string => !!x);
   if (ids.length === 0) return new Map();
   const rows = await db.select({ id: amigaUploads.id, size: amigaUploads.sizeBytes, received: amigaUploads.receivedBytes }).from(amigaUploads)
@@ -67,7 +71,7 @@ async function uploadsOf(db: Db, orgId: string, gets: RemoteRow[]): Promise<Map<
  * its size and the board's last fetched chunk; any ended part whole, so the bar ends with the job. Between volumes each
  * file counts once -- its way up the first half, its queue row (once handed over) the second.
  */
-function bytesOf(gets: RemoteRow[], uploads: Map<string, { size: number; received: number }>, sent: TransferRow[], relayed: boolean) {
+function bytesOf(gets: JobReq[], uploads: Map<string, { size: number; received: number }>, sent: JobSent[], relayed: boolean) {
   let total = 0;
   let done = 0;
   for (const g of gets) {
@@ -88,15 +92,12 @@ function bytesOf(gets: RemoteRow[], uploads: Map<string, { size: number; receive
   return { total, done: Math.min(done, total) };
 }
 
-/** One job as its card says it, however long ago it finished; `progress` when the caller already has it. */
-export async function jobView(db: Db, orgId: string, id: string, now: Date, progress?: FetchProgress | null,
+/** One job as its card says it, however long ago it finished; `read` when the caller already looked (fetchJob). */
+export async function jobView(db: Db, orgId: string, id: string, now: Date, read?: JobRead | null,
   opts: { expire?: boolean } = {}): Promise<JobView | null> {
-  const p = progress === undefined ? await fetchProgress(db, orgId, id, now, opts) : progress;
-  if (!p) return null;
-  const reqs = await db.select().from(remoteRequests).where(and(eq(remoteRequests.fetchId, id), eq(remoteRequests.orgId, orgId)))
-    .orderBy(asc(remoteRequests.createdAt), asc(remoteRequests.id));
-  const sent = await db.select().from(transfers).where(and(eq(transfers.jobId, id), eq(transfers.orgId, orgId)))
-    .orderBy(asc(transfers.createdAt), asc(transfers.id));
+  const r = read === undefined ? await fetchJob(db, orgId, id, now, opts) : read;
+  if (!r) return null;
+  const { progress: p, reqs, sent } = r;
   const gets = reqs.filter((r) => r.kind === 'get');
   const relay = gets.map((g) => (g.target as GetTarget).relay).find((x) => !!x) ?? null;
   const marker = reqs.find((r) => r.kind === CANCEL_KIND) ?? null;

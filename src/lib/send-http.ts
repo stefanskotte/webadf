@@ -42,7 +42,7 @@ export async function storeSendBytes(bytes: Uint8Array): Promise<string> {
 
 /** A row as the browser sees it. A row still waiting or moving past its expiry reads 'expired' at once: the poll
  *  already skips it, and the daily cron only catches up the status. */
-export function toView(r: TransferRow, now: number): TransferView {
+export function toView(r: Pick<TransferRow, 'id' | 'path' | 'sizeBytes' | 'status' | 'bytesSent' | 'savedAs' | 'errorCode' | 'errorText' | 'createdAt' | 'finishedAt' | 'expiresAt'>, now: number): TransferView {
   const lapsed = (r.status === 'queued' || r.status === 'sending') && r.expiresAt.getTime() <= now;
   return {
     id: r.id, path: r.path, sizeBytes: r.sizeBytes, status: lapsed ? 'expired' : (r.status as TransferView['status']),
