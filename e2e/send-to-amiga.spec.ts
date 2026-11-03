@@ -81,6 +81,7 @@ test('a file picked on the Send zone waits in NET:, the board takes it, and its 
 
 // Was "Cancel takes a waiting file out of the board's queue": Cancel is Delete in NET: (R4).
 test('Delete takes a waiting file out of the board\'s queue; a Delete after delivery clears the row, never cancels it', async ({ page, request }) => {
+  test.setTimeout(90_000);   // Two sends, two deletes and an idle pane's 10 s re-read, against the live database.
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request, 'Bench');   // Task 1: the name is kept
   await boardSays(request, token, 'c');
