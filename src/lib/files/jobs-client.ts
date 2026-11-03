@@ -87,6 +87,8 @@ export function createJobsStore(deps: JobsDeps) {
   /** Each watched job: when it was first watched, and whether an answer has held it. */
   const watched = new Map<string, { since: number; listed: boolean }>();
   const fetching = new Set<string>();
+  /** Jobs seen running that an answer let go with no watcher: asked for once, so a failure still gets its card. */
+  const lost = new Set<string>();
   /** Failed one-off asks per job, so a flaky network is tried again (ONE_TRIES at most) but never forever. */
   const oneFails = new Map<string, number>();
   let timer: unknown = null;
@@ -110,12 +112,13 @@ export function createJobsStore(deps: JobsDeps) {
 
   function take(jobs: JobView[]) {
     const now = deps.now();
+    const wasRunning = state.signedOut ? [] : state.jobs.filter((j) => j.running);
     const samples: Record<string, Sample[]> = {};
     const finishedSeenAt: Record<string, number> = {};
     const words: string[] = [];
     for (const j of jobs) {
       if (j.running && j.bytes) {
-        samples[j.id] = [...(state.samples[j.id] ?? []), { at: now, done: j.bytes.done }].filter((s) => s.at >= now - WINDOW_MS);
+        samples[j.id] = [...(state.samples[j.id] ?? []), { at: now, done: j.bytes.done, ended: j.total - j.waiting }].filter((s) => s.at >= now - WINDOW_MS);
       }
       if (!j.running) {
         finishedSeenAt[j.id] = state.finishedSeenAt[j.id] ?? now;
@@ -140,6 +143,20 @@ export function createJobsStore(deps: JobsDeps) {
       if (jobs.some((j) => j.id === id)) { w.listed = true; continue; }
       if ((w.listed || now - w.since >= TRACK_MS) && !fetching.has(id)) void fetchOne(id);
     }
+    // A job that ran, gone from the answer (it finished over 2 minutes ago, while the tab was hidden). A board's Queue card
+    // has no job of its own to ask for: its rows answer under a new id.
+    for (const j of wasRunning) {
+      if (jobs.some((x) => x.id === j.id) || j.id.startsWith(QUEUE_JOB) || fetching.has(j.id)) continue;
+      if (!watched.has(j.id)) lost.add(j.id);
+      void fetchOne(j.id);
+    }
+  }
+
+  /** A job asked for on its own that failed or was cancelled: its card, as if the list had still held it. */
+  function keepCard(j: JobView) {
+    if (j.running || isClean(j) || state.signedOut || state.seen.includes(j.id) || state.jobs.some((x) => x.id === j.id)) return;
+    const jobs = [...state.jobs, j].sort((x, y) => y.startedAt.localeCompare(x.startedAt) || x.id.localeCompare(y.id));
+    set({ jobs, finishedSeenAt: { ...state.finishedSeenAt, [j.id]: state.finishedSeenAt[j.id] ?? deps.now() }, announce: announced(state.announce, resultWords(j)) });
   }
 
   async function fetchOne(id: string) {
@@ -152,11 +169,13 @@ export function createJobsStore(deps: JobsDeps) {
       // The ask failed (network, 5xx): tried again on its own timer -- with nothing running the store asks nothing.
       const n = (oneFails.get(id) ?? 0) + 1;
       oneFails.set(id, n);
-      if (n < ONE_TRIES && watched.has(id)) { deps.setTimer(() => { if (!stopped && !fetching.has(id) && watched.has(id)) void fetchOne(id); }, OFFLINE_POLL_MS); return; }
+      const wanted = () => watched.has(id) || lost.has(id);
+      if (n < ONE_TRIES && wanted()) { deps.setTimer(() => { if (!stopped && !fetching.has(id) && wanted()) void fetchOne(id); }, OFFLINE_POLL_MS); return; }
     }
     oneFails.delete(id);
+    lost.delete(id);
     const j = a === 'gone' ? null : a;
-    if (j) for (const w of [...(watchers.get(id) ?? [])]) w(j);
+    if (j) { keepCard(j); for (const w of [...(watchers.get(id) ?? [])]) w(j); }
     // Still running (a list that missed it): watched as if just begun. Else it is forgotten: nothing more will come.
     const w = watched.get(id);
     if (j?.running && w) { w.since = deps.now(); w.listed = false; } else { watched.delete(id); watchers.delete(id); }
