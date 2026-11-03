@@ -239,6 +239,10 @@ describe('timeLeft with small files (A500 bench 2026-11-02: "about 28 min left" 
     const samples = [run({ done: 0, ended: 0 }, 0), run({ done: 15_000, ended: 1 }, 15_000), run({ done: 30_000, ended: 2 }, 30_000)];
     expect(timeLeft(samples, { bytes: { total: 40_000, done: 30_000 }, offline: null, running: true, waiting: 10 }, t0 + 30_000)).toBe(10);
   });
+  it('one file left after a run of small ones: the bytes alone', () => {
+    const samples = [run({ done: 0, ended: 0 }, 0), run({ done: 1500, ended: 15 }, 15_000), run({ done: 3000, ended: 30 }, 30_000)];
+    expect(timeLeft(samples, { bytes: { total: 30_000, done: 3000 }, offline: null, running: true, waiting: 1 }, t0 + 30_000)).toBe(270);
+  });
   it('fewer than two files through in the window: the bytes alone', () => {
     const samples = [run({ done: 0, ended: 0 }, 0), run({ done: 1500, ended: 0 }, 15_000), run({ done: 3000, ended: 1 }, 30_000)];
     expect(timeLeft(samples, { bytes: { total: 30_000, done: 3000 }, offline: null, running: true, waiting: 1 }, t0 + 30_000)).toBe(270);

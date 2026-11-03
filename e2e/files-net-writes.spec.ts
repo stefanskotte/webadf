@@ -149,7 +149,8 @@ test('Delete asks first and cannot be undone; a big drawer counts up, then stops
   await expect(busy(page)).toContainText('Deleted Work:c.txt', { timeout: LIVE });
   await expect(rowAt(page, 'right', 'c.txt')).toHaveCount(0, { timeout: LIVE });
 
-  fakeBoardTiming.delMs = 2_500;
+  // Longer than the panel's look (2 s, plus the page's own round trip), so it sees the count at 50.
+  fakeBoardTiming.delMs = 6_000;
   try {
     await rowAt(page, 'right', 'Big').click();
     await page.getByTestId('files-delete').click();

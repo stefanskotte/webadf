@@ -120,7 +120,8 @@ export function barOf(j: JobView): { value: number; byBytes: boolean } {
  * Seconds left, or null: only while it runs with known bytes and its board online, only once bytes have moved for
  * WARMUP_MS, and at the rate of the samples in the last WINDOW_MS. Small files cost the time of each file, not of their
  * bytes, so the rate by bytes alone reads far too long while they go (A500 bench 2026-11-02: "about 28 min left" for 3):
- * with two or more files through in the window, the shorter of the two answers.
+ * with two or more files through in the window and two or more to go, the shorter of the two answers. One file left is
+ * all bytes, however fast the small ones before it went.
  */
 export function timeLeft(samples: Sample[], j: Pick<JobView, 'bytes' | 'offline' | 'running'> & Partial<Pick<JobView, 'waiting'>>, now: number): number | null {
   if (!j.running || j.offline || !j.bytes || j.bytes.total <= 0 || samples.length === 0) return null;
@@ -135,7 +136,7 @@ export function timeLeft(samples: Sample[], j: Pick<JobView, 'bytes' | 'offline'
   if (!(rate > 0)) return null;
   const byBytes = (j.bytes.total - j.bytes.done) / rate;
   const files = (b.ended ?? 0) - (a.ended ?? 0);
-  const byFiles = j.waiting !== undefined && files >= 2 ? (j.waiting * seconds) / files : Infinity;
+  const byFiles = j.waiting !== undefined && j.waiting >= 2 && files >= 2 ? (j.waiting * seconds) / files : Infinity;
   return Math.max(0, Math.min(byBytes, byFiles));
 }
 

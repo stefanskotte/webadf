@@ -1,6 +1,6 @@
 import { expect, type APIRequestContext } from '@playwright/test';
 import { crc32 } from 'node:zlib';
-import { eq } from 'drizzle-orm';
+import { and, eq, gt } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { hashDeviceToken } from '@/lib/device-token';
@@ -300,6 +300,12 @@ async function reqVersionOf(token: string): Promise<number> {
   return d.v;
 }
 
+/** The board was seen just now, unless a test has set it back past 45 s. */
+async function boardStaysSeen(token: string) {
+  await getDb().update(devices).set({ lastSeenAt: new Date() })
+    .where(and(eq(devices.tokenHash, hashDeviceToken(token)), gt(devices.lastSeenAt, new Date(Date.now() - 45_000))));
+}
+
 /**
  * The board and Transfer at work: every 300 ms it reads req.v and, as firmware 1.22.0 does, takes the waiting requests
  * only when req.v has moved since it last took them (reqAck), answering each from `fs`, until `until()` or `maxMs` pass.
@@ -309,7 +315,11 @@ export async function boardServes(request: APIRequestContext, token: string, fs:
   served: BoardRequest[] = [], maxMs = 30_000, opts: { queue?: VolumeNext[] } = {}): Promise<BoardRequest[]> {
   const end = Date.now() + maxMs;
   let ack: number | null = null;
+  let aliveAt = Date.now();
   while (!until() && Date.now() < end) {
+    // A real board reports every 25 s. A test that outlasts the online window must not see its board go offline; one that
+    // made its board look offline (lastSeenAt set back) stays so.
+    if (Date.now() - aliveAt >= 10_000) { aliveAt = Date.now(); await boardStaysSeen(token); }
     // Phase 2: with `queue`, the board also takes its queue's files, as firmware 1.23 relays them (one per pass).
     if (opts.queue && !fakeBoardTiming.queueHeld && opts.queue.length < fakeBoardTiming.queueLimit) {
       const t = await boardTakesVolumeNext(request, token, fs);

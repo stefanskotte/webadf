@@ -190,12 +190,12 @@ export async function latestFor(db: Db, deviceId: string, kind: 'vols' | 'dir', 
 }
 
 /**
- * The newest answer for a place, however old, and no new ask: for a pane following a copy (its rows are read fresh around
+ * The newest answer for a place, however old or let go by a change there (dropMemory), and no new ask: for a pane following a copy (its rows are read fresh around
  * this). A request waiting on an Amiga that is busy with the copy must not freeze the pane's marks. Null when none is kept.
  */
 export async function lastAnswer(db: Db, deviceId: string, kind: 'vols' | 'dir', amigaPath: string, now = new Date()): Promise<Extract<ListingState, { state: 'ready' }> | null> {
   const [row] = await db.select().from(remoteRequests).where(and(
-    eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.kind, kind), eq(remoteRequests.status, 'done'),
+    eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.kind, kind), inArray(remoteRequests.status, ['done', 'stale']),
     sql`${amigaFoldSql(remoteRequests.amigaPath)} = ${amigaFoldSql(amigaPath)}`,
   )).orderBy(sql`${remoteRequests.answeredAt} desc nulls last`).limit(1);
   if (!row?.answeredAt) return null;

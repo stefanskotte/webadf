@@ -317,6 +317,12 @@ describe('a pane following a copy (Files, A500 bench 2026-11-02: "read 4 min ago
     expect(l?.net?.readAt).toBeLessThan(Date.now() - 3 * 60_000);
     expect(await dirAsks()).toEqual([]);
   });
+  it('an answer let go by a change in the drawer still draws, with no new ask', async () => {
+    await getDb().update(remoteRequests).set({ status: 'stale' }).where(eq(remoteRequests.kind, 'dir'));
+    const l = await netDriver.list(ctx, place as never, { follow: true });
+    expect(l?.entries.map((e) => e.name)).toContain('x');
+    expect(await dirAsks()).toEqual([]);
+  });
   it('without following, the same place asks the Amiga again', async () => {
     await age();
     await expect(netDriver.list(ctx, place as never, {})).rejects.toBeDefined();

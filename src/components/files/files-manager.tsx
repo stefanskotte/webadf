@@ -473,7 +473,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   /** Files were queued for a board from the Send zone: a pane showing its queue reads it again. */
   function sentTo(deviceId: string) {
     const { panes: cur } = latest.current;
-    for (const side of ['left', 'right'] as const) if (cur[side].path === `NET:/${deviceId}/${QUEUE_FOLDER}`) void load(side, cur[side].path);
+    for (const side of ['left', 'right'] as const) if (cur[side].path === `NET:/${deviceId}/${QUEUE_FOLDER}`) void load(side, cur[side].path, { keep: true });
   }
 
   function navigate(side: Side, path: string) {
@@ -594,7 +594,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   /** After the strip changed a disk or its drive (an eject, a rename, a restore): the panes showing it and the strip. */
   function stripChanged(diskId: string) {
     const { panes: cur } = latest.current;
-    for (const s of ['left', 'right'] as const) if (cur[s].listing?.disk?.diskId === diskId) void load(s, cur[s].path);
+    for (const s of ['left', 'right'] as const) if (cur[s].listing?.disk?.diskId === diskId) void load(s, cur[s].path, { keep: true });
     void refreshStrip(diskId);
   }
 
@@ -1010,7 +1010,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       // A job that changed the Amiga's disks changed drawers on both sides maybe: both read again (the server let their
       // memory go); where the copy arrived the Amiga is asked afresh. A copy out of a volume changed only its destination.
       if (j.writes.length || j.direction === 'to') {
-        for (const side of sides) void load(side, cur[side].path, { fresh: j.direction === 'to' && arrivesIn(cur[side].path, dest) });
+        for (const side of sides) void load(side, cur[side].path, { keep: true, fresh: j.direction === 'to' && arrivesIn(cur[side].path, dest) });
       } else for (const side of sides) if (cur[side].path === dest) void refresh(side);
       then?.(j);
     });
