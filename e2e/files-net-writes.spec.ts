@@ -195,6 +195,25 @@ test('a big drawer with drawers inside and its icon: the status row counts what 
   } finally { Object.assign(fakeBoardTiming, { delEvery: 50, delBeforeMs: 0, delMs: 0 }); await board.stop(); }
 });
 
+test('a refused Copy keeps what was picked, to try again', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const { deviceId, token } = await writable(page, request);
+  const board = serving(request, token, amiga());
+  try {
+    await openFiles(page, 'STASH:', `NET:/${deviceId}/Work/Tools`, 'left');
+    await page.getByTestId('files-stash-input').setInputFiles([{ name: 'keep.txt', mimeType: 'text/plain', buffer: Buffer.from('keep') }]);
+    await expect(rowAt(page, 'left', 'keep.txt')).toBeVisible({ timeout: LIVE });
+    await expect(rowAt(page, 'right', 'x.lha')).toBeVisible({ timeout: LIVE });
+    await rowAt(page, 'left', 'keep.txt').click();
+    await page.route('**/api/files/ops', (r) => r.fulfill({ status: 409, json: { error: 'conflict' } }), { times: 1 });
+    const read = page.waitForResponse((r) => r.url().includes('/api/files/list') && decodeURIComponent(r.url()).includes('path=STASH:'), { timeout: LIVE });
+    await page.getByTestId('files-copy').click();
+    await read;
+    await expect(page.locator('[data-sonner-toast]').first()).toBeVisible({ timeout: LIVE });
+    await expect(page.getByTestId('pane-left')).toContainText('1 of 1 selected', { timeout: LIVE });
+  } finally { await board.stop(); }
+});
+
 test('Copy from STASH: onto a volume: each clash answer, and the queue line the board relays', async ({ page, request }) => {
   test.setTimeout(150_000);
   const { deviceId, token } = await writable(page, request);

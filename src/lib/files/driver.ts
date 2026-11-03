@@ -98,8 +98,11 @@ export function itemResult(source: string, fn: () => void): OpItem {
 
 export interface VolumeDriver {
   readonly device: Device;
-  /** null = not found (404). `fresh`: NET: volumes ask the Amiga again rather than reuse a remembered answer (Refresh). */
-  list(ctx: FsCtx, p: FsPath, opts?: { fresh?: boolean }): Promise<Listing | null>;
+  /**
+   * null = not found (404). `fresh`: NET: volumes ask the Amiga again rather than reuse a remembered answer (Refresh).
+   * `follow`: a pane watching a copy arrive: the newest answer however old, with today's rows on it, and no new ask.
+   */
+  list(ctx: FsCtx, p: FsPath, opts?: { fresh?: boolean; follow?: boolean }): Promise<Listing | null>;
   read(ctx: FsCtx, p: FsPath): Promise<FileBytes | null>;              // a file's bytes + meta; null for a folder or not found
   collect(ctx: FsCtx, p: FsPath): Promise<IncomingItem[] | null>;      // one entry walked, for a copy to another device
   within?(ctx: OpCtx, req: CopyMove): Promise<Outcome>;                // copy/move with every source and the dest on this device

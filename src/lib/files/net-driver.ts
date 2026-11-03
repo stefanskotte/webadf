@@ -20,7 +20,7 @@ import { SEND_FILE_MAX, SEND_QUEUE_MAX_BYTES, SEND_QUEUE_MAX_FILES } from '@/lib
 import { uploadBoards } from '@/lib/amiga-uploads';
 import { mapLimit } from '@/lib/pool';
 import { protectionString } from '@/lib/adffs/dir';
-import { copyMoving, deleteRunning, latestFor, pendingAlive, requestListing, type RemoteRow } from '@/lib/remote-requests';
+import { copyMoving, deleteRunning, lastAnswer, latestFor, pendingAlive, requestListing, type RemoteRow } from '@/lib/remote-requests';
 import { browseBlock, browseMark, errorWords } from '@/lib/remote-browse';
 import { amigaPathOf, volumeLabel, type EntryInfo, type VolumeInfo } from '@/lib/remote-wire';
 import { QUEUE_FOLDER } from '@/lib/remote-limits';
@@ -237,12 +237,13 @@ async function volumeFree(t: SendTarget, volume: string, now: number): Promise<s
  * NET:/<board>/<Volume>/<drawer>/… (§4.4, §4.6): a drawer as Transfer listed it; refused with the pane's words. Asked
  * and remembered by the path Transfer is sent (a labelled volume's device path); shown by the volume's label.
  */
-async function listVolume(ctx: FsCtx, t: SendTarget, segs: string[], now: number, opts: { fresh?: boolean }): Promise<Listing | null> {
+async function listVolume(ctx: FsCtx, t: SendTarget, segs: string[], now: number, opts: { fresh?: boolean; follow?: boolean }): Promise<Listing | null> {
   const at = amigaPathOf(segs);
   if (!at) return null;
   const block = browseOf(t, now);
   if (block !== null) refuse('read_only', 409, block);
-  const s = await requestListing(getDb(), { orgId: ctx.orgId, deviceId: t.id, kind: 'dir', amigaPath: at.amigaPath, fresh: !!opts.fresh }, new Date(now));
+  const followed = opts.follow ? await lastAnswer(getDb(), t.id, 'dir', at.amigaPath, new Date(now)) : null;
+  const s = followed ?? await requestListing(getDb(), { orgId: ctx.orgId, deviceId: t.id, kind: 'dir', amigaPath: at.amigaPath, fresh: !!opts.fresh }, new Date(now));
   if (s.state === 'failed') {
     const code = s.row.errorCode ?? '';
     const words = errorWords(code, s.row.errorText ?? '', t.name);
@@ -263,7 +264,7 @@ async function listVolume(ctx: FsCtx, t: SendTarget, segs: string[], now: number
     meta: await volumeFree(t, at.volume, now) };
 }
 
-async function list(ctx: FsCtx, p: FsPath, opts: { fresh?: boolean } = {}): Promise<Listing | null> {
+async function list(ctx: FsCtx, p: FsPath, opts: { fresh?: boolean; follow?: boolean } = {}): Promise<Listing | null> {
   const now = Date.now();
   if (p.segments.length === 0) return listBoards(ctx, now);
   const t = await findSendTarget(getDb(), ctx.orgId, p.segments[0], now);

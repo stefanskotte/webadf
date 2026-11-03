@@ -189,6 +189,19 @@ export async function latestFor(db: Db, deviceId: string, kind: 'vols' | 'dir', 
   return { state: 'none' };
 }
 
+/**
+ * The newest answer for a place, however old, and no new ask: for a pane following a copy (its rows are read fresh around
+ * this). A request waiting on an Amiga that is busy with the copy must not freeze the pane's marks. Null when none is kept.
+ */
+export async function lastAnswer(db: Db, deviceId: string, kind: 'vols' | 'dir', amigaPath: string, now = new Date()): Promise<Extract<ListingState, { state: 'ready' }> | null> {
+  const [row] = await db.select().from(remoteRequests).where(and(
+    eq(remoteRequests.deviceId, deviceId), eq(remoteRequests.kind, kind), eq(remoteRequests.status, 'done'),
+    sql`${amigaFoldSql(remoteRequests.amigaPath)} = ${amigaFoldSql(amigaPath)}`,
+  )).orderBy(sql`${remoteRequests.answeredAt} desc nulls last`).limit(1);
+  if (!row?.answeredAt) return null;
+  return { state: 'ready', row, ageMs: now.getTime() - row.answeredAt.getTime() };
+}
+
 export async function requestListing(
   db: Db, a: { orgId: string; deviceId: string; kind: 'vols' | 'dir'; amigaPath: string; fresh: boolean }, now = new Date(),
 ): Promise<ListingState> {
