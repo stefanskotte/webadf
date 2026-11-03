@@ -1995,6 +1995,51 @@ static void a_dest_row_goes_at_protocol_5(void) {
     CHECK(strcmp(F.posted, "{\"ok\":false,\"code\":\"readonly\",\"text\":\"Writing is off in Transfer\"}") == 0, F.posted);
 }
 
+static void started(void) { fresh(); as_set_inputs(&S, true, 0x0a000001, 1); as_tick(&S); as_step(&S); }
+static void refused_once(void) {
+    started();
+    F.now += AS_RETRY_IDLE_MS + 1; as_tick(&S); as_step(&S);
+    F.sock = AS_SOCK_REFUSED; as_step(&S);
+}
+static void a_silent_amiga_retries_every_30_s_and_never_cuts_the_poll(void) {
+    refused_once();
+    CHECK_EQ_INT(as_rx(&S), 'r');
+    F.now += AS_RETRY_LIVE_MS;
+    CHECK(!as_reconnect_due(&S), "no driver running: the poll is left alone");
+    F.now += AS_RETRY_IDLE_MS;
+    CHECK(!as_reconnect_due(&S), "due, but the Amiga is off: still left alone");
+}
+static void a_running_driver_retries_every_15_s_and_cuts_the_poll_when_due(void) {
+    started(); as_set_amiga_live(&S, true);
+    F.now += AS_RETRY_LIVE_MS + 1; as_tick(&S); as_step(&S);
+    F.sock = AS_SOCK_REFUSED; as_step(&S);
+    CHECK(!as_reconnect_due(&S), "just retried");
+    F.now += AS_RETRY_LIVE_MS - 1;
+    CHECK(!as_reconnect_due(&S), "not yet");
+    F.now += 1;
+    CHECK(as_reconnect_due(&S), "due: the poll is cut");
+    int was = F.connects;
+    as_tick(&S);
+    CHECK_EQ_INT(F.connects, was + 1);
+    CHECK(!as_reconnect_due(&S), "connecting: no second cut, so the poll cannot be cut over and over");
+}
+static void a_driver_starting_brings_a_slow_retry_forward(void) {
+    refused_once();
+    F.now += 1000;
+    as_set_amiga_live(&S, true);
+    CHECK(!as_reconnect_due(&S), "not at once");
+    F.now += AS_RETRY_LIVE_MS;
+    CHECK(as_reconnect_due(&S), "15 s after the driver started, not the rest of the 30");
+}
+static void a_connected_transfer_is_not_a_reconnect(void) {
+    started(); as_set_amiga_live(&S, true);
+    F.now += AS_RETRY_LIVE_MS + 1; as_tick(&S); as_step(&S);
+    F.sock = AS_SOCK_OPEN; as_step(&S);
+    reply("READY 6"); as_step(&S);
+    F.now += AS_RETRY_IDLE_MS * 4;
+    CHECK(!as_reconnect_due(&S), "connected: nothing to cut the poll for");
+}
+
 int main(void) {
     RUN(off_or_no_address_does_nothing);
     RUN(connects_to_6800_and_says_hello);
@@ -2139,5 +2184,9 @@ int main(void) {
     RUN(delete_one_with_writing_off_still_goes_at_protocol_5);
     RUN(each_write_is_relayed_at_protocol_5);
     RUN(a_dest_row_goes_at_protocol_5);
+    RUN(a_silent_amiga_retries_every_30_s_and_never_cuts_the_poll);
+    RUN(a_running_driver_retries_every_15_s_and_cuts_the_poll_when_due);
+    RUN(a_driver_starting_brings_a_slow_retry_forward);
+    RUN(a_connected_transfer_is_not_a_reconnect);
     return REPORT();
 }

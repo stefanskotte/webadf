@@ -1142,12 +1142,21 @@ static bool nfc_event_pending(void *ctx) {
 // g_write_last_ms as it was just before core1 began the current long poll:
 // the write cursor's mark (poll_wake.h). core1 only.
 static uint32_t g_poll_write_mark;
+// core1 is inside the long poll (dc_step), not a preload the same interrupt also guards: a disk's fetch is never cut
+// for a reconnect, or a slow one would start over every 15 s.
+static bool g_poll_held;
+#if WF_PNET_L2
+static amiga_send_t *g_poll_send;   // the engine, once core1 has one
+#endif
 
 /** core1, from inside tls_read's wait while a poll is held: cut the poll
  *  short when a tap is waiting OR a write has landed since the poll began,
  *  so a save made during a held poll is uploaded at once instead of when
  *  the poll comes back (HANDOFF 3av). Two loads. */
 static bool poll_wake_pending(void *ctx) {
+#if WF_PNET_L2
+    if (g_poll_held && g_poll_send && as_reconnect_due(g_poll_send)) return true;
+#endif
     return poll_should_yield(nfc_event_pending(ctx), g_write_last_ms, g_poll_write_mark);
 }
 
@@ -2482,6 +2491,11 @@ static void core1_main(void) {
             }
             // Cheap, every pass (no HTTPS): connect retries, the handshake, pings, Receive's replies, pushing bytes.
             as_set_req_version(&g_send, c.req_version);   // NET: volumes: the poll's req.v
+            g_poll_send = &g_send;
+            {   // The status cylinder read in the last 10 s (about every 4 s while the driver runs); 0: not since Network mode began.
+                const uint32_t seen = g_pnet_status_last_ms;
+                as_set_amiga_live(&g_send, seen != 0 && clock_ms() - seen < 10000u);
+            }
             as_tick(&g_send);
             dc_set_send(&c, as_acked_version(&g_send), as_rx(&g_send));
             if (as_req_capable(&g_send))
@@ -2612,7 +2626,9 @@ static void core1_main(void) {
                 // This pass's write mark (taken at the top): a write applied
                 // since then cuts the poll short.
                 g_poll_write_mark = pass_write_mark;
+                g_poll_held = true;
                 s = dc_step(&c);
+                g_poll_held = false;
                 polled = true;
             }
             // Task 10's contract: a poll cut short by a waiting tap -- or a
