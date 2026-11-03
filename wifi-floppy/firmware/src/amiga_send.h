@@ -24,6 +24,7 @@
 #define AS_ID_MAX 40
 #define AS_RETRY_WAITING_MS 5000u    // reconnect cadence while a file waits
 #define AS_RETRY_IDLE_MS 30000u      // ... and while nothing does (so the card can say whether Receive runs)
+#define AS_RETRY_LIVE_MS 15000u      // ... and while the Amiga's driver is running, so Transfer is found soon after it starts
 #define AS_CONNECT_MS 10000u
 #define AS_HELLO_MS 10000u
 #define AS_GO_MS 30000u
@@ -130,6 +131,7 @@ typedef enum { AS_IDLE, AS_CONNECTING, AS_HELLO, AS_READY, AS_FILE_SENT, AS_DATA
 typedef struct amiga_send {
     const as_ops_t *ops;
     bool net_on;
+    bool amiga_live;   // the driver read the status cylinder lately (as_set_amiga_live)
     uint32_t ip;
     uint32_t want_version, have_version;
     bool fetched_once, force_fetch;
@@ -165,6 +167,11 @@ void as_init(amiga_send_t *s, const as_ops_t *ops, char *queue_buf, uint8_t *chu
 void as_set_key(amiga_send_t *s, const char *hex32);
 // From core1 each pass: Network mode on, the Amiga's address (0 = none yet), the poll's xfer.v.
 void as_set_inputs(amiga_send_t *s, bool net_on, uint32_t amiga_ip, uint32_t queue_version);
+// The Amiga's driver is running (core1, every pass). Going live brings a slower retry forward.
+void as_set_amiga_live(amiga_send_t *s, bool live);
+// A reconnect is due now and the Amiga's driver runs: worth cutting the long poll for, because Transfer may have started
+// and the site says so only once the board has reconnected. Never with the Amiga off. Loads only: safe from tls_read's wait.
+bool as_reconnect_due(const amiga_send_t *s);
 // Cheap, every pass, never an HTTPS request: connect retries, the handshake, pings, Receive's replies, pushing bytes.
 void as_tick(amiga_send_t *s);
 // True while a file is moving either way, a reply is awaited, the queue must be fetched, an outcome posted, or a PUT

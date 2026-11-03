@@ -30,7 +30,9 @@ static const char *list_block(const amiga_send_t *s, int *n) {
     *n = s->queue_len - (int)(nl + 1 - s->queue);
     return nl + 1;
 }
-static uint32_t retry_ms(const amiga_send_t *s) { return next_present(s) ? AS_RETRY_WAITING_MS : AS_RETRY_IDLE_MS; }
+static uint32_t retry_ms(const amiga_send_t *s) {
+    return next_present(s) ? AS_RETRY_WAITING_MS : s->amiga_live ? AS_RETRY_LIVE_MS : AS_RETRY_IDLE_MS;
+}
 
 static void push(amiga_send_t *s, const uint8_t *p, int n) { s->out_p = p; s->out_n = n; }
 // Pushes what the socket takes now. false: the socket is broken.
@@ -354,6 +356,19 @@ void as_set_inputs(amiga_send_t *s, bool net_on, uint32_t amiga_ip, uint32_t que
     s->net_on = net_on;
     s->ip = amiga_ip;
     s->want_version = queue_version;
+}
+
+void as_set_amiga_live(amiga_send_t *s, bool live) {
+    if (live && !s->amiga_live && s->phase == AS_IDLE) {
+        const uint32_t soon = now(s) + AS_RETRY_LIVE_MS;
+        if ((int32_t)(s->t_retry - soon) > 0) s->t_retry = soon;
+    }
+    s->amiga_live = live;
+}
+
+bool as_reconnect_due(const amiga_send_t *s) {
+    return s->amiga_live && usable(s) && s->net_on && s->ip != 0 && !in_backoff(s) && s->fetched_once
+        && s->phase == AS_IDLE && (int32_t)(now(s) - s->t_retry) >= 0;
 }
 
 bool as_has_work(const amiga_send_t *s) {
