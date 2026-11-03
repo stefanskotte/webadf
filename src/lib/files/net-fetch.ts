@@ -34,7 +34,7 @@ import { addGameToCollection } from '@/lib/collections';
 import { formatPath, parsePath, type FsPath } from './path';
 import { refuse, skippedItem, type Clash, type CopyMove, type OpCtx, type OpItem, type Outcome } from './driver';
 import { browseOf, isNetVolumePath } from './net-driver';
-import { belowDrawer, clashMode, joinAmiga, moveWithinVolume, mustRemoveOnVolume, placeOf, sameVolume, writableBoard } from './net-write';
+import { arrivingNames, belowDrawer, clashMode, joinAmiga, moveWithinVolume, mustRemoveOnVolume, placeOf, sameVolume, writableBoard } from './net-write';
 import { settleMoveOfGet, settleMoveOfTransfer, settleMovesOfJob } from './net-moves';
 import { CANCEL_KIND, CANCELLED, commonDrawer } from './job-view';
 import { shelfDest } from './shelf';
@@ -186,12 +186,15 @@ export async function volumeToVolume(ctx: OpCtx, req: CopyMove): Promise<Outcome
   const results = new Map<string, OpItem>();
   const tops: (Top & { name: string; mode: ClashMode; dirs: string[][] })[] = [];
   const clashes: Clash[] = [];
-  const taken = (n: string) => entries.some((e) => sameStashName(e.name, n)) || tops.some((x) => sameStashName(x.name, n));
+  // What is on its way there counts as there, as for any copy onto a volume (copyOntoVolume).
+  const arriving = await arrivingNames(getDb(), dt.id, to.amiga, now);
+  const present = (n: string) => entries.some((e) => sameStashName(e.name, n)) || arriving.some((a) => sameStashName(a, n));
+  const taken = (n: string) => present(n) || tops.some((x) => sameStashName(x.name, n));
   for (const [i, f] of froms.entries()) {
     const top = await expand(t.id, req.sources[i], f!.segs, now);
     const name = f!.segs[f!.segs.length - 1];
     const dirs = top.dir ? await drawersOf(t.id, f!.segs, now) : [];
-    if (!entries.some((e) => sameStashName(e.name, name))) { tops.push({ ...top, name, mode: clashMode(req.onClash), dirs }); continue; }
+    if (!present(name)) { tops.push({ ...top, name, mode: clashMode(req.onClash), dirs }); continue; }
     if (req.onClash === 'ask') { clashes.push({ source: top.source, name, dest: req.dest }); continue; }
     if (req.onClash === 'skip') { results.set(top.source, skippedItem(top.source)); continue; }
     if (req.onClash === 'replace') { tops.push({ ...top, name, mode: 'replace', dirs }); continue; }

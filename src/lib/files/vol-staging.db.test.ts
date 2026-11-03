@@ -36,6 +36,7 @@ const { diskStore } = await import('@/lib/storage');
 const { runOp } = await import('./ops');
 const { fetchProgress, placeFetched, afterTransferDone } = await import('./net-fetch');
 const { afterRequestAnswered } = await import('./net-moves');
+const { netDriver } = await import('./net-driver');
 
 const ctx = { orgId: 'o1', userId: 'u1' };
 const DATE = '2020-01-02T00:00:00.000Z';
@@ -288,5 +289,37 @@ describe('moves between volumes keep §9 and touch no STASH:', () => {
     await answerFresh();
     expect(await deletesOn('w1')).toEqual(['Work:x one']);
     expect(await stashNames()).toEqual(['mine.txt']);
+  });
+});
+
+describe('a copy between volumes and what is on its way (help: "there or coming")', () => {
+  it('a name still coming asks, as a name already there does', async () => {
+    await op({ op: 'copy', sources: [W('x')], dest: 'NET:/w1/DF0', onClash: 'ask' });
+    const again = await op({ op: 'copy', sources: [W('x')], dest: 'NET:/w1/DF0', onClash: 'ask' }) as { clashes?: { name: string }[] };
+    expect(again.clashes?.map((c) => c.name)).toEqual(['x']);
+  });
+  it('Keep both takes a name clear of what is coming', async () => {
+    await op({ op: 'copy', sources: [W('x')], dest: 'NET:/w1/DF0', onClash: 'ask' });
+    await op({ op: 'copy', sources: [W('x')], dest: 'NET:/w1/DF0', onClash: 'keep-both' });
+    const relays = (await gets()).map((g) => (g.target as { relay: { dest: string } }).relay.dest).sort();
+    expect(relays).toEqual(['DF0:x', 'DF0:x_1']);
+  });
+});
+
+describe('a pane following a copy (Files, A500 bench 2026-11-02: "read 4 min ago")', () => {
+  const place = { device: 'NET' as const, segments: ['w1', 'Work'] };
+  const dirAsks = async () => (await getDb().select().from(remoteRequests).where(eq(remoteRequests.kind, 'dir'))).filter((r) => r.status === 'waiting');
+  const age = () => getDb().update(remoteRequests).set({ answeredAt: new Date(Date.now() - 4 * 60_000) }).where(eq(remoteRequests.kind, 'dir'));
+  it('an answer past its memory still draws, with no new ask of the Amiga', async () => {
+    await age();
+    const l = await netDriver.list(ctx, place as never, { follow: true });
+    expect(l?.entries.map((e) => e.name)).toContain('x');
+    expect(l?.net?.readAt).toBeLessThan(Date.now() - 3 * 60_000);
+    expect(await dirAsks()).toEqual([]);
+  });
+  it('without following, the same place asks the Amiga again', async () => {
+    await age();
+    await expect(netDriver.list(ctx, place as never, {})).rejects.toBeDefined();
+    expect((await dirAsks()).length).toBe(1);
   });
 });

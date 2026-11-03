@@ -103,7 +103,7 @@ export const relayedTo = (db: Db, boardId: string, statuses: string[]) => db.sel
  * each active queue row's, each Makedir not yet answered, each file still coming from another volume, by the first name
  * below the drawer. A row finished, cancelled, failed or past its time is not on its way.
  */
-async function arrivingNames(db: Db, boardId: string, amiga: string, now = new Date()): Promise<string[]> {
+export async function arrivingNames(db: Db, boardId: string, amiga: string, now = new Date()): Promise<string[]> {
   const [queued, made, coming] = await Promise.all([
     db.select({ dest: transfers.amigaDest }).from(transfers).where(and(eq(transfers.deviceId, boardId), inArray(transfers.status, ['queued', 'sending']),
       gt(transfers.expiresAt, now), isNotNull(transfers.amigaDest))),
