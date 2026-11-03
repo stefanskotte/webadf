@@ -94,7 +94,7 @@ detail, and what to do when a join fails, is in
 The pictures come from a demo account holding freely redistributable disks: scene demos and
 freeware tools. `PORT=3100 pnpm screenshots` takes them again (see
 `e2e/screenshots.shots.ts`); every email address on them is masked, and the board is a
-stand-in called A500.
+stand-in called A500. The one exception is Transfer's window, captured from a real A500 by hand.
 
 ![The library: seven titles in a grid, Demozoo pictures on the demos, and the 9 Fingers card outlined with a DF0 pill](docs/screenshots/library.png)
 
@@ -119,6 +119,11 @@ you last clicked is the source; the buttons under the panes act on it. Each edit
 
 *NET: also lists the Amiga's own volumes when Transfer runs there with Read ticked: open a drawer on the hard disk
 and copy files to STASH: or LIBRARY:. With Write ticked too, copy and move onto it, rename and delete.*
+
+![Transfer 2.13's window on an Amiga: the folder files are saved to, the Send, Retry failed and Trust this board buttons, Read and Write ticked under Web App, and a list of SnoopDOS files marked done, receiving 6% and waiting](docs/screenshots/transfer.png)
+
+*Transfer, on the Amiga itself: files from the web app arrive here, and Send goes the other way. Read and Write decide
+what the web app may do with the Amiga's volumes.*
 
 ![The Devices page: the A500 board online and up to date, its drive drawing with the OLED showing 9 Fingers, the disk in the drive, and the Second drive (DF1) choices](docs/screenshots/devices.png)
 
