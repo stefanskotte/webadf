@@ -478,3 +478,56 @@ describe('remembered per browser', () => {
     expect(store.getState().jobs).toHaveLength(1);
   });
 });
+
+describe('a job that failed while the tab was hidden, over 2 minutes before it came back', () => {
+  const failedJob = finished({ failed: [{ name: 'a.txt', reason: 'disk full' }], done: 1 });
+  function hiddenRun(one: JobView | 'gone' | null, first = job()) {
+    let shown = true;
+    const h = harness([[first], []], { visible: () => shown, loadOne: async () => one });
+    return { ...h, hide: () => { shown = false; h.store.onVisibility(); }, show: () => { shown = true; h.store.onVisibility(); } };
+  }
+  it('asks for it on its own, and its card stays and is announced', async () => {
+    const { store, loadOne, hide, show } = hiddenRun(failedJob);
+    store.start(); await flush();
+    hide(); show(); await flush();
+    expect(loadOne).toHaveBeenCalledWith('j1');
+    expect(store.getState().jobs.map((j) => j.id)).toEqual(['j1']);
+    expect(store.getState().jobs[0].running).toBe(false);
+    expect(store.getState().finishedSeenAt.j1).toBeDefined();
+    expect(store.getState().announce).toContain('a.txt');
+    store.stop();
+  });
+  it('a clean finish gets no card', async () => {
+    const { store, hide, show } = hiddenRun(finished());
+    store.start(); await flush();
+    hide(); show(); await flush();
+    expect(store.getState().jobs).toEqual([]);
+    store.stop();
+  });
+  it('a card already put away stays away', async () => {
+    const { store, hide, show } = hiddenRun(failedJob);
+    store.start(); await flush();
+    store.dismiss('j1');
+    hide(); show(); await flush();
+    expect(store.getState().jobs).toEqual([]);
+    store.stop();
+  });
+  it("a board's Queue card is not asked for: its rows answer under a new id", async () => {
+    const { store, loadOne, hide, show } = hiddenRun(failedJob, job({ id: 'queue:b1:123' }));
+    store.start(); await flush();
+    hide(); show(); await flush();
+    expect(loadOne).not.toHaveBeenCalled();
+    store.stop();
+  });
+  it('a failed ask is tried again, and then the card comes', async () => {
+    let shown = true;
+    const answers: (JobView | null)[] = [null, failedJob];
+    const h = harness([[job()], []], { visible: () => shown, loadOne: async () => answers.shift() ?? null });
+    h.store.start(); await flush();
+    shown = false; h.store.onVisibility(); shown = true; h.store.onVisibility(); await flush();
+    expect(h.store.getState().jobs).toEqual([]);
+    await vi.advanceTimersByTimeAsync(OFFLINE_POLL_MS);
+    expect(h.store.getState().jobs.map((j) => j.id)).toEqual(['j1']);
+    h.store.stop();
+  });
+});

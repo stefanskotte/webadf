@@ -149,7 +149,8 @@ test('Delete asks first and cannot be undone; a big drawer counts up, then stops
   await expect(busy(page)).toContainText('Deleted Work:c.txt', { timeout: LIVE });
   await expect(rowAt(page, 'right', 'c.txt')).toHaveCount(0, { timeout: LIVE });
 
-  fakeBoardTiming.delMs = 2_500;
+  // Longer than the panel's look (2 s, plus the page's own round trip), so it sees the count at 50.
+  fakeBoardTiming.delMs = 6_000;
   try {
     await rowAt(page, 'right', 'Big').click();
     await page.getByTestId('files-delete').click();
@@ -193,6 +194,25 @@ test('a big drawer with drawers inside and its icon: the status row counts what 
     await expect(rowAt(page, 'right', 'Many')).toHaveCount(0, { timeout: LIVE });
     await expect(page.getByText(/didn.t answer/)).toHaveCount(0);
   } finally { Object.assign(fakeBoardTiming, { delEvery: 50, delBeforeMs: 0, delMs: 0 }); await board.stop(); }
+});
+
+test('a refused Copy keeps what was picked, to try again', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const { deviceId, token } = await writable(page, request);
+  const board = serving(request, token, amiga());
+  try {
+    await openFiles(page, 'STASH:', `NET:/${deviceId}/Work/Tools`, 'left');
+    await page.getByTestId('files-stash-input').setInputFiles([{ name: 'keep.txt', mimeType: 'text/plain', buffer: Buffer.from('keep') }]);
+    await expect(rowAt(page, 'left', 'keep.txt')).toBeVisible({ timeout: LIVE });
+    await expect(rowAt(page, 'right', 'x.lha')).toBeVisible({ timeout: LIVE });
+    await rowAt(page, 'left', 'keep.txt').click();
+    await page.route('**/api/files/ops', (r) => r.fulfill({ status: 409, json: { error: 'conflict' } }), { times: 1 });
+    const read = page.waitForResponse((r) => r.url().includes('/api/files/list') && decodeURIComponent(r.url()).includes('path=STASH:'), { timeout: LIVE });
+    await page.getByTestId('files-copy').click();
+    await read;
+    await expect(page.locator('[data-sonner-toast]').first()).toBeVisible({ timeout: LIVE });
+    await expect(page.getByTestId('pane-left')).toContainText('1 of 1 selected', { timeout: LIVE });
+  } finally { await board.stop(); }
 });
 
 test('Copy from STASH: onto a volume: each clash answer, and the queue line the board relays', async ({ page, request }) => {

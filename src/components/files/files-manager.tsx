@@ -228,9 +228,9 @@ type Fetched = { listing: Listing } | { gone: true } | { pending: string; alive?
  * answered yet (202, NET: volumes spec 2026-10-30 §4.4) -- the label to show while asking again; never a listing.
  * `fresh`: Refresh, which asks the Amiga again rather than take the 2-minute memory.
  */
-async function fetchListing(path: string, fresh = false): Promise<Fetched> {
+async function fetchListing(path: string, fresh = false, follow = false): Promise<Fetched> {
   try {
-    const res = await fetch(`/api/files/list?path=${encodeURIComponent(path)}${fresh ? '&fresh=1' : ''}`, { cache: 'no-store' });
+    const res = await fetch(`/api/files/list?path=${encodeURIComponent(path)}${fresh ? '&fresh=1' : ''}${follow ? '&follow=1' : ''}`, { cache: 'no-store' });
     if (res.status === 202) {
       const body = (await res.json().catch(() => null)) as { label?: unknown; alive?: unknown } | null;
       return { pending: typeof body?.label === 'string' ? body.label : 'Reading from the Amiga…', alive: body?.alive === true };
@@ -414,9 +414,10 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    * A NET: listing the Amiga has not answered yet (NET: volumes, spec 2026-10-30 §4.4, §5) keeps the old rows (dimmed)
    * under its label and is asked again every PANE_ASK_MS (without `fresh`: the request is already on its way) until it
    * lands, is refused, or PANE_GIVE_UP_MS pass ("A500 didn't answer — Refresh to try again"). A newer load of the side
-   * (a navigation, a Swap) bumps `seq`, and this loop then stops without a word. `fresh`: Refresh.
+   * (a navigation, a Swap) bumps `seq`, and this loop then stops without a word. `fresh`: Refresh. `keep`: what is picked
+   * when the listing lands stays picked, for a place read again under the person's hands.
    */
-  async function load(side: Side, path: string, opts: { stayOn?: RefusalCode; select?: string; fresh?: boolean } = {}): Promise<boolean> {
+  async function load(side: Side, path: string, opts: { stayOn?: RefusalCode; select?: string; fresh?: boolean; keep?: boolean } = {}): Promise<boolean> {
     const { stayOn } = opts;
     const n = ++seq.current[side];
     // Asking the same place again (Refresh, the page's pending first state) keeps its label up rather than flash "Loading…".
@@ -439,10 +440,17 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       const i = drawn.findIndex((x) => x.path === opts.select);
       if (i >= 0) selection = { anchor: i, cursor: i, picked: new Set([i]) };
     }
+    // The same place drawn afresh: the rows picked meanwhile follow their entries (remapSelection).
+    const picksKept = (p: PaneState, l: Listing): Selection => {
+      if (!opts.keep || !p.listing || p.listing.path !== l.path) return selection;
+      const sort = latest.current.sorts[deviceOf(l.path)];
+      const view: PaneView = { filter: p.filter, hideInfo: latest.current.hideInfo };
+      return remapSelection(paneRows(p.listing.entries, sort, view), paneRows(l.entries, sort, view), p.selection);
+    };
     setPanes((ps) => ({
       ...ps,
       [side]: 'listing' in r
-        ? { path, listing: r.listing, loading: false, error: null, gone: false, errorDisk: null, pending: null, selection,
+        ? { path, listing: r.listing, loading: false, error: null, gone: false, errorDisk: null, pending: null, selection: picksKept(ps[side], r.listing),
             filter: !opts.select && ps[side].listing?.path === r.listing.path ? ps[side].filter : '' }
         : { path, listing: null, loading: false, error: 'gone' in r ? GONE : r.error, gone: 'gone' in r,
             errorDisk: 'gone' in r ? null : errorDiskOf(r), pending: null, selection: EMPTY_SELECTION, filter: '' },
@@ -454,16 +462,18 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
    * Fresh listings where the panes are NOW. Called after an operation's await, so it reads the latest state, not
    * this render's: a pane the person moved while the operation ran stays where they took it.
    */
-  function reloadBoth() {
+  function reloadBoth(o: { keepPicks?: boolean } = {}) {
     const { panes: cur } = latest.current;
-    void load('left', cur.left.path);
-    void load('right', cur.right.path);
+    // What was picked is let go now, not when the listing lands: a row clicked in between is the person's next pick.
+    if (!o.keepPicks) setPanes((ps) => ({ left: { ...ps.left, selection: EMPTY_SELECTION }, right: { ...ps.right, selection: EMPTY_SELECTION } }));
+    void load('left', cur.left.path, { keep: true });
+    void load('right', cur.right.path, { keep: true });
   }
 
   /** Files were queued for a board from the Send zone: a pane showing its queue reads it again. */
   function sentTo(deviceId: string) {
     const { panes: cur } = latest.current;
-    for (const side of ['left', 'right'] as const) if (cur[side].path === `NET:/${deviceId}/${QUEUE_FOLDER}`) void load(side, cur[side].path);
+    for (const side of ['left', 'right'] as const) if (cur[side].path === `NET:/${deviceId}/${QUEUE_FOLDER}`) void load(side, cur[side].path, { keep: true });
   }
 
   function navigate(side: Side, path: string) {
@@ -529,9 +539,14 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     const at = latest.current.panes[side];
     if (at.loading || !at.listing) return;
     const n = seq.current[side];
-    const r = await fetchListing(at.path);
+    // Following a copy into a volume: its marks are read without asking the Amiga, which is busy with that copy; a read
+    // it has not answered would hold them back for minutes (A500 bench 2026-11-02, "read 4 min ago").
+    const follow = isVolumePlace(at.path) && netPollMs(at.listing) !== null;
+    const r = await fetchListing(at.path, false, follow);
     if (n !== seq.current[side] || !('listing' in r)) return;
     const fresh = r.listing;
+    // The copy is through: what it brought is on the Amiga, so the drawer is read from there.
+    if (follow && netPollMs(fresh) === null) { void load(side, at.path, { keep: true }); return; }
     setPanes((ps) => {
       const p = ps[side];
       if (p.path !== at.path || p.loading || !p.listing) return ps;
@@ -579,7 +594,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   /** After the strip changed a disk or its drive (an eject, a rename, a restore): the panes showing it and the strip. */
   function stripChanged(diskId: string) {
     const { panes: cur } = latest.current;
-    for (const s of ['left', 'right'] as const) if (cur[s].listing?.disk?.diskId === diskId) void load(s, cur[s].path);
+    for (const s of ['left', 'right'] as const) if (cur[s].listing?.disk?.diskId === diskId) void load(s, cur[s].path, { keep: true });
     void refreshStrip(diskId);
   }
 
@@ -822,7 +837,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       if (!res.ok || !body?.items) {
         if (inline && body?.error === inline) return { kind: 'refused', words: wordsFor(body.error, body.detail) };
         toast.error(wordsFor(body?.error, body?.detail));
-        if (reloadsBoth(body?.error)) reloadBoth();
+        // A refusal changed nothing: what was picked stays, to try again.
+        if (reloadsBoth(body?.error)) reloadBoth({ keepPicks: true });
         return { kind: 'refused' };
       }
       return { kind: 'done', items: body.items, versions: body.versions ?? [], added: body.added ?? [], ...(body.queued !== undefined ? { queued: body.queued } : {}),
@@ -865,7 +881,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     // A clash answered Skip is neither done nor failed: said apart, never counted as moved or copied.
     const tally = tallyItems(done);
     const ok = tally.done;
-    reloadBoth();
+    reloadBoth({ keepPicks: ok === 0 });
     // Every disk on screen may have a new version (a move changes its source too); the target's is the one named.
     const { panes: cur } = latest.current;
     const others = [cur.left.listing?.disk?.diskId, cur.right.listing?.disk?.diskId].filter((x): x is string => !!x && x !== target);
@@ -994,7 +1010,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       // A job that changed the Amiga's disks changed drawers on both sides maybe: both read again (the server let their
       // memory go); where the copy arrived the Amiga is asked afresh. A copy out of a volume changed only its destination.
       if (j.writes.length || j.direction === 'to') {
-        for (const side of sides) void load(side, cur[side].path, { fresh: j.direction === 'to' && arrivesIn(cur[side].path, dest) });
+        for (const side of sides) void load(side, cur[side].path, { keep: true, fresh: j.direction === 'to' && arrivesIn(cur[side].path, dest) });
       } else for (const side of sides) if (cur[side].path === dest) void refresh(side);
       then?.(j);
     });
@@ -1047,7 +1063,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     // A copy into a board's queue says how many FILES it queued (a folder is several): "Queued 3 files to A500 bench."
     const said = (n: number) => (run.queued !== undefined ? `Queued ${files(run.queued)} to ${run.where}.` : `${verbs[run.op][1]} ${(run.count ?? items)(n)} to ${run.where}.`);
     if (done.length) void report(done, said, run.target, versions, { undo: run.undo, ...(run.count ? { count: run.count } : {}) });
-    else reloadBoth();
+    else reloadBoth({ keepPicks: true });
   }
 
   function chooseClash(choice: ClashChoice, forAll: boolean) {
