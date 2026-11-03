@@ -146,6 +146,10 @@ what each one did.*
 
 *Settings has three tabs: Account (yours alone), Library (sharing) and Server.*
 
+![Settings, Library tab: the Sharing panel with a New share button, a Check button for whether other servers can reach this one, and nothing shared yet](docs/screenshots/settings-library.png)
+
+*Sharing, on the Library tab: let a friend's WebFloppy browse and mount your collections. Each link works once.*
+
 ![Settings, Server tab: About this server, with the web app's commit, hosting, platform, board firmware and the library's size](docs/screenshots/settings-server.png)
 
 *About this server, on the Server tab.*
