@@ -8,8 +8,19 @@ const changed = (o: Partial<SysconfSettings>) =>
   differing(buildSysconf(sysconfDefaults()), buildSysconf({ ...sysconfDefaults(), ...o }));
 
 describe('buildSysconf', () => {
-  it('the defaults are what mksysconfig.py writes, byte for byte', () => {
-    expect(buildSysconf(sysconfDefaults())).toEqual(fixture);
+  it('the defaults are what mksysconfig.py writes, apart from the pointer image', () => {
+    const b = buildSysconf(sysconfDefaults());
+    expect(differing(b, fixture).every((i) => i >= 32 && i < 96)).toBe(true);
+    expect(differing(b, fixture).length).toBeGreaterThan(0);
+  });
+  it('the default pointer is the Workbench disks\' arrow, in their bytes', () => {
+    const b = buildSysconf(sysconfDefaults());
+    const v = new DataView(b.buffer, b.byteOffset);
+    // Row 0 RW, row 5 ..KRRRRRRR, row 10 .........KR: as the 2.04, 3.1.4 and 3.2 disks hold them.
+    expect([v.getUint16(32), v.getUint16(34)]).toEqual([0b1100000000000000, 0b0100000000000000]);
+    expect([v.getUint16(32 + 5 * 4), v.getUint16(34 + 5 * 4)]).toEqual([0b0001111111000000, 0b0010000000000000]);
+    expect([v.getUint16(32 + 10 * 4), v.getUint16(34 + 10 * 4)]).toEqual([0b0000000000100000, 0b0000000001000000]);
+    expect(sysconfDefaults().pointer.slice(11).every((r) => r === '.'.repeat(16))).toBe(true);
   });
   it('is always 232 bytes', () => expect(buildSysconf({ ...sysconfDefaults(), fontHeight: 9 }).length).toBe(232));
   it.each([
@@ -52,7 +63,7 @@ describe('buildSysconf', () => {
   });
   it('does not share its defaults between calls', () => {
     const a = sysconfDefaults(); a.pointer[0] = 'x'; a.colors[0] = 1;
-    expect(sysconfDefaults().pointer[0]).toBe('KK..............');
+    expect(sysconfDefaults().pointer[0]).toBe('RW..............');
     expect(sysconfDefaults().colors[0]).toBe(0xAAA);
   });
 });

@@ -47,10 +47,10 @@ describe('colours', () => {
 describe('the pointer', () => {
   it('paint changes one cell, in a new array', () => {
     const before = sysconfDefaults().pointer;
-    const after = paint(before, 2, 1, 'R');
-    expect(after[1]).toBe('KWR.............');
+    const after = paint(before, 15, 1, 'R');
+    expect(after[1]).toBe('KRWW...........R');
     expect(after[0]).toBe(before[0]);
-    expect(before[1]).toBe('KWK.............');
+    expect(before[1]).toBe('KRWW............');
   });
 });
 
@@ -80,6 +80,11 @@ describe('the dialog', () => {
     const html = renderToStaticMarkup(form());
     for (const w of ['Display', 'Overscan position', 'Workbench colours', 'Pointer', 'Keyboard and mouse', 'read at boot only', 'Devs']) expect(html).toContain(w);
     expect(html).not.toMatch(/serial|printer|baud|Overscan size/i);
+  });
+  it('offers the standard pointer', () => {
+    const html = renderToStaticMarkup(form());
+    expect(html).toContain('Standard pointer');
+    expect(html).toContain('pointer-standard');
   });
   it('the footer says the size', () => expect(renderToStaticMarkup(footer(false))).toContain('232 bytes'));
   it('the clash state offers Replace, Keep both and Skip', () => {

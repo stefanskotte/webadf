@@ -115,6 +115,18 @@ test('dragging paints every cell it crosses, and the hot spot tool sets the hot 
   await expect(page.getByTestId('pointer-cell-8-8')).toHaveAttribute('data-hot', '');
 });
 
+test('Standard pointer brings back the Workbench arrow after Clear', async ({ page }) => {
+  await signUpFresh(page);
+  await openFiles(page, 'STASH:', 'NET:', 'left');
+  await button(page).click();
+  await expect(page.getByTestId('pointer-cell-0-0')).toHaveAttribute('data-ink', 'R');
+  await page.getByTestId('pointer-clear').click();
+  await expect(page.getByTestId('pointer-cell-0-0')).toHaveAttribute('data-ink', '.');
+  await page.getByTestId('pointer-standard').click();
+  await expect(page.getByTestId('pointer-cell-0-0')).toHaveAttribute('data-ink', 'R');
+  await expect(page.getByTestId('pointer-cell-1-0')).toHaveAttribute('data-ink', 'W');
+});
+
 test('a fast drag leaves no gap', async ({ page }) => {
   await signUpFresh(page);
   await openFiles(page, 'STASH:', 'NET:', 'left');

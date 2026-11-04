@@ -25,7 +25,7 @@ its open questions where the ROM could.
 - Serial and printer settings (operator).
 - Opening or editing an existing file (my call: the command is Create).
 - Adding the file to a disk automatically, or making a `Devs` drawer. The person goes to the right place first.
-- Saved presets, ready-made pointers, or importing a pointer image.
+- Saved presets, pointers other than the standard one, or importing a pointer image.
 - Changing any firmware, Transfer or the driver disk.
 
 ## Anti-goals
@@ -33,8 +33,8 @@ its open questions where the ROM could.
 - A control that does nothing. The operator's rule: show only what is proven to work.
 - A value that can hurt the Amiga. `PointerTicks` is a divisor in Intuition (`divs.w $6c(a3)` in `SetPrefs`), so 0 must
   be impossible to write.
-- Commodore data in the repo. The pointer comes from `mksysconfig.py`, which draws its own. Real Workbench files stay out
-  of the repo.
+- Commodore data in the repo, with one exception by the operator's ruling (2026-11-04): the standard pointer's image, 11
+  rows, as `STANDARD_POINTER`, so a person can have the pointer they know. Real Workbench files stay out of the repo.
 - A file shorter than 232 bytes, under any path. It would be ignored at boot.
 
 ## What the ROMs say
@@ -98,7 +98,7 @@ time.
 | Display | Workbench screen: Interlace | off | | bit 0 |
 | Display | Overscan position X, Y | 0, 0 | -16 to 16 | signed bytes |
 | Workbench colours | Four colours | AAA, 000, FFF, 68B | 12-bit | words 0RGB |
-| Pointer | 16 x 16 editor, three colours plus clear, hot spot | the arrow in `mksysconfig.py`, 0, 0 | hot spot 0-15 | see below |
+| Pointer | 16 x 16 editor, three colours plus clear, hot spot | the Workbench disks' pointer, 0, 0 | hot spot 0-15 | see below |
 | Pointer | Three pointer colours | E44, 000, EEC | 12-bit | words 0RGB |
 | Keyboard and mouse | Key repeat delay | 0.60 s | 0.02 to 2 s | timeval |
 | Keyboard and mouse | Key repeat speed | 0.05 s | 0.02 to 1 s | timeval |
@@ -107,7 +107,7 @@ time.
 | Keyboard and mouse | Acceleration | off | | bit 15 of offset 124 |
 
 **Pointer:** choose one of four inks (clear, three colours), click or drag cells, a separate tool sets the hot spot, and
-Clear and Reset. Stored as `mksysconfig.py` does it: two control words, 16 rows of two bitplanes, two end words.
+Clear and `Standard pointer`, which restores the Workbench image and hot spot. Stored as `mksysconfig.py` does it: two control words, 16 rows of two bitplanes, two end words.
 
 **Hot spot:** Intuition stores it as a negative offset and adds 1 to X when it reads it. Workbench's `XOffset -1, YOffset
 0` means pixel (0, 0). So pixel (x, y) is stored as `XOffset = -x - 1`, `YOffset = -y`. Read from the code; the bench
@@ -134,22 +134,21 @@ these. Keep it short. The help topic in `src/lib/help/topics.tsx` changes with t
 - Next.js here differs from training data: read `node_modules/next/dist/docs/` before writing route or page code.
 - Self-hosting has full parity: no dependency on our deployment.
 - No migration expected.
-- Never commit ROMs or real Workbench files. Tests compare with a fixture made by `mksysconfig.py`, which holds no
-  Commodore data.
+- Never commit ROMs or real Workbench files. Tests compare with a fixture made by `mksysconfig.py`, outside the pointer's image.
 - e2e: only the specs for touched areas, port 3100, serialised, in runs under 9 minutes.
 - Web change: ask the operator about the self-host sync afterwards.
 
 ## Done means
 
 - Unit tests:
-  - the defaults build byte for byte what `mksysconfig.py` writes;
+  - the defaults build what `mksysconfig.py` writes, apart from the pointer image, which is the Workbench disks';
   - every control changes only its own bytes;
   - always 232 bytes;
   - mouse speed can only be 1, 2 or 4 and the server refuses anything else;
   - a pointer drawn and hot spot set come out in the expected words.
 - e2e: the button replaces `Filter…`, the dialog creates the file in STASH: and inside a disk, a clash asks, the disabled
   reasons show, the filter field still works.
-- Local, not committed: the defaults match the 3.2 Workbench disk's file byte for byte apart from the pointer image.
+- Local, not committed: the defaults match the 3.2 Workbench disk's file byte for byte.
 - **Boot test, before release:** in the emulator on Kickstart 2.04, 3.1, 3.1.4 and 3.2, boot a disk with no IPrefs in its
   startup and a made file that changes every setting, then see each take effect. On the A500, once, the same disk through
   the board. Settings that cannot be seen on a screen (key repeat, double-click, mouse speed, acceleration) are tried by

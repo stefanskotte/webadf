@@ -113,11 +113,11 @@ export function PointerEditor(p: {
         <Button type="button" size="sm" variant="outline" aria-pressed={hotTool} data-testid="pointer-hotspot" onClick={() => setHotTool(!hotTool)}
                 className="aria-pressed:outline-2 aria-pressed:outline-(--ring)">Set hot spot</Button>
         <div data-testid="pointer-hotspot-at" style={{ color: 'var(--faint)' }}>Hot spot: X {p.hotSpot.x}, Y {p.hotSpot.y}</div>
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
           <Button type="button" size="sm" variant="outline" data-testid="pointer-clear"
                   onClick={() => p.onChange({ pointer: Array.from({ length: POINTER_SIZE }, () => '.'.repeat(POINTER_SIZE)), hotSpot: p.hotSpot })}>Clear</Button>
-          <Button type="button" size="sm" variant="outline" data-testid="pointer-reset"
-                  onClick={() => { const d = sysconfDefaults(); p.onChange({ pointer: d.pointer, hotSpot: d.hotSpot }); }}>Reset</Button>
+          <Button type="button" size="sm" variant="outline" data-testid="pointer-standard"
+                  onClick={() => { const d = sysconfDefaults(); p.onChange({ pointer: d.pointer, hotSpot: d.hotSpot }); }}>Standard pointer</Button>
         </div>
       </div>
     </div>

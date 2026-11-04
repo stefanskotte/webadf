@@ -81,3 +81,7 @@ The published firmware image contains the following. Their licence texts are in 
 ## Tools used to verify this project (not distributed)
 
 amitools/xdftool (GPL-2.0-or-later), LHa for UNIX, xDMS, Greaseweazle, KiCad.
+
+## AmigaOS pointer image
+
+Create SysConf's standard pointer (`STANDARD_POINTER` in `src/lib/files/sysconf.ts`, 11 rows of pixels) is the pointer image from the AmigaOS Workbench disks' `Devs/system-configuration`. It is not covered by webadf's MIT licence, and it belongs to its rights holders.

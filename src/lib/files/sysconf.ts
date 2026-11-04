@@ -2,7 +2,7 @@
 // Create SysConf (spec 2026-11-04): DEVS:system-configuration from named settings. The file is struct Preferences, 232
 // bytes, big-endian; Kickstart's loader ignores a shorter one, so every byte is always written. Only the fields Kickstart
 // itself reads are settings. The rest stay as TEMPLATE has them: the bytes docs/superpowers/research/system-configuration/
-// mksysconfig.py writes, which hold no Commodore data (it draws its own pointer). CLIENT-SAFE.
+// mksysconfig.py writes. The one piece of Commodore's data is STANDARD_POINTER below. CLIENT-SAFE.
 import { z } from 'zod';
 
 export const SYSCONF_NAME = 'system-configuration';
@@ -29,19 +29,20 @@ export const DOUBLE_CLICK_US = { min: 20000, max: 10000000 };
 
 const TEMPLATE = 'CAAABQAAAAAAAMNQAAAAAAAJJ8AAAAABAABOIAAAAAAAAMAAQADgAGAA8ABwAPgAeAD8AHwA/gB+AP8AfwD/gHwA/8BsAP4ARgDvAAYAzwADAAeAAwAHgAAAAwAAAAAAAAAAAP8ADkQAAA7sAAEKqgAAD/8GiwAAAIEALAAAAABnZW5lcmljAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABQBLAAAAAAAAAAcAIABCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAA==';
 
-const POINTER = [
-  'KK..............', 'KWK.............', 'KWWK............', 'KWWWK...........',
-  'KWWWWK..........', 'KWWWWWK.........', 'KWWWWWWK........', 'KWWWWWWWK.......',
-  'KWWWWWKKKK......', 'KWWKWWK.........', 'KWK.KWWK........', 'KK..KWWK........',
-  '.....KWWK.......', '.....KWWK.......', '......KK........', '................',
+/** The standard pointer: the image on the 2.04, 3.1.4 and 3.2 Workbench disks, by the operator's ruling (2026-11-04). */
+const STANDARD_POINTER = [
+  'RW..............', 'KRWW............', '.KRRWW..........', '.KRRRRWW........',
+  '..KRRRRRWW......', '..KRRRRRRR......', '...KRRRW........', '...KRRKRW.......',
+  '....KR.KRW......', '....KR..KRW.....', '.........KR.....', '................',
+  '................', '................', '................', '................',
 ];
 
-/** What the Workbench disks hold, with mksysconfig.py's pointer: a fresh copy each call. */
+/** What the Workbench disks hold: a fresh copy each call. */
 export function sysconfDefaults(): SysconfSettings {
   return {
     fontHeight: 8, interlace: false, viewX: 0, viewY: 0,
     colors: [0xAAA, 0x000, 0xFFF, 0x68B], pointerColors: [0xE44, 0x000, 0xEEC],
-    pointer: [...POINTER], hotSpot: { x: 0, y: 0 },
+    pointer: [...STANDARD_POINTER], hotSpot: { x: 0, y: 0 },
     keyDelayUs: 600000, keySpeedUs: 50000, doubleClickUs: 1020000, mouseTicks: 1, acceleration: false,
   };
 }
