@@ -13,6 +13,8 @@ export const NO_NESTED = 'Collections hold titles, not folders';
 export const NO_COLLECTION_IN_COLLECTION = 'A collection cannot go inside another';
 export const ONLY_TITLES_FILED = 'Only titles, and disk images from STASH:, go into the library here';
 export const FILE_ON_SHELF = 'Open LIBRARY: or a collection to file titles';
+/** Create SysConf on a shelf: it is a file, so it goes where files live. */
+export const SYSCONF_ON_SHELF = 'Open a disk, STASH: or an Amiga volume to make it there';
 /** Makedir in a title's disk list: folders are made on a disk or in STASH: (D13). */
 export const MAKEDIR_IN_DISK = 'Open a disk or STASH: to make a folder in it';
 /** A collection copied or moved anywhere but onto a shelf: collections are LIBRARY:'s folders and never leave it. */

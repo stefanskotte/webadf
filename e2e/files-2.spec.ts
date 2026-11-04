@@ -160,7 +160,7 @@ test('the device column moves the source pane to a device root and shows it pres
   await expect(page.getByTestId('pane-right-title')).toHaveAttribute('data-role', 'source');
 });
 
-test('the grid: All, None, Parent, Root, Swap, Show .info, Filter…', async ({ page }) => {
+test('the grid: All, None, Parent, Root, Swap, Show .info', async ({ page }) => {
   const { orgId } = await signUpFresh(page);
   const tag = runTag();
   const a = await seedTitle(orgId, `Grid-${tag}`, STANDARD);
@@ -190,7 +190,7 @@ test('the grid: All, None, Parent, Root, Swap, Show .info, Filter…', async ({ 
   await expect(crumb(page, 'right', 0)).toHaveText('LIBRARY:');
   await expect(page.getByTestId('files-root')).toHaveAttribute('aria-disabled', 'true');
 
-  // Back into the disk for Show .info and Filter…
+  // Back into the disk for Show .info
   await row(page, 'right', `Grid-${tag}`).dblclick();
   await page.getByTestId('pane-right').getByTestId('pane-row').filter({ hasText: 'Disk 1' }).dblclick();
   await expect(row(page, 'right', 'Disk.info')).toHaveCount(1);
@@ -203,9 +203,6 @@ test('the grid: All, None, Parent, Root, Swap, Show .info, Filter…', async ({ 
   await showInfo.click();
   await expect(showInfo).toHaveAttribute('aria-pressed', 'true');
   await expect(row(page, 'right', 'Disk.info')).toHaveCount(1);
-
-  await page.getByTestId('files-filter').click();
-  await expect(page.getByTestId('pane-right-filter')).toBeFocused();
 
   // Swap: the panes trade places; the source stays on its side.
   await page.getByTestId('files-swap').click();

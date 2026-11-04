@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { unsettled, holdsFiles, addToLibraryReason, offersUndo, placeOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly, failedReason, FAILED_ROW, deleteText, deleteWhere, netVolumeReason } from './pane-rules';
+import { unsettled, holdsFiles, addToLibraryReason, offersUndo, placeOf, exactPlaceOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly, failedReason, FAILED_ROW, deleteText, deleteWhere, netVolumeReason } from './pane-rules';
 import { NET_OPEN_VOLUME, NET_READ_ONLY } from './net-rules';
 import type { FsEntry, Listing } from './types';
 
@@ -57,6 +57,21 @@ describe('offersUndo (STASH: keeps no versions)', () => {
     expect(offersUndo('move', ['STASH:/a.txt'], 'LIBRARY:/g/d')).toBe(false);
     expect(offersUndo('move', ['LIBRARY:/g/d/a'], 'STASH:/Mods')).toBe(false);
     expect(offersUndo('move', ['LIBRARY:/g/d/a'], 'LIBRARY:/g/d2')).toBe(true);
+  });
+});
+
+describe('exactPlaceOf: where Create SysConf will write', () => {
+  const crumbs = (...labels: string[]) => labels.map((label) => ({ label, path: label }));
+  it('an Amiga volume by its Amiga path', () => {
+    expect(exactPlaceOf(L('NET:/w1/Work/Devs', { crumbs: crumbs('NET:', 'A500', 'Work:', 'Devs'),
+      net: { board: 'w1', boardName: 'A500', volume: 'Work', amigaPath: 'Work:Devs', readAt: 1, cut: false, browse: null, write: null } }))).toBe('Work:Devs');
+  });
+  it('a disk by its label and the drawers below it', () => {
+    expect(exactPlaceOf(L('LIBRARY:/g1/d1/Devs/Sub', { disk, crumbs: crumbs('LIBRARY:', 'Title', disk.label, 'Devs', 'Sub') }))).toBe(`${disk.label}/Devs/Sub`);
+    expect(exactPlaceOf(L('LIBRARY:/g1/d1', { disk, crumbs: crumbs('LIBRARY:', 'Title', disk.label) }))).toBe(disk.label);
+  });
+  it('a STASH: folder by its path', () => {
+    expect(exactPlaceOf(L('STASH:/Boot', {}))).toBe('STASH:/Boot');
   });
 });
 

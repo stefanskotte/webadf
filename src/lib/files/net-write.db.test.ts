@@ -37,6 +37,7 @@ const { netDriver } = await import('./net-driver');
 const { parsePath } = await import('./path');
 const { fetchProgress, placeFetched, afterTransferDone } = await import('./net-fetch');
 
+const { sysconfDefaults } = await import('./sysconf');
 const ctx = { orgId: 'o1', userId: 'u1' };
 const DATE = '2020-01-02T00:00:00.000Z';
 const ent = (name: string, size: number, dir = false) => ({ name, dir, size, protection: 0, date: DATE, comment: '' });
@@ -826,5 +827,25 @@ describe('a name on its way counts as a clash', () => {
     await stash('B/same.txt', '2');
     expect(await op({ op: 'copy', sources: ['STASH:/A/same.txt', 'STASH:/B/same.txt'], dest: TOOLS, onClash: 'ask' }))
       .toMatchObject({ kind: 'refused', refusal: { code: 'name_exists', detail: 'two sources are named same.txt' } });
+  });
+});
+
+describe('Create SysConf onto a volume', () => {
+  it('queues the 232 bytes as a job, at the absolute path', async () => {
+    await remember('Work:Devs', []);
+    const r = await op({ op: 'create-sysconf', dest: 'NET:/w1/Work/Devs', settings: sysconfDefaults(), onClash: 'ask' });
+    expect(r).toMatchObject({ kind: 'done', items: [{ ok: true }], job: { files: 1 } });
+    expect((await rows())[0]).toMatchObject({ path: 'system-configuration', amigaDest: 'Work:Devs/system-configuration', sizeBytes: 232 });
+  });
+  it('a file already there is a clash, so the Amiga\'s real one is not replaced unasked', async () => {
+    await remember('Work:Devs', [ent('system-configuration', 232)]);
+    expect(await op({ op: 'create-sysconf', dest: 'NET:/w1/Work/Devs', settings: sysconfDefaults(), onClash: 'ask' }))
+      .toMatchObject({ kind: 'clashes', clashes: [{ name: 'system-configuration' }] });
+    expect(await rows()).toHaveLength(0);
+  });
+  it('a board with writing off refuses it', async () => {
+    await remember('Work:', [], 'w3');
+    expect(await op({ op: 'create-sysconf', dest: 'NET:/w3/Work', settings: sysconfDefaults(), onClash: 'ask' }))
+      .toMatchObject({ kind: 'refused', refusal: { code: 'read_only', detail: OFF } });
   });
 });

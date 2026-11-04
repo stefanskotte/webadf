@@ -19,6 +19,8 @@ const Body = z.discriminatedUnion('op', [
   z.object({ op: z.literal('add-to-library'), sources }),
   z.object({ op: z.literal('create-adf'), dest: path, name, filesystem: z.enum(['OFS', 'FFS']), density: z.enum(['dd', 'hd']),
     onClash: z.enum(['ask', 'replace', 'skip', 'keep-both']) }),
+  // The settings are the engine's to check (createSysconf), so a direct runOp is covered too.
+  z.object({ op: z.literal('create-sysconf'), dest: path, settings: z.unknown(), onClash: z.enum(['ask', 'replace', 'skip', 'keep-both']) }),
 ]);
 
 export async function POST(request: Request) {

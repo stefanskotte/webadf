@@ -6,7 +6,7 @@ describe('the button bank (Files 2 §2.3)', () => {
     const label = (c: (typeof BANK_GRID)[number]) => (c === null ? '' : BANK_LABEL[c]);
     expect(BANK_GRID).toHaveLength(18);
     expect(BANK_GRID.slice(0, 6).map(label)).toEqual(['All', 'Copy', 'Makedir', 'Create ADF…', 'Info', 'Download']);
-    expect(BANK_GRID.slice(6, 12).map(label)).toEqual(['None', 'Move', 'Rename', 'Add to library', 'Protect', 'Filter…']);
+    expect(BANK_GRID.slice(6, 12).map(label)).toEqual(['None', 'Move', 'Rename', 'Add to library', 'Protect', 'Create SysConf…']);
     expect(BANK_GRID.slice(12).map(label)).toEqual(['Parent', 'Root', 'Swap', 'Show .info', 'Refresh', 'Delete']);
   });
   // NET: volumes (spec 2026-10-30 §5): row 3, column 5.

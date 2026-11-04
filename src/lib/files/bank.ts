@@ -4,17 +4,17 @@
 // volumes, spec 2026-10-30 §5) took the one empty cell, row 3 column 5. CLIENT-SAFE.
 export type BankCommand =
   | 'all' | 'copy' | 'makedir' | 'createadf' | 'info' | 'download'
-  | 'none' | 'move' | 'rename' | 'addlib' | 'protect' | 'filter'
+  | 'none' | 'move' | 'rename' | 'addlib' | 'protect' | 'createsysconf'
   | 'parent' | 'root' | 'swap' | 'showinfo' | 'refresh' | 'delete';
 
 export const BANK_GRID: readonly (BankCommand | null)[] = [
   'all', 'copy', 'makedir', 'createadf', 'info', 'download',
-  'none', 'move', 'rename', 'addlib', 'protect', 'filter',
+  'none', 'move', 'rename', 'addlib', 'protect', 'createsysconf',
   'parent', 'root', 'swap', 'showinfo', 'refresh', 'delete',
 ];
 
 export const BANK_LABEL: Record<BankCommand, string> = {
   all: 'All', copy: 'Copy', makedir: 'Makedir', createadf: 'Create ADF…', info: 'Info', download: 'Download',
-  none: 'None', move: 'Move', rename: 'Rename', addlib: 'Add to library', protect: 'Protect', filter: 'Filter…',
+  none: 'None', move: 'Move', rename: 'Rename', addlib: 'Add to library', protect: 'Protect', createsysconf: 'Create SysConf…',
   parent: 'Parent', root: 'Root', swap: 'Swap', showinfo: 'Show .info', refresh: 'Refresh', delete: 'Delete',
 };
