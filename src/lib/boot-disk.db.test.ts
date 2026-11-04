@@ -20,7 +20,7 @@ const { getDb, closeDb } = await import('@/db');
 const { migrate } = await import('drizzle-orm/node-postgres/migrator');
 const { eq } = await import('drizzle-orm');
 const { devices } = await import('@/db/schema/devices');
-const { touchLastSeen } = await import('./mount');
+const { recordStatus, touchLastSeen } = await import('./mount');
 const { noteBoot, saveBootDisk } = await import('./boot-disk-store');
 
 const ID = 'boot-dev-01';
@@ -122,6 +122,30 @@ describe('Disk at startup', () => {
         await noteBoot(ID, { id: 'cccccccc', ota: false });
         expect(await cursor()).toBe(5);
       }
+    });
+    // Final review: a reverted board's next clean boot reported null, which wiped 'failed' and let the boot after it be
+    // offered the same release: flashed again every second power-up.
+    it('a failure outlives a clean report, so its release is not offered again', async () => {
+      await want('failed');
+      await getDb().update(devices).set({ firmwareUpdateError: 'reverted' }).where(eq(devices.id, ID));
+      for (const firmwareVersion of [undefined, '1.24.0']) {
+        await recordStatus(ID, { mountedSha256: null, firmwareVersion, firmwareUpdateState: null, firmwareUpdateError: null });
+        expect((await row()).firmwareUpdateState).toBe('failed');
+        expect((await row()).firmwareUpdateError).toBe('reverted');
+      }
+      await noteBoot(ID, { id: 'dddddddd', ota: false });
+      expect(await cursor()).toBe(5);
+    });
+    it('with nothing asked for, a clean report does clear it', async () => {
+      await want('failed', null);
+      await recordStatus(ID, { mountedSha256: null, firmwareUpdateState: null, firmwareUpdateError: null });
+      expect((await row()).firmwareUpdateState).toBeNull();
+    });
+    it('a board that lost a queued offer and reported null before its first poll is still offered it', async () => {
+      await want('queued');
+      await recordStatus(ID, { mountedSha256: null, firmwareUpdateState: null, firmwareUpdateError: null });
+      await noteBoot(ID, { id: 'eeeeeeee', ota: false });
+      expect(await cursor()).toBe(6);
     });
     it('nothing asked for: nothing moves', async () => {
       await want(null, null);
