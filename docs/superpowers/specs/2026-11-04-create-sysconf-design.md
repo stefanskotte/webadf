@@ -97,8 +97,8 @@ time.
 |---|---|---|---|---|
 | Display | System font: Topaz 8 (80 columns) / Topaz 9 (60) | Topaz 8 | those two | 8 / 9 |
 | Display | Workbench screen: Interlace | off | | bit 0 |
-| Display | Display position X, Y | 0, 0 | -16 to 16 | signed bytes |
-| Display | Extra size: Rows, Columns | 0, 0 | -16 to 16 | signed bytes |
+| Display | Overscan position X, Y | 0, 0 | -16 to 16 | signed bytes |
+| Display | Overscan size: Rows, Columns | 0, 0 | -64 to 64 (640 to 704 columns is +64) | signed bytes |
 | Workbench colours | Four colours | AAA, 000, FFF, 68B | 12-bit | words 0RGB |
 | Pointer | 16 x 16 editor, three colours plus clear, hot spot | the arrow in `mksysconfig.py`, 0, 0 | hot spot 0-15 | see below |
 | Pointer | Three pointer colours | E44, 000, EEC | 12-bit | words 0RGB |

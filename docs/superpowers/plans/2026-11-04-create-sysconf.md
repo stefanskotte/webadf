@@ -46,7 +46,8 @@ export const SYSCONF_SIZE = 232;
 export type Ink = '.' | 'R' | 'K' | 'W';   // clear, color17, color18, color19
 export type SysconfSettings = {
   fontHeight: 8 | 9; interlace: boolean;
-  viewX: number; viewY: number; extraRows: number; extraColumns: number;   // integers, -16..16
+  viewX: number; viewY: number;              // overscan position, integers, -16..16
+  extraRows: number; extraColumns: number;   // overscan size, integers, -64..64
   colors: [number, number, number, number];                                // 0..0xFFF
   pointerColors: [number, number, number];                                 // 0..0xFFF
   pointer: string[];                                                       // 16 strings of 16 Inks
@@ -378,7 +379,7 @@ Expected: differences only at 28-99, the pointer image, plus whatever `mksysconf
 
 - [ ] **Step 2: Emulator boot test**
 
-In a scratchpad, with `xdftool`, copy each local Workbench disk (never committed) and give it a startup with no IPrefs: `LoadWB`, `EndCLI`. Put in `Devs/system-configuration` a file made by `buildSysconf` that changes every setting visibly: Topaz 9 against the disk's 8, interlace, four unusual colours, an odd pointer and colours, hot spot (8, 8), display position, extra rows. Boot on Kickstart 2.04, 3.1, 3.1.4 and 3.2 with FS-UAE, driven and captured as `tools/receive/uae/uae-test.sh` does, stopping only the PID it started. Screenshot each, compare with a boot of the defaults.
+In a scratchpad, with `xdftool`, copy each local Workbench disk (never committed) and give it a startup with no IPrefs: `LoadWB`, `EndCLI`. Put in `Devs/system-configuration` a file made by `buildSysconf` that changes every setting visibly: Topaz 9 against the disk's 8, interlace, four unusual colours, an odd pointer and colours, hot spot (8, 8), overscan position and size. Boot on Kickstart 2.04, 3.1, 3.1.4 and 3.2 with FS-UAE, driven and captured as `tools/receive/uae/uae-test.sh` does, stopping only the PID it started. Screenshot each, compare with a boot of the defaults.
 Expected: every visible setting takes effect on each. Hot spot checked by clicking a small gadget with the pointer's centre.
 
 - [ ] **Step 3: A full Workbench**

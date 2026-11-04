@@ -22,7 +22,8 @@ export type SysconfSettings = {
 };
 
 export const POINTER_SIZE = 16;
-export const OFFSET_MAX = 16;   // display position and extra size, each way
+export const OVERSCAN_POSITION_MAX = 16;   // overscan position, each way
+export const OVERSCAN_SIZE_MAX = 64;       // overscan size, each way: 640 to 704 columns is +64
 export const KEY_DELAY_US = { min: 20000, max: 2000000 };
 export const KEY_SPEED_US = { min: 20000, max: 1000000 };
 export const DOUBLE_CLICK_US = { min: 20000, max: 10000000 };
@@ -46,13 +47,14 @@ export function sysconfDefaults(): SysconfSettings {
   };
 }
 
-const offset = z.number().int().min(-OFFSET_MAX).max(OFFSET_MAX);
+const position = z.number().int().min(-OVERSCAN_POSITION_MAX).max(OVERSCAN_POSITION_MAX);
+const size = z.number().int().min(-OVERSCAN_SIZE_MAX).max(OVERSCAN_SIZE_MAX);
 const color = z.number().int().min(0).max(0xFFF);
 const cell = z.number().int().min(0).max(POINTER_SIZE - 1);
 const us = (r: { min: number; max: number }) => z.number().int().min(r.min).max(r.max);
 export const sysconfSchema: z.ZodType<SysconfSettings> = z.object({
   fontHeight: z.union([z.literal(8), z.literal(9)]), interlace: z.boolean(),
-  viewX: offset, viewY: offset, extraRows: offset, extraColumns: offset,
+  viewX: position, viewY: position, extraRows: size, extraColumns: size,
   colors: z.tuple([color, color, color, color]), pointerColors: z.tuple([color, color, color]),
   pointer: z.array(z.string().regex(/^[.RKW]{16}$/)).length(POINTER_SIZE),
   hotSpot: z.object({ x: cell, y: cell }),
