@@ -106,3 +106,10 @@ int rx_device_sendable(const char *dev) {
     }
     return 1;
 }
+
+unsigned long rx_kbps(unsigned long moved, unsigned long secs) {
+    unsigned long k;
+    if (moved < 16384UL || secs < 2) return 0;
+    k = (moved / 1024UL) / secs;
+    return k ? k : 1;
+}

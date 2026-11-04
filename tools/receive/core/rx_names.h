@@ -22,5 +22,8 @@ unsigned rx_utoa(unsigned long v, char *out);
 int rx_name_sendable(const char *name);
 /* 1 if dev is a device name the web app takes: 1..30 bytes of [A-Za-z0-9_.-], then ':' (remote-wire.ts DEVICE). */
 int rx_device_sendable(const char *dev);
+/* KB/s for a row (Transfer 2.14), or 0 where the number would mean nothing: under 16 KB (one progress step; a small file
+   costs its file, not its bytes) or under 2 s (the clock counts whole seconds). Never 0 otherwise. */
+unsigned long rx_kbps(unsigned long moved, unsigned long secs);
 
 #endif
