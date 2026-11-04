@@ -10,6 +10,16 @@ export function paint(pointer: string[], x: number, y: number, ink: Ink): string
   return pointer.map((row, r) => (r === y ? `${row.slice(0, x)}${ink}${row.slice(x + 1)}` : row));
 }
 
+type Cell = { x: number; y: number };
+/** Every cell on the line from `a` to `b`, both included: a fast drag's events land several cells apart. */
+export function cellsBetween(a: Cell, b: Cell): Cell[] {
+  const steps = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+  return Array.from({ length: steps + 1 }, (_, i) => (steps === 0 ? a : {
+    x: Math.round(a.x + ((b.x - a.x) * i) / steps),
+    y: Math.round(a.y + ((b.y - a.y) * i) / steps),
+  }));
+}
+
 const INKS: { id: string; ink: Ink; label: string }[] = [
   { id: 'clear', ink: '.', label: 'Clear' }, { id: '1', ink: 'R', label: 'Colour 1' },
   { id: '2', ink: 'K', label: 'Colour 2' }, { id: '3', ink: 'W', label: 'Colour 3' },
@@ -30,11 +40,13 @@ export function PointerEditor(p: {
   const [hotTool, setHotTool] = useState(false);
   const [at, setAt] = useState({ x: 0, y: 0 });
   const grid = useRef<HTMLDivElement>(null);
+  /** During a drag: the last cell, and the rows as painted so far, as two moves can come before one render. */
+  const drag = useRef<{ last: Cell; pointer: string[] } | null>(null);
   const look = (i: Ink) => (i === '.' ? CLEAR_LOOK : colorToCss(p.colors['RKW'.indexOf(i)]));
 
-  function apply(x: number, y: number, pointer = p.pointer) {
-    if (hotTool) { p.onChange({ pointer, hotSpot: { x, y } }); return; }
-    if (pointer[y][x] !== ink) p.onChange({ pointer: paint(pointer, x, y, ink), hotSpot: p.hotSpot });
+  function apply(x: number, y: number) {
+    if (hotTool) { p.onChange({ pointer: p.pointer, hotSpot: { x, y } }); return; }
+    if (p.pointer[y][x] !== ink) p.onChange({ pointer: paint(p.pointer, x, y, ink), hotSpot: p.hotSpot });
   }
   /** The cell under the pointer, from the grid's box: a captured pointer's events all land on the grid. */
   function cellOf(e: PointerEvent<HTMLDivElement>) {
@@ -47,12 +59,18 @@ export function PointerEditor(p: {
     if (e.button !== 0) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
     const c = cellOf(e);
-    if (c) { setAt(c); apply(c.x, c.y); }
+    if (!c) return;
+    setAt(c);
+    apply(c.x, c.y);
+    if (!hotTool) drag.current = { last: c, pointer: paint(p.pointer, c.x, c.y, ink) };
   }
   function onMove(e: PointerEvent<HTMLDivElement>) {
-    if (hotTool || !e.currentTarget.hasPointerCapture?.(e.pointerId)) return;
-    const c = cellOf(e);
-    if (c) apply(c.x, c.y);
+    const d = drag.current;
+    const c = d && cellOf(e);
+    if (!d || !c || (c.x === d.last.x && c.y === d.last.y)) return;
+    d.pointer = cellsBetween(d.last, c).reduce((rows, cell) => paint(rows, cell.x, cell.y, ink), d.pointer);
+    d.last = c;
+    p.onChange({ pointer: d.pointer, hotSpot: p.hotSpot });
   }
   function onKey(e: KeyboardEvent<HTMLDivElement>) {
     const step: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
@@ -67,7 +85,7 @@ export function PointerEditor(p: {
 
   return (
     <div className="flex flex-wrap items-start gap-4">
-      <div ref={grid} role="grid" aria-label="Pointer image" data-testid="pointer-grid" onPointerDown={onDown} onPointerMove={onMove} onKeyDown={onKey}
+      <div ref={grid} role="grid" aria-label="Pointer image" data-testid="pointer-grid" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }} onKeyDown={onKey}
            className="grid w-full max-w-[272px] touch-none select-none gap-px sm:w-[240px]"
            style={{ gridTemplateColumns: `repeat(${POINTER_SIZE}, 1fr)`, background: 'var(--line)', padding: 1 }}>
         {p.pointer.map((row, y) => (

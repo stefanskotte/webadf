@@ -115,6 +115,20 @@ test('dragging paints every cell it crosses, and the hot spot tool sets the hot 
   await expect(page.getByTestId('pointer-cell-8-8')).toHaveAttribute('data-hot', '');
 });
 
+test('a fast drag leaves no gap', async ({ page }) => {
+  await signUpFresh(page);
+  await openFiles(page, 'STASH:', 'NET:', 'left');
+  await button(page).click();
+  await page.getByTestId('pointer-ink-1').click();
+  const from = (await page.getByTestId('pointer-cell-1-14').boundingBox())!;
+  const to = (await page.getByTestId('pointer-cell-14-14').boundingBox())!;
+  await page.mouse.move(from.x + 3, from.y + 3);
+  await page.mouse.down();
+  await page.mouse.move(to.x + 3, to.y + 3);   // one event across 14 cells
+  await page.mouse.up();
+  for (let x = 1; x <= 14; x++) await expect(page.getByTestId(`pointer-cell-${x}-14`)).toHaveAttribute('data-ink', 'R');
+});
+
 test('a bad value turns Create off with the reason, and fixing it turns it on', async ({ page }) => {
   await signUpFresh(page);
   await openFiles(page, 'STASH:', 'NET:', 'left');

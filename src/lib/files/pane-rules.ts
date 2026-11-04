@@ -115,6 +115,19 @@ export function placeOf(l: Listing | null): string {
   return l && inStash(l.path) ? 'STASH:' : 'the other side';
 }
 
+/**
+ * Exactly where a new file lands, for a dialog that must say so before it writes: an Amiga volume by its Amiga path
+ * ("Work:Devs"), a disk by its label and drawers ("Boot/Devs"), a STASH: folder by its path; anywhere else placeOf.
+ */
+export function exactPlaceOf(l: Listing | null): string {
+  if (l?.net?.amigaPath) return l.net.amigaPath;
+  if (l?.disk) {
+    const at = l.crumbs.findLastIndex((c) => c.label === l.disk!.label);
+    return [l.disk.label, ...(at < 0 ? [] : l.crumbs.slice(at + 1).map((c) => c.label))].join('/');
+  }
+  return l && inStash(l.path) ? l.path : placeOf(l);
+}
+
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** "Disk 1" or "SysInfo · Disk 1": the place a disk-side dialog names. */

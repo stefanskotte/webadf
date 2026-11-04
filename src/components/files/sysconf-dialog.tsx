@@ -74,12 +74,12 @@ function Row({ label, labelId, note, children }: { label: string; labelId?: stri
     </div>
   );
 }
-function Num({ label, name, value, testId, onChange, suffix }: { label: string; name?: string; value: string; testId: string; onChange(v: string): void; suffix?: string }) {
+function Num({ label, name, value, testId, onChange, suffix, signed }: { label: string; name?: string; value: string; testId: string; onChange(v: string): void; suffix?: string; signed?: boolean }) {
   return (
     <label className="flex items-center gap-1.5">
       {label && <span>{label}</span>}
       <Input value={value} onChange={(e) => onChange(e.target.value)} data-testid={testId} aria-label={name}
-             inputMode="decimal" spellCheck={false} autoComplete="off" className="w-[72px]" />
+             inputMode={signed ? 'text' : 'decimal'} spellCheck={false} autoComplete="off" className="w-[72px]" />
       {suffix}
     </label>
   );
@@ -116,12 +116,12 @@ export function SysconfForm({ formId, draft: d, onChange, onSubmit }: { formId: 
           </label>
         </Row>
         <Row label="Overscan position">
-          <Num label="X" value={d.viewX} testId="sysconf-view-x" onChange={(viewX) => set({ viewX })} />
-          <Num label="Y" value={d.viewY} testId="sysconf-view-y" onChange={(viewY) => set({ viewY })} />
+          <Num label="X" value={d.viewX} testId="sysconf-view-x" signed onChange={(viewX) => set({ viewX })} />
+          <Num label="Y" value={d.viewY} testId="sysconf-view-y" signed onChange={(viewY) => set({ viewY })} />
         </Row>
         <Row label="Overscan size">
-          <Num label="Rows" value={d.extraRows} testId="sysconf-rows" onChange={(extraRows) => set({ extraRows })} />
-          <Num label="Columns" value={d.extraColumns} testId="sysconf-columns" onChange={(extraColumns) => set({ extraColumns })} />
+          <Num label="Rows" value={d.extraRows} testId="sysconf-rows" signed onChange={(extraRows) => set({ extraRows })} />
+          <Num label="Columns" value={d.extraColumns} testId="sysconf-columns" signed onChange={(extraColumns) => set({ extraColumns })} />
         </Row>
       </Group>
       <Group title="Workbench colours">

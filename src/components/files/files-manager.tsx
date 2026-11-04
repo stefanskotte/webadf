@@ -19,7 +19,7 @@ import type { OpItem, OpRequest } from '@/lib/files/ops';
 import type { Added } from '@/lib/files/driver';
 import {
   acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, netVolumeReason, OTHER_PANE_OPENING, PANE_OPENING, unsettled,
-  offersUndo, placeOf,
+  offersUndo, exactPlaceOf, placeOf,
 } from '@/lib/files/pane-rules';
 import { askUntilAnswered } from '@/lib/files/ask-listing';
 import {
@@ -1861,7 +1861,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
                          onCancel={() => setDialog(null)} onCreate={(v) => { createOnce.current(() => createDisk(dialog.side, v)); }} />
       )}
       {dialog?.kind === 'sysconf' && (
-        <SysconfDialog where={panes[dialog.side].listing?.path.startsWith('STASH:') ? panes[dialog.side].listing!.path : placeOf(panes[dialog.side].listing)}
+        <SysconfDialog where={exactPlaceOf(panes[dialog.side].listing)}
                        busy={dialogBusy} clash={dialog.clash} onCancel={() => setDialog(null)}
                        onBack={() => setDialog({ ...dialog, clash: false })}
                        onCreate={(v) => { createOnce.current(() => createSysconfFile(dialog.side, v, prefs.files.onClash)); }}
