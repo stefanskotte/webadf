@@ -27,7 +27,7 @@ import {
   NET_PICK_BOARD, NET_READ_ONLY,
 } from '@/lib/files/net-rules';
 import { errorWords } from '@/lib/remote-browse';
-import { COLLECTIONS_STAY, createAdfReason, diskCopyReason, DISKS_ONTO_VOLUME, DISKS_STAY_IN_LIBRARY, disksPicked, filingNoun, filingReason, listsDisks, placeReason, shelfOf, shelfOfRow, shelfReasons } from '@/lib/files/shelf-rules';
+import { COLLECTIONS_STAY, createAdfReason, SYSCONF_ON_SHELF, diskCopyReason, DISKS_ONTO_VOLUME, DISKS_STAY_IN_LIBRARY, disksPicked, filingNoun, filingReason, listsDisks, placeReason, shelfOf, shelfOfRow, shelfReasons } from '@/lib/files/shelf-rules';
 import { stashPollMs, trackArriving, withStalls, type ArrivingSeen } from '@/lib/files/arriving';
 import { netDropRefusal, sendToBoard } from '@/lib/files/net-send';
 import type { UserPrefs } from '@/lib/user-prefs-schema';
@@ -56,6 +56,9 @@ import {
   ClashDialog, ConfirmDeleteDialog, InfoDialog, NameDialog, ProtectDialog, placeName, type Clash, type ClashChoice,
 } from './dialogs';
 import { CreateAdfDialog } from './create-adf-dialog';
+import { SysconfDialog } from './sysconf-dialog';
+import { SYSCONF_NAME, type SysconfSettings } from '@/lib/files/sysconf';
+import type { OnClash } from '@/lib/files/driver';
 
 /**
  * The Files manager (spec 2026-10-29 §5; Files 2 §2): two panes side by side and, from lg, the button bank under both
@@ -136,6 +139,8 @@ type Dialog =
   | { kind: 'info'; side: Side; entry: FsEntry }
   /** Create ADF… (Files 2 §4): a blank disk in the `side` pane's place. */
   | { kind: 'create'; side: Side }
+  /** Create SysConf… (spec 2026-11-04): `clash` once the place answers that it already has the file. */
+  | { kind: 'sysconf'; side: Side; clash: boolean }
   /** Copy to… / Move to… on a phone: `sources` from the active pane, the picker starting at the other pane's place. */
   | { kind: 'pick'; op: 'copy' | 'move'; sources: string[]; start: string }
   /** The TOSEC-identity confirm before the first write to `disk` this visit; `next` goes on once it is confirmed. */
@@ -769,13 +774,14 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const collectionPicked = shelfOf(src) !== null && picked.some((e) => e.kind === 'collection');
   // DSK rows: Copy to… walks to a volume (the picker checks where); no place takes a move of them.
   const diskRows = disksPicked(src, picked);
+  const makedirReason = volumeRO ?? (volume ? null : inNet ? NOT_IN_NET : !holdsFiles(src) ? 'Open a disk or STASH: to make a folder in it' : !src!.writable ? readOnly(src!) : null);
   const reasons = {
     copy: transferReason('copy'),
     move: transferReason('move'),
     delete: shelf ? shelf.delete : sourceReason(true),
     rename: shelf ? shelf.rename : volumeRO ?? (inNet ? NOT_IN_NET : one(sourceReason(true), 'rename it')),
     // A volume a board can write to makes drawers on the Amiga (phase 2, spec 2026-10-31 §4.1).
-    makedir: shelf ? shelf.makedir : volumeRO ?? (volume ? null : inNet ? NOT_IN_NET : !holdsFiles(src) ? 'Open a disk or STASH: to make a folder in it' : !src!.writable ? readOnly(src!) : null),
+    makedir: shelf ? shelf.makedir : makedirReason,
     protect: volumeRO ?? (inNet ? NOT_IN_NET : sourceReason(true)),
     info: inNet && !board && !volume ? NOT_IN_NET : one(sourceReason(false), 'see its details'),
     // One file by path; several, or a folder, as a .zip (spec §3.3).
@@ -790,6 +796,8 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     addlib: volumeRO ?? addToLibraryReason(src, picked),
     // A blank disk in STASH:, or a new title on LIBRARY: or in a collection (§4).
     createadf: createAdfReason(src),
+    // A file: wherever Makedir makes a real folder, so not on a shelf, where Makedir makes a collection.
+    createsysconf: shelf ? SYSCONF_ON_SHELF : makedirReason,
   };
   /** Add to library is offered only while the active pane is in STASH: (R8). */
   const inStash = !!src && deviceOf(src.path) === 'stash';
@@ -799,13 +807,12 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
   const nav = navTargets(src, panes[active].path);
   const bankReasons: Record<BankCommand, string | null> = {
     copy: reasons.copy, move: reasons.move, delete: reasons.delete, rename: reasons.rename, makedir: reasons.makedir,
-    protect: reasons.protect, info: reasons.info, download: reasons.download, addlib: reasons.addlib, createadf: reasons.createadf,
+    protect: reasons.protect, info: reasons.info, download: reasons.download, addlib: reasons.addlib, createadf: reasons.createadf, createsysconf: reasons.createsysconf,
     all: rowsOf(active).length === 0 ? 'Nothing here to select' : null,
     none: picked.length === 0 ? 'Nothing is selected' : null,
     parent: nav.parent ? null : 'Already at the top',
     root: nav.root ? null : 'Already at the top',
     swap: null,
-    filter: src ? null : 'Nothing is listed here',
     showinfo: holdsFiles(src) || volume ? null : 'Open a disk or STASH: to show or hide .info files',
     // Reads the source pane again; in NET: it asks the Amiga afresh (spec 2026-10-30 §5). Every pane has a place.
     refresh: null,
@@ -1125,7 +1132,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     next();
   }
 
-  function act(cmd: Exclude<BankCommand, 'all' | 'none' | 'parent' | 'root' | 'swap' | 'filter' | 'showinfo' | 'refresh'> | 'copyTo' | 'moveTo') {
+  function act(cmd: Exclude<BankCommand, 'all' | 'none' | 'parent' | 'root' | 'swap' | 'showinfo' | 'refresh'> | 'copyTo' | 'moveTo') {
     // While an operation runs a press says what runs (the status row's words), never silently nothing (Task 8 review).
     if (busy) { toast(busy, { id: 'files-busy' }); return; }
     const reason = reasons[cmd];
@@ -1150,6 +1157,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       case 'download': if (volume) void downloadFromVolume(picked[0], src!.path); else void download(downloadHref(picked, folderName)); return;
       case 'addlib': void addToLibrary(picked); return;
       case 'createadf': setDialog({ kind: 'create', side }); return;
+      case 'createsysconf': guarded([src?.disk], () => setDialog({ kind: 'sysconf', side, clash: false })); return;
     }
   }
 
@@ -1179,6 +1187,21 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     void load(side, l.path, { select: made.skipped ? undefined : made.source });
     const other = otherSide(side);
     if (latest.current.panes[other].path === l.path) void load(other, l.path);
+  }
+
+  /** Create SysConf…: a clash or a refusal keeps the dialog and what was entered in it. */
+  async function createSysconfFile(side: Side, settings: SysconfSettings, onClash: OnClash) {
+    const l = panes[side].listing;
+    if (!l) return;
+    const r = await post({ op: 'create-sysconf', dest: l.path, settings, onClash }, 'Creating the file…');
+    if (r.kind === 'clashes') { setDialog({ kind: 'sysconf', side, clash: true }); return; }
+    if (r.kind !== 'done') return;
+    const failed = r.items.find((i) => !i.ok);
+    if (failed && !failed.ok) { toast.error(refusalWords(failed.refusal.code, failed.refusal.detail)); return; }
+    ranOp.current = true;
+    setDialog(null);
+    if (r.job) { watchFetch(r.job, ''); return; }
+    void report(r.items, () => `Made ${SYSCONF_NAME} in ${placeOf(l)}.`, l.disk?.diskId ?? null, r.versions);
   }
 
   /**
@@ -1299,7 +1322,6 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       case 'parent': command('parent', false); return;
       case 'root': if (nav.root) navigate(active, nav.root); return;
       case 'swap': swap(); return;
-      case 'filter': filterRefs[active].current?.focus(); return;
       case 'showinfo': showInfo(hideInfo); return;   // hidden now → show
       case 'refresh': void load(active, panes[active].path, { fresh: true }); return;
       default: act(cmd);
@@ -1783,7 +1805,7 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
                                   onClick={() => bank('refresh')} className={cn(MENU_ITEM, 'h-11 sm:h-11 font-medium aria-disabled:opacity-50')}>
                   Refresh
                 </DropdownMenuItem>
-                {([['rename', 'Rename…'], ['makedir', 'Makedir…'], ['createadf', 'Create ADF…'], ['protect', 'Protect…'], ['info', 'Info'],
+                {([['rename', 'Rename…'], ['makedir', 'Makedir…'], ['createadf', 'Create ADF…'], ['createsysconf', 'Create SysConf…'], ['protect', 'Protect…'], ['info', 'Info'],
                   ...(inStash ? [['addlib', 'Add to library']] as const : []), ['download', 'Download']] as const).map(([id, label]) => (
                   // Not disabled: a tap on one that cannot act now says why.
                   <DropdownMenuItem key={id} data-testid={`files-more-${id}`} aria-disabled={reasons[id] !== null || busy !== null || undefined}
@@ -1837,6 +1859,13 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
                          taken={prefs.files.onClash === 'ask' && panes[dialog.side].listing?.path.startsWith('STASH:')
                            ? panes[dialog.side].listing!.entries.map((e) => e.name) : null}
                          onCancel={() => setDialog(null)} onCreate={(v) => { createOnce.current(() => createDisk(dialog.side, v)); }} />
+      )}
+      {dialog?.kind === 'sysconf' && (
+        <SysconfDialog where={panes[dialog.side].listing?.path.startsWith('STASH:') ? panes[dialog.side].listing!.path : placeOf(panes[dialog.side].listing)}
+                       busy={dialogBusy} clash={dialog.clash} onCancel={() => setDialog(null)}
+                       onBack={() => setDialog({ ...dialog, clash: false })}
+                       onCreate={(v) => { createOnce.current(() => createSysconfFile(dialog.side, v, prefs.files.onClash)); }}
+                       onClash={(c, v) => { createOnce.current(() => createSysconfFile(dialog.side, v, c)); }} />
       )}
       {dialog?.kind === 'protect' && (
         <ProtectDialog entries={dialog.entries} busy={dialogBusy} onCancel={() => setDialog(null)}
