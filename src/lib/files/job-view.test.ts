@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   askingAbout, barOf, canCancel, cardShown, commonDrawer, confirmWords, failureList, isClean, jobLine, jobNow, jobTitle, leftWords, panelLift,
-  pillWords, QUEUE_JOB, resultWords, sizeWords, timeLeft, type JobView, type Sample,
+  addToFit, pillWords, QUEUE_JOB, resultWords, sizeWords, timeLeft, type Fit, type JobView, type Sample,
 } from './job-view';
 
 const KB = 1024;
@@ -246,5 +246,48 @@ describe('timeLeft with small files (A500 bench 2026-11-02: "about 28 min left" 
   it('fewer than two files through in the window: the bytes alone', () => {
     const samples = [run({ done: 0, ended: 0 }, 0), run({ done: 1500, ended: 0 }, 15_000), run({ done: 3000, ended: 1 }, 30_000)];
     expect(timeLeft(samples, { bytes: { total: 30_000, done: 3000 }, offline: null, running: true, waiting: 1 }, t0 + 30_000)).toBe(270);
+  });
+});
+
+describe('timeLeft over a whole job (Pillock 2026-11-04: Monkey Island disks read from 1 min to 9 min)', () => {
+  // Four disks: ten 1 KB files at 3 s each, then an 800 KB file at 3 s + 20 s. The job's bytes move as each file ends.
+  const files = Array.from({ length: 4 }, () => [...Array.from({ length: 10 }, () => ({ kb: 1, s: 3 })), { kb: 800, s: 23 }]).flat();
+  const totalS = files.reduce((n, f) => n + f.s, 0);
+  const totalB = files.reduce((n, f) => n + f.kb * 1024, 0);
+  function run(useFit: boolean) {
+    const t0 = 1_000_000; const out: { est: number; truth: number }[] = [];
+    let samples: Sample[] = []; let fit: Fit | undefined;
+    for (let sec = 0; sec < totalS; sec += 2) {
+      let t = 0, done = 0, ended = 0;
+      for (const f of files) { if (t + f.s > sec) break; t += f.s; done += f.kb * 1024; ended++; }
+      const at = t0 + sec * 1000;
+      const s: Sample = { at, done, ended };
+      samples = [...samples, s].filter((x) => x.at >= at - 30_000);
+      fit = addToFit(fit, s);
+      const est = timeLeft(samples, { bytes: { total: totalB, done }, offline: null, running: true, waiting: files.length - ended }, at, useFit ? fit : undefined);
+      if (est !== null && sec >= totalS / 4) out.push({ est, truth: totalS - sec });
+    }
+    return out;
+  }
+  it('stays near the real time left, from a quarter of the way on', () => {
+    const r = run(true);
+    expect(r.length).toBeGreaterThan(50);
+    for (const { est, truth } of r) if (truth > 30) { expect(est).toBeGreaterThan(truth * 0.6); expect(est).toBeLessThan(truth * 1.5); }
+  });
+  it('the last 30 s alone do not, which is why the fit is there', () => {
+    const r = run(false);
+    expect(r.some(({ est, truth }) => truth > 30 && (est < truth * 0.6 || est > truth * 1.5))).toBe(true);
+  });
+  it('with files all alike the fit cannot part files from bytes, and the last 30 s answer', () => {
+    let fit: Fit | undefined; const t0 = 1_000_000;
+    const samples: Sample[] = [0, 15, 30].map((n) => ({ at: t0 + n * 1000, done: n * 100, ended: n }));
+    for (const s of samples) fit = addToFit(fit, s);
+    expect(timeLeft(samples, { bytes: { total: 30_000, done: 3000 }, offline: null, running: true, waiting: 30 }, t0 + 30_000, fit)).toBe(30);
+  });
+  it('a poll with nothing new leaves the fit waiting, so a long file counts its whole time', () => {
+    const a = addToFit(undefined, { at: 0, done: 0, ended: 0 });
+    const b = addToFit(a, { at: 2000, done: 0, ended: 0 });
+    expect(b).toBe(a);
+    expect(addToFit(b, { at: 20_000, done: 1024, ended: 1 }).tb).toBe(20);
   });
 });
