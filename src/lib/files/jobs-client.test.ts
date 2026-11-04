@@ -293,12 +293,12 @@ describe('createJobsStore state', () => {
     expect(timeLeft(store.getState().samples.j1, job({ bytes: { total: 100_000, done: 60_000 } }), Date.now())).toBeNull();
   });
   it('fits: a running job keeps a whole-job fit past the samples window, and lets it go when it ends', async () => {
-    const answers: Answer[] = [[job({ bytes: { total: 100_000, done: 1000 }, total: 10, waiting: 10 })], [job({ bytes: { total: 100_000, done: 50_000 }, total: 10, waiting: 5 })], [finished()]];
+    const answers: Answer[] = [[job({ bytes: { total: 100_000, done: 1000 }, total: 10, waiting: 10 })], [job({ bytes: { total: 100_000, done: 50_000 }, total: 10, waiting: 5 })], [job({ bytes: { total: 100_000, done: 60_000 }, total: 10, waiting: 3 })], [finished()]];
     const { store } = harness(answers);
     store.start();
     await flush();
-    await vi.advanceTimersByTimeAsync(2_000);
-    expect(store.getState().fits.j1.files).toBe(5);
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(store.getState().fits.j1.files).toBe(2);
     await vi.advanceTimersByTimeAsync(2_000);
     expect(store.getState().fits.j1).toBeUndefined();
   });

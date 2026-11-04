@@ -284,10 +284,35 @@ describe('timeLeft over a whole job (Pillock 2026-11-04: Monkey Island disks rea
     for (const s of samples) fit = addToFit(fit, s);
     expect(timeLeft(samples, { bytes: { total: 30_000, done: 3000 }, offline: null, running: true, waiting: 30 }, t0 + 30_000, fit)).toBe(30);
   });
+  it('a stall in the middle does not skew the rest (final review: 644 s said for 144 s after a 300 s wait)', () => {
+    const t0 = 1_000_000; let fit: Fit | undefined; let at = t0; let done = 0; let ended = 0;
+    const left = files.map((f) => f);
+    fit = addToFit(fit, { at, done, ended });
+    let est: number | null = null; let truth = 0;
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      at += (f.s + (i === 15 ? 300 : 0)) * 1000; done += f.kb * 1024; ended++;
+      fit = addToFit(fit, { at, done, ended });
+      if (i === 16) {
+        truth = left.slice(17).reduce((n, x) => n + x.s, 0);
+        const samples: Sample[] = [{ at: at - 12_000, done: done - 2048, ended: ended - 2 }, { at: at - 11_000, done: done - 1024, ended: ended - 1 }, { at, done, ended }];
+        est = timeLeft(samples, { bytes: { total: totalB, done }, offline: null, running: true, waiting: files.length - ended }, at, fit);
+      }
+    }
+    expect(est).toBeGreaterThan(truth * 0.6);
+    expect(est).toBeLessThan(truth * 1.5);
+  });
+  it('the wait before the first file counts for nothing', () => {
+    const a = addToFit(undefined, { at: 0, done: 0, ended: 0 });
+    const b = addToFit(a, { at: 600_000, done: 1024, ended: 1 });
+    expect(b.tb).toBe(0);
+    expect(b.from.at).toBe(600_000);
+  });
   it('a poll with nothing new leaves the fit waiting, so a long file counts its whole time', () => {
     const a = addToFit(undefined, { at: 0, done: 0, ended: 0 });
     const b = addToFit(a, { at: 2000, done: 0, ended: 0 });
     expect(b).toBe(a);
-    expect(addToFit(b, { at: 20_000, done: 1024, ended: 1 }).tb).toBe(20);
+    const c = addToFit(addToFit(b, { at: 20_000, done: 1024, ended: 1 }), { at: 40_000, done: 2048, ended: 2 });
+    expect(c.tb).toBe(20);
   });
 });

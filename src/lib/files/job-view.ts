@@ -18,6 +18,8 @@ export const FADE_MS = 6_000;
 export const WARMUP_MS = 10_000;
 /** ...and is the rate over this last stretch of bytes. */
 export const WINDOW_MS = 30_000;
+/** A stretch this far over three times what the job so far says it should take is a stall, not the files' time. */
+const STALL_MARGIN_S = 30;
 /** A kept card lists this many failed files, then "and N more" (spec §3). */
 export const FAILED_SHOWN = 5;
 
@@ -42,7 +44,7 @@ export type JobView = JobProgressView & {
 /** One look at a running job: its bytes through and, where it counts files, the files ended. */
 export type Sample = { at: number; done: number; ended?: number };
 /** A job's time so far as seconds per file and per KB, least squares over its polls: running sums, whatever its length. */
-export type Fit = { from: Sample; files: number; ff: number; fb: number; bb: number; tf: number; tb: number };
+export type Fit = { from: Sample; started: boolean; files: number; ff: number; fb: number; bb: number; tf: number; tb: number };
 
 const KB = 1024;
 const MB = 1024 * 1024;
@@ -118,26 +120,47 @@ export function barOf(j: JobView): { value: number; byBytes: boolean } {
   return { value: it.total ? pct(it.ended, it.total) : 0, byBytes: false };
 }
 
-/** Adds the poll `s` to the fit. A poll where nothing moved waits for the next one, so a long file counts its whole time. */
+/** Seconds per file and per KB, or null where they cannot be parted: under 2 files through, or files all alike. */
+function fitCosts(fit: Fit): { perFile: number; perKb: number } | null {
+  if (fit.files < 2) return null;
+  const det = fit.ff * fit.bb - fit.fb * fit.fb;
+  if (det < 0.01 * fit.ff * fit.bb) return null;
+  const perFile = (fit.tf * fit.bb - fit.tb * fit.fb) / det;
+  const perKb = (fit.tb * fit.ff - fit.tf * fit.fb) / det;
+  if (perFile < 0) return { perFile: 0, perKb: fit.tb / fit.bb };
+  if (perKb < 0) return { perFile: fit.tf / fit.ff, perKb: 0 };
+  return { perFile, perKb };
+}
+
+/** What f files and b KB should have cost so far, or null with nothing to go by. */
+function expected(fit: Fit, f: number, b: number): number | null {
+  const costs = fitCosts(fit);
+  if (costs) return costs.perFile * f + costs.perKb * b;
+  if (fit.ff === 0 && fit.bb === 0) return null;
+  return Math.max(fit.ff ? (fit.tf / fit.ff) * f : 0, fit.bb ? (fit.tb / fit.bb) * b : 0);
+}
+
+/**
+ * Adds the poll `s` to the fit. A poll where nothing moved waits for the next one, so a long file counts its whole time.
+ * What is not the files' time counts for nothing: the wait before the first one (a queue), and a stretch far longer than
+ * the job so far says it should take (a board offline, a requester on the Amiga), which would skew all the rest.
+ */
 export function addToFit(fit: Fit | undefined, s: Sample): Fit {
-  if (!fit) return { from: s, files: 0, ff: 0, fb: 0, bb: 0, tf: 0, tb: 0 };
+  if (!fit) return { from: s, started: false, files: 0, ff: 0, fb: 0, bb: 0, tf: 0, tb: 0 };
   const f = (s.ended ?? 0) - (fit.from.ended ?? 0);
   const b = (s.done - fit.from.done) / KB;
   if (f <= 0 && b <= 0) return fit;
   const t = (s.at - fit.from.at) / 1000;
-  return { from: s, files: fit.files + f, ff: fit.ff + f * f, fb: fit.fb + f * b, bb: fit.bb + b * b, tf: fit.tf + t * f, tb: fit.tb + t * b };
+  if (!fit.started) return { ...fit, from: s, started: true };
+  const due = expected(fit, f, b);
+  if (due !== null && t > 3 * due + STALL_MARGIN_S) return { ...fit, from: s };
+  return { from: s, started: true, files: fit.files + f, ff: fit.ff + f * f, fb: fit.fb + f * b, bb: fit.bb + b * b, tf: fit.tf + t * f, tb: fit.tb + t * b };
 }
 
-/** Seconds left by the fit, or null where it cannot part files from bytes: under 2 files through, or files all alike. */
+/** Seconds left by the fit, or null where it cannot say. */
 function fitLeft(fit: Fit | undefined, filesLeft: number, kbLeft: number): number | null {
-  if (!fit || fit.files < 2) return null;
-  const det = fit.ff * fit.bb - fit.fb * fit.fb;
-  if (det < 0.01 * fit.ff * fit.bb) return null;
-  let perFile = (fit.tf * fit.bb - fit.tb * fit.fb) / det;
-  let perKb = (fit.tb * fit.ff - fit.tf * fit.fb) / det;
-  if (perFile < 0) { perFile = 0; perKb = fit.tb / fit.bb; }
-  if (perKb < 0) { perKb = 0; perFile = fit.tf / fit.ff; }
-  return perFile * filesLeft + perKb * kbLeft;
+  const costs = fit ? fitCosts(fit) : null;
+  return costs && costs.perFile * filesLeft + costs.perKb * kbLeft;
 }
 
 /**
