@@ -103,7 +103,7 @@ describe('the driver disk rollout (plan 2026-10-17 R16)', () => {
       '1ca4f4cb402042e9c842bcf7af91fb86cf5587125ba64134b26f4d25d35a352d',
       'fb363d45c3b6c26592ada627c1cddc68b32c93c003a82328617a487dce5aa287', '05170a83c279157fc50a2a9a595f4caf1ec194253127d93232f6fd5bfc008c9e']);
     expect(PAULANET_DISK_PREVIOUS).toBe('6003773e42651f89f0c165d6111039f46b462d929f4a8877fe07187b73963439');
-    expect(PAULANET_DISK_SHA256).toBe('d3886b14b973e3c0417c02991a786936412a349febec52ee50f5da8ed304d910');
+    expect(PAULANET_DISK_SHA256).toBe('d485a4a2482974f714c70b9fb6a8c7bb23c26afcb9210fa34b36152bb9c61ad2');
     for (const sha of [PAULANET_DISK_SHA256, ...PAULANET_DISK_OLDER]) {
       expect(isDriverDisk(sha)).toBe(true);
       expect(servedWithoutEntitlement(sha)).toBe(true);

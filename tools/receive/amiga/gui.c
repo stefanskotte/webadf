@@ -131,7 +131,8 @@ static void row_text(const row *r, line *o) {
    LIST_SECS; the first change after a quiet spell shows at once, and gui_pass draws what is left. */
 #define LIST_SECS 5
 #define LIST_LINES 8   /* window_open's list */
-/* Transfer 2.14 (Pillock's ask, 2026-11-04): the list follows the file on the move, or the newest row with none moving. On
+static int active(const row *r);
+/* Transfer 2.14 (Pillock's ask, 2026-11-04): the list follows the file on the move, between files the next one waiting, else the newest row. On
    V39+ someone who scrolled up is left there until they come back down; V37 cannot read the position, so it always follows. */
 static LONG list_follow(gui *G) {
     int i, at = G->n - 1;
@@ -141,6 +142,7 @@ static LONG list_follow(gui *G) {
         if (now < G->list_top) return now;
     }
     for (i = G->n - 1; i >= 0; i--) if (G->rows[i].state == ST_RECEIVING || G->rows[i].state == ST_UP_MOVING) { at = i; break; }
+    if (i < 0) for (i = 0; i < G->n; i++) if (active(&G->rows[i])) { at = i; break; }
     return G->list_top = at >= LIST_LINES ? at - (LIST_LINES - 1) : 0;
 }
 static void draw_list(gui *G) {
@@ -280,6 +282,7 @@ static void on_event(void *u, const rx_event *e, rx_session *s) {
         break;
     case RX_EV_FAILED:
         if ((r = find(G, e->id)) != NULL) { r->state = ST_FAILED; strncpy(r->why, e->text ? e->text : "", sizeof r->why - 1); }
+        if (e->path && strchr(e->path, ':')) { sprintf(t, "Web: could not copy %s", path_end(e->path)); set_status(G, t); }
         if (G->has_pending) { afs_set_root(G->ctx, G->pending); G->has_pending = 0; }
         break;
     case RX_EV_TRUST:

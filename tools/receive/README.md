@@ -32,7 +32,7 @@ small files from 3.8 s to 6.7 s a file by 100 rows on the A500. The binary is 62
 Transfer 2.14 shows how far and how fast (`receiving 25%, 219 KB, 42 KB/s`, then `done, 53 KB/s`; no speed for a file under 16 KB
 or 2 s), keeps the file on the move in view (on Kickstart 3.x it leaves you be if you scrolled up), and says the file now on the
 status line during a copy to a volume (`Web: copying to Work:a.adf`). All of it stays within the list's 5 s draw. The binary is
-62,984 B; fixed buffers grow 1,536 B (16 B a row).
+63,120 B; fixed buffers grow 1,536 B (16 B a row).
 
 ## Using it
 
