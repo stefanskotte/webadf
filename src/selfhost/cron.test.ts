@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { parseCron, nextRun, nextArm } from './cron';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { parseCron, nextRun, nextArm, scheduleJob } from './cron';
 import { config } from '../../vercel';
 
 describe('cron', () => {
@@ -36,5 +36,38 @@ describe('cron', () => {
       expect(at.toISOString()).toBe('2026-10-20T03:00:00.000Z');
       expect(at.getTime()).toBeGreaterThan(now.getTime());
     });
+  });
+});
+
+describe('scheduleJob', () => {
+  // Fake timers treat a delay past 2^31-1 ms as 1 ms, as Node does.
+  afterEach(() => { vi.useRealTimers(); });
+  const monthly = parseCron('0 5 2 * *');
+  const DAY = 86_400_000;
+  function counted() {
+    const at: string[] = [];
+    return { at, run: async () => { at.push(new Date().toISOString()); } };
+  }
+
+  it('a slot further off than a timer can wait does not run early', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-04T22:55:00Z') });
+    const job = counted();
+    scheduleJob(monthly, job.run);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(job.at).toEqual([]);
+  });
+  it('a monthly job runs at its slots and at no other time, month after month', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-04T22:55:00Z') });
+    const job = counted();
+    scheduleJob(monthly, job.run);
+    await vi.advanceTimersByTimeAsync(100 * DAY);
+    expect(job.at).toEqual(['2026-12-02T05:00:00.000Z', '2027-01-02T05:00:00.000Z', '2027-02-02T05:00:00.000Z']);
+  });
+  it('a nightly job is unchanged', async () => {
+    vi.useFakeTimers({ now: new Date('2026-10-15T02:00:00Z') });
+    const job = counted();
+    scheduleJob(parseCron('0 3 * * *'), job.run);
+    await vi.advanceTimersByTimeAsync(2 * DAY);
+    expect(job.at).toEqual(['2026-10-15T03:00:00.000Z', '2026-10-16T03:00:00.000Z']);
   });
 });

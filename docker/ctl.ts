@@ -6,7 +6,7 @@ import { preparePgDir, ensureTraversable } from '@/selfhost/pgdir';
 import { renderCaddyfile } from '@/selfhost/caddyfile';
 import { ensureSecrets, readSecrets, SecretError } from '@/selfhost/secrets';
 import { applyAppEnv } from '@/selfhost/app-env';
-import { parseCron, nextRun, nextArm } from '@/selfhost/cron';
+import { parseCron, scheduleJob } from '@/selfhost/cron';
 import { config as vercelConfig } from '../vercel';
 
 /** webadf-ctl: the container's entry (self-hosting P2). One line per failure, exit 1. */
@@ -94,21 +94,17 @@ async function scheduler() {
   const jobs = (vercelConfig.crons ?? []).map((c) => ({ path: c.path, cron: parseCron(c.schedule) }));
   say(`scheduler: ${jobs.map((j) => j.path).join(', ')}`);
   for (const j of jobs) {
-    (function arm(at: Date) {
-      setTimeout(async () => {
-        const t0 = Date.now();
-        say(`cron ${j.path}: start`);
-        try {
-          const r = await fetch(`http://app:3000${j.path}`, { headers: { authorization: `Bearer ${process.env.CRON_SECRET}` } });
-          await r.arrayBuffer(); // drain, so the connection is released
-          say(`cron ${j.path}: HTTP ${r.status} in ${Math.round((Date.now() - t0) / 1000)} s`);
-        } catch (e) {
-          say(`cron ${j.path}: failed (${(e as Error).message}); next slot retries`);
-        }
-        // nextArm: never the same slot twice, and missed slots (suspend, overrun) collapse into this run.
-        arm(nextArm(j.cron, at, new Date()));
-      }, Math.max(0, at.getTime() - Date.now()));
-    })(nextRun(j.cron, new Date()));
+    scheduleJob(j.cron, async () => {
+      const t0 = Date.now();
+      say(`cron ${j.path}: start`);
+      try {
+        const r = await fetch(`http://app:3000${j.path}`, { headers: { authorization: `Bearer ${process.env.CRON_SECRET}` } });
+        await r.arrayBuffer(); // drain, so the connection is released
+        say(`cron ${j.path}: HTTP ${r.status} in ${Math.round((Date.now() - t0) / 1000)} s`);
+      } catch (e) {
+        say(`cron ${j.path}: failed (${(e as Error).message}); next slot retries`);
+      }
+    });
   }
 }
 

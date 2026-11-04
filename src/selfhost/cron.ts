@@ -42,3 +42,26 @@ export function nextRun(c: Cron, after: Date): Date {
 export function nextArm(c: Cron, served: Date, now: Date): Date {
   return nextRun(c, new Date(Math.max(served.getTime(), now.getTime())));
 }
+
+/** The longest setTimeout there is. Past it Node warns and fires after 1 ms. */
+export const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/**
+ * Runs `run` at each of the cron's slots. `run` handles its own failures: the scheduler has nothing to do with one.
+ * A slot further off than a timer can wait (a monthly job: 24.8 days is the limit) is reached in hops. Without them the
+ * timer fired at once, and nextArm moved on from the slot it had not reached, so the job ran in a loop for good.
+ */
+export function scheduleJob(c: Cron, run: () => Promise<void>): void {
+  (function arm(at: Date) {
+    const left = at.getTime() - Date.now();
+    if (left > MAX_TIMER_MS) {
+      setTimeout(() => arm(at), MAX_TIMER_MS);
+      return;
+    }
+    setTimeout(async () => {
+      await run();
+      // nextArm: never the same slot twice, and missed slots (suspend, overrun) collapse into this run.
+      arm(nextArm(c, at, new Date()));
+    }, Math.max(0, left));
+  })(nextRun(c, new Date()));
+}
