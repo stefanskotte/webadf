@@ -44,7 +44,7 @@ export type JobView = JobProgressView & {
 /** One look at a running job: its bytes through and, where it counts files, the files ended. */
 export type Sample = { at: number; done: number; ended?: number };
 /** A job's time so far as seconds per file and per KB, least squares over its polls: running sums, whatever its length. */
-export type Fit = { from: Sample; started: boolean; files: number; ff: number; fb: number; bb: number; tf: number; tb: number };
+export type Fit = { from: Sample; started: boolean; biggest: number; files: number; ff: number; fb: number; bb: number; tf: number; tb: number };
 
 const KB = 1024;
 const MB = 1024 * 1024;
@@ -146,15 +146,16 @@ function expected(fit: Fit, f: number, b: number): number | null {
  * the job so far says it should take (a board offline, a requester on the Amiga), which would skew all the rest.
  */
 export function addToFit(fit: Fit | undefined, s: Sample): Fit {
-  if (!fit) return { from: s, started: false, files: 0, ff: 0, fb: 0, bb: 0, tf: 0, tb: 0 };
+  if (!fit) return { from: s, started: false, biggest: 0, files: 0, ff: 0, fb: 0, bb: 0, tf: 0, tb: 0 };
   const f = (s.ended ?? 0) - (fit.from.ended ?? 0);
   const b = (s.done - fit.from.done) / KB;
   if (f <= 0 && b <= 0) return fit;
   const t = (s.at - fit.from.at) / 1000;
   if (!fit.started) return { ...fit, from: s, started: true };
-  const due = expected(fit, f, b);
+  // Bytes the job has not moved in one go before have no cost to compare with: a first big file is news, not a stall.
+  const due = b > 2 * fit.biggest ? null : expected(fit, f, b);
   if (due !== null && t > 3 * due + STALL_MARGIN_S) return { ...fit, from: s };
-  return { from: s, started: true, files: fit.files + f, ff: fit.ff + f * f, fb: fit.fb + f * b, bb: fit.bb + b * b, tf: fit.tf + t * f, tb: fit.tb + t * b };
+  return { from: s, started: true, biggest: Math.max(fit.biggest, b), files: fit.files + f, ff: fit.ff + f * f, fb: fit.fb + f * b, bb: fit.bb + b * b, tf: fit.tf + t * f, tb: fit.tb + t * b };
 }
 
 /** Seconds left by the fit, or null where it cannot say. */
@@ -182,7 +183,9 @@ export function timeLeft(samples: Sample[], j: Pick<JobView, 'bytes' | 'offline'
   const seconds = (b.at - a.at) / 1000;
   const rate = (b.done - a.done) / seconds;
   if (!(rate > 0)) return null;
-  const fitted = j.waiting === undefined ? null : fitLeft(fit, j.waiting, (j.bytes.total - j.bytes.done) / KB);
+  // Under a tenth of the bytes through, the small files first, a cost per KB is a guess at the rest: "16 min" for 4 on the A500.
+  const enough = j.bytes.done >= j.bytes.total / 10;
+  const fitted = j.waiting === undefined || !enough ? null : fitLeft(fit, j.waiting, (j.bytes.total - j.bytes.done) / KB);
   if (fitted !== null) return Math.max(0, fitted);
   const byBytes = (j.bytes.total - j.bytes.done) / rate;
   const files = (b.ended ?? 0) - (a.ended ?? 0);

@@ -284,6 +284,32 @@ describe('timeLeft over a whole job (Pillock 2026-11-04: Monkey Island disks rea
     for (const s of samples) fit = addToFit(fit, s);
     expect(timeLeft(samples, { bytes: { total: 30_000, done: 3000 }, offline: null, running: true, waiting: 30 }, t0 + 30_000, fit)).toBe(30);
   });
+  // A500 2026-11-04: 49 files, mostly 1-2 KB, then 1.1 MB in three at 7 KB/s: "about 16 min left" at 24 s for about 4 min.
+  it('a few tiny files say nothing about the megabyte to come: the files so far answer until enough bytes have gone', () => {
+    const t0 = 1_000_000; let fit: Fit | undefined; const samples: Sample[] = [];
+    const seen: [number, number][] = [[0, 0], [1, 2], [2, 4], [1, 3], [2, 5], [1, 2], [2, 4]];   // KB, seconds: time follows size, by chance
+    let done = 0; let at = t0;
+    seen.forEach(([kb, sec], i) => { done += kb * 1024; at += sec * 1000; const x = { at, done, ended: i }; samples.push(x); fit = addToFit(fit, x); });
+    const j = { bytes: { total: 1300 * 1024, done }, offline: null, running: true, waiting: 43 };
+    const est = timeLeft(samples, j, at, fit);
+    expect(est).toBeLessThan(600);   // about 4 min; the fit alone says over 40
+    expect(est).toBeGreaterThan(60);
+  });
+  it('a big file slower than the small ones suggest is the job, not a stall', () => {
+    const slow = Array.from({ length: 4 }, () => [...Array.from({ length: 10 }, (_, n) => ({ kb: 1 + (n % 3), s: 3 })), { kb: 880, s: 128 }]).flat();
+    const total = slow.reduce((n, f) => n + f.kb * 1024, 0); const all = slow.reduce((n, f) => n + f.s, 0);
+    const t0 = 1_000_000; let fit: Fit | undefined = addToFit(undefined, { at: t0, done: 0, ended: 0 }); let samples: Sample[] = [];
+    let t = 0, done = 0;
+    slow.forEach((f, i) => {
+      t += f.s; done += f.kb * 1024; const at = t0 + t * 1000; const s = { at, done, ended: i + 1 };
+      fit = addToFit(fit, s); samples = [...samples, s].filter((x) => x.at >= at - 30_000);
+      if (i >= 11 && all - t > 30) {
+        const est = timeLeft([{ at: at - 12_000, done: done - 2, ended: i - 1 }, { at: at - 11_000, done: done - 1, ended: i }, s], { bytes: { total, done }, offline: null, running: true, waiting: slow.length - i - 1 }, at, fit);
+        expect(est).toBeGreaterThan((all - t) * 0.6);
+        expect(est).toBeLessThan((all - t) * 1.5);
+      }
+    });
+  });
   it('a stall in the middle does not skew the rest (final review: 644 s said for 144 s after a 300 s wait)', () => {
     const t0 = 1_000_000; let fit: Fit | undefined; let at = t0; let done = 0; let ended = 0;
     const left = files.map((f) => f);
