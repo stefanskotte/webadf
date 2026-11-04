@@ -28,11 +28,6 @@ describe('the draft', () => {
     const r = settingsOf({ ...draftOf(sysconfDefaults()), viewX: v });
     expect('problem' in r && r.problem).toMatch(/Overscan position/);
   });
-  it('overscan size takes 64 and refuses 65', () => {
-    expect(settingsOf({ ...draftOf(sysconfDefaults()), extraColumns: '64' })).toHaveProperty('settings');
-    const r = settingsOf({ ...draftOf(sysconfDefaults()), extraColumns: '65' });
-    expect('problem' in r && r.problem).toMatch(/Overscan size/);
-  });
   it('a negative overscan is typed as one', () => {
     const r = settingsOf({ ...draftOf(sysconfDefaults()), viewY: '-3' });
     expect('settings' in r && r.settings.viewY).toBe(-3);
@@ -76,15 +71,15 @@ describe('a drag between two cells', () => {
 describe('the dialog', () => {
   it('the signed fields use a keyboard with a minus sign (the iPhone\'s decimal pad has none)', () => {
     const html = renderToStaticMarkup(form());
-    for (const id of ['sysconf-view-x', 'sysconf-view-y', 'sysconf-rows', 'sysconf-columns']) {
+    for (const id of ['sysconf-view-x', 'sysconf-view-y']) {
       expect(html.match(new RegExp(`<input[^>]*data-testid="${id}"[^>]*>`))![0]).toContain('inputMode="text"');
     }
     expect(html.match(/<input[^>]*data-testid="sysconf-key-delay"[^>]*>/)![0]).toContain('inputMode="decimal"');
   });
   it('shows every group, with no serial or printer settings', () => {
     const html = renderToStaticMarkup(form());
-    for (const w of ['Display', 'Overscan position', 'Overscan size', 'Workbench colours', 'Pointer', 'Keyboard and mouse', 'read at boot only', 'Devs']) expect(html).toContain(w);
-    expect(html).not.toMatch(/serial|printer|baud/i);
+    for (const w of ['Display', 'Overscan position', 'Workbench colours', 'Pointer', 'Keyboard and mouse', 'read at boot only', 'Devs']) expect(html).toContain(w);
+    expect(html).not.toMatch(/serial|printer|baud|Overscan size/i);
   });
   it('the footer says the size', () => expect(renderToStaticMarkup(footer(false))).toContain('232 bytes'));
   it('the clash state offers Replace, Keep both and Skip', () => {

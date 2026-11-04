@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { SegRadioGroup } from '@/components/ui/seg-radio-group';
 import {
-  DOUBLE_CLICK_US, KEY_DELAY_US, KEY_SPEED_US, OVERSCAN_POSITION_MAX, OVERSCAN_SIZE_MAX, SYSCONF_NAME, SYSCONF_SIZE, sysconfDefaults, sysconfSchema, type SysconfSettings,
+  DOUBLE_CLICK_US, KEY_DELAY_US, KEY_SPEED_US, OVERSCAN_POSITION_MAX, SYSCONF_NAME, SYSCONF_SIZE, sysconfDefaults, sysconfSchema, type SysconfSettings,
 } from '@/lib/files/sysconf';
 import { managerReturnsFocus } from './dialogs';
 import { PointerEditor } from './pointer-editor';
@@ -14,14 +14,14 @@ import { colorToCss, cssToColor } from './sysconf-colors';
 
 export { colorToCss, cssToColor };
 
-type Typed = 'viewX' | 'viewY' | 'extraRows' | 'extraColumns' | 'keyDelay' | 'keySpeed' | 'doubleClick';
+type Typed = 'viewX' | 'viewY' | 'keyDelay' | 'keySpeed' | 'doubleClick';
 /** What the dialog holds: everything typed stays as typed, so an emptied field is a reason and not a number. */
-export type SysconfDraft = Omit<SysconfSettings, 'viewX' | 'viewY' | 'extraRows' | 'extraColumns' | 'keyDelayUs' | 'keySpeedUs' | 'doubleClickUs'> & Record<Typed, string>;
+export type SysconfDraft = Omit<SysconfSettings, 'viewX' | 'viewY' | 'keyDelayUs' | 'keySpeedUs' | 'doubleClickUs'> & Record<Typed, string>;
 
 export function draftOf(s: SysconfSettings): SysconfDraft {
-  const { viewX, viewY, extraRows, extraColumns, keyDelayUs, keySpeedUs, doubleClickUs, ...rest } = s;
+  const { viewX, viewY, keyDelayUs, keySpeedUs, doubleClickUs, ...rest } = s;
   const seconds = (us: number) => (us / 1000000).toFixed(2);
-  return { ...rest, viewX: String(viewX), viewY: String(viewY), extraRows: String(extraRows), extraColumns: String(extraColumns),
+  return { ...rest, viewX: String(viewX), viewY: String(viewY),
     keyDelay: seconds(keyDelayUs), keySpeed: seconds(keySpeedUs), doubleClick: seconds(doubleClickUs) };
 }
 
@@ -38,11 +38,9 @@ function micros(text: string, r: { min: number; max: number }): number | null {
 
 /** The settings, or the words saying the first thing wrong. */
 export function settingsOf(d: SysconfDraft): { settings: SysconfSettings } | { problem: string } {
-  const { viewX, viewY, extraRows, extraColumns, keyDelay, keySpeed, doubleClick, ...rest } = d;
+  const { viewX, viewY, keyDelay, keySpeed, doubleClick, ...rest } = d;
   const pos = [whole(viewX, OVERSCAN_POSITION_MAX), whole(viewY, OVERSCAN_POSITION_MAX)];
   if (pos.includes(null)) return { problem: `Overscan position must be a whole number from -${OVERSCAN_POSITION_MAX} to ${OVERSCAN_POSITION_MAX}.` };
-  const size = [whole(extraRows, OVERSCAN_SIZE_MAX), whole(extraColumns, OVERSCAN_SIZE_MAX)];
-  if (size.includes(null)) return { problem: `Overscan size must be a whole number from -${OVERSCAN_SIZE_MAX} to ${OVERSCAN_SIZE_MAX}.` };
   const seconds = (r: { min: number; max: number }) => `from ${r.min / 1000000} to ${r.max / 1000000} seconds`;
   const delay = micros(keyDelay, KEY_DELAY_US);
   if (delay === null) return { problem: `Key repeat delay must be ${seconds(KEY_DELAY_US)}.` };
@@ -50,7 +48,7 @@ export function settingsOf(d: SysconfDraft): { settings: SysconfSettings } | { p
   if (speed === null) return { problem: `Key repeat speed must be ${seconds(KEY_SPEED_US)}.` };
   const click = micros(doubleClick, DOUBLE_CLICK_US);
   if (click === null) return { problem: `Double-click time must be ${seconds(DOUBLE_CLICK_US)}.` };
-  const parsed = sysconfSchema.safeParse({ ...rest, viewX: pos[0], viewY: pos[1], extraRows: size[0], extraColumns: size[1],
+  const parsed = sysconfSchema.safeParse({ ...rest, viewX: pos[0], viewY: pos[1],
     keyDelayUs: delay, keySpeedUs: speed, doubleClickUs: click });
   return parsed.success ? { settings: parsed.data } : { problem: 'Those settings are not valid.' };
 }
@@ -118,10 +116,6 @@ export function SysconfForm({ formId, draft: d, onChange, onSubmit }: { formId: 
         <Row label="Overscan position">
           <Num label="X" value={d.viewX} testId="sysconf-view-x" signed onChange={(viewX) => set({ viewX })} />
           <Num label="Y" value={d.viewY} testId="sysconf-view-y" signed onChange={(viewY) => set({ viewY })} />
-        </Row>
-        <Row label="Overscan size">
-          <Num label="Rows" value={d.extraRows} testId="sysconf-rows" signed onChange={(extraRows) => set({ extraRows })} />
-          <Num label="Columns" value={d.extraColumns} testId="sysconf-columns" signed onChange={(extraColumns) => set({ extraColumns })} />
         </Row>
       </Group>
       <Group title="Workbench colours">

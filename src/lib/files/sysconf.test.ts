@@ -16,7 +16,6 @@ describe('buildSysconf', () => {
     [{ fontHeight: 9 }, [0]],
     [{ interlace: true }, [185]],
     [{ viewX: 3 }, [118]], [{ viewY: -3 }, [119]],
-    [{ extraRows: 2 }, [216]], [{ extraColumns: -2 }, [217]],
     [{ mouseTicks: 4 }, [109]],
     [{ acceleration: true }, [124]],
     [{ keySpeedUs: 60000 }, [10, 11]],
@@ -46,6 +45,11 @@ describe('buildSysconf', () => {
     expect(v.getUint16(34)).toBe(0b0110000000000000);    // plane 1: K, W
     expect(v.getUint32(96)).toBe(0);                     // the end words
   });
+  it('leaves overscan size as the template has it: it had no effect in the boot test', () => {
+    expect(Object.keys(sysconfDefaults())).not.toContain('extraRows');
+    expect(sysconfSchema.safeParse({ ...sysconfDefaults(), extraRows: 200 }).success).toBe(true);   // an unknown key is dropped
+    expect('extraRows' in (sysconfSchema.parse({ ...sysconfDefaults(), extraRows: 200 }) as object)).toBe(false);
+  });
   it('does not share its defaults between calls', () => {
     const a = sysconfDefaults(); a.pointer[0] = 'x'; a.colors[0] = 1;
     expect(sysconfDefaults().pointer[0]).toBe('KK..............');
@@ -55,12 +59,11 @@ describe('buildSysconf', () => {
 
 describe('sysconfSchema', () => {
   it.each([
-    ['a fraction', { viewX: 1.5 }], ['a position out of range', { viewX: 17 }], ['a size out of range', { extraColumns: 65 }], ['mouse speed 0', { mouseTicks: 0 }], ['mouse speed 3', { mouseTicks: 3 }],
+    ['a fraction', { viewX: 1.5 }], ['a position out of range', { viewX: 17 }],  ['mouse speed 0', { mouseTicks: 0 }], ['mouse speed 3', { mouseTicks: 3 }],
     ['font 10', { fontHeight: 10 }], ['a short pointer', { pointer: Array(15).fill('.'.repeat(16)) }],
     ['a bad ink', { pointer: Array(16).fill('X'.repeat(16)) }], ['a colour too large', { colors: [0x1000, 0, 0, 0] }],
     ['a hot spot off the grid', { hotSpot: { x: 16, y: 0 } }], ['too fast a repeat', { keySpeedUs: 19999 }],
     ['a NaN', { keyDelayUs: NaN }], ['a string', { keyDelayUs: '600000' }],
   ])('refuses %s', (_w, o) => expect(sysconfSchema.safeParse({ ...sysconfDefaults(), ...o }).success).toBe(false));
-  it('takes overscan size up to 64', () => expect(sysconfSchema.safeParse({ ...sysconfDefaults(), extraColumns: 64, extraRows: -64 }).success).toBe(true));
   it('takes the defaults', () => expect(sysconfSchema.safeParse(sysconfDefaults()).success).toBe(true));
 });

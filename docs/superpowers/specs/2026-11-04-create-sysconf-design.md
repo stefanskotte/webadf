@@ -67,11 +67,10 @@ read on 2.04, 3.1 and 3.2; the init clearing them was read on 3.1 only, which th
 | 20 | DoubleClick (timeval) | Intuition | each SetPrefs |
 | 108 | PointerTicks | Intuition | each SetPrefs |
 | 124 bit 15 | MOUSE_ACCEL | Intuition | each SetPrefs |
-| 216, 217 | RowSizeChange, ColumnSizeChange | Intuition, to GfxBase NormalDisplayRows/Columns | each SetPrefs |
 
 Hidden, and written as `mksysconfig.py` writes them: everything else. That includes the serial and printer fields, read
 only by the disk-based `serial.device` and `printer.device`, and fields with no reader found (`ViewInitX`, `ViewInitY`
-which `SetPrefs` overwrites, `SCREEN_DRAG`, `wb_Width`, `wb_Height`, `wb_Depth`, the padding).
+which `SetPrefs` overwrites, `RowSizeChange` and `ColumnSizeChange`, which Intuition reads but which changed nothing on a Workbench screen in the WinUAE boot test on 2.04 and 3.2, `SCREEN_DRAG`, `wb_Width`, `wb_Height`, `wb_Depth`, the padding).
 
 IPrefs on a full Workbench also calls `GetPrefs` and `SetPrefs`, so saved prefs may replace these values after boot.
 Which ones has not been observed.
@@ -98,7 +97,6 @@ time.
 | Display | System font: Topaz 8 (80 columns) / Topaz 9 (60) | Topaz 8 | those two | 8 / 9 |
 | Display | Workbench screen: Interlace | off | | bit 0 |
 | Display | Overscan position X, Y | 0, 0 | -16 to 16 | signed bytes |
-| Display | Overscan size: Rows, Columns | 0, 0 | -64 to 64 (640 to 704 columns is +64) | signed bytes |
 | Workbench colours | Four colours | AAA, 000, FFF, 68B | 12-bit | words 0RGB |
 | Pointer | 16 x 16 editor, three colours plus clear, hot spot | the arrow in `mksysconfig.py`, 0, 0 | hot spot 0-15 | see below |
 | Pointer | Three pointer colours | E44, 000, EEC | 12-bit | words 0RGB |
