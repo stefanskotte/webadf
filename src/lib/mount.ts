@@ -484,8 +484,18 @@ export async function recordStatus(
   if (s.i2c !== undefined) patch.i2cAddrs = s.i2c;
   else if (s.firmwareVersion !== undefined) patch.i2cAddrs = null;
   if (s.updateProtocol !== undefined) patch.updateProtocol = s.updateProtocol;
-  if (s.firmwareUpdateState !== undefined) patch.firmwareUpdateState = s.firmwareUpdateState;
-  if (s.firmwareUpdateError !== undefined) patch.firmwareUpdateError = s.firmwareUpdateError;
+  // A board reports null on any clean boot, including the one after a release reverted. While that release is still asked
+  // for, the failure stands: the person should read it, and a fresh boot must not take the row for a lost offer
+  // (bootPatch) and flash the release again. A new request or a cancel clears it.
+  const failedStands = sql`(${devices.firmwareUpdateState} = 'failed' and ${devices.desiredFirmwareVersion} is not null)`;
+  const reportedState = s.firmwareUpdateState === null
+    ? sql`case when ${failedStands} then ${devices.firmwareUpdateState} else null end`
+    : s.firmwareUpdateState;
+  const reportedError = s.firmwareUpdateError === null && s.firmwareUpdateState === null
+    ? sql`case when ${failedStands} then ${devices.firmwareUpdateError} else null end`
+    : s.firmwareUpdateError;
+  if (s.firmwareUpdateState !== undefined) patch.firmwareUpdateState = reportedState;
+  if (s.firmwareUpdateError !== undefined) patch.firmwareUpdateError = reportedError;
   // The acknowledgement cursor only ever goes UP. A late report carrying an
   // older value must not re-open a wake the device has already answered.
   if (s.firmwareInstructionAck !== undefined) {
@@ -529,10 +539,10 @@ export async function recordStatus(
     // overwritten by the completion CASE, so progress never landed and
     // refuseTarget's update_in_flight guard could never fire.
     const elseState = s.firmwareUpdateState !== undefined
-      ? sql`${s.firmwareUpdateState}`
+      ? sql`${reportedState}`
       : sql`${devices.firmwareUpdateState}`;
     const elseError = s.firmwareUpdateError !== undefined
-      ? sql`${s.firmwareUpdateError}`
+      ? sql`${reportedError}`
       : sql`${devices.firmwareUpdateError}`;
     patch.firmwareUpdateState = sql`case when ${done} then null else ${elseState} end`;
     patch.firmwareUpdateError = sql`case when ${done} then null else ${elseError} end`;

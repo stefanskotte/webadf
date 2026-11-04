@@ -96,14 +96,14 @@ describe('the driver disk rollout (plan 2026-10-17 R16)', () => {
     expect(driverDiskFor({ df1Sha256: null, netDriverSeenAt: new Date(NOW) }, NOW)).toBe(PAULANET_DISK_SHA256);
     expect(driverDiskFor({ df1Sha256: PAULANET_DISK_SHA256, netDriverSeenAt: new Date(NOW) }, NOW)).toBe(PAULANET_DISK_SHA256);
   });
-  it('serves and keeps the current disk and every older one, and nothing else (Transfer 2.13, 2026-11-03)', () => {
-    expect(PAULANET_DISK_OLDER).toEqual([PAULANET_DISK_PREVIOUS, '2a5a80e574cc1e483a8adb2fb995dea47ed94c2ed18ad0ef0134a3a607fbc288', '4ad243e909b3df3b5ccde80e345ec3537871bb091c5f55a4dbd65b7e303a6c7e', 'e427a3d780b4aaf80b1fe5baf307bbb30608c53c0d7b5ffd1d83e1b2c4d30865', 'd480590e6ed2b791be3ad9ef9f7c3972c72321cd2035a1ef18d38f78e3adb2cb', '184ca84b8fb9b158e84ae0199ee658a2d2946a8b48800a7a4b91f21763a50306', '026ed784c18d9709ab52cdfa0f25b30f9b21198ce82fa00794f5196aa7c17698', '3c8c037d471cebfff2078b7952d400b46fb3a0ab69b57518ca62aa0916264a98', '4b1cc536e5ca9347c322eccbc191f3af14d295195c3210ec04735d922a5159da', '7b0c7ed5557f72d84e21f03fd7c54eccc773fd1d3dc4d749e60eede081b4fc12', '05a898caa137cb2e24f1aa0f30784126a3e88276aaf80387af446d1e204bbb45', '9f58337d1a8bde3da2cce4fc26e97eed9ca77f9c16b12c58fea0373e898699fa',
+  it('serves and keeps the current disk and every older one, and nothing else (Transfer 2.14, 2026-11-04)', () => {
+    expect(PAULANET_DISK_OLDER).toEqual([PAULANET_DISK_PREVIOUS, '49d45f6ebf2fb4182db9844422905b9769030cfd238e7481502e1c0e69d65dab', '2a5a80e574cc1e483a8adb2fb995dea47ed94c2ed18ad0ef0134a3a607fbc288', '4ad243e909b3df3b5ccde80e345ec3537871bb091c5f55a4dbd65b7e303a6c7e', 'e427a3d780b4aaf80b1fe5baf307bbb30608c53c0d7b5ffd1d83e1b2c4d30865', 'd480590e6ed2b791be3ad9ef9f7c3972c72321cd2035a1ef18d38f78e3adb2cb', '184ca84b8fb9b158e84ae0199ee658a2d2946a8b48800a7a4b91f21763a50306', '026ed784c18d9709ab52cdfa0f25b30f9b21198ce82fa00794f5196aa7c17698', '3c8c037d471cebfff2078b7952d400b46fb3a0ab69b57518ca62aa0916264a98', '4b1cc536e5ca9347c322eccbc191f3af14d295195c3210ec04735d922a5159da', '7b0c7ed5557f72d84e21f03fd7c54eccc773fd1d3dc4d749e60eede081b4fc12', '05a898caa137cb2e24f1aa0f30784126a3e88276aaf80387af446d1e204bbb45', '9f58337d1a8bde3da2cce4fc26e97eed9ca77f9c16b12c58fea0373e898699fa',
       '36bce70c114ad2eff6cdbb720ffaeabdbf79856592211080b437f7ac3110f796',
       '6e799db55e95a52900bff0ea6e3155b7787a44bcd5c5371510522cff0d5820f9',
       '1ca4f4cb402042e9c842bcf7af91fb86cf5587125ba64134b26f4d25d35a352d',
       'fb363d45c3b6c26592ada627c1cddc68b32c93c003a82328617a487dce5aa287', '05170a83c279157fc50a2a9a595f4caf1ec194253127d93232f6fd5bfc008c9e']);
-    expect(PAULANET_DISK_PREVIOUS).toBe('49d45f6ebf2fb4182db9844422905b9769030cfd238e7481502e1c0e69d65dab');
-    expect(PAULANET_DISK_SHA256).toBe('6003773e42651f89f0c165d6111039f46b462d929f4a8877fe07187b73963439');
+    expect(PAULANET_DISK_PREVIOUS).toBe('6003773e42651f89f0c165d6111039f46b462d929f4a8877fe07187b73963439');
+    expect(PAULANET_DISK_SHA256).toBe('d485a4a2482974f714c70b9fb6a8c7bb23c26afcb9210fa34b36152bb9c61ad2');
     for (const sha of [PAULANET_DISK_SHA256, ...PAULANET_DISK_OLDER]) {
       expect(isDriverDisk(sha)).toBe(true);
       expect(servedWithoutEntitlement(sha)).toBe(true);

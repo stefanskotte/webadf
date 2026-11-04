@@ -6,7 +6,7 @@
 // with a failure or a cancel stays here until it is closed (a reload forgets it). The open/closed choice and the cards
 // already put away are remembered per browser, a convenience: storage that throws or is empty changes nothing else.
 // CLIENT-SAFE.
-import { FADE_MS, isClean, QUEUE_JOB, resultWords, WINDOW_MS, type JobView, type Sample } from './job-view';
+import { addToFit, FADE_MS, isClean, QUEUE_JOB, resultWords, WINDOW_MS, type Fit, type JobView, type Sample } from './job-view';
 
 export const POLL_MS = 2_000;
 export const OFFLINE_POLL_MS = 15_000;
@@ -40,6 +40,8 @@ export type JobsDeps = {
 export type JobsState = {
   jobs: JobView[];
   samples: Record<string, Sample[]>;
+  /** A running job's time so far: what the estimate reads once the samples' window is too short to say. */
+  fits: Record<string, Fit>;
   finishedSeenAt: Record<string, number>;
   open: boolean;
   /** Cards closed, or faded after a clean finish: not shown again in this browser. */
@@ -80,7 +82,7 @@ export function announced(previous: string, words: string): string {
 }
 
 export function createJobsStore(deps: JobsDeps) {
-  let state: JobsState = { jobs: [], samples: {}, finishedSeenAt: {}, open: true, seen: [], announce: '', signedOut: false };
+  let state: JobsState = { jobs: [], samples: {}, fits: {}, finishedSeenAt: {}, open: true, seen: [], announce: '', signedOut: false };
   const listeners = new Set<() => void>();
   const watchers = new Map<string, Set<(j: JobView) => void>>();
   const tracked = new Map<string, number>();
@@ -114,11 +116,14 @@ export function createJobsStore(deps: JobsDeps) {
     const now = deps.now();
     const wasRunning = state.signedOut ? [] : state.jobs.filter((j) => j.running);
     const samples: Record<string, Sample[]> = {};
+    const fits: Record<string, Fit> = {};
     const finishedSeenAt: Record<string, number> = {};
     const words: string[] = [];
     for (const j of jobs) {
       if (j.running && j.bytes) {
-        samples[j.id] = [...(state.samples[j.id] ?? []), { at: now, done: j.bytes.done, ended: j.total - j.waiting }].filter((s) => s.at >= now - WINDOW_MS);
+        const sample: Sample = { at: now, done: j.bytes.done, ended: j.total - j.waiting };
+        samples[j.id] = [...(state.samples[j.id] ?? []), sample].filter((s) => s.at >= now - WINDOW_MS);
+        fits[j.id] = addToFit(state.fits[j.id], sample);
       }
       if (!j.running) {
         finishedSeenAt[j.id] = state.finishedSeenAt[j.id] ?? now;
@@ -135,7 +140,7 @@ export function createJobsStore(deps: JobsDeps) {
     for (const j of kept) finishedSeenAt[j.id] = state.finishedSeenAt[j.id] ?? now;
     // In the server's order (jobs.ts): the panel shows them newest first.
     const shown = kept.length ? [...jobs, ...kept].sort((x, y) => y.startedAt.localeCompare(x.startedAt) || x.id.localeCompare(y.id)) : jobs;
-    set({ jobs: shown, samples, finishedSeenAt, announce, signedOut: false });
+    set({ jobs: shown, samples, fits, finishedSeenAt, announce, signedOut: false });
     for (const j of jobs) for (const w of [...(watchers.get(j.id) ?? [])]) w(j);
     // A watched job the list let go unseen (it finished while the tab was hidden, more than 2 minutes ago) or never
     // held: asked for on its own, once, so its watchers still hear how it ended (a Download, the panes read again).

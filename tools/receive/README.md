@@ -29,12 +29,16 @@ Transfer 2.12 fixes copies stopping while its window was the active one: the win
 list arrow no longer repeats; a click steps and the scroller drags.
 Transfer 2.13 draws the window's list at most every 5 s (at once for what you did yourself): on every event it took a copy of
 small files from 3.8 s to 6.7 s a file by 100 rows on the A500. The binary is 62,208 B.
+Transfer 2.14 shows how far and how fast (`receiving 25%, 219 KB, 42 KB/s`, then `done, 53 KB/s`; no speed for a file under 16 KB
+or 2 s), keeps the file on the move in view (on Kickstart 3.x it leaves you be if you scrolled up), and says the file now on the
+status line during a copy to a volume (`Web: copying to Work:a.adf`). All of it stays within the list's 5 s draw. The binary is
+63,120 B; fixed buffers grow 1,536 B (16 B a row).
 
 ## Using it
 
 - **From Workbench:** double-click it (from a Shell: `Transfer GUI`). The window, titled *WebFloppy - Receive & Send*,
   shows the folder (**Choose…** opens a requester; **Save** stores it), the two web app switches on one row
-  (**Web App: Read Write**), the status, and the queue: waiting, receiving NN %, done, or failed with the reason.
+  (**Web App: Read Write**), the status, and the queue: waiting, receiving NN% with bytes and speed, done with the speed, or failed with the reason.
 - **A commodity (Transfer 2.7):** the window is a commodity named *Transfer* in Exchange. Its close gadget only
   hides the window; Transfer keeps receiving, sending and answering the web app. The hotkey (default **Ctrl Alt W**)
   or Exchange's **Show** brings it back, Exchange's **Hide** hides it, **Project ▸ Quit** (Amiga-Q) or Exchange's

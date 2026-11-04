@@ -20,7 +20,7 @@ const { getDb, closeDb } = await import('@/db');
 const { migrate } = await import('drizzle-orm/node-postgres/migrator');
 const { eq } = await import('drizzle-orm');
 const { devices } = await import('@/db/schema/devices');
-const { touchLastSeen } = await import('./mount');
+const { recordStatus, touchLastSeen } = await import('./mount');
 const { noteBoot, saveBootDisk } = await import('./boot-disk-store');
 
 const ID = 'boot-dev-01';
@@ -91,6 +91,67 @@ describe('Disk at startup', () => {
     r = await row();
     expect(r.desiredSha256).toBe(SHA);
     expect(r.desiredVersion).toBe(6);
+  });
+
+  // Pillock 2026-11-04: rebooted while his update sat at "queued". The board forgets an offer on a reboot, and the server
+  // had its ack, so the offer never came again: "Requested" until a cancel and a new request moved the cursor.
+  describe('an update asked for, across a reboot', () => {
+    const want = async (state: string | null, version: string | null = '1.24.1') => {
+      await getDb().update(devices).set({ desiredFirmwareVersion: version, firmwareUpdateState: state, firmwareInstructionVersion: 5, firmwareInstructionAck: 5, bootId: 'aaaaaaaa', prevBootId: null }).where(eq(devices.id, ID));
+    };
+    const cursor = async () => (await row()).firmwareInstructionVersion;
+    it('a new boot is offered it again: the cursor moves past the ack', async () => {
+      await want('queued');
+      await noteBoot(ID, { id: 'bbbbbbbb', ota: false });
+      expect(await cursor()).toBe(6);
+      expect((await row()).firmwareInstructionAck).toBe(5);
+    });
+    it('and once: the same boot again, or a late request from the last one, does not', async () => {
+      await want('queued');
+      await touchLastSeen(ID, { id: 'bbbbbbbb', ota: false });
+      await touchLastSeen(ID, { id: 'bbbbbbbb', ota: false });
+      await touchLastSeen(ID, { id: 'aaaaaaaa', ota: false });
+      expect(await cursor()).toBe(6);
+    });
+    it("not on the update's own reboot, nor once it was flashing or failed: that is the board's to report", async () => {
+      await want('queued');
+      await noteBoot(ID, { id: 'bbbbbbbb', ota: true });
+      expect(await cursor()).toBe(5);
+      for (const state of ['applying', 'failed']) {
+        await want(state);
+        await noteBoot(ID, { id: 'cccccccc', ota: false });
+        expect(await cursor()).toBe(5);
+      }
+    });
+    // Final review: a reverted board's next clean boot reported null, which wiped 'failed' and let the boot after it be
+    // offered the same release: flashed again every second power-up.
+    it('a failure outlives a clean report, so its release is not offered again', async () => {
+      await want('failed');
+      await getDb().update(devices).set({ firmwareUpdateError: 'reverted' }).where(eq(devices.id, ID));
+      for (const firmwareVersion of [undefined, '1.24.0']) {
+        await recordStatus(ID, { mountedSha256: null, firmwareVersion, firmwareUpdateState: null, firmwareUpdateError: null });
+        expect((await row()).firmwareUpdateState).toBe('failed');
+        expect((await row()).firmwareUpdateError).toBe('reverted');
+      }
+      await noteBoot(ID, { id: 'dddddddd', ota: false });
+      expect(await cursor()).toBe(5);
+    });
+    it('with nothing asked for, a clean report does clear it', async () => {
+      await want('failed', null);
+      await recordStatus(ID, { mountedSha256: null, firmwareUpdateState: null, firmwareUpdateError: null });
+      expect((await row()).firmwareUpdateState).toBeNull();
+    });
+    it('a board that lost a queued offer and reported null before its first poll is still offered it', async () => {
+      await want('queued');
+      await recordStatus(ID, { mountedSha256: null, firmwareUpdateState: null, firmwareUpdateError: null });
+      await noteBoot(ID, { id: 'eeeeeeee', ota: false });
+      expect(await cursor()).toBe(6);
+    });
+    it('nothing asked for: nothing moves', async () => {
+      await want(null, null);
+      await noteBoot(ID, { id: 'bbbbbbbb', ota: false });
+      expect(await cursor()).toBe(5);
+    });
   });
 
   it('on Last disk, a boot is recorded and the disk comes back', async () => {

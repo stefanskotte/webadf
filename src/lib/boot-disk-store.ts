@@ -15,13 +15,21 @@ import { BOOT_DISK_FW, type BootDisk, type BootReport } from '@/lib/boot-disk';
  *     no update mark, and must never be what empties DF0. Then: on "No disk", not an update's reboot, and with a disk
  *     desired -- the same columns and version bump as clearDesired, so the boot's first poll answers with no disk.
  * A reconnect, a server restart or a retried request carries the stored id: nothing moves. DF1 is not touched.
+ *
+ * A fresh boot also offers again an update still asked for. A board keeps an offer in RAM only, and the server has its ack
+ * (acks only rise), so a reboot before the flash left it waiting for an offer that never came, the card on "Requested"
+ * until a cancel and a new request moved the cursor (Pillock 2026-11-04). Not on an update's reboot, nor from 'applying' or
+ * 'failed': there the board has its own report to make, and a release that reverted must not be flashed again.
  */
 export function bootPatch(boot: BootReport): PgUpdateSetSource<typeof devices> {
   const fresh = sql`(${devices.bootId} is distinct from ${boot.id} and ${devices.prevBootId} is distinct from ${boot.id})`;
   const empty = sql`(${fresh} and ${devices.bootId} is not null and ${devices.bootDisk} = 'empty'
     and ${boot.ota ? sql`false` : sql`true`} and ${devices.desiredSha256} is not null)`;
+  const reoffer = sql`(${fresh} and ${boot.ota ? sql`false` : sql`true`} and ${devices.desiredFirmwareVersion} is not null
+    and ${devices.firmwareUpdateState} is distinct from 'applying' and ${devices.firmwareUpdateState} is distinct from 'failed')`;
   const clear = <T>(col: T) => sql`case when ${empty} then null else ${col} end`;
   return {
+    firmwareInstructionVersion: sql`case when ${reoffer} then ${devices.firmwareInstructionVersion} + 1 else ${devices.firmwareInstructionVersion} end`,
     bootId: sql`case when ${fresh} then ${boot.id} else ${devices.bootId} end`,
     prevBootId: sql`case when ${fresh} then ${devices.bootId} else ${devices.prevBootId} end`,
     desiredSha256: clear(devices.desiredSha256),

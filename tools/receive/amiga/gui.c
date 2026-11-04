@@ -26,6 +26,7 @@
 #include "cx.h"
 #include "ipc.h"
 #include "net.h"
+#include "rx_names.h"
 #include "ui.h"
 #include "version.h"
 
@@ -40,7 +41,8 @@ enum { G_DIR, G_CHOOSE, G_SEND, G_RETRY, G_TRUST, G_SAVE, G_WEBAPP, G_BROWSE, G_
 #define ROWS_MAX 96
 enum { ST_WAITING, ST_RECEIVING, ST_DONE, ST_FAILED, ST_UP_WAITING, ST_UP_MOVING, ST_UP_DONE, ST_UP_FAILED, ST_SKIPPED };
 typedef struct { char id[RX_ID_MAX + 1]; unsigned tag; char name[RX_PATH_MAX + 1];
-                 char local[RX_LOCAL_MAX + 1]; unsigned long size; int state; unsigned pct; char why[40]; } row;
+                 char local[RX_LOCAL_MAX + 1]; unsigned long size; int state; unsigned pct; char why[40];
+                 ULONG t0; unsigned long b0, bytes, kbps; } row;   /* since the file began, from b0 (a resume): bytes, KB/s */
 /* What the list gadget walks: rebuilt only in draw_list, so rows may change between two draws. */
 typedef struct { struct Node node; char text[80]; } line;
 
@@ -48,6 +50,7 @@ typedef struct {
     struct Window *win; struct Gadget *g[G_N]; APTR vi; struct Screen *scr;
     struct List list; row rows[ROWS_MAX]; line lines[ROWS_MAX]; int n;
     int list_dirty; ULONG t_list;   /* the list is drawn at most every LIST_SECS (draw_list) */
+    LONG list_top;                  /* the first line draw_list last showed */
     afs_ctx *ctx; rx_fs *fs; rx_session *s; rx_upq *q;
     struct MsgPort *app_port; struct AppWindow *app_win;
     char status[80]; char pending[256]; int has_pending; int quit; int connected;
@@ -79,7 +82,8 @@ static void set_trust_button(gui *G, int on) {
 /* Every board before 1.19.0 connects this way to send files down: said only once something is to go up (as shell.c). */
 #define OLD_FW "This board's firmware cannot receive files (update to 1.19.0)"
 /* The name column: an AmigaDOS name is 30 at most, narrower only where the window has no room (window_open). text[80] holds
-   the longest line: 30 + 1 + 7 + 1 + "to web: failed: " + 24. */
+   the longest line: 30 + 1 + 7 + 1 + "to web: failed: " + 24; "receiving 99%, 4096 KB, 9999 KB/s" is shorter, and fits
+   the window at its usual width. */
 #define NAME_MAX_W 30
 #define NAME_MIN_W 17
 static int name_w = NAME_MAX_W;
@@ -87,8 +91,14 @@ static unsigned pct_of(unsigned long bytes, unsigned long size) {
     unsigned p = size ? (unsigned)(bytes / (size / 100 + 1)) : 0;
     return p > 99 ? 99 : p;
 }
+/* Transfer 2.14 (Pillock's ask, 2026-11-04): how far and how fast; files too small for a speed stay as they were. */
+static void row_begin(row *r, unsigned long from) { r->t0 = rx_now_secs(); r->b0 = r->bytes = from; r->kbps = 0; }
+static void row_moved(row *r, unsigned long bytes) {
+    r->bytes = bytes;
+    r->kbps = rx_kbps(bytes > r->b0 ? bytes - r->b0 : 0, rx_now_secs() - r->t0);
+}
 static void row_text(const row *r, line *o) {
-    char nm[NAME_MAX_W + 1], sz[16]; const char *base = strrchr(r->name, '/'); size_t l;
+    char nm[NAME_MAX_W + 1], sz[16], far[32] = "", fast[16] = ""; const char *base = strrchr(r->name, '/'); size_t l;
     /* Before the first '/', a volume's root: Work:a.txt shows as a.txt, as a drawer's file does. */
     if (!base) base = strchr(r->name, ':');
     base = base ? base + 1 : r->name;
@@ -99,14 +109,18 @@ static void row_text(const row *r, line *o) {
     /* Files are 4 MB at most (4 digits of KB); a LIST from anyone on the LAN may say more: MB then (4 GB = 4096 MB). */
     else if (r->size <= 9999UL * 1024) sprintf(sz, "%4lu KB", (r->size + 1023) / 1024);
     else sprintf(sz, "%4lu MB", r->size / 1048576UL + 1);
+    if (r->kbps) {
+        if (r->state == ST_RECEIVING || r->state == ST_UP_MOVING) sprintf(far, ", %lu KB, %lu KB/s", r->bytes / 1024UL, r->kbps);
+        else sprintf(fast, ", %lu KB/s", r->kbps);
+    }
     switch (r->state) {
     case ST_WAITING: sprintf(o->text, "%s %s waiting", nm, sz); break;
-    case ST_RECEIVING: sprintf(o->text, "%s %s receiving %u%%", nm, sz, r->pct); break;
-    case ST_DONE: sprintf(o->text, "%s %s done", nm, sz); break;
+    case ST_RECEIVING: sprintf(o->text, "%s %s receiving %u%%%s", nm, sz, r->pct, far); break;
+    case ST_DONE: sprintf(o->text, "%s %s done%s", nm, sz, fast); break;
     case ST_FAILED: sprintf(o->text, "%s %s failed: %.30s", nm, sz, r->why); break;
     case ST_UP_WAITING: sprintf(o->text, "%s %s to web: waiting", nm, sz); break;
-    case ST_UP_MOVING: sprintf(o->text, "%s %s to web: %u %%", nm, sz, r->pct); break;
-    case ST_UP_DONE: sprintf(o->text, "%s %s to web: done", nm, sz); break;
+    case ST_UP_MOVING: sprintf(o->text, "%s %s to web: %u %%%s", nm, sz, r->pct, far); break;
+    case ST_UP_DONE: sprintf(o->text, "%s %s to web: done%s", nm, sz, fast); break;
     case ST_SKIPPED: sprintf(o->text, "%s %s skipped (it exists)", nm, sz); break;
     default: sprintf(o->text, "%s %s to web: failed: %.24s", nm, sz, r->why); break;
     }
@@ -116,13 +130,30 @@ static void row_text(const row *r, line *o) {
    event, a copy of small files went from 3.8 s a file to 6.7 s by 100 rows (A500 bench 2026-11-02). So at most every
    LIST_SECS; the first change after a quiet spell shows at once, and gui_pass draws what is left. */
 #define LIST_SECS 5
+#define LIST_LINES 8   /* window_open's list */
+static int active(const row *r);
+/* Transfer 2.14 (Pillock's ask, 2026-11-04): the list follows the file on the move, between files the next one waiting, else the newest row. On
+   V39+ someone who scrolled up is left there until they come back down; V37 cannot read the position, so it always follows. */
+static LONG list_follow(gui *G) {
+    int i, at = G->n - 1;
+    LONG now = G->list_top;
+    if (GadToolsBase->lib_Version >= 39) {
+        GT_GetGadgetAttrs(G->g[G_LIST], G->win, NULL, GTLV_Top, (ULONG)&now, TAG_END);
+        if (now < G->list_top) return now;
+    }
+    for (i = G->n - 1; i >= 0; i--) if (G->rows[i].state == ST_RECEIVING || G->rows[i].state == ST_UP_MOVING) { at = i; break; }
+    if (i < 0) for (i = 0; i < G->n; i++) if (active(&G->rows[i])) { at = i; break; }
+    return G->list_top = at >= LIST_LINES ? at - (LIST_LINES - 1) : 0;
+}
 static void draw_list(gui *G) {
     int i;
+    LONG top;
     G->list_dirty = 0; G->t_list = rx_now_secs();
     GT_SetGadgetAttrs(G->g[G_LIST], G->win, NULL, GTLV_Labels, ~0UL, TAG_END);
     new_list(&G->list);
     for (i = 0; i < G->n; i++) { row_text(&G->rows[i], &G->lines[i]); AddTail(&G->list, &G->lines[i].node); }
-    GT_SetGadgetAttrs(G->g[G_LIST], G->win, NULL, GTLV_Labels, (ULONG)&G->list, TAG_END);
+    top = list_follow(G);
+    GT_SetGadgetAttrs(G->g[G_LIST], G->win, NULL, GTLV_Labels, (ULONG)&G->list, GTLV_Top, (ULONG)top, TAG_END);
 }
 static void list_flush(gui *G) {
     if (G->list_dirty && G->win && rx_now_secs() - G->t_list >= LIST_SECS) draw_list(G);
@@ -212,6 +243,11 @@ static void retry_failed(gui *G) {
 /* TRUST from `Transfer SEND TRUST ...` in a Shell, as shell.c: with no board yet, the next board's key is trusted. */
 static int gui_trust(void *u) { gui *G = u; if (rx_trust_now(G->s) != 0) G->q->trust_next = 1; return 0; }
 
+/* The status line's path: the end of a long one, since the name is what matters. */
+static const char *path_end(const char *p) {
+    size_t l = strlen(p);
+    return l > 55 ? p + l - 55 : p;
+}
 static void on_event(void *u, const rx_event *e, rx_session *s) {
     gui *G = u; row *r; unsigned i; int k;
     char k4[5], t[80], w[80];
@@ -228,15 +264,16 @@ static void on_event(void *u, const rx_event *e, rx_session *s) {
         break;
     case RX_EV_BEGIN:
         if (!(r = find(G, e->id))) r = add(G, e->id);
-        if (r) { strcpy(r->name, e->path); r->size = e->size; r->state = ST_RECEIVING; r->pct = 0; }
+        if (r) { strcpy(r->name, e->path); r->size = e->size; r->state = ST_RECEIVING; r->pct = 0; row_begin(r, 0); }
+        if (strchr(e->path, ':')) { sprintf(t, "Web: copying to %s", path_end(e->path)); set_status(G, t); }   /* the file now, Transfer 2.14 */
         break;
     case RX_EV_PROGRESS:
-        if ((r = find(G, e->id)) != NULL) r->pct = pct_of(e->bytes, e->size);
+        if ((r = find(G, e->id)) != NULL) { r->pct = pct_of(e->bytes, e->size); row_moved(r, e->bytes); }
         break;
     case RX_EV_DONE:
-        if ((r = find(G, e->id)) != NULL) { strcpy(r->name, e->path); r->state = ST_DONE; }
+        if ((r = find(G, e->id)) != NULL) { strcpy(r->name, e->path); r->state = ST_DONE; row_moved(r, e->size); }
         if (G->has_pending) { afs_set_root(G->ctx, G->pending); G->has_pending = 0; }
-        if (strchr(e->path, ':')) { sprintf(t, "Web: copied to %.60s", e->path); set_status(G, t); }   /* protocol 4 */
+        if (strchr(e->path, ':')) { sprintf(t, "Web: copied to %s", path_end(e->path)); set_status(G, t); }   /* protocol 4 */
         break;
     case RX_EV_SKIP:
         if (!(r = find(G, e->id))) r = add(G, e->id);
@@ -245,6 +282,7 @@ static void on_event(void *u, const rx_event *e, rx_session *s) {
         break;
     case RX_EV_FAILED:
         if ((r = find(G, e->id)) != NULL) { r->state = ST_FAILED; strncpy(r->why, e->text ? e->text : "", sizeof r->why - 1); }
+        if (e->path && strchr(e->path, ':')) { sprintf(t, "Web: could not copy %s", path_end(e->path)); set_status(G, t); }
         if (G->has_pending) { afs_set_root(G->ctx, G->pending); G->has_pending = 0; }
         break;
     case RX_EV_TRUST:
@@ -260,13 +298,13 @@ static void on_event(void *u, const rx_event *e, rx_session *s) {
         return;
     case RX_EV_UP_BEGIN:
         if (!(r = find_tag(G, e->tag)) && (r = add(G, "")) != NULL) { r->tag = e->tag; strcpy(r->name, e->path); }
-        if (r) { r->size = e->size; r->state = ST_UP_MOVING; r->pct = pct_of(e->bytes, e->size); }
+        if (r) { r->size = e->size; r->state = ST_UP_MOVING; r->pct = pct_of(e->bytes, e->size); row_begin(r, e->bytes); }
         break;
     case RX_EV_UP_PROGRESS:
-        if ((r = find_tag(G, e->tag)) != NULL) r->pct = pct_of(e->bytes, e->size);
+        if ((r = find_tag(G, e->tag)) != NULL) { r->pct = pct_of(e->bytes, e->size); row_moved(r, e->bytes); }
         break;
     case RX_EV_UP_DONE:
-        if ((r = find_tag(G, e->tag)) != NULL) { r->state = ST_UP_DONE; r->size = e->size; }
+        if ((r = find_tag(G, e->tag)) != NULL) { r->state = ST_UP_DONE; r->size = e->size; row_moved(r, e->size); }
         ipc_done(e->tag, 1, e->size, "");
         break;
     case RX_EV_UP_FAILED:
@@ -530,7 +568,8 @@ static int build(gui *G) {
     ng.ng_GadgetText = NULL; ng.ng_GadgetID = G_STATUS;
     G->g[G_STATUS] = g = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)G->status, GTTX_Border, TRUE, TAG_END);
     y = (UWORD)(y + gh + 4);
-    lh = (UWORD)(8 * fh + 4);   /* eight whole lines: GadTools drops a part line, which left a gap under the list */
+    G->list_top = 0;
+    lh = (UWORD)(LIST_LINES * fh + 4);   /* eight whole lines: GadTools drops a part line, which left a gap under the list */
     ng.ng_TopEdge = (WORD)y; ng.ng_Height = (WORD)lh; ng.ng_GadgetID = G_LIST;
     G->g[G_LIST] = g = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&G->list, GTLV_ReadOnly, TRUE, TAG_END);
     G->gl = gl;

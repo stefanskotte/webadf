@@ -12,7 +12,7 @@ import { Modal } from '@/components/ui/modal';
 import { isSignedOutAnswer, SIGNED_OUT_TEXT } from '@/lib/signed-out';
 import {
   askingAbout, barOf, canCancel, cardShown, confirmWords, failureList, isClean, jobLine, jobNow, jobTitle, panelLift, pillWords, resultWords, timeLeft,
-  type JobView, type Sample,
+  type Fit, type JobView, type Sample,
 } from '@/lib/files/job-view';
 import { useJobsState, useJobsStore } from './jobs-provider';
 
@@ -100,7 +100,7 @@ export function TransfersPanel() {
               </li>
             )}
             {shown.map((j) => (
-              <JobCard key={j.id} j={j} samples={st.samples[j.id] ?? []} now={now} onCancel={() => setAsking(j.id)} onClose={() => store.dismiss(j.id)} />
+              <JobCard key={j.id} j={j} samples={st.samples[j.id] ?? []} fit={st.fits[j.id]} now={now} onCancel={() => setAsking(j.id)} onClose={() => store.dismiss(j.id)} />
             ))}
           </ul>
         </section>
@@ -125,7 +125,7 @@ export function TransfersPanel() {
   );
 }
 
-function JobCard({ j, samples, now, onCancel, onClose }: { j: JobView; samples: Sample[]; now: number; onCancel(): void; onClose(): void }) {
+function JobCard({ j, samples, fit, now, onCancel, onClose }: { j: JobView; samples: Sample[]; fit?: Fit; now: number; onCancel(): void; onClose(): void }) {
   const title = jobTitle(j);
   const bar = barOf(j);
   const line2 = jobNow(j);
@@ -150,7 +150,7 @@ function JobCard({ j, samples, now, onCancel, onClose }: { j: JobView; samples: 
                className="mt-2 h-1.5 overflow-hidden rounded-full" style={{ background: 'var(--track)' }}>
             <div className="h-full rounded-full transition-[width]" style={{ width: `${bar.value}%`, background: 'var(--ink)' }} />
           </div>
-          <p data-testid="transfers-card-line" className="mt-1.5" style={{ color: 'var(--muted)' }}>{jobLine(j, timeLeft(samples, j, now))}</p>
+          <p data-testid="transfers-card-line" className="mt-1.5" style={{ color: 'var(--muted)' }}>{jobLine(j, timeLeft(samples, j, now, fit))}</p>
           {line2 && <p data-testid="transfers-card-now" className="truncate" style={{ color: 'var(--muted)' }}>{line2}</p>}
           {canCancel(j) && (
             <Button size="sm" variant="outline" className="mt-2 max-lg:min-h-11" data-testid="transfers-cancel" onClick={onCancel}>

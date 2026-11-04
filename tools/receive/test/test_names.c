@@ -2,6 +2,16 @@
 #include "harness.h"
 #include "rx_names.h"
 
+static void kbps(void) {
+    CHECK(rx_kbps(900UL * 1024, 20) == 45, "900 KB in 20 s");
+    CHECK(rx_kbps(16384, 2) == 8, "the shortest that counts");
+    CHECK(rx_kbps(16383, 2) == 0, "too few bytes: a small file costs its file, not its bytes");
+    CHECK(rx_kbps(900UL * 1024, 1) == 0, "under 2 s the clock is too coarse");
+    CHECK(rx_kbps(900UL * 1024, 0) == 0, "no time at all");
+    CHECK(rx_kbps(16384, 100) == 1, "slow still says something");
+    CHECK(rx_kbps(4294967295UL, 2) == 2097151UL, "no overflow");
+}
+
 static void ok_paths(void) {
     CHECK(rx_path_ok("Hello.txt"), "plain");
     CHECK(rx_path_ok("mods/axelf.mod"), "subfolder");
@@ -126,4 +136,4 @@ static void absolute_candidates(void) {
     CHECK(strcmp(out, "Work:1234567890123456789012345678_2") == 0, "the volume does not count in the 30 bytes");
 }
 
-int main(void) { RUN(absolute_paths); RUN(absolute_candidates); RUN(ok_paths); RUN(bad_paths); RUN(candidates); RUN(utoa); RUN(base_names); RUN(sendable_names); RUN(sendable_devices); return REPORT(); }
+int main(void) { RUN(kbps); RUN(absolute_paths); RUN(absolute_candidates); RUN(ok_paths); RUN(bad_paths); RUN(candidates); RUN(utoa); RUN(base_names); RUN(sendable_names); RUN(sendable_devices); return REPORT(); }
