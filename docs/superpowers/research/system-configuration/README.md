@@ -1,6 +1,6 @@
-# System-configuration editor: resume here
+# System-configuration research
 
-Status: idea, not designed and not approved. Moved here from the HDPart project on 2026-11-04. The next step is a design conversation, not code.
+Status: SHIPPED as Create SysConf on 2026-11-04. The questions below are answered in `docs/superpowers/specs/2026-11-04-create-sysconf-design.md` and `HANDOFF.md` ("Create SysConf SHIPPED"), which supersede this note. Moved here from the HDPart project on 2026-11-04.
 
 ## The idea
 
@@ -26,7 +26,7 @@ HDPart's boot ADF had no `Devs/system-configuration`, and the Workbench screen a
 
 - Checked: the generator's output matches the `Devs/system-configuration` on the Workbench 3.2 disk byte for byte, apart from the pointer image. That proves the layout for the fields that file sets. Bytes that are zero in both prove nothing about those fields.
 - Checked: the 3.1.4 and 3.2 Workbench disks ship a 232-byte file, and all 10 Kickstart ROMs tried, from 2.05 to 3.2.2, contain the name `system-configuration`.
-- Not yet tested when this was written: that adding the file really changes the font on boot. HDPart's boot test will settle it; see the HDPart repo (`tools/mksysconfig.py`, `make adf`).
+- Tested since (WinUAE on 2.04-3.2, A500 on 3.1): adding the file changes the font on boot. As first written, not yet tested: HDPart's boot test will settle it; see the HDPart repo (`tools/mksysconfig.py`, `make adf`).
 
 ## Questions to settle first
 

@@ -8,6 +8,8 @@
 
 **Tech Stack:** Next.js (read `node_modules/next/dist/docs/` before route code), React, zod, vitest, Playwright.
 
+> **Superseded on the pointer and overscan size (operator and boot test, 2026-11-04):** the default pointer is the real Workbench pointer (`STANDARD_POINTER`), not `mksysconfig.py`'s, and the button is `Standard pointer`, not Reset. Overscan size came out. The spec holds the final version; this plan is the record of how it was built.
+
 **Spec:** `docs/superpowers/specs/2026-11-04-create-sysconf-design.md`. Research: `docs/superpowers/research/system-configuration/`.
 
 ## Global Constraints
