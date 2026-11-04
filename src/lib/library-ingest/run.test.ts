@@ -36,6 +36,14 @@ describe('runLibraryIngest', () => {
     expect(out.shas).toEqual(['hA.adf', 'hB.adf']);
     expect([...out.final]).toEqual([['hB.adf', 'deduped'], ['hA.adf', 'done']]);
   });
+  it('names the collection on every /complete, and none when the drop has none', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const answer = (b: unknown) => { bodies.push(b as Record<string, unknown>); return Response.json({ titles: {} }); };
+    await runLibraryIngest([file('A.adf')], io(server({ missing: [], complete: answer }).fetch), collect().emit, { collectionId: 'c1' });
+    await runLibraryIngest([file('A.adf')], io(server({ missing: [], complete: answer }).fetch), collect().emit);
+    expect(bodies[0].collectionId).toBe('c1');
+    expect('collectionId' in bodies[1]).toBe(false);
+  });
   it('a 409 /complete with rejectedReasons fails that row with its note and keeps the others', async () => {
     const s = server({ missing: [], complete: () => Response.json({ created: 0, rejectedReasons: { 'hA.adf': 'not a disk' } }, { status: 409 }) });
     const c = collect();

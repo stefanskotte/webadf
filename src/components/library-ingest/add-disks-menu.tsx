@@ -97,7 +97,7 @@ export function AddDisksMenu() {
                </button>
              }>
         <div className="flex flex-col gap-2 px-6 py-5">
-          <UrlFetch busy={ingest.busy} setBusy={ingest.setBusy} onRows={ingest.addFetched} />
+          <UrlFetch busy={ingest.busy} setBusy={ingest.setBusy} onRows={ingest.addFetched} collectionId={ingest.collection?.id} />
         </div>
       </Modal>
     </>

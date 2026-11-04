@@ -41,14 +41,14 @@ export function useLibraryIngest(opts?: { setRows?: SetRows; onSettled?: () => v
    * One drop's files, or with `more` one chunk of a drop that goes on (the Library page's provider adds a drop of
    * many archives a chunk at a time): the set suggestion waits for endDrop, so the drop gets one for all it landed.
    */
-  async function addFiles(files: File[], part?: { more?: boolean }) {
+  async function addFiles(files: File[], part?: { more?: boolean; collectionId?: string }) {
     setBusy(true);
     // A new drop clears any earlier panel at once (on its first chunk), whether
     // or not this one ends up suggesting anything of its own.
     if (!drop.current.started) setSuggestion(null);
     let out: IngestOutcome | null = null;
     try {
-      out = await runLibraryIngest(files, browserIo(), setRows);
+      out = await runLibraryIngest(files, browserIo(), setRows, { collectionId: part?.collectionId });
     } finally {
       // Runs on every path, so the dropzone/input never stays disabled and the
       // library view always reflects whatever did land.

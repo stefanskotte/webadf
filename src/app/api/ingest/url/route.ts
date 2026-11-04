@@ -3,13 +3,18 @@ import { requireOrg } from '@/lib/session';
 import { ingestFromUrl, type UrlIngestCode } from '@/lib/url-ingest';
 import { takeUrlFetch } from '@/lib/url-fetch-limit';
 import { URL_FETCH_LIMITS } from '@/lib/url-fetch';
+import { fileIngestedTitles } from '@/lib/collections';
 
 // The fetch has its own 25 s deadline (URL_FETCH_LIMITS.timeoutMs); storing
 // and registering up to MAX_IMAGES_PER_URL images needs the rest. 60 s, like
 // /api/ingest/complete, whose code this runs.
 export const maxDuration = 60;
 
-const body = z.object({ url: z.string().min(1).max(URL_FETCH_LIMITS.maxUrlLength) });
+const body = z.object({
+  url: z.string().min(1).max(URL_FETCH_LIMITS.maxUrlLength),
+  /** The collection being viewed, so a disk lands where you stand (fileIngestedTitles). */
+  collectionId: z.string().min(1).max(255).optional(),
+});
 
 /**
  * HTTP status per refusal. The body only ever carries the code (and, for
@@ -55,7 +60,7 @@ export async function POST(request: Request) {
     return Response.json({ error: 'rate_limited', retryAfter: seconds }, { status: 429, headers: { 'retry-after': String(seconds) } });
   }
 
-  // orgId from the session only; the body carries nothing but the URL.
+  // orgId from the session only; the collection is checked against it before anything is filed.
   const result = await ingestFromUrl(orgId, parsed.data.url);
   if (!result.ok) {
     return Response.json(
@@ -63,5 +68,6 @@ export async function POST(request: Request) {
       { status: STATUS[result.code] },
     );
   }
+  await fileIngestedTitles(orgId, parsed.data.collectionId, result.rows.flatMap((r) => (r.title ? [r.title.gameId] : [])));
   return Response.json({ rows: result.rows });
 }

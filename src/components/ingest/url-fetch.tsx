@@ -18,11 +18,13 @@ export type FetchedRow = {
  * dropzone's own table via onRows.
  */
 export function UrlFetch({
-  busy, setBusy, onRows,
+  busy, setBusy, onRows, collectionId,
 }: {
   busy: boolean;
   setBusy: (b: boolean) => void;
   onRows: (rows: FetchedRow[], since: string) => Promise<void> | void;
+  /** The collection being viewed: what the fetch lands is filed there. */
+  collectionId?: string;
 }) {
   const [url, setUrl] = useState('');
   const [status, setStatus] = useState<{ text: string; tone: 'muted' | 'danger' | 'ok' } | null>(null);
@@ -38,7 +40,7 @@ export function UrlFetch({
       const res = await fetch('/api/ingest/url', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ url: value }),
+        body: JSON.stringify({ url: value, ...(collectionId ? { collectionId } : {}) }),
       });
       let data: { rows?: FetchedRow[]; error?: string; status?: number; retryAfter?: number } = {};
       try { data = await res.json(); } catch { /* not JSON: handled as a plain failure */ }

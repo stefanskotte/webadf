@@ -5,11 +5,12 @@ import { readDroppedItems } from '@/lib/drop-reader';
 import { toast } from 'sonner';
 import { DROP_WAIT, useLibraryIngestContext } from './library-ingest-provider';
 
-/** "Drop to add 3 disks to the library" when every dragged item is a file (a folder is one too), else no number. */
-function headline(dt: DataTransfer | null): string {
+/** "Drop to add 3 disks to Utilities" when every dragged item is a file (a folder is one too), else no number. */
+function headline(dt: DataTransfer | null, collection: string | undefined): string {
+  const to = collection ?? 'the library';
   const items = dt?.items ? Array.from(dt.items) : [];
   const n = items.length > 0 && items.every((i) => i.kind === 'file') ? items.length : 0;
-  return n > 0 ? `Drop to add ${n} disk${n === 1 ? '' : 's'} to the library` : 'Drop to add disks to the library';
+  return n > 0 ? `Drop to add ${n} disk${n === 1 ? '' : 's'} to ${to}` : `Drop to add disks to ${to}`;
 }
 
 /**
@@ -35,14 +36,14 @@ export function LibraryDropOverlay() {
     const enter = (e: DragEvent) => {
       if (!isFileDrag(e)) return;
       depth++;
-      setShown(headline(e.dataTransfer));
+      setShown(headline(e.dataTransfer, live.current.collection?.name));
     };
     const over = (e: DragEvent) => {
       if (!isFileDrag(e)) return;
       // Without this the browser opens the dropped file in the tab instead of handing it to the page.
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = live.current.busy ? 'none' : 'copy';
-      setShown((s) => s ?? headline(e.dataTransfer));
+      setShown((s) => s ?? headline(e.dataTransfer, live.current.collection?.name));
     };
     const leave = (e: DragEvent) => {
       if (!isFileDrag(e)) return;

@@ -1,5 +1,5 @@
 'use client';
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { useLibraryIngest } from './use-library-ingest';
 import { diskFilesFromDrop, type DropFileItem } from '@/lib/library-ingest/drop-files';
@@ -9,6 +9,8 @@ import type { Suggestion } from '@/lib/disk-set-suggest';
 import type { FetchedRow } from '@/components/ingest/url-fetch';
 
 type LibraryIngest = {
+  /** The collection the page is showing: what is added now is filed there. Null on the landing and All titles. */
+  collection: { id: string; name: string } | null;
   /** The tray's rows, newest drop first (R9). */
   rows: LibRow[];
   /** One line per archive whose other files were left out (drop-files.ts), each with its own key: two drops of the
@@ -40,7 +42,7 @@ const Ctx = createContext<LibraryIngest | null>(null);
  * stamped with the drop they came from so the tray lists the newest drop first. It wraps the header and the body, so
  * the header's Add disks ▾ menu, the page-wide drop overlay and the tray share one state.
  */
-export function LibraryIngestProvider({ children }: { children: ReactNode }) {
+export function LibraryIngestProvider({ children, collection = null }: { children: ReactNode; collection?: { id: string; name: string } | null }) {
   // The rows with the drop each came from (stampDrops), kept together so one update changes both.
   const [tray, setTray] = useState<{ rows: LibRow[]; dropOf: ReadonlyMap<string, TrayPlace> }>({ rows: [], dropOf: new Map() });
   const [notes, setNotes] = useState<{ key: number; text: string }[]>([]);
@@ -57,6 +59,9 @@ export function LibraryIngestProvider({ children }: { children: ReactNode }) {
     });
   }, []);
   const ingest = useLibraryIngest({ setRows });
+  // Read when a drop starts: the provider outlives moving between collections, and a drop goes where it was dropped.
+  const where = useRef(collection);
+  useEffect(() => { where.current = collection; });
 
   // One drop at a time, from its first read to its set suggestion (increment 3 final ruling): a drop let in while
   // another was still being added or suggested for would share that one suggestion. A ref, not `busy`, so two drops
@@ -71,12 +76,13 @@ export function LibraryIngestProvider({ children }: { children: ReactNode }) {
     running.current = true;
     drop.current++;
     setReading(true);
+    const collectionId = where.current?.id;
     // A drop of many archives goes up a chunk at a time as they are opened (DROP_CHUNK), not all held in the tab
     // first; its rows land in the tray chunk by chunk under the same drop. An error out of the upload itself is the
     // pipeline's to show on its rows, not "could not be read". The set suggestion waits for the last chunk (endDrop).
     let failedUpload: unknown = null;
     const addChunk = async (chunk: File[]) => {
-      try { await ingest.addFiles(chunk, { more: true }); } catch (e) { failedUpload ??= e; }
+      try { await ingest.addFiles(chunk, { more: true, collectionId }); } catch (e) { failedUpload ??= e; }
     };
     try {
       const r = await diskFilesFromDrop(await items, addChunk);
@@ -120,6 +126,7 @@ export function LibraryIngestProvider({ children }: { children: ReactNode }) {
 
   const busy = reading || ingest.busy;
   const value: LibraryIngest = {
+    collection,
     rows: trayOrder(tray.rows, tray.dropOf),
     notes,
     busy,

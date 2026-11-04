@@ -22,6 +22,8 @@ export const completeBody = z.object({
     sizeBytes: z.number().int().positive().max(MAX_DISK_BYTES),
     filename: z.string().min(1).max(255),
   })).min(1).max(MAX_BATCH),
+  /** The collection being viewed, so a disk lands where you stand (fileIngestedTitles). */
+  collectionId: z.string().min(1).max(255).optional(),
 });
 
 export function splitKnownMissing(requested: string[], known: Set<string>) {

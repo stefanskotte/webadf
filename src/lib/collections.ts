@@ -387,6 +387,16 @@ export async function moveGamesToCollection(
 }
 
 /**
+ * A disk added while a collection is open lands in it: the titles an ingest placed, filed after the collection's
+ * members. A title the disk already had is filed too, and stays wherever else it is. An unknown or foreign id (a stale
+ * ?collection=) files nothing and refuses nothing, as Create ADF: the disks are in the library either way.
+ */
+export async function fileIngestedTitles(orgId: string, collectionId: string | undefined, gameIds: string[]): Promise<void> {
+  if (!collectionId || gameIds.length === 0) return;
+  await moveGamesToCollection(orgId, [...new Set(gameIds)], collectionId);
+}
+
+/**
  * The first of this org's collections (in the Library's collection order: sortKey, then id, as listCollections) the
  * title is filed in, or null (Files 2 §3.1): where "Files…" opens the title's disk. Scoped through `collections`, since
  * collection_games carries no org_id (D-4-5).

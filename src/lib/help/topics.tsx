@@ -36,12 +36,12 @@ export const HELP_TOPICS = {
       <>
         <p>
           <strong>Adding disks.</strong> Drop disk images, folders of them or .zip and .lha files anywhere on the
-          page, or use <em>Add disks</em>, which also takes a URL. A tray below says what each did.
+          page, or use <em>Add disks</em>, which also takes a URL. A tray below says what each did. Inside a collection they
+          are filed there.
         </p>
         <p>
           <strong>Grid or table.</strong> The grid and table buttons at the top switch views and keep the
-          collection you are in. <em>Library opens in</em> under Preferences in Settings picks the view it starts in: the grid
-          unless you change it.
+          collection you are in. <em>Library opens in</em> under Preferences in Settings picks the view it starts in.
         </p>
         <p>
           <strong>Folders.</strong> In the table, the library&apos;s first page lists each collection as a folder,

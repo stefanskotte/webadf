@@ -59,7 +59,7 @@ export const MAX_BATCH = 500;
 export const UPLOAD_CONCURRENCY = 6;
 
 /** handleFiles + processGroup of the old dropzone, verbatim in behaviour: rows go out through `emit` (a functional update). */
-export async function runLibraryIngest(files: File[], io: IngestIo, emit: Emit): Promise<IngestOutcome> {
+export async function runLibraryIngest(files: File[], io: IngestIo, emit: Emit, place?: { collectionId?: string }): Promise<IngestOutcome> {
   // Recorded before anything else, so it covers every row this drop ends
   // up producing -- the suggest route refuses a `since` more than 24h old
   // (Task 6 controller ruling 2), which this drop's own start never is.
@@ -213,6 +213,7 @@ export async function runLibraryIngest(files: File[], io: IngestIo, emit: Emit):
             sizeBytes: h.file.size,
             filename: h.file.name,
           })),
+          ...(place?.collectionId ? { collectionId: place.collectionId } : {}),
         });
         const refused = res.rejectedReasons ?? {};
         // The title each placed (or already placed) disk is in; a refused file has none, so its row offers no Open title.

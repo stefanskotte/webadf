@@ -157,7 +157,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       {/* The page adds disks itself (Files increment 3, R8/R9): Add disks ▾ in the header, a drop anywhere, the tray at
           the bottom of the content column. One provider over the header and the body, so all three share its rows;
           the overlay listens for OS file drags only, so the collection drags below never meet it. */}
-      <LibraryIngestProvider>
+      <LibraryIngestProvider collection={view.kind === 'collection' ? { id: view.id, name: heading } : null}>
       <PageHeader
         size="lg"
         eyebrow={eyebrow}

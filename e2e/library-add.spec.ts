@@ -186,6 +186,53 @@ test('an ADF the library already had reads Added, newest drop first', async ({ p
   await expect(page.getByTestId('library-tray-row').first()).toHaveAttribute('data-key', `lib:${sha(b)}`);
 });
 
+test('a drop inside a collection files the title there, and the overlay names it', async ({ page }) => {
+  const tag = runTag();
+  await signUpFresh(page);
+  const res = await page.request.post('/api/collections', { data: { name: `Utilities ${tag}` } });
+  const { id } = await res.json() as { id: string };
+
+  await page.goto(`/library?collection=${id}`);
+  const a = fakeAdf(`into-${tag}`);
+  await synthDrop(page, [{ name: `LibAdd Into ${tag} (1990)(X).adf`, kind: 'file', bytes: bytes(a) }], TARGET);
+  await expect(summary(page)).toHaveText('1 added', { timeout: 30_000 });
+  await expect(card(page, `LibAdd Into ${tag}`)).toHaveCount(1, { timeout: 10_000 });
+  // Not in the landing's Uncategorized.
+  await page.goto('/library');
+  await expect(card(page, `LibAdd Into ${tag}`)).toHaveCount(0);
+
+  // The overlay says where a drop will go, here and at the landing.
+  const dragIn = () => page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(['x'], 'x.adf'));
+    window.dispatchEvent(new DragEvent('dragenter', { dataTransfer: dt, bubbles: true }));
+  });
+  await expect(page.getByTestId('library-drop-target')).toHaveAttribute('data-native-drop', 'ready');
+  await dragIn();
+  await expect(page.getByTestId('library-drop-overlay')).toContainText('to the library');
+  await page.goto(`/library?collection=${id}`);
+  await expect(page.getByTestId('library-drop-target')).toHaveAttribute('data-native-drop', 'ready');
+  await dragIn();
+  await expect(page.getByTestId('library-drop-overlay')).toContainText(`to Utilities ${tag}`);
+});
+
+test('Paste a URL… inside a collection asks to file there', async ({ page }) => {
+  const tag = runTag();
+  await signUpFresh(page);
+  const res = await page.request.post('/api/collections', { data: { name: `Fetched ${tag}` } });
+  const { id } = await res.json() as { id: string };
+  let sent: { url?: string; collectionId?: string } = {};
+  await page.route('**/api/ingest/url', async (route) => {
+    sent = route.request().postDataJSON();
+    await route.fulfill({ json: { rows: [] } });
+  });
+  await page.goto(`/library?collection=${id}#add-disks`);
+  await page.getByTestId('library-add-url').click();
+  await page.getByTestId('url-input').fill('https://example.test/a.adf');
+  await page.getByTestId('url-fetch').click();
+  await expect.poll(() => sent.collectionId).toBe(id);
+});
+
 test('one drop at a time: until a drop has its set suggestion, Add disks waits and a second drop is refused in words', async ({ page }) => {
   const tag = runTag();
   await signUpFresh(page);
