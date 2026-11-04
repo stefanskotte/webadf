@@ -16,6 +16,7 @@ import { isNetVolumeDir, isNetVolumePath } from './net-write';
 import { startFetch, volumeToVolume } from './net-fetch';
 import { addDiskImages } from './add-to-library';
 import { createAdf, type CreateAdfRequest } from './create-adf';
+import { createSysconf, type CreateSysconfRequest } from './create-sysconf';
 import { copyDisksOntoVolume } from './disks-as-folders';
 import { deleteOnShelf, fileOnShelf, makeCollection, renameOnShelf, shelfDest, shelfItem } from './shelf';
 import type { Refusal } from './types';
@@ -32,7 +33,8 @@ export type OpRequest =
   | { op: 'protect'; sources: string[]; protection: number }      // AmigaDOS bits, 0..0xff, as files/[block] PATCH takes
   | { op: 'comment'; source: string; comment: string }
   | { op: 'add-to-library'; sources: string[] }                   // STASH: disk images into the library (R8)
-  | ({ op: 'create-adf' } & CreateAdfRequest);                    // a blank disk into STASH: or LIBRARY: (Files 2 §4)
+  | ({ op: 'create-adf' } & CreateAdfRequest)                     // a blank disk into STASH: or LIBRARY: (Files 2 §4)
+  | ({ op: 'create-sysconf' } & CreateSysconfRequest);            // DEVS:system-configuration into the active pane
 export type OpResult =
   /** `versions`: each history version the op saved, in the order it saved them (Undo needs exactly one, Task 9b). */
   | ({ kind: 'done'; items: OpItem[]; added?: Added[]; queued?: number; fetching?: { id: string; files: number };
@@ -121,6 +123,7 @@ async function dispatch(ctx: OpCtx, req: OpRequest): Promise<Outcome> {
     }
     case 'add-to-library': { const r = await addDiskImages(ctx, req.sources); return { kind: 'done', items: r.items, added: r.added }; }
     case 'create-adf': return createAdf(ctx, req);
+    case 'create-sysconf': return createSysconf(ctx, req);
   }
 }
 
