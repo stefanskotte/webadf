@@ -488,7 +488,7 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "wifi_floppy.kicad_pro",
+    "filename": "rev-c.kicad_pro",
     "version": 3
   },
   "net_settings": {
@@ -722,7 +722,7 @@
     "subpart_id_separator": 0,
     "top_level_sheets": [
       {
-        "filename": "wifi_floppy.kicad_sch",
+        "filename": "rev-c.kicad_sch",
         "name": "Root",
         "uuid": "c9178abf-c4d6-4242-b99e-f9f08c77f33c"
       }
@@ -734,6 +734,14 @@
     [
       "c9178abf-c4d6-4242-b99e-f9f08c77f33c",
       "Root"
+    ],
+    [
+      "a1f0c350-2350-4b00-9000-000000000002",
+      "MCU"
+    ],
+    [
+      "a1f0c350-2350-4b00-9000-000000000003",
+      "Support"
     ]
   ],
   "text_variables": {},
