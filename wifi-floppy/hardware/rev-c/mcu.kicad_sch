@@ -7275,7 +7275,7 @@
 				)
 			)
 		)
-		(property "Value" "27"
+		(property "Value" "27.4"
 			(at 50.8 106.68 90)
 			(show_name no)
 			(do_not_autoplace no)

@@ -99,9 +99,9 @@ R('R26', 158.6, 112.4, '27', 'USB_DM', 'USB_DM_RP', rot=90)
 R('R27', 161.3, 112.4, '5k1', 'CC1', 'GND', rot=90)
 R('R28', 160.0, 112.4, '5k1', 'CC2', 'GND', rot=90)
 put('D3', 'Diode_SMD', 'D_SOD-123F', 159.0, 115.0, 0, 'PMEG40T30ER', {'1':VS,'2':VB})
-put('SW1', 'Button_Switch_SMD', 'SW_Push_1P1T_XKB_TS-1187A', 158.4, 122.0, 0, 'BOOTSEL', {'1':'BOOT_R','2':'GND'})
+put('SW1', 'Button_Switch_SMD', 'SW_Push_1P1T_XKB_TS-1187A', 158.1, 122.0, 0, 'BOOTSEL', {'1':'BOOT_R','2':'GND'})
 R('R29', 143.2, 111.3, '1k', 'BOOT_R', 'QCS')
-put('SW2', 'Button_Switch_SMD', 'SW_Push_1P1T_XKB_TS-1187A', 158.4, 128.0, 0, 'RUN', {'1':'RUN','2':'GND'})
+put('TP1', 'TestPoint', 'TestPoint_Pad_D1.0mm', 158.4, 127.0, 0, 'RUN', {'1':'RUN'})   # no reset button (operator, 2026-11-05)
 put('J7', 'Connector_JST', 'JST_SH_BM03B-SRSS-TB_1x03-1MP_P1.00mm_Vertical', 136.4, 122.0, 90, 'SWD',
     {'1':'SWCLK','2':'GND','3':'SWDIO','MP':'GND'})
 put('U5', 'Package_TO_SOT_SMD', 'SOT-223-3_TabPin2', 137.5, 133.0, 90, 'NCP1117ST33T3G', {'1':'GND','2':V33,'3':VS})
@@ -139,6 +139,41 @@ def pour(layer, name, pri=0):
 k = pcbnew.ZONE(b); k.SetIsRuleArea(True); k.SetDoNotAllowTracks(True); k.SetDoNotAllowVias(True); k.SetDoNotAllowPads(False)
 k.SetDoNotAllowZoneFills(True); k.SetDoNotAllowFootprints(False); k.SetLayerSet(pcbnew.LSET.AllCuMask(LAYERS))
 rect(k, M[0]-17.75, yb-5.0, xr, yb); k.SetZoneName('RM2 RF keep-out'); b.Add(k)
+
+# The schematic is the source: names, values and links come from its netlist, so KiCad sees this board as made from it.
+import re, subprocess, tempfile
+nl = os.path.join(tempfile.mkdtemp(), 'rev-c.net')
+subprocess.run(['/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli', 'sch', 'export', 'netlist', '--format', 'kicadsexpr', '-o', nl,
+                os.path.join(HERE, 'rev-c.kicad_sch')], capture_output=True, check=True)
+t = open(nl).read()
+comps = t[t.index('(components'):t.index('(libparts')]
+linked = 0
+for m in re.finditer(r'\(comp\s+\(ref "([^"]+)"\)(.*?)(?=\(comp\s+\(ref|\Z)', comps, re.S):
+    ref, body = m.group(1), m.group(2)
+    f = b.FindFootprintByReference(ref); assert f is not None, ref
+    f.SetValue(re.search(r'\(value "([^"]*)"', body).group(1))
+    nick, name = re.search(r'\(footprint "([^"]*)"', body).group(1).split(':')
+    f.SetFPID(pcbnew.LIB_ID(nick, name))
+    sp = re.search(r'\(sheetpath\s+\(names "([^"]*)"\)\s+\(tstamps "([^"]*)"\)', body)
+    uid = re.findall(r'\(tstamps "([^"]*)"\)', body)[-1]
+    f.SetPath(pcbnew.KIID_PATH(sp.group(2) + uid))
+    prop = dict(re.findall(r'\(property\s+\(name "([^"]+)"\)\s+\(value "([^"]*)"\)', body))
+    f.SetSheetname(prop['Sheetname']); f.SetSheetfile(prop['Sheetfile'])
+    if 'MPN' in prop: f.SetField('MPN', prop['MPN'])
+    linked += 1
+assert linked > 50, linked
+pads = {}
+for f in b.Footprints():
+    for p in f.Pads():
+        KEEP.append(p)
+        if p.GetNumber(): pads.setdefault((f.GetReference(), p.GetNumber()), []).append(p)
+renamed = 0
+for m in re.finditer(r'\(net\s+\(code "\d+"\)\s+\(name "([^"]*)"(.*?)(?=\(net\s+\(code|\Z)', t[t.index('(nets'):], re.S):
+    for rf, pn in re.findall(r'\(ref "([^"]+)"\)\s+\(pin "([^"]+)"', m.group(2)):
+        for p in pads.get((rf, pn), []):
+            p.SetNet(net(m.group(1))); renamed += 1
+assert renamed > 200, renamed
+print('linked', linked, 'pads named', renamed)
 b.BuildConnectivity()
 pcbnew.SaveBoard(OUT, b)
 print('nets', b.GetNetCount())

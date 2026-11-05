@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pre-fab check for the wifi-floppy board: `pnpm hw:verify`.
+"""Pre-fab check for the wifi-floppy board: `pnpm hw:verify`, or `pnpm hw:verify rev-c` for rev C.
 
 Runs KiCad's own ERC and DRC (kicad-cli) on the project in this directory, then checks the
 netlist against what the firmware and the recorded design decisions require. Exits non-zero
@@ -20,8 +20,9 @@ import re
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCH = os.path.join(HERE, 'wifi_floppy.kicad_sch')
-PCB = os.path.join(HERE, 'wifi_floppy.kicad_pcb')
+REV_C = 'rev-c' in sys.argv[1:]
+SCH = os.path.join(HERE, 'rev-c/rev-c.kicad_sch' if REV_C else 'wifi_floppy.kicad_sch')
+PCB = os.path.join(HERE, 'rev-c/rev-c.kicad_pcb' if REV_C else 'wifi_floppy.kicad_pcb')
 
 def kicad_cli():
     for c in (shutil.which('kicad-cli'),
@@ -132,14 +133,23 @@ def on_net(name):
 PICO = {1: 'INDEX', 2: 'CHNG', 4: 'SEL0', 5: 'SEL1', 6: 'MTR', 7: 'DIR', 9: 'STEP',
         10: 'WDATA', 11: 'WGATE', 12: 'SIDE', 14: 'WPROT', 15: 'RDATA', 16: 'RDY',
         17: 'TRK0', 24: 'OLED_SDA', 25: 'OLED_SCL', 27: 'BUZZER', 29: 'ACT_LED'}
+if REV_C:
+    # U1 is the RP2350B itself. Same GPIOs as the PIM726, at the QFN-80 pins of the datasheet's table.
+    DS = json.load(open(os.path.join(HERE, 'rev-c/rp2350-qfn80-pins.json')))
+    def qfn(gpio):
+        return DS.get(f'GPIO{gpio}') or DS[[k for k in DS if k.startswith(f'GPIO{gpio}_')][0]]
+    GP = {1: 0, 2: 1, 4: 2, 5: 3, 6: 4, 7: 5, 9: 6, 10: 7, 11: 8, 12: 9, 14: 10, 15: 11, 16: 12, 17: 13, 24: 18, 25: 19, 27: 21, 29: 22}
+    PICO = {qfn(GP[pin]): want for pin, want in PICO.items()}
+    PICO.update({qfn(23): 'WL_ON', qfn(24): 'WL_D', qfn(25): 'WL_CS', qfn(29): 'WL_CLK', qfn(47): 'PSRAM_CS'})
 for pin, want in PICO.items():
     got = net_of('U1', pin)
-    if got != want:
+    if (got or '').split('/')[-1] != want:
         fail(f'U1 pin {pin}: net {got!r}, firmware expects {want!r}')
-for pin in (19, 20, 21, 22):                       # GP14-17: antenna keepout
-    got = net_of('U1', pin) or ''
-    if not got.startswith('unconnected'):
-        fail(f'U1 pin {pin} (GP{pin - 5}) is connected ({got}); it sits in the antenna keepout')
+if not REV_C:
+    for pin in (19, 20, 21, 22):                   # GP14-17: antenna keepout
+        got = net_of('U1', pin) or ''
+        if not got.startswith('unconnected'):
+            fail(f'U1 pin {pin} (GP{pin - 5}) is connected ({got}); it sits in the antenna keepout')
 
 # The Amiga's J1 pin for each floppy line.
 J1 = {'CHNG': 2, 'INDEX': 8, 'SEL0': 10, 'SEL1': 12, 'MTR': 16, 'DIR': 18, 'STEP': 20,

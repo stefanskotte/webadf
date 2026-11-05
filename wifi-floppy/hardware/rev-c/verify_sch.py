@@ -27,10 +27,9 @@ for f in b.GetFootprints():
 # the board's unconnected_ nets and the schematic's single-pin nets say nothing
 bp = {n: frozenset(v) for n, v in bn.items() if not n.startswith('unconnected') and not n.startswith('Net-(unc')}
 sp = {n: v for n, v in snets.items() if not n.startswith('unconnected')}
-# EXPECTED: the operator dropped the RUN button; TP1 takes its place
 def norm(v, exp):
     return frozenset(x for x in v if x[0] not in exp)
-EXCL = {'SW2', 'TP1'}
+EXCL = set()
 A = collections.Counter(norm(v, EXCL) for v in bp.values() if len(norm(v, EXCL)) > 1)
 B = collections.Counter(norm(v, EXCL) for v in sp.values() if len(norm(v, EXCL)) > 1)
 bad = 0

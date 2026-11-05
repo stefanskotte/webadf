@@ -567,23 +567,23 @@
       },
       {
         "netclass": "Power",
-        "pattern": "DVDD"
+        "pattern": "/MCU/DVDD"
       },
       {
         "netclass": "Power",
-        "pattern": "VDDBAT"
+        "pattern": "/MCU/VDDBAT"
       },
       {
         "netclass": "Power",
-        "pattern": "VREG_AVDD"
+        "pattern": "/MCU/VREG_AVDD"
       },
       {
         "netclass": "Power",
-        "pattern": "ADC_AVDD"
+        "pattern": "/MCU/ADC_AVDD"
       },
       {
         "netclass": "Power",
-        "pattern": "VREG_LX"
+        "pattern": "/MCU/VREG_LX"
       },
       {
         "netclass": "Power",
@@ -591,7 +591,7 @@
       },
       {
         "netclass": "Reg",
-        "pattern": "/VSYS"
+        "pattern": "VSYS"
       },
       {
         "netclass": "Reg",

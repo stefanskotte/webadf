@@ -10,7 +10,7 @@ def check(what, got, want):
     if got == want: ok += 1
     else: bad.append(f'{what}: board has {got!r}, source says {want!r}')
 def pad(board, ref, n):
-    return [p.GetNetname() for p in board.FindFootprintByReference(ref).Pads() if p.GetNumber() == str(n)]
+    return [p.GetNetname().split('/')[-1] for p in board.FindFootprintByReference(ref).Pads() if p.GetNumber() == str(n)]
 # RP2350 datasheet tables 1427-1432, extracted from the PDF (RP-008373-DS-2)
 DS = json.load(open(os.path.join(HERE, 'rp2350-qfn80-pins.json')))
 gp = lambda g: DS[f'GPIO{g}'] if f'GPIO{g}' in DS else DS[[k for k in DS if k.startswith(f'GPIO{g}_')][0]]
@@ -50,6 +50,7 @@ for f in r.Footprints():
     ref = f.GetReference()
     if ref == 'U1': continue
     for p in f.Pads():
-        kept += 1; check(f'rev B {ref}.{p.GetNumber()}', pad(c, ref, p.GetNumber())[0] if pad(c, ref, p.GetNumber()) else None, p.GetNetname())
+        if p.GetNetname().startswith('unconnected'): continue   # names of no-connects follow the schematic
+        kept += 1; check(f'rev B {ref}.{p.GetNumber()}', pad(c, ref, p.GetNumber())[0] if pad(c, ref, p.GetNumber()) else None, p.GetNetname().replace('/VSYS', 'VSYS'))
 print(f'{ok} checks passed ({kept} rev B pads), {len(bad)} failed')
 for b in bad: print(' FAIL', b)
