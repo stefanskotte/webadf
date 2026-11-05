@@ -20,3 +20,15 @@ Anyone may build, modify and sell their own boards from these files.
   (https://github.com/stefanskotte/webadf/pull/3#issuecomment-5864414711). Credited here and in
   `THIRD-PARTY-NOTICES.md` with thanks.
 - The KiCad library parts copied into `wifi-floppy-lib.*` keep their own licence; see `KICAD-LIBRARY-LICENSE.md`.
+- Rev C's core regulator pattern and its inductor and capacitor footprints (`rev-c/reg_pattern.py`, `rev-c/rev-c-lib.pretty/L_Abracon_AOTA-B201610S3R3-101-T`, `C_0402_1005Metric_RP_wide`) come from Raspberry Pi's RP2350 minimal design R4, under this licence:
+
+```
+= MIT License =
+Copyright (c) 2026 Raspberry Pi Ltd
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```

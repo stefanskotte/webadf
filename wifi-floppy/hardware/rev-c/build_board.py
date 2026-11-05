@@ -38,6 +38,8 @@ def C(ref, x, y, val, a, c='GND', rot=0): return put(ref, 'Capacitor_SMD', 'C_04
 def C6(ref, x, y, val, a, c='GND', rot=0): return put(ref, 'Capacitor_SMD', 'C_0603_1608Metric', x, y, rot, val, {'1': a, '2': c})
 
 V33, VS, DV, VB = '+3.3V', '/VSYS', 'DVDD', 'VBUS'
+sys.path.insert(0, HERE)
+import reg_pattern as RP
 # The RP2350B: every GPIO on the net the PIM726's header pin carried on rev B.
 HDR = {0:1,1:2,2:4,3:5,4:6,5:7,6:9,7:10,8:11,9:12,10:14,11:15,12:16,13:17,18:24,19:25,21:27,22:29}   # GPIO -> PIM726 pad
 GP = {0:77,1:78,2:79,3:80,4:1,5:2,6:3,7:4,8:6,9:7,10:8,11:9,12:11,13:12,14:13,15:14,16:16,17:17,18:18,19:19,20:20,21:21,
@@ -63,23 +65,25 @@ C('C11', U[0]-7.2, L(10)+0.2, '100nF', DV,  rot=90)
 C('C12', U[0]-7.2, L(15)+1.0, '100nF', V33, rot=90)
 C('C13', 143.4, U[1]+7.0, '100nF', V33)
 C('C14', 145.8, U[1]+7.0, '100nF', V33)
-C('C15', 148.4, U[1]+7.0, '100nF', DV)
+C('C15', 148.4, U[1]+7.0, '4.7uF', DV)                        # the datasheet's second COUT, far from L1
 C('C16', U[0]+6.4, RY(41), '100nF', V33, rot=90)
 C('C17', U[0]+6.4, RY(50)+0.9, '100nF', V33, rot=90)
 C('C18', U[0]+6.4, RY(51)-0.9, '100nF', DV, rot=90)
 C('C19', U[0]+6.2, RY(60)+0.2, '100nF', V33, rot=90)
 C('C20', TX(76), U[1]-6.3, '100nF', V33)
-C6('C21', 149.1, 114.6, '10uF', V33, rot=90)                 # VREG_VIN
-C6('C22', 151.4, 114.6, '2.2uF', 'VREG_AVDD', rot=90)
-R('R20', 151.4, 112.0, '27', V33, 'VREG_AVDD', rot=90)
-put('L1', 'Inductor_SMD', 'L_0805_2012Metric', 153.6, 112.8, 90, 'MLZ2012M3R3HT000', {'1':'VREG_LX','2':DV})
-C6('C23', 155.7, 112.8, '10uF', DV, rot=90)
+# The core regulator is Raspberry Pi's pattern, placed from reg_pattern.py. Moving any of these means moving all of them.
+at = lambda ref: RP.abs_(RP.PARTS[ref][:2])
+put('C21', 'LOCAL', 'C_0402_1005Metric_RP_wide', *at('C21'), 0, '4.7uF', {'1':V33,'2':'GND'})          # CIN
+put('C23', 'LOCAL', 'C_0402_1005Metric_RP_wide', *at('C23'), 0, '4.7uF', {'1':DV,'2':'GND'})           # COUT
+put('L1', 'LOCAL', 'L_Abracon_AOTA-B201610S3R3-101-T', *at('L1'), 0, 'AOTA-B201610S3R3-101-T', {'1':DV,'2':'VREG_LX'})
+C('C22', *at('C22'), '4.7uF', 'VREG_AVDD', rot=-90)                                                    # CFILT
+R('R20', *at('R20'), '33', V33, 'VREG_AVDD', rot=-90)                                                  # RFILT
 R('R21', 154.6, 116.9, '220', V33, 'ADC_AVDD')
 C6('C24', 154.6, 115.4, '2.2uF', 'ADC_AVDD')
 # crystal
-put('Y1', 'Crystal', 'Crystal_SMD_3225-4Pin_3.2x2.5mm', 147, 132.3, 0, '12MHz', {'1':'XIN','2':'GND','3':'XOUT','4':'GND'})
-C('C25', 143.9, 132.0, '10pF', 'XIN', rot=90)
-C('C26', 150.3, 133.2, '10pF', 'XOUT', rot=90)
+put('Y1', 'Crystal', 'Crystal_SMD_3225-4Pin_3.2x2.5mm', 147, 132.3, 0, 'ABM8-272-T3', {'1':'XIN','2':'GND','3':'XOUT','4':'GND'})
+C('C25', 143.9, 132.0, '15pF', 'XIN', rot=90)
+C('C26', 150.3, 133.2, '15pF', 'XOUT', rot=90)
 R('R22', 150.3, 130.6, '1k', 'XOUT', 'XOUT_RP', rot=90)
 # flash and PSRAM on one QSPI bus
 put('U3', 'Package_SO', 'SOIC-8_5.3x5.3mm_P1.27mm', 140.6, 107.0, 0, 'W25Q128JVSIQ',

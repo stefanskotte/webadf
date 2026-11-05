@@ -189,6 +189,13 @@ for ref in ('J3', 'J4'):
         if net_of(ref, 3) != 'OLED_SCL' or net_of(ref, 4) != 'OLED_SDA' or net_of(ref, 2) != '+3.3V':
             fail(f'{ref}: expected 1 GND, 2 +3.3V, 3 SCL, 4 SDA')
 
+if REV_C:
+    # The core regulator against Raspberry Pi's pattern and the datasheet's limits.
+    r = subprocess.run([sys.executable, 'verify_reg.py', 'rev-c.kicad_pcb', 'mcu.kicad_sch', 'support.kicad_sch'],
+                       cwd=os.path.join(HERE, 'rev-c'), capture_output=True, text=True)
+    if r.returncode:
+        fail('core regulator differs from the pattern:\n' + r.stdout)
+
 # --- report ------------------------------------------------------------------------------
 for n in notes:
     print('note:', n)
