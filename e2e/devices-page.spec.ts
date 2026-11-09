@@ -515,7 +515,7 @@ test('a pairing code is shown with a live expiry, and disappears when it expires
     await page.clock.fastForward('00:30');
     await expect(expiry).not.toHaveText(before ?? '');
 
-    await page.clock.fastForward('10:00');
+    await page.clock.fastForward('30:00');   // codes last 30 minutes (2026-11-09)
     // The code is gone, not merely disabled or greyed out -- it would send
     // someone to the hardware to type something that can no longer work.
     await expect(page.getByTestId('pairing-code')).toHaveCount(0);

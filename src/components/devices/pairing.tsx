@@ -1,7 +1,9 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { PAIRING_POLL_MS } from '@/lib/pairing-guide';
 
 /**
  * The pairing state, shared by the header's Pair a device button and the "Add another drive" aside's button (spec
@@ -16,6 +18,11 @@ export type PairingState = {
   remainingMs: number | null;
   expired: boolean;
   busy: boolean;
+  /** Set once the live code has been used by a board: the name typed for it, or '' when none was. */
+  paired: string | null;
+  /** The "How pairing works" guide, shared by every button that opens it. */
+  guideOpen: boolean;
+  setGuideOpen: (open: boolean) => void;
   setName: (v: string) => void;
   /** Open the naming form from a clean field. */
   startNaming: () => void;
@@ -40,6 +47,9 @@ export function PairingProvider({ children }: { children: React.ReactNode }) {
   const [remainingMs, setRemainingMs] = useState<number | null>(null);
   const [expired, setExpired] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [paired, setPaired] = useState<string | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const router = useRouter();
 
   // Ticks the countdown once a second while a code is live. A code that has hit zero is removed rather than left
   // greyed out. (mint() sets the first remainingMs, so nothing is set synchronously here.)
@@ -57,9 +67,34 @@ export function PairingProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(id);
   }, [expiresAt]);
 
+  // While a code is live, ask every few seconds whether a board has used it (cathers, 2026-11-09: the board's own page
+  // says the device "appears in the web app", and here it never did until a reload). On "paired" the code goes, the
+  // page says so and refreshes to draw the new card. A failed ask is simply asked again; the countdown still runs.
+  useEffect(() => {
+    if (!code) return;
+    let stop = false;
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/devices/pair?code=${encodeURIComponent(code)}`, { cache: 'no-store' });
+        if (stop || !res.ok || !res.headers.get('content-type')?.includes('application/json')) return;
+        const { state } = await res.json();
+        if (stop || state !== 'paired') return;
+        stop = true;
+        setCode(null);
+        setExpiresAt(null);
+        setRemainingMs(null);
+        setPaired(pairedName ?? '');
+        toast.success(pairedName ? `Paired: ${pairedName}` : 'Board paired');
+        router.refresh();
+      } catch { /* offline for a moment: the next tick asks again */ }
+    }, PAIRING_POLL_MS);
+    return () => { stop = true; clearInterval(id); };
+  }, [code, pairedName, router]);
+
   const mint = useCallback(async () => {
     setBusy(true);
     setExpired(false);
+    setPaired(null);
     const typed = name.trim();
     try {
       let res: Response;
@@ -89,12 +124,12 @@ export function PairingProvider({ children }: { children: React.ReactNode }) {
     }
   }, [name]);
 
-  const startNaming = useCallback(() => { setName(''); setNaming(true); }, []);
+  const startNaming = useCallback(() => { setName(''); setPaired(null); setNaming(true); }, []);
   const cancelNaming = useCallback(() => setNaming(false), []);
 
   const value = useMemo<PairingState>(() => ({
-    naming, name, pairedName, code, remainingMs, expired, busy, setName, startNaming, cancelNaming, mint,
-  }), [naming, name, pairedName, code, remainingMs, expired, busy, startNaming, cancelNaming, mint]);
+    naming, name, pairedName, code, remainingMs, expired, busy, paired, guideOpen, setGuideOpen, setName, startNaming, cancelNaming, mint,
+  }), [naming, name, pairedName, code, remainingMs, expired, busy, paired, guideOpen, startNaming, cancelNaming, mint]);
 
   return <PairingContext.Provider value={value}>{children}</PairingContext.Provider>;
 }

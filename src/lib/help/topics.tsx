@@ -147,20 +147,21 @@ export const HELP_TOPICS = {
   // DC_HALTED branch; disk history kept because disk_versions.device_id has no FK (db/schema/disk-history.ts).
   // Address note: plan 2026-10-12 ruling 4 -- 1.11.0 sends the board's own DHCP client-id.
   // Naming at pairing: pair-button.tsx, api/devices/pair + device/register (plan 2026-10-17 R8).
+  // Pairing steps (2026-11-09): lib/pairing-guide.ts holds each fact with its firmware source; pairing-guide.tsx.
   // Disk at startup: lib/boot-disk.ts + boot-disk-store.ts (cleared at a new boot's first request; not on the same
   // boot id or an &ota=1 boot), boot-disk-setting.tsx, firmware fw_trial.h (the update-reboot mark), BOOT_DISK_FW.
   // Stuck-start line: lib/last-boot.ts describeLastBoot, device-card.tsx; firmware boot_trail.h (fw 1.18.2).
   boards: {
     title: 'Boards',
     short:
-      'A board is the WiFi floppy drive plugged into your Amiga. Pair it once with a code from this page, and from then on it plays whatever you mount here.',
+      'A board is the WiFi floppy drive plugged into your Amiga. Pair it once with a code from the Devices page, and from then on it plays whatever you mount here.',
     body: (
       <>
         <p>
-          <strong>Pairing.</strong> Press <em>Pair a device</em>, give the board a name
-          and press <em>Get a code</em>. A new board starts its own Wi-Fi
-          network <em>wifi-floppy-…</em> (password <em>wififloppy</em>); join it and enter your home Wi-Fi details and
-          the code.
+          <strong>Pairing.</strong> On Devices press <em>Pair a device</em>, give the board a name and
+          press <em>Get a code</em>. Join the board&apos;s network <em>wifi-floppy-…</em> from a phone
+          (password <em>wififloppy</em>; setup page at <em>http://192.168.4.1</em>) and enter your 2.4 GHz Wi-Fi
+          details and the code. <em>How pairing works</em> on Devices has every step.
         </p>
         <p>
           <strong>Online / Offline.</strong> A board is online if heard from in the last minute.
