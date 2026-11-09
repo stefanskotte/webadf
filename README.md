@@ -50,12 +50,28 @@ You need the board, a USB cable, a phone and an account on <https://webadf.verce
 2. Download `wifi-floppy-install-<version>.uf2` from the
    [latest release](https://github.com/stefanskotte/webadf/releases/latest) and drag it onto
    that drive. The board writes it and restarts by itself; the drive disappears.
-3. In the web app, open **Devices**, press **Pair a device**, give the board a name and press
-   **Get a code** (the code lasts 10 minutes). On your phone, join the board's setup Wi-Fi, `wifi-floppy-XXXX` (password
-   `wififloppy`). The setup page opens by itself, or browse to `http://192.168.4.1/`. Enter
-   your Wi-Fi network, its password and the code.
-4. Done. The board joins your network and appears under Devices. Firmware updates now arrive
-   over the air from the web app.
+3. **Get a pairing code in the web app.** The code comes from the web app, not the board. Open
+   **Devices**: with no board yet it lists the five steps (**How pairing works** shows them again at any
+   time). Press **Pair a device**, give the board a name and press **Get a code**. The code lasts 30 minutes,
+   and the page now walks you through the rest with the code filled in.
+
+   ![The Devices page with no board yet: No devices paired yet, and five numbered steps from getting a code here to waiting a minute for the board to appear](docs/screenshots/pair-1-devices-empty.png)
+
+   ![After Get a code: the code MYBJDV for A500 in the header, and Now set up the board with the code written into steps 1 and 4, and a Not working? list](docs/screenshots/pair-2-code.png)
+
+4. **Give the board your Wi-Fi and the code.** Power the board; its screen shows *Setup needed* and its own
+   Wi-Fi network, `wifi-floppy-XXXX`. Join that network from your phone (password `wififloppy`). The
+   setup page opens by itself; if it does not, browse to `http://192.168.4.1/`. Enter your home Wi-Fi name
+   and password (a 2.4 GHz network with a password) and the code, and press **Save**.
+
+   <img src="docs/screenshots/pair-3-board-setup.png" width="300" alt="The board's setup page on a phone: WiFi Floppy Setup, the board's MAC, the WiFi network name and password filled in, the pairing code, and Save">
+
+5. **Wait about a minute.** The board's network disappears, the board joins your Wi-Fi and uses the code
+   to register with the web app. Keep the Devices page open: it says **Paired** and shows the board by
+   itself. If the board cannot join or register, its setup network comes back with the reason at the top
+   of the setup page; join it again and fix that. Firmware updates now arrive over the air from the web app.
+
+   ![Paired: A500. The Devices page now lists the A500 board, online and up to date, with no disk in the drive](docs/screenshots/pair-4-paired.png)
 
 ### Path B: your own server (self-hosted, Docker)
 
@@ -81,7 +97,7 @@ You need a host with Docker and Compose v2, the board, a USB cable and a phone.
    Let's Encrypt certificate, leave it out. `wf server show` prints the setting and
    `wf server clear` goes back to the hosted app. Changing the server forgets the board's
    Wi-Fi and pairing, and it refuses while a disk is mounted.
-4. Pair it as in step 3 of Path A, from **Devices** on your own server. Firmware updates come
+4. Pair it as in steps 3-5 of Path A, from **Devices** on your own server. Firmware updates come
    from your server too: it imports every signed release from GitHub daily.
 
 If your phone has joined this board's setup network before, forget that network first. More

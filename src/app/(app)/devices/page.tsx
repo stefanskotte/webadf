@@ -19,6 +19,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { DeviceList } from '@/components/devices/device-list';
 import { PairButton } from '@/components/devices/pair-button';
 import { PairingProvider } from '@/components/devices/pairing';
+import { PairingGuideButton, PairingGuideDialog, PairingPanel } from '@/components/devices/pairing-guide';
 import { FobButton } from '@/components/nfc/fob-button';
 
 export default async function DevicesPage() {
@@ -96,16 +97,19 @@ export default async function DevicesPage() {
                 <span style={{ color: 'var(--muted)' }}><HelpTip topic="nfc" /></span>
               </div>
             )}
+            <PairingGuideButton />
             <PairButton />
           </div>
         )}
       />
       <div className="flex flex-col gap-6 px-4 pb-10 sm:px-7">
+        <PairingPanel />
         <DeviceList devices={devices} now={now} states={states}
                     selectableIds={selectableIds} latest={registry.latest} behind={behind} security={securityPending}
                     nextById={nextById} sendLineById={sendLineById} transferById={transferById} uploadLineById={uploadLineById}
                     skipPassword={prefs.firmware.skipPassword} />
       </div>
+      <PairingGuideDialog />
     </PairingProvider>
   );
 }
