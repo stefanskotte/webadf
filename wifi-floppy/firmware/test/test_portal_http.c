@@ -14,6 +14,9 @@ static void test_root_renders_the_form(void) {
     CHECK(strstr(out, "name=\"ssid\"") != NULL, "ssid field");
     CHECK(strstr(out, "name=\"pass\"") != NULL, "password field");
     CHECK(strstr(out, "name=\"code\"") != NULL, "pairing code field");
+    // Testers started at the board and did not know where the code comes from (Discord, 2026-11-09).
+    CHECK(strstr(out, "Devices, Pair a device") != NULL, "says where the pairing code comes from");
+    CHECK(strstr(out, "2.4 GHz") != NULL, "says the board needs 2.4 GHz WiFi");
     CHECK(strstr(out, "AB:CD:EF:01:02:03") != NULL,
           "the MAC is shown so you know which board you are configuring");
     CHECK_EQ_INT(res.action, PORTAL_ACT_NONE);

@@ -173,10 +173,11 @@ static const char *PAGE_FMT =
     "<input type=\"password\" id=\"pass\" name=\"pass\" maxlength=\"63\" "
     "minlength=\"8\" required>"
     "<p class=\"hint\">Required: open networks with no password are not "
-    "supported.</p>"
+    "supported. The board uses 2.4 GHz WiFi only.</p>"
     "<label for=\"code\">Pairing code</label>"
     "<input type=\"text\" id=\"code\" name=\"code\" maxlength=\"16\" "
     "autocapitalize=\"off\" autocorrect=\"off\" required>"
+    "<p class=\"hint\">Get it in the web app: Devices, Pair a device.</p>"
     "<button type=\"submit\">Save</button>"
     "</form>"
     "</body></html>";
