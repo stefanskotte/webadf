@@ -17,6 +17,7 @@ import { asSecondDriveMode, SECOND_DRIVE_NET_FW, type SecondDriveMode } from '@/
 import { isHdAdfSql } from '@/lib/disk-format-sql';
 import { firmwareAtLeast } from '@/lib/firmware-version';
 import { asBootDisk, BOOT_DISK_FW, type BootDisk } from '@/lib/boot-disk';
+import { asFittedAs, type FittedAs } from '@/lib/fitted-as';
 import {
   NFC_ELEMENT_FIRMWARE, ROTATION_FIRMWARE, STATUS_ICON_FIRMWARE, stripHeadRecords,
 } from '@/lib/display-layout';
@@ -506,6 +507,8 @@ export interface DeviceListItem {
   displayLayout: string | null;
   /** Disk at startup (src/lib/boot-disk.ts): what the user chose, and whether the board's firmware can do "No disk". */
   bootDisk: BootDisk;
+  /** Inside the Amiga (DF0) or in an external case (DF1): names the drive only (src/lib/fitted-as.ts). */
+  fittedAs: FittedAs;
   bootDiskCapable: boolean;
   /** The disk DF0 last held before a web eject (A4): offered as "Re-insert last disk" while the drive is empty. */
   lastDiskId: string | null;
@@ -603,6 +606,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       netFramesOut: devices.netFramesOut,
       displayLayout: devices.displayLayout,
       bootDisk: devices.bootDisk,
+      fittedAs: devices.fittedAs,
       lastDiskId: lastDisk.id,
       lastDiskTitle: deviceTitle(lastGame),
       lastDiskNo: lastDisk.diskNo,
@@ -638,6 +642,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
     secondDriveNetCapable: r.secondDriveCapable === true && firmwareAtLeast(r.firmwareVersion, SECOND_DRIVE_NET_FW),
     secondDriveCapable: r.secondDriveCapable === true,
     bootDisk: asBootDisk(r.bootDisk),
+    fittedAs: asFittedAs(r.fittedAs),
     bootDiskCapable: firmwareAtLeast(r.firmwareVersion, BOOT_DISK_FW),
     displayLayout: r.displayLayout && r.displayLayout.length > 0
       ? Buffer.from(stripHeadRecords(r.displayLayout)).toString('base64')   // 1.17.0's head element is withdrawn; stored blobs are not migrated

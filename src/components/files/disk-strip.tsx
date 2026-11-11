@@ -42,8 +42,12 @@ function names(list: MountChoice[]): string {
  * confirmed keeps holderText's wording, which never begins with "In" (desired state is not fact).
  */
 export function driveChip(choices: MountChoice[]): string {
-  const df0 = choices.filter((c) => c.isThisDisk && c.state === 'converged');
-  if (df0.length > 0) return `In DF0: of ${names(df0)}`;
+  const main = choices.filter((c) => c.isThisDisk && c.state === 'converged');
+  // Named per drive: DF0, or DF1 for a board fitted in an external case (src/lib/fitted-as.ts).
+  if (main.length > 0) {
+    const drives = [...new Set(main.map((c) => c.mainDrive))];
+    return drives.map((d) => `In ${d}: of ${names(main.filter((c) => c.mainDrive === d))}`).join('; ');
+  }
   const df1 = choices.filter((c) => c.df1Held);
   if (df1.length > 0) return `In DF1: of ${names(df1)}`;
   return holderText(choices)?.text ?? 'Not in a drive';

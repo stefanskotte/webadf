@@ -15,7 +15,7 @@ const { chipSlots } = await import('@/lib/drive-chips');
 
 /** A converged, online board holding disk 1 of a two-disk title, protected. */
 const base: DriveChip = {
-  id: 'dev-a', name: 'Bench', shortName: 'Bench', online: true, state: 'converged', phase: 'loaded',
+  id: 'dev-a', name: 'Bench', shortName: 'Bench', online: true, state: 'converged', phase: 'loaded', drive: 'DF0',
   disk: { id: 'disk-1', gameId: 'gam-1', title: 'Turrican', diskNo: 1, diskCount: 2, writeProtected: true, readOnly: null },
   loadingTitle: null, canGoTo: true, canToggleProtect: true, canEject: true,
   next: { diskNo: 2, diskCount: 2, wraps: false, preload: null }, df1: null, seen: null,

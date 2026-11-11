@@ -1,4 +1,5 @@
 import { useId } from 'react';
+import type { DriveName } from '@/lib/fitted-as';
 
 /**
  * The board's drawing of an Amiga drive (ModernDevicesV2, spec §3): case, bezel, the four stripes, the slot, the
@@ -28,8 +29,10 @@ export function artHeight(tall: boolean): number {
   return ART_H + (tall ? TALL_EXTRA : EXTRA);
 }
 
-export function DriveArt({ name, online, hasDisk, tall }: {
+export function DriveArt({ name, online, hasDisk, tall, drive = 'DF0' }: {
   name: string; online: boolean; hasDisk: boolean; tall: boolean;
+  /** The label on the drive's front: DF0, or DF1 for a board in an external case (src/lib/fitted-as.ts). */
+  drive?: DriveName;
 }) {
   const uid = useId().replace(/:/g, '');
   const caseId = `mdCase${uid}`;
@@ -81,7 +84,7 @@ export function DriveArt({ name, online, hasDisk, tall }: {
         <rect x="244" y="80" width="28" height="12" rx="4" fill="#C9BDA4" />
         <rect x="244" y="80" width="28" height="10" rx="4" fill="#E3D9C5" />
         <path d="M258 82.5 l4 4 h-8 z" fill="#7A7262" />
-        <text x="70" y="94" fontFamily="var(--font-mono), monospace" fontSize="9" letterSpacing="1.5" fill="#7A7262">DF0</text>
+        <text x="70" y="94" fontFamily="var(--font-mono), monospace" fontSize="9" letterSpacing="1.5" fill="#7A7262">{drive}</text>
       </g>
       <rect x="34" y={118 + dy} width="40" height="5" rx="2.5" fill="#3B362C" opacity="0.8" />
       <rect x="230" y={118 + dy} width="40" height="5" rx="2.5" fill="#3B362C" opacity="0.8" />

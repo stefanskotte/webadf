@@ -12,7 +12,7 @@ const f = (name: string, block: number, o: Partial<AdfEntry> = {}): AdfEntry => 
 const d = (name: string, block: number, children: AdfEntry[] = []): AdfEntry => f(name, block, { kind: 'dir', children });
 const choice = (o: Partial<MountChoice>): MountChoice => ({ id: 'b1', name: 'Bench', state: 'empty', holding: null,
   isThisDisk: false, action: 'mount', actionLabel: 'Mount', revertDiskId: null, df1: null, df1Held: false,
-  df1Stale: false, ...o }) as MountChoice;
+  df1Stale: false, mainDrive: 'DF0', ...o }) as MountChoice;
 const v = (seq: number, isHead = false): HistoryVersion => ({ seq, isHead, label: 'Edited in browser',
   createdAt: new Date(0), changes: [], sectorNote: null }) as unknown as HistoryVersion;
 
@@ -80,6 +80,8 @@ describe('driveLight / driveBadge (spec §2, the holderText ranking)', () => {
     expect(driveBadge([choice({ isThisDisk: true, state: 'converged' })])).toBe('DF0');
     expect(driveBadge([choice({ df1Held: true })])).toBe('DF1');
     expect(driveBadge([choice({ isThisDisk: true, state: 'pending' })])).toBeNull();
+    // A board fitted in an external case (src/lib/fitted-as.ts): its main drive is DF1 to the Amiga.
+    expect(driveBadge([choice({ isThisDisk: true, state: 'converged', mainDrive: 'DF1' })])).toBe('DF1');
   });
 });
 

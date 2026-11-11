@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useId, useState } from 'react';
+import type { DriveName } from '@/lib/fitted-as';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -8,7 +9,8 @@ import { holdAction, holdLabel, type Hold } from '@/lib/drive-holds';
 import { df1Option, type Df1Board } from '@/lib/df1-pick';
 
 /** A board the org has paired, as the page loaded it. `df1`: its DF1 rules' inputs, null unless DF1 is On. */
-export type DriveDevice = { id: string; name: string; df1: Df1Board | null };
+/** `drive`: what the Amiga calls its main drive, DF0 or DF1 in an external case (src/lib/fitted-as.ts). Absent = DF0. */
+export type DriveDevice = { id: string; name: string; df1: Df1Board | null; drive?: DriveName };
 /** One disk of a title, labelled as the title page labels it; format and size for DF1's rule (spec 2026-10-14 §3.1). */
 export type DriveDisk = { id: string; diskNo: number; imageFormat: string; sizeBytes: number };
 /**
@@ -186,7 +188,7 @@ function CardMountPicker({ title, diskCount, drives, m, onClose }: Omit<CardMoun
   // Ejecting from several boards picks among the boards that hold it; mounting
   // picks among all of them.
   const boards: DriveDevice[] = ejecting
-    ? holds.map((h) => ({ id: h.deviceId, name: holdLabel(h, diskCount), df1: null }))
+    ? holds.map((h) => ({ id: h.deviceId, name: holdLabel(h, diskCount), df1: null, drive: h.drive }))
     : drives.devices;
   const ready = ejecting ? deviceId !== null : diskId !== null && deviceId !== null;
   const chosenHold = ejecting ? holds.find((h) => h.deviceId === deviceId) ?? null : null;

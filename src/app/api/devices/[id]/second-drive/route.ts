@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { requireOrg } from '@/lib/session';
 import { firmwareFor, DF1_SEEN_REASON } from '@/lib/second-drive';
 import { saveSecondDrive } from '@/lib/second-drive-store';
+import { EXTERNAL_NO_SECOND_DRIVE } from '@/lib/fitted-as';
 
 const body = z.object({ mode: z.enum(['off', 'df1', 'net']), override: z.boolean().optional() });
 
@@ -18,6 +19,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   if (r === 'firmware_too_old') {
     return Response.json({ error: 'firmware_too_old', reason: `Needs firmware ${firmwareFor(parsed.data.mode)} or newer` }, { status: 409 });
   }
+  if (r === 'external') return Response.json({ error: 'external', reason: EXTERNAL_NO_SECOND_DRIVE }, { status: 409 });
   if (r === 'df1_seen') return Response.json({ error: 'df1_seen', reason: DF1_SEEN_REASON }, { status: 409 });
   return Response.json({ version: r.version });
 }

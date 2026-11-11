@@ -13,6 +13,7 @@ import { games, disks, entitlements } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { diskVersions, diskWriteSessions } from '@/db/schema/disk-history';
 import { planBulkDelete, type KeptTitle, type PlanGame } from '@/lib/bulk-delete-plan';
+import { asFittedAs } from '@/lib/fitted-as';
 import { clearDesired } from '@/lib/mount';
 import { ejectDf1Holders } from '@/lib/df1-store';
 import { planReorder } from '@/lib/disk-set';
@@ -256,8 +257,9 @@ export async function deleteGames(
   const boards = await db.select({
     id: devices.id, name: devices.name, desiredSha256: devices.desiredSha256, mountedSha256: devices.mountedSha256,
     lastSeenAt: devices.lastSeenAt, desiredDiskId: devices.desiredDiskId, mountedDiskId: devices.mountedDiskId,
-    df1DiskId: devices.df1DiskId, df1Sha256: devices.df1Sha256,
-  }).from(devices).where(eq(devices.orgId, orgId));
+    df1DiskId: devices.df1DiskId, df1Sha256: devices.df1Sha256, fittedAs: devices.fittedAs,
+  }).from(devices).where(eq(devices.orgId, orgId))
+    .then((rows) => rows.map((r) => ({ ...r, fittedAs: asFittedAs(r.fittedAs) })));
   const sessions = diskRows.length === 0 ? [] : await db
     .select({ deviceId: diskWriteSessions.deviceId, deviceName: devices.name, diskId: diskWriteSessions.diskId })
     .from(diskWriteSessions)

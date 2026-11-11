@@ -38,13 +38,16 @@ export async function saveSecondDrive(
           }),
     })
     .where(and(scope, eq(devices.secondDriveCapable, true),
+      // Fitted as External (src/lib/fitted-as.ts): the second-drive line is not connected, so only Off is taken.
+      mode === 'off' ? sql`true` : ne(devices.fittedAs, 'external'),
       // Network needs 1.11.0 by the REPORTED version, in the same WHERE (the saveDisplay rule): a board
       // that reports an older build between a read and this write cannot take a mode it does not know.
       mode === 'net' ? firmwareAtLeastSql(SECOND_DRIVE_NET_FW) : sql`true`, guard))
     .returning({ version: devices.secondDriveVersion });
   if (row) return { version: row.version };
-  const [r] = await db.select({ capable: devices.secondDriveCapable, seen: devices.df1Seen, firmwareVersion: devices.firmwareVersion })
+  const [r] = await db.select({ capable: devices.secondDriveCapable, seen: devices.df1Seen, firmwareVersion: devices.firmwareVersion, fittedAs: devices.fittedAs })
     .from(devices).where(scope).limit(1);
   if (!r) return 'not_found';
+  if (mode !== 'off' && r.fittedAs === 'external') return 'external';
   return secondDriveRefusal(mode, r);
 }

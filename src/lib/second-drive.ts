@@ -21,7 +21,7 @@ export const SECOND_DRIVE_NET_FW = '1.11.0';
 export function asSecondDriveMode(v: string | null): SecondDriveMode | null {
   return v === 'off' || v === 'df1' || v === 'net' ? v : null;
 }
-export type SaveSecondDriveOutcome = { version: number } | 'not_found' | 'firmware_too_old' | 'df1_seen';
+export type SaveSecondDriveOutcome = { version: number } | 'not_found' | 'firmware_too_old' | 'df1_seen' | 'external';
 
 export const SECOND_DRIVE_FW = '1.9.0';
 export const DF1_SEEN_REASON = 'A drive already answers as DF1 on this Amiga';

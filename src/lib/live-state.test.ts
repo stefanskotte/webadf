@@ -20,7 +20,7 @@ const base: LiveStateRow = {
   macAddress: 'AA:BB:CC:DD:EE:FF',
   trackMaxBytes: null, playsHd: false, preloadSha256: null, preloadState: null, next: null,
   displayVersion: 0, displayAppliedVersion: null, displayError: null, displayLayouts: null, displayPanel: '128x32',
-  secondDrive: 'off', secondDriveVersion: 0, secondDriveAppliedVersion: null, secondDriveReported: null,
+  secondDrive: 'off', fittedAs: 'internal', secondDriveVersion: 0, secondDriveAppliedVersion: null, secondDriveReported: null,
   df1DiskId: null, df1PickSha256: null, df1PickTitle: null, df1PickDiskNo: null,
   sendVersion: 0, sendRx: null, sendRxAt: null,
   df1Sha256: null, netDriverSeenAt: null, netAmigaIp: null, netFramesIn: null, netFramesOut: null,

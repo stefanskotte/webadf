@@ -407,6 +407,13 @@
       "when": 1793496905932,
       "tag": "0057_transfer_active_at",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1794389746633,
+      "tag": "0058_fitted_as",
+      "breakpoints": true
     }
   ]
 }

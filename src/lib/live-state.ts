@@ -84,6 +84,8 @@ export interface LiveStateRow {
   displayPanel: string;
   /** The DF1 setting and Network readings (plan 2026-10-12 ruling 18): all card inputs. */
   secondDrive: string; secondDriveVersion: number; secondDriveAppliedVersion: number | null;
+  /** Fitted as (src/lib/fitted-as.ts): names the drive in the chips and on the card, so a page input. */
+  fittedAs: string;
   secondDriveReported: string | null; df1Sha256: string | null;
   netDriverSeenAt: Date | null; netAmigaIp: string | null; netFramesIn: number | null; netFramesOut: number | null;
   /**
@@ -155,7 +157,7 @@ export function liveFingerprint(
         r.displayVersion, r.displayAppliedVersion ?? '', r.displayError ?? '',
         r.displayLayouts === null ? '' : String(r.displayLayouts), r.displayPanel,
         r.next ? `${r.next.diskNo}/${r.next.diskCount}/${r.next.wraps ? 1 : 0}/${r.next.preload ?? ''}` : '',
-        r.secondDrive, r.secondDriveVersion, r.secondDriveAppliedVersion ?? '', r.secondDriveReported ?? '',
+        r.secondDrive, r.secondDriveVersion, r.secondDriveAppliedVersion ?? '', r.secondDriveReported ?? '', r.fittedAs,
         r.df1Sha256 ?? '', driverBucket(r.netDriverSeenAt, now), r.netAmigaIp ?? '',
         // The DF1 pick; the digest too (ruling 1): editing the picked disk's bytes must refresh the card.
         r.df1DiskId ?? '', r.df1PickSha256 ?? '', r.df1PickTitle ?? '', r.df1PickDiskNo ?? '',
@@ -233,6 +235,7 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       displayLayouts: devices.displayLayouts,
       displayPanel: devices.displayPanel,
       secondDrive: devices.secondDrive,
+      fittedAs: devices.fittedAs,
       secondDriveVersion: devices.secondDriveVersion,
       secondDriveAppliedVersion: devices.secondDriveAppliedVersion,
       secondDriveReported: devices.secondDriveReported,

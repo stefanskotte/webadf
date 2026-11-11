@@ -81,7 +81,9 @@ export function driveLight(choices: MountChoice[]): 'in' | 'moving' | 'stale' | 
 
 /** The disk row's badge rule (disk-row.tsx): DF0 converged on this disk, else DF1 holding its digest. */
 export function driveBadge(choices: MountChoice[]): 'DF0' | 'DF1' | null {
-  if (choices.some((c) => c.state === 'converged' && c.isThisDisk)) return 'DF0';
+  // The main drive is DF1 on a board fitted in an external case (src/lib/fitted-as.ts).
+  const main = choices.find((c) => c.state === 'converged' && c.isThisDisk);
+  if (main) return main.mainDrive;
   if (choices.some((c) => c.df1Held)) return 'DF1';
   return null;
 }

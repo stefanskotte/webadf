@@ -164,8 +164,8 @@ export function TitleMenu({ game: g, collectionId, fob, drives }: {
     ? `${mount.holds.map((h) => holdLabel(h, g.diskCount)).join('; ')} · ${single ? verb : 'Eject or cancel'}`
     : 'Mount';
   const mountText = mount.ejecting
-    ? (single ? (verb === 'Cancel' ? 'Cancel mount' : 'Eject from DF0') : 'Eject or cancel…')
-    : (direct ? 'Mount in DF0' : 'Mount…');
+    ? (single ? (verb === 'Cancel' ? 'Cancel mount' : `Eject from ${single.drive}`) : 'Eject or cancel…')
+    : (direct ? `Mount in ${drives.devices[0].drive ?? 'DF0'}` : 'Mount…');
 
   return (
     // `contents`: no box of its own. It catches what bubbles out of the menu's portalled parts that are not the

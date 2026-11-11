@@ -1,5 +1,6 @@
 import { isOnline } from '@/lib/device-state';
 import { holdLabel, holdsByGame, type DiskRef, type HoldDeviceRow } from '@/lib/drive-holds';
+import { mainDrive, type DriveName } from '@/lib/fitted-as';
 
 /**
  * Which titles of a bulk delete a board holds, and so are KEPT (spec 2026-10-26 library multi-select §3.3, Ruling 12).
@@ -14,7 +15,7 @@ import { holdLabel, holdsByGame, type DiskRef, type HoldDeviceRow } from '@/lib/
 export interface PlanGame { id: string; title: string; year: number | null }
 export interface PlanDevice extends HoldDeviceRow { df1DiskId: string | null; df1Sha256: string | null }
 export interface PlanSession { deviceId: string; deviceName: string; diskId: string }
-export interface HoldWhere { deviceName: string; drive: 'DF0' | 'DF1'; label: string }
+export interface HoldWhere { deviceName: string; drive: DriveName; label: string }
 export interface KeptTitle { id: string; title: string; holds: HoldWhere[] }
 export interface BulkDeletePlan {
   /** In request order. */
@@ -55,7 +56,7 @@ export function planBulkDelete(
     for (const [gameId, holds] of Object.entries(df0)) {
       for (const h of holds) {
         held.add(h.diskId);
-        add(gameId, { deviceName: h.deviceName, drive: 'DF0', label: holdLabel(h, disksOf.get(gameId)?.length ?? 1) });
+        add(gameId, { deviceName: h.deviceName, drive: h.drive, label: holdLabel(h, disksOf.get(gameId)?.length ?? 1) });
       }
     }
     // Controller amendment to Ruling 12: the disk a board reports MOUNTED holds in every state, alongside a requested
@@ -64,9 +65,9 @@ export function planBulkDelete(
     if (mounted && !held.has(mounted.id)) {
       const label = holdLabel({
         deviceId: dev.id, deviceName: dev.name, diskId: mounted.id, diskNo: mounted.diskNo, state: 'mounted',
-        online: isOnline(dev.lastSeenAt, now), revertDiskId: null,
+        online: isOnline(dev.lastSeenAt, now), revertDiskId: null, drive: mainDrive(dev.fittedAs),
       }, disksOf.get(mounted.gameId)?.length ?? 1);
-      add(mounted.gameId, { deviceName: dev.name, drive: 'DF0', label });
+      add(mounted.gameId, { deviceName: dev.name, drive: mainDrive(dev.fittedAs), label });
     }
     // DF1: the pick AND, separately, what the board reports in the drive when that is another disk.
     const pick = dev.df1DiskId !== null ? diskById.get(dev.df1DiskId) : undefined;
@@ -78,7 +79,8 @@ export function planBulkDelete(
   }
   for (const s of sessions) {
     const d = diskById.get(s.diskId);
-    if (d) add(d.gameId, { deviceName: s.deviceName, drive: 'DF0', label: `Writing on ${s.deviceName}` });
+    const drive = mainDrive(devices.find((x) => x.id === s.deviceId)?.fittedAs);
+    if (d) add(d.gameId, { deviceName: s.deviceName, drive, label: `Writing on ${s.deviceName}` });
   }
 
   const deletable: PlanGame[] = [];
