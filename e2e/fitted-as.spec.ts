@@ -81,3 +81,17 @@ test('the route takes only the two values and only the caller\'s board', async (
   expect((await page.request.patch(`/api/devices/${deviceId}/fitted-as`, { data: { fittedAs: 'sideways' } })).status()).toBe(400);
   expect((await page.request.patch('/api/devices/not-a-board/fitted-as', { data: { fittedAs: 'external' } })).status()).toBe(404);
 });
+
+test('at phone width both choices fit inside the dialog', async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Phone Fit');
+  await page.goto('/devices');
+  await openBoardSettings(page, deviceId);
+  const dialog = await page.getByTestId('board-settings-dialog').boundingBox();
+  const group = await page.getByTestId(`fitted-as-${deviceId}`).boundingBox();
+  expect(dialog && group).toBeTruthy();
+  expect(group!.x).toBeGreaterThanOrEqual(dialog!.x);
+  expect(group!.x + group!.width).toBeLessThanOrEqual(dialog!.x + dialog!.width);
+  await page.getByTestId(`fitted-as-${deviceId}`).screenshot({ path: 'test-results/fitted-as-phone.png' });
+});
