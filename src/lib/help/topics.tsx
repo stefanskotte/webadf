@@ -507,8 +507,8 @@ export const HELP_TOPICS = {
           setting refuses to switch on; after removing that drive, use <em>Switch on anyway…</em>.
         </p>
         <p>
-          <strong>In an external drive case</strong> the Amiga sees the board as DF1. Pick{' '}
-          <em>External drive case</em> under <em>Fitted as</em> in <em>Board settings</em>; it then has no second drive.
+          <strong>Drive numbers.</strong> On an external port the board is DF1 + DF2, or DF2 + DF3 on a big box.
+          Set it in <em>Board settings</em>.
         </p>
         <GoodToKnow items={[
           'DF1 is read-only: saving to it fails as write-protected. Saves to DF0 follow that disk’s own write protection.',

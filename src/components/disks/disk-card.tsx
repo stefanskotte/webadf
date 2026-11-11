@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { DriveName } from '@/lib/drive-numbers';
 import { DiskIcon } from '@/components/ui/disk-icon';
 import type { DiskColor } from '@/lib/disk-icon';
 import { MAX_ENTRIES, type VolumeResult, type VolumeUsage } from '@/lib/adffs';
@@ -21,7 +22,7 @@ const Pill = ({ children }: { children: ReactNode }) => (
 
 export interface DiskCardProps {
   diskId: string; filename: string; title: string; color: DiskColor; hd: boolean; writeProtected: boolean;
-  badge: 'DF0' | 'DF1' | null; volume: VolumeResult | null; usage: VolumeUsage | null; sizeBytes: number;
+  badge: DriveName | null; volume: VolumeResult | null; usage: VolumeUsage | null; sizeBytes: number;
   rootBlock: number; holder: { text: string; stale: boolean } | null; light: 'in' | 'moving' | 'stale' | 'none';
   actions: ReactNode;
 }

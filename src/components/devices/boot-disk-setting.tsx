@@ -1,6 +1,6 @@
 'use client';
 import type { KeyboardEvent } from 'react';
-import { mainDrive } from '@/lib/fitted-as';
+import { mainDrive } from '@/lib/drive-numbers';
 import type { DeviceListItem } from '@/lib/queries';
 import { bootDiskNote, BOOT_DISK_FW, type BootDisk } from '@/lib/boot-disk';
 import { HelpTip } from '@/components/help/help-tip';
@@ -99,7 +99,7 @@ export function BootDiskSetting({ device, value, onChange, error, busy = false }
           </span>
         )}
       </div>
-      <span className="text-[12px]" style={{ color: 'var(--muted-2)' }} data-testid={`boot-disk-hint-${id}`}>{hint(value, mainDrive(device.fittedAs))}</span>
+      <span className="text-[12px]" style={{ color: 'var(--muted-2)' }} data-testid={`boot-disk-hint-${id}`}>{hint(value, mainDrive(device.driveBase))}</span>
       {error && (
         <span role="alert" className="text-[13px]" style={{ color: 'var(--amber-text)', overflowWrap: 'anywhere' }}
               data-testid={`boot-disk-error-${id}`}>{error}</span>

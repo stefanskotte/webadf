@@ -59,9 +59,10 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
     devices, game.disks.map((d) => ({ id: d.id, gameId: game.id, diskNo: d.diskNo, sha256: d.sha256 })), now,
   )[game.id]?.find((h) => h.state === 'mounted');
   const df0Disk = holdDisk ? game.disks.find((d) => d.id === holdDisk.diskId) : undefined;
-  const df1Disk = game.disks.find((d) => mountChoices(devices, d, now).some((c) => c.df1Held));
+  const df1Held = game.disks.map((d) => ({ d, c: mountChoices(devices, d, now).find((x) => x.df1Held) })).find((x) => x.c);
+  const df1Disk = df1Held?.d;
   const mountedText = df0Disk ? `${holdDisk!.drive} · ${df0Disk.imageFormat.toUpperCase()}`
-    : df1Disk ? `DF1 · ${df1Disk.imageFormat.toUpperCase()}` : null;
+    : df1Disk ? `${df1Held!.c!.secondName} · ${df1Disk.imageFormat.toUpperCase()}` : null;
 
   const fromName = resolveFrom(from, collections)?.name;
 

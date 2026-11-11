@@ -9,8 +9,8 @@ import type { BootDisk } from '@/lib/boot-disk';
 import { Modal } from '@/components/ui/modal';
 import { HelpTip } from '@/components/help/help-tip';
 import { BootDiskSetting } from './boot-disk-setting';
-import { FittedAsSetting } from './fitted-as-setting';
-import type { FittedAs } from '@/lib/fitted-as';
+import { DriveNumbersSetting } from './drive-numbers-setting';
+import type { DriveBase } from '@/lib/drive-numbers';
 import { DeleteDeviceConfirm } from './delete-device-dialog';
 
 /** The NFC line is known to be wrong: the attention dot's rule (spec §8.3). A board that sends no scan is unknown,
@@ -39,8 +39,8 @@ export function BoardSettings({ device, openOnArrival = false }: {
   const [draft, setDraft] = useState<BootDisk>(device.bootDisk);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
-  const [fitted, setFitted] = useState<FittedAs>(device.fittedAs);
-  const [fittedFailed, setFittedFailed] = useState<string | null>(null);
+  const [base, setBase] = useState<DriveBase>(device.driveBase);
+  const [baseFailed, setBaseFailed] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const deleting = useRef(false);
@@ -54,14 +54,14 @@ export function BoardSettings({ device, openOnArrival = false }: {
   const attention = needsAttention(device);
   const i2c = describeI2cScan(device.nfcReader, device.i2cAddrs, device.firmwareVersion);
   const bootDirty = draft !== device.bootDisk;
-  const fittedDirty = fitted !== device.fittedAs;
-  const dirty = bootDirty || fittedDirty;
+  const baseDirty = base !== device.driveBase;
+  const dirty = bootDirty || baseDirty;
 
   function show() {
     setDraft(device.bootDisk);
-    setFitted(device.fittedAs);
+    setBase(device.driveBase);
     setFailed(null);
-    setFittedFailed(null);
+    setBaseFailed(null);
     setOpen(true);
   }
 
@@ -74,12 +74,12 @@ export function BoardSettings({ device, openOnArrival = false }: {
     requestAnimationFrame(() => {
       document.getElementById(`device-${id}`)?.scrollIntoView({ block: 'center' });
       setDraft(device.bootDisk);
-      setFitted(device.fittedAs);
+      setBase(device.driveBase);
       setFailed(null);
-      setFittedFailed(null);
+      setBaseFailed(null);
       setOpen(true);
     });
-  }, [openOnArrival, id, device.bootDisk, device.fittedAs]);
+  }, [openOnArrival, id, device.bootDisk, device.driveBase]);
 
   // Each changed setting is its own PATCH; a refusal stays on its own section and keeps the modal open. A setting
   // that saved stays saved (the refresh shows it), so a retry sends only what is still different.
@@ -100,14 +100,14 @@ export function BoardSettings({ device, openOnArrival = false }: {
   async function save() {
     setBusy(true);
     setFailed(null);
-    setFittedFailed(null);
+    setBaseFailed(null);
     try {
-      const fittedOk = !fittedDirty || await patch('fitted-as', { fittedAs: fitted }, setFittedFailed);
+      const baseOk = !baseDirty || await patch('drive-base', { base }, setBaseFailed);
       const bootOk = !bootDirty || await patch('boot-disk', { mode: draft }, setFailed);
       startRefresh(() => router.refresh());
-      if (!fittedOk || !bootOk) return;
+      if (!baseOk || !bootOk) return;
       setOpen(false);
-      toast.success(bootDirty && !fittedDirty ? 'Disk at startup saved. The board uses it at its next start.'
+      toast.success(bootDirty && !baseDirty ? 'Disk at startup saved. The board uses it at its next start.'
         : bootDirty ? 'Board settings saved. Disk at startup applies at the board\'s next start.' : 'Board settings saved.');
     } finally { setBusy(false); }
   }
@@ -191,7 +191,7 @@ export function BoardSettings({ device, openOnArrival = false }: {
                </>
              )}>
         <div className="flex flex-col gap-[22px] px-6 py-5">
-          <FittedAsSetting device={device} value={fitted} onChange={setFitted} error={fittedFailed} busy={busy} />
+          <DriveNumbersSetting device={device} value={base} onChange={setBase} error={baseFailed} busy={busy} />
           <BootDiskSetting device={device} value={draft} onChange={setDraft} error={failed} busy={busy} />
           <div className="flex flex-col gap-2">
             <span className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>NFC reader</span>

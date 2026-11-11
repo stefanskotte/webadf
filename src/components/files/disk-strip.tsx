@@ -43,13 +43,16 @@ function names(list: MountChoice[]): string {
  */
 export function driveChip(choices: MountChoice[]): string {
   const main = choices.filter((c) => c.isThisDisk && c.state === 'converged');
-  // Named per drive: DF0, or DF1 for a board fitted in an external case (src/lib/fitted-as.ts).
+  // Named per drive: DF0, or DF1 for a board fitted in an external case (src/lib/drive-numbers.ts).
   if (main.length > 0) {
     const drives = [...new Set(main.map((c) => c.mainDrive))];
     return drives.map((d) => `In ${d}: of ${names(main.filter((c) => c.mainDrive === d))}`).join('; ');
   }
   const df1 = choices.filter((c) => c.df1Held);
-  if (df1.length > 0) return `In DF1: of ${names(df1)}`;
+  if (df1.length > 0) {
+    const drives = [...new Set(df1.map((c) => c.secondName))];
+    return drives.map((d) => `In ${d}: of ${names(df1.filter((c) => c.secondName === d))}`).join('; ');
+  }
   return holderText(choices)?.text ?? 'Not in a drive';
 }
 

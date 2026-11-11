@@ -66,7 +66,7 @@ export function MountAction({ diskId, choices, remote }: { diskId: string; choic
       // next poll. The layout's live poller (src/components/shell/live-refresh.tsx)
       // is what turns this into fact once the board reports.
       toast.success(drive === 'df1'
-        ? (df1Eject ? 'Eject DF1 requested' : 'Mount into DF1 requested')
+        ? (df1Eject ? `Eject ${choice.secondName} requested` : `Mount into ${choice.secondName} requested`)
         : !ejecting ? 'Mount requested' : choice.revertDiskId ? 'Mount cancelled' : 'Eject requested');
       router.refresh();
     } finally {
@@ -79,9 +79,9 @@ export function MountAction({ diskId, choices, remote }: { diskId: string; choic
     const opt = c.df1!;
     return (
       <button type="button" onClick={() => act(c, 'df1')} disabled={busy || !opt.enabled}
-              data-testid={testId} title={opt.enabled ? 'DF1 is read-only' : opt.reason ?? undefined}
+              data-testid={testId} title={opt.enabled ? `${c.secondName} is read-only` : opt.reason ?? undefined}
               className={`shrink-0 ${opt.isThisDisk ? ejectCls : cls}`} style={opt.isThisDisk ? ejectStyle : style}>
-        {opt.isThisDisk ? 'Eject DF1' : 'DF1'}
+        {opt.isThisDisk ? `Eject ${c.secondName}` : c.secondName}
       </button>
     );
   }
@@ -90,7 +90,7 @@ export function MountAction({ diskId, choices, remote }: { diskId: string; choic
   function df1Note(c: MountChoice, testId: string) {
     return (
       <span className="text-[11px]" data-testid={testId} style={{ color: 'var(--muted-2)' }}>
-        {c.df1!.enabled ? 'DF1 is read-only' : c.df1!.reason}
+        {c.df1!.enabled ? `${c.secondName} is read-only` : c.df1!.reason}
       </span>
     );
   }
@@ -118,7 +118,7 @@ export function MountAction({ diskId, choices, remote }: { diskId: string; choic
               className={ejecting ? ejectCls : cls}
               style={ejecting ? ejectStyle : style}>
         <DriveIcon up={ejecting} />
-        {busy ? 'Working…' : ejecting ? only.actionLabel : only.df1 ? 'DF0' : 'Mount'}
+        {busy ? 'Working…' : ejecting ? only.actionLabel : only.df1 ? only.mainDrive : 'Mount'}
       </button>
     );
     // DF1 off or Network: Mount is DF0's, exactly as before (spec D1).
@@ -181,7 +181,7 @@ export function MountAction({ diskId, choices, remote }: { diskId: string; choic
                           : `mount-${diskId}-to-${c.id}`}
                         className={`shrink-0 ${ejecting ? ejectCls : cls}`}
                         style={ejecting ? ejectStyle : style}>
-                  {!ejecting && c.df1 ? 'DF0' : c.actionLabel}
+                  {!ejecting && c.df1 ? c.mainDrive : c.actionLabel}
                 </button>
                 {c.df1 && df1Button(c, c.df1.isThisDisk ? `eject-${diskId}-df1-from-${c.id}` : `mount-${diskId}-df1-to-${c.id}`)}
               </span>

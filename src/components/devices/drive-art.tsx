@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import type { DriveName } from '@/lib/fitted-as';
+import type { DriveName } from '@/lib/drive-numbers';
 
 /**
  * The board's drawing of an Amiga drive (ModernDevicesV2, spec §3): case, bezel, the four stripes, the slot, the
@@ -31,7 +31,7 @@ export function artHeight(tall: boolean): number {
 
 export function DriveArt({ name, online, hasDisk, tall, drive = 'DF0' }: {
   name: string; online: boolean; hasDisk: boolean; tall: boolean;
-  /** The label on the drive's front: DF0, or DF1 for a board in an external case (src/lib/fitted-as.ts). */
+  /** The label on the drive's front: DF0, or DF1 for a board in an external case (src/lib/drive-numbers.ts). */
   drive?: DriveName;
 }) {
   const uid = useId().replace(/:/g, '');
