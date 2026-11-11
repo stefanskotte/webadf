@@ -15,19 +15,24 @@ Rev B with the PIM726 module replaced by its parts on our PCB: RP2350B, 16 MB fl
 | `verify_pins.py rev-c.kicad_pcb` | 209 of 209 against the RP2350 datasheet, firmware `board.c`, the pico-sdk header, the RM2 datasheet, and rev B's connected pads |
 | `verify_reg.py` | the regulator matches Raspberry Pi's pattern: 62 differences before, 0 now |
 | `pnpm hw:verify rev-c` | passes: ERC, DRC, firmware pins, J1 lines, 1k pull-ups, the regulator |
-| Gerbers | regenerated 2026-11-11, same 14 files and export settings (they reproduce the 2026-11-08 set from that board); 238 holes for 173 vias and 65 drilled pads. The 2026-11-08 set was analysed with kicad-happy, this one was not. Not yet through JLC's own check |
+| Gerbers | regenerated 2026-11-11 after the placement changes below, same 14 files and export settings (they reproduce the earlier sets from their boards); 233 holes for 168 vias and 65 drilled pads. The 2026-11-08 set was analysed with kicad-happy, this one was not. Not yet through JLC's own check |
 | Tracks | 0.15 mm, necked to 0.11 mm at the QFN, vias 0.45/0.2 mm, spacing 0.127 mm: within JLC's published 4-layer limits, not confirmed by JLC |
 
 ## Copper review, 2026-11-11
 
-A read of the autorouted copper found nine things to fix. Shanshe's hand re-route had not arrived, so they were fixed on this board with scripted and hand-placed tracks. Each change was kept only if DRC (with parity), `verify_reg.py`, `verify_pins.py` and `hw:verify rev-c` still passed. The regulator's pattern is untouched.
+A read of the autorouted copper found nine things to fix. Shanshe's hand re-route had not arrived, so they were fixed on this board with scripted and hand-placed tracks. Seven were fixed with the parts where they stood; the operator then allowed placement changes for the last two, QSPI and the USB pair. Each change was kept only if DRC (with parity), `verify_reg.py`, `verify_pins.py` and `hw:verify rev-c` still passed. The regulator's pattern is untouched.
 
 | | Before | Now |
 |---|---|---|
 | 1. IOVDD pins tracked to their 100 nF capacitor on the top layer | 1 of 11 (pin 64) | 7 of 11: 5, 29, 41, 50, 60, 76 added, 1.5 to 2.4 mm each; their vias under the chip are gone, so the capacitor's via is the pin's way to the plane |
 | 2. C15 to DVDD pin 32 | 15.4 mm, 2 vias | 2.2 mm on the top layer |
-| 3. QSPI | U1 to PSRAM 14.3 to 33.7 mm, 11 vias | **unchanged** |
-| 4. USB D+/D- | not a pair, median gap 3.6 mm | **unchanged** |
+| 3. QSPI, U1 to PSRAM (CLK, SD0, SD1, SD2, SD3) | 14.5, 27.7, 33.7, 14.3, 15.1 mm | 8.3, 8.1, 15.0, 13.8, 8.2 mm |
+| 3. QSPI, U1 to flash | 13.1, 13.5, 19.4, 18.4, 15.5 mm | 12.9, 10.0, 19.1, 16.5, 15.4 mm |
+| 3. QSPI, vias on those five lines | 9 | 5: none on CLK, SD0 and SD3, three on SD1, two on SD2 |
+| 3. QSPI, longest branch past a junction | 16.0 mm (SD0, through the flash to the PSRAM) | 13.5 mm (SD1 to the flash); CLK, SD0 and SD3 have no branch |
+| 3. Chip selects | QCS 23.0 mm, 3 vias; PSRAM_CS 20.5 mm, none | QCS **unchanged**; PSRAM_CS 21.5 mm, none |
+| 4. USB D+/D-, gap between the two, median | 3.8 mm, one each side of L1 | 0.15 mm, together on the back |
+| 4. USB D+/D-, resistor to pin | 15.7 and 17.5 mm, 2 vias each | 16.6 and 17.1 mm, 2 vias each |
 | 5. Crystal: XIN, pin to Y1 | 9.7 mm, 2 vias, through C25's pad | 7.2 mm, no vias, between Y1's ground pads |
 | 5. WL_D beside the crystal | between R22's pads, 0.65 mm from Y1 | crosses under XIN and XOUT on the back at the pins; 0.7 mm from R22 and 1.8 mm from Y1; 4 vias instead of 2 |
 | 5. WL_ON below Y1 | 0.5 mm from the XIN pad | 1.0 mm |
@@ -37,12 +42,12 @@ A read of the autorouted copper found nine things to fix. Shanshe's hand re-rout
 | 8. Segments under 0.05 mm | 82 (58 of zero length) | 0 |
 | 8. Joints under 45 degrees | 6 | 0 |
 | 9. CC1 between R26 and R28 | 0.09 mm for 0.3 mm | 0.15 mm |
-| Whole board | 972 segments, 180 vias | 885 segments, 173 vias |
+| Whole board | 972 segments, 180 vias | 855 segments, 168 vias |
 
 What was not done, and why:
 
-- **QSPI (3).** Not attempted on copper. U3 and U4 sit on opposite sides of the six lines, C20 and C28 stand in the lines' way out of U1, and QSD1 and QSD2 have to cross to reach both parts; every shorter path I drew for one line crossed another on both layers. It needs the six lines planned together, and probably U4 or C28 moved.
-- **USB pair (4).** A same-layer pair cannot be drawn with the parts where they are. D- (pin 66) can only leave U1 inwards, because the regulator's VREG_FB track passes 0.4 mm beyond the end of its pad; D+ (pin 67) is west of it; and at the connector the D+ resistor R25 is also west of R26, with their chip-side pads on the far side. The two orders are mirror images, so one line has to cross the other. Swapping R25 with R26 would take the crossing away; that is a placement change, not made here. At 12 Mbit/s over 17 mm it does not matter electrically.
+- **QSPI (3), placement changed.** U4 is turned half a turn and moved 0.9 mm west; R24 moved onto the PSRAM_CS run by R20, and C28 to below U4's supply pin. U3 and C20 stay. With U4 this way round, SD0, CLK and SD3 run on the top layer from U1 into U4's pads and out of them to U3's: no vias and no branch, over unbroken ground. SD1 and SD2 are on U4's far row and U3's far column, and U1's pin order puts them on the wrong side of the other three, so each branches at a via below U4 and hops under them on the back. What is not better: SD1 is still 19 mm to the flash, now through two vias; the flash lengths are spread wider (6.3 mm before, 9.1 now) because the short lines got shorter, none longer; PSRAM_CS is 1.0 mm longer; QCS was not touched, because C20 stands over its pin and it can only leave U1 inwards.
+- **USB pair (4), placement not changed.** Both lines leave pins 67 and 66 to the north-west on the top layer (the only way pin 66 can go), drop through a via each beside the regulator's keep-out, run the back 0.15 mm apart above the regulator, and come up at a via each beside R25 and R26. R25 and R26 were not swapped: at J6 the D+ pads come out west of D-, and CC2 and CC1 pass west, south and east of the two resistors, so a top-layer pair has no way out of that pocket whichever resistor stands where; with the vias the present order needs no crossing. Two vias a line is the least this layout allows. A pair with no vias would need R28 moved to J6's west side (or vias on CC2) and vias on PSRAM_CS instead; not done. The pair is on the back, so its reference is the +3.3 V plane, not ground; both planes are whole under it but for the vias' own holes. It is 12 Mbit/s.
 - **IOVDD pins 15 and 24** keep their vias under the chip: TRK0 on the top layer lies between pin 15 and C12, and WL_ON's via sits below pin 24 with WPROT on the back leaving it nowhere else to go. **Pins 68 and 69** have no capacitor this side of the USB pins.
 - **C23 to DVDD pins 51 and 10** (9.6 and 13.0 mm, two vias) is Raspberry Pi's back track and the ring under the chip: the pattern, so it stays.
 - **Via-in-pad, 9 left:** RM2's six ground castellations (the only free copper beside them is under the module), U5's two tab vias (the regulator's output and heat go through them) and U2 pin 19 (no free spot within 2 mm).
@@ -111,7 +116,7 @@ From the ISSI datasheet and `hardware_psram/psram.c`: same pinout and commands a
 
 1. **A person reading the schematic.** Nobody has yet.
 2. **A person checking the core regulator against datasheet figures 23 and 24**, and the crystal: Y1's placement and tracks are still autorouted, its part and caps are now Raspberry Pi's.
-3. **A person reading the autorouted copper:** QSPI lengths, the USB pair (12 Mbit/s, so no impedance control needed, but keep it short), the floppy lines. It has too many vias. The 2026-11-11 review fixed seven of its nine findings (above); QSPI and the USB pair are still as the autorouter left them, and the copper it did not touch is still autorouted.
+3. **A person reading the autorouted copper:** QSPI lengths, the USB pair (12 Mbit/s, so no impedance control needed, but keep it short), the floppy lines. It has too many vias. The 2026-11-11 review fixed its nine findings as far as the table above says (QCS and SD1's length to the flash are the leftovers); the copper it did not touch is still autorouted.
    LIV2 read it on 2026-11-08: tracks joined pads off-centre (the mask opening is 0.05 mm larger than the pad, so the copper beside it lies bare and invites bridges), U5 is in the way of U1's left-side signals, and the autorouter's copper is untidy generally. `centre.py` fixed 106 of the joins on this board, with DRC unchanged and the regulator untouched; 22 signal joins would come too close to other copper and need a person (it lists them), and 28 power stubs end on a via inside an SMD pad (via-in-pad, a solder-wicking risk). Moving U5, C29 and C30 4 mm down took 22% of the bottom-layer copper out of that corner (309 to 241 mm) and 6 vias, but Freerouting then leaves 5 connections unrouted, and this pipeline also leaves 4 unrouted without the move, so the move is not on this board yet.
 4. **Footprints against samples:** RM2, USB-C, buttons.
 5. **Board-edge clearances:** SW1 moved in 0.3 mm, now about 0.55 mm. M1 at the edge is intended.
