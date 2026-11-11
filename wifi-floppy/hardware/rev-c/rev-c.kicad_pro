@@ -586,16 +586,16 @@
         "pattern": "/MCU/VREG_LX"
       },
       {
-        "netclass": "Power",
-        "pattern": "VBUS"
-      },
-      {
         "netclass": "Reg",
         "pattern": "VSYS"
       },
       {
         "netclass": "Reg",
         "pattern": "+5V"
+      },
+      {
+        "netclass": "Reg",
+        "pattern": "VBUS"
       }
     ]
   },
