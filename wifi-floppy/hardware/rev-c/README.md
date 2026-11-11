@@ -4,7 +4,7 @@ Rev B with the PIM726 module replaced by its parts on our PCB: RP2350B, 16 MB fl
 
 **The schematic and the routed board agree, and nothing else about the board differs from using a PIM726 on rev B. It is still not a board to order:** see "Owed before a fab order".
 
-## Result (2026-11-05)
+## Result (2026-11-05, copper revised 2026-11-11)
 
 | Check | Result |
 |---|---|
@@ -15,8 +15,41 @@ Rev B with the PIM726 module replaced by its parts on our PCB: RP2350B, 16 MB fl
 | `verify_pins.py rev-c.kicad_pcb` | 209 of 209 against the RP2350 datasheet, firmware `board.c`, the pico-sdk header, the RM2 datasheet, and rev B's connected pads |
 | `verify_reg.py` | the regulator matches Raspberry Pi's pattern: 62 differences before, 0 now |
 | `pnpm hw:verify rev-c` | passes: ERC, DRC, firmware pins, J1 lines, 1k pull-ups, the regulator |
-| Gerbers | analysed with kicad-happy. Not yet through JLC's own check |
-| Tracks | 0.15 mm, necked as low as 0.09 mm at the QFN, vias 0.45/0.2 mm, spacing 0.127 mm: within JLC's published 4-layer limits, not confirmed by JLC |
+| Gerbers | regenerated 2026-11-11, same 14 files and export settings (they reproduce the 2026-11-08 set from that board); 238 holes for 173 vias and 65 drilled pads. The 2026-11-08 set was analysed with kicad-happy, this one was not. Not yet through JLC's own check |
+| Tracks | 0.15 mm, necked to 0.11 mm at the QFN, vias 0.45/0.2 mm, spacing 0.127 mm: within JLC's published 4-layer limits, not confirmed by JLC |
+
+## Copper review, 2026-11-11
+
+A read of the autorouted copper found nine things to fix. Shanshe's hand re-route had not arrived, so they were fixed on this board with scripted and hand-placed tracks. Each change was kept only if DRC (with parity), `verify_reg.py`, `verify_pins.py` and `hw:verify rev-c` still passed. The regulator's pattern is untouched.
+
+| | Before | Now |
+|---|---|---|
+| 1. IOVDD pins tracked to their 100 nF capacitor on the top layer | 1 of 11 (pin 64) | 7 of 11: 5, 29, 41, 50, 60, 76 added, 1.5 to 2.4 mm each; their vias under the chip are gone, so the capacitor's via is the pin's way to the plane |
+| 2. C15 to DVDD pin 32 | 15.4 mm, 2 vias | 2.2 mm on the top layer |
+| 3. QSPI | U1 to PSRAM 14.3 to 33.7 mm, 11 vias | **unchanged** |
+| 4. USB D+/D- | not a pair, median gap 3.6 mm | **unchanged** |
+| 5. Crystal: XIN, pin to Y1 | 9.7 mm, 2 vias, through C25's pad | 7.2 mm, no vias, between Y1's ground pads |
+| 5. WL_D beside the crystal | between R22's pads, 0.65 mm from Y1 | crosses under XIN and XOUT on the back at the pins; 0.7 mm from R22 and 1.8 mm from Y1; 4 vias instead of 2 |
+| 5. WL_ON below Y1 | 0.5 mm from the XIN pad | 1.0 mm |
+| 5. Ground plane under Y1 | 98% | 100% |
+| 6. VBUS, J6 A4/B9 to D3 | 0.2 mm wide, 9.3 mm, 0.5/0.25 vias | 0.5 mm wide, 6.9 mm, 0.7/0.35 vias; VBUS is in the Reg class (`rules.py`) |
+| 7. Plane vias inside an SMD pad | 28 | 9 |
+| 8. Segments under 0.05 mm | 82 (58 of zero length) | 0 |
+| 8. Joints under 45 degrees | 6 | 0 |
+| 9. CC1 between R26 and R28 | 0.09 mm for 0.3 mm | 0.15 mm |
+| Whole board | 972 segments, 180 vias | 885 segments, 173 vias |
+
+What was not done, and why:
+
+- **QSPI (3).** Not attempted on copper. U3 and U4 sit on opposite sides of the six lines, C20 and C28 stand in the lines' way out of U1, and QSD1 and QSD2 have to cross to reach both parts; every shorter path I drew for one line crossed another on both layers. It needs the six lines planned together, and probably U4 or C28 moved.
+- **USB pair (4).** A same-layer pair cannot be drawn with the parts where they are. D- (pin 66) can only leave U1 inwards, because the regulator's VREG_FB track passes 0.4 mm beyond the end of its pad; D+ (pin 67) is west of it; and at the connector the D+ resistor R25 is also west of R26, with their chip-side pads on the far side. The two orders are mirror images, so one line has to cross the other. Swapping R25 with R26 would take the crossing away; that is a placement change, not made here. At 12 Mbit/s over 17 mm it does not matter electrically.
+- **IOVDD pins 15 and 24** keep their vias under the chip: TRK0 on the top layer lies between pin 15 and C12, and WL_ON's via sits below pin 24 with WPROT on the back leaving it nowhere else to go. **Pins 68 and 69** have no capacitor this side of the USB pins.
+- **C23 to DVDD pins 51 and 10** (9.6 and 13.0 mm, two vias) is Raspberry Pi's back track and the ring under the chip: the pattern, so it stays.
+- **Via-in-pad, 9 left:** RM2's six ground castellations (the only free copper beside them is under the module), U5's two tab vias (the regulator's output and heat go through them) and U2 pin 19 (no free spot within 2 mm).
+- **VSYS and VBUS still cross under Y1 on the back**, behind both planes.
+- The link between J6's two VBUS pin pairs is still 0.2 mm: the connector's locating holes leave no room for more.
+
+XIN now runs under the crystal's body, between its two ground pads. That is short and has ground on both sides, but it is under the can: say if you would rather have it go round.
 
 ## Parts
 
@@ -78,7 +111,7 @@ From the ISSI datasheet and `hardware_psram/psram.c`: same pinout and commands a
 
 1. **A person reading the schematic.** Nobody has yet.
 2. **A person checking the core regulator against datasheet figures 23 and 24**, and the crystal: Y1's placement and tracks are still autorouted, its part and caps are now Raspberry Pi's.
-3. **A person reading the autorouted copper:** QSPI lengths, the USB pair (12 Mbit/s, so no impedance control needed, but keep it short), the floppy lines. It has too many vias.
+3. **A person reading the autorouted copper:** QSPI lengths, the USB pair (12 Mbit/s, so no impedance control needed, but keep it short), the floppy lines. It has too many vias. The 2026-11-11 review fixed seven of its nine findings (above); QSPI and the USB pair are still as the autorouter left them, and the copper it did not touch is still autorouted.
    LIV2 read it on 2026-11-08: tracks joined pads off-centre (the mask opening is 0.05 mm larger than the pad, so the copper beside it lies bare and invites bridges), U5 is in the way of U1's left-side signals, and the autorouter's copper is untidy generally. `centre.py` fixed 106 of the joins on this board, with DRC unchanged and the regulator untouched; 22 signal joins would come too close to other copper and need a person (it lists them), and 28 power stubs end on a via inside an SMD pad (via-in-pad, a solder-wicking risk). Moving U5, C29 and C30 4 mm down took 22% of the bottom-layer copper out of that corner (309 to 241 mm) and 6 vias, but Freerouting then leaves 5 connections unrouted, and this pipeline also leaves 4 unrouted without the move, so the move is not on this board yet.
 4. **Footprints against samples:** RM2, USB-C, buttons.
 5. **Board-edge clearances:** SW1 moved in 0.3 mm, now about 0.55 mm. M1 at the edge is intended.
@@ -88,5 +121,7 @@ From the ISSI datasheet and `hardware_psram/psram.c`: same pinout and commands a
 ## Rebuild
 
 In order, with KiCad's Python and Freerouting 2.5.0: `variants.sh` runs `build_board.py` (places), `regulator.py` (the regulator's copper), `stitch.py` (joins power pins to the planes), Freerouting on the outer layers, and `route.py` (adds the planes and pours), into `v1/`. Then by hand: `clean.py v1/rev-c.kicad_pcb v1/drc1.json` removes the router's stray vias and widens any neck below 0.09 mm, `finish.py` adds fiducials and sets the silkscreen, `centre.py v1/rev-c.kicad_pcb` brings tracks onto their pads' centres, `verify_pins.py` checks. The fiducials landed at free spots, not in the corners: place them properly in KiCad. Part references on the new parts are hidden until someone places them.
+
+**Since 2026-11-11 the board file is the source for the copper.** The review's fixes were made on `rev-c.kicad_pcb` itself; the steps above would rebuild the board without them. `rules.py` still holds the net classes.
 
 `package.sh` builds `rev-c-kicad-project.zip`: the project with `wifi-floppy-lib` copied in and the library tables pointed at the copies, so it opens anywhere with KiCad 10. Rebuild it after any change.
