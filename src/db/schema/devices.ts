@@ -199,12 +199,13 @@ export const devices = pgTable('devices', {
    * of a boot the server has not seen, unless the board says the boot is an update's own reboot.
    */
   bootDisk: text('boot_disk').notNull().default('last'),
-  /**
-   * 'internal' | 'external' (2026-11-11, src/lib/fitted-as.ts): where the board is fitted. The select line it answers
-   * on is set by the cable, so an external case makes its drive DF1 to the Amiga; this only names it so. Server-side
-   * only: nothing is sent to the board. External keeps the second drive Off (no DF2 line reaches the board).
-   */
+  /** Superseded the same day by driveBase (migration 0059 copied 'external' to 1). Unread; dropped in a later migration. */
   fittedAs: text('fitted_as').notNull().default('internal'),
+  /**
+   * 0-3 (2026-11-11, src/lib/drive-numbers.ts): the board's main drive is DF<n>, its second DF<n+1> (none at 3). Set by
+   * where it is plugged in; this only names the drives. Server-side only: nothing is sent to the board.
+   */
+  driveBase: integer('drive_base').notNull().default(0),
   /** The board's id for its current boot (?boot= on a poll or tap, fw 1.18.1+); null = never heard. */
   bootId: text('boot_id'),
   /** The boot before it: a late request carrying it is ignored, never taken for a new boot. Null = none yet. */

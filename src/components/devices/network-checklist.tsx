@@ -1,4 +1,5 @@
 import type { DeviceListItem } from '@/lib/queries';
+import { nameDrives } from '@/lib/drive-numbers';
 import { DriverLine } from '@/components/devices/driver-line';
 import { CheckRow } from '@/components/devices/check-row';
 import { HelpTip } from '@/components/help/help-tip';
@@ -12,7 +13,7 @@ export function NetworkChecklist({ device, now }: { device: DeviceListItem; now:
   return (
     <div className="flex min-w-0 items-start gap-1">
       <ul aria-label="Amiga network" data-testid={`net-checklist-${id}`} className="m-0 flex min-w-0 list-none flex-col gap-2 p-0">
-        <CheckRow testid={`net-disk-${id}`} l={driverDiskLine(device)} />
+        {(() => { const l = driverDiskLine(device); return <CheckRow testid={`net-disk-${id}`} l={{ ...l, text: nameDrives(l.text, device.driveBase) }} />; })()}
         <DriverLine id={id} seenAtMs={device.netDriverSeenAt?.getTime() ?? null} serverNow={now} />
         <CheckRow testid={`net-ip-${id}`} l={amigaAddressLine(device.netAmigaIp)} />
         {traffic && (

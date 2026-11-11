@@ -1,5 +1,5 @@
 import { deviceState, isOnline, type DeviceStateRow } from '@/lib/device-state';
-import { mainDrive, type DriveName, type FittedAs } from '@/lib/fitted-as';
+import { mainDrive, type DriveName, type DriveBase } from '@/lib/drive-numbers';
 
 /**
  * Which library titles are in a drive, for the card ring and its Eject.
@@ -18,8 +18,8 @@ export interface HoldDeviceRow extends DeviceStateRow {
   name: string;
   desiredDiskId: string | null;
   mountedDiskId: string | null;
-  /** Where the board is fitted (src/lib/fitted-as.ts); absent = inside the Amiga. */
-  fittedAs?: FittedAs;
+  /** Where the board is fitted (src/lib/drive-numbers.ts); absent = inside the Amiga. */
+  driveBase?: DriveBase;
 }
 
 export interface DiskRef { id: string; gameId: string; diskNo: number; sha256: string }
@@ -66,7 +66,7 @@ export function holdsByGame(
       online: isOnline(row.lastSeenAt, now),
       revertDiskId: !converged && row.mountedDiskId !== null && row.mountedDiskId !== disk.id
         ? row.mountedDiskId : null,
-      drive: mainDrive(row.fittedAs),
+      drive: mainDrive(row.driveBase),
     });
   }
   return out;

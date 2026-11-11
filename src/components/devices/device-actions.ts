@@ -82,7 +82,7 @@ export async function requestWriteProtect(diskId: string, writeProtected: boolea
 }
 
 /** POST /api/devices/[id]/eject {"drive":"df1"} -- the card's "Eject DF1" (spec 2026-10-14 §3.2). DF0 is untouched. */
-export async function requestEjectDf1(deviceId: string): Promise<boolean> {
+export async function requestEjectDf1(deviceId: string, name = 'DF1'): Promise<boolean> {
   let res: Response;
   try {
     res = await fetch(`/api/devices/${deviceId}/eject`, {
@@ -95,9 +95,9 @@ export async function requestEjectDf1(deviceId: string): Promise<boolean> {
     return false;
   }
   if (!res.ok) {
-    toast.error('Could not eject DF1', { description: `The server answered ${res.status}.` });
+    toast.error(`Could not eject ${name}`, { description: `The server answered ${res.status}.` });
     return false;
   }
-  toast.success('Eject DF1 requested');
+  toast.success(`Eject ${name} requested`);
   return true;
 }

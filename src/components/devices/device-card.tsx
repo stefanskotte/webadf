@@ -1,5 +1,5 @@
 import { firmwareCellText, signalCell, statusPill } from '@/lib/devices-look';
-import { EXTERNAL_NO_SECOND_DRIVE } from '@/lib/fitted-as';
+import { NO_SECOND_DRIVE } from '@/lib/drive-numbers';
 import { deviceState, isOnline, relative } from '@/lib/device-state';
 import { firmwareLabel, updateLabel, type FirmwareState } from '@/lib/firmware-state';
 import { isDefaultDeviceName } from '@/lib/device-name';
@@ -203,14 +203,14 @@ export function DeviceCard(
       )}
 
       <div className="mx-3 mb-3">
-        {/* Fitted in an external case (src/lib/fitted-as.ts): no line reaches the board for a second drive, so
-            the setting is not offered -- in words, with where to change it, rather than a disabled control. */}
-        {device.fittedAs === 'external' && device.secondDrive === 'off' ? (
+        {/* At DF3 (src/lib/drive-numbers.ts) there is no next drive number, so the setting is not offered -- in
+            words, with where to change it, rather than a disabled control. */}
+        {device.driveBase === 3 && device.secondDrive === 'off' ? (
           <div className="flex flex-col gap-[3px] rounded-[14px] border px-4 py-3.5" style={{ borderColor: 'var(--line)' }}
-               data-testid={`device-df1-external-${device.id}`}>
-            <span className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>Second drive: Off</span>
+               data-testid={`device-df1-none-${device.id}`}>
+            <span className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>Second drive: none</span>
             <span className="text-[12px]" style={{ color: 'var(--muted-2)' }}>
-              {EXTERNAL_NO_SECOND_DRIVE}. Change <em>Fitted as</em> in Board settings to use one.
+              {NO_SECOND_DRIVE}. Change <em>Drive numbers</em> in Board settings to use one.
             </span>
           </div>
         ) : (

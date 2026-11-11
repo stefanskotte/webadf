@@ -1,6 +1,6 @@
 import { deviceState, isOnline, type DeviceState, type DeviceStateRow } from '@/lib/device-state';
 import { df1Option, type Df1Board, type Df1Option } from '@/lib/df1-pick';
-import { mainDrive, type DriveName, type FittedAs } from '@/lib/fitted-as';
+import { mainDrive, nameDrives, secondDriveName, type DriveName, type DriveBase } from '@/lib/drive-numbers';
 
 /**
  * What one device offers for one disk: what it is holding now, and whether the
@@ -29,8 +29,8 @@ export interface MountTargetRow extends DeviceStateRow, Df1Board {
    */
   df1Sha256: string | null;
   df1PickSha256: string | null;
-  /** Where the board is fitted (src/lib/fitted-as.ts); absent = inside the Amiga. */
-  fittedAs?: FittedAs;
+  /** Where the board is fitted (src/lib/drive-numbers.ts); absent = inside the Amiga. */
+  driveBase?: DriveBase;
 }
 
 /** The disk being acted on: what rule 3 of spec 2026-10-14 §3.1 (a standard DD ADF) needs besides its ids. */
@@ -72,6 +72,8 @@ export interface MountChoice {
   df1Stale: boolean;
   /** What the Amiga calls this board's main drive: DF0, or DF1 when it is fitted in an external case. */
   mainDrive: DriveName;
+  /** What the Amiga calls its second drive (DF1, or DF2/DF3 by its drive numbers); DF1 where none (DF3 boards). */
+  secondName: DriveName;
 }
 
 /** "Lemmings — disk 2", degrading rather than rendering "null — disk null". */
@@ -126,11 +128,14 @@ export function mountChoice(row: MountTargetRow, disk: MountDisk, now: number): 
   const revertDiskId = isThisDisk && !converged && row.mountedDiskId !== null && row.mountedDiskId !== activeDiskId
     ? row.mountedDiskId : null;
 
-  const df1 = df1Option(row, disk);
+  // The option's refusal is written for DF0/DF1; this board's numbers in it (src/lib/drive-numbers.ts).
+  const opt = df1Option(row, disk);
+  const df1 = opt && opt.reason ? { ...opt, reason: nameDrives(opt.reason, row.driveBase) } : opt;
   const df1Held = df1?.isThisDisk === true && row.df1PickSha256 !== null && row.df1Sha256 === row.df1PickSha256;
   const df1Stale = df1?.isThisDisk === true && !df1Held && !isOnline(row.lastSeenAt, now);
 
-  return { id: row.id, name: row.name, state, holding, isThisDisk, action, actionLabel, revertDiskId, df1, df1Held, df1Stale, mainDrive: mainDrive(row.fittedAs) };
+  return { id: row.id, name: row.name, state, holding, isThisDisk, action, actionLabel, revertDiskId, df1, df1Held, df1Stale,
+    mainDrive: mainDrive(row.driveBase), secondName: secondDriveName(row.driveBase) ?? 'DF1' };
 }
 
 export function mountChoices(rows: MountTargetRow[], disk: MountDisk, now: number): MountChoice[] {
@@ -176,14 +181,14 @@ export function holderText(choices: MountChoice[]): HolderLine | null {
   const converged = held.filter((c) => c.state === 'converged');
   if (converged.length > 0) return { text: `In ${names(converged)}`, stale: false };
   const df1Held = inDf1.filter((c) => c.df1Held);
-  if (df1Held.length > 0) return { text: `In ${names(df1Held)} (DF1)`, stale: false };
+  if (df1Held.length > 0) return { text: `In ${names(df1Held)} (${df1Held[0].secondName})`, stale: false };
 
   const pending = held.filter((c) => c.state === 'pending');
   if (pending.length > 0) return { text: `Mounting to ${names(pending)}…`, stale: false };
   const df1Loading = inDf1.filter((c) => !c.df1Held && !c.df1Stale);
-  if (df1Loading.length > 0) return { text: `Mounting to ${names(df1Loading)} (DF1)…`, stale: false };
+  if (df1Loading.length > 0) return { text: `Mounting to ${names(df1Loading)} (${df1Loading[0].secondName})…`, stale: false };
 
   if (held.length > 0) return { text: `Requested on ${names(held)} — not confirmed`, stale: true };
-  if (inDf1.length > 0) return { text: `Requested on ${names(inDf1)} (DF1) — not confirmed`, stale: true };
+  if (inDf1.length > 0) return { text: `Requested on ${names(inDf1)} (${inDf1[0].secondName}) — not confirmed`, stale: true };
   return null;
 }

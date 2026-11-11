@@ -20,7 +20,7 @@ const disk: DiskInfo = {
 
 const board = (o: Partial<MountChoice> = {}): MountChoice => ({
   id: 'b1', name: 'A500 bench', state: 'empty', holding: null, isThisDisk: false, action: 'mount',
-  actionLabel: 'Mount here', revertDiskId: null, df1: null, df1Held: false, df1Stale: false, mainDrive: 'DF0', ...o,
+  actionLabel: 'Mount here', revertDiskId: null, df1: null, df1Held: false, df1Stale: false, mainDrive: 'DF0', secondName: 'DF1', ...o,
 });
 const inDf0 = board({ state: 'converged', holding: 'SysInfo — disk 1', isThisDisk: true, action: 'eject', actionLabel: 'Eject' });
 

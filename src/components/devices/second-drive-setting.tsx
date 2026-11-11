@@ -1,5 +1,6 @@
 'use client';
 import { useState, useTransition } from 'react';
+import { nameDrives, secondDriveName } from '@/lib/drive-numbers';
 import { useRouter } from 'next/navigation';
 import type { DeviceListItem } from '@/lib/queries';
 import { secondDriveStatus, DF1_SEEN_REASON, SECOND_DRIVE_NET_FW, secondDriveHelp, sel1Text, df1SeenText, type SecondDriveMode } from '@/lib/second-drive';
@@ -29,6 +30,9 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
   transfer?: { running: boolean } | null; sendLine?: string | null; uploadLine?: { text: string; href: boolean } | null;
 }) {
   const id = device.id;
+  // This board's drive numbers (src/lib/drive-numbers.ts): every text here is written for DF0 + DF1.
+  const nd = (t: string) => nameDrives(t, device.driveBase);
+  const second = secondDriveName(device.driveBase) ?? 'DF1';
   const router = useRouter();
   const [refreshing, startRefresh] = useTransition();
   const [busy, setBusy] = useState(false);
@@ -74,7 +78,7 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
       // Already on: "Next disk of the set" is DF1 with no pick, so drop the pick.
       if (!hasPick) return;
       setBusy(true);
-      try { if (await requestEjectDf1(id)) startRefresh(() => router.refresh()); }
+      try { if (await requestEjectDf1(id, second)) startRefresh(() => router.refresh()); }
       finally { setBusy(false); }
       return;
     }
@@ -91,7 +95,7 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
       });
       if (res.status === 409) {
         const j = await res.json() as { error: string; reason: string };
-        if (j.error === 'df1_seen') { setPending(mode); setRefused(DF1_SEEN_REASON); return 'refused'; } else setFailed(j.reason);   // m1: only df1_seen offers the override
+        if (j.error === 'df1_seen') { setPending(mode); setRefused(nd(DF1_SEEN_REASON)); return 'refused'; } else setFailed(nd(j.reason));   // m1: only df1_seen offers the override
         return false;
       }
       if (!res.ok) {
@@ -121,31 +125,37 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
       <div className="flex flex-col gap-3 px-4 py-3.5 lg:flex-row lg:items-center lg:gap-4">
         <div className="flex min-w-0 flex-1 items-center gap-4">
           <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-[10px] font-mono text-[12px] font-semibold"
-                style={{ background: 'var(--track)', color: 'var(--muted)' }}>DF1</span>
+                style={{ background: 'var(--track)', color: 'var(--muted)' }}>{second}</span>
           <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
             <span className="flex items-center gap-1 text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>
-              Second drive (DF1)
+              {`Second drive (${second})`}
               <HelpTip topic="second-drive" />
             </span>
             {/* Below sm the mode in words while the radios are closed (both values: the radios say it from sm). */}
             <span data-df1-mode="" className="text-[13px] font-semibold sm:hidden" style={{ color: 'var(--ink)' }}>
-              {`DF1 · ${RADIOS.find((r) => r.value === shown)?.label ?? ''}`}
+              {`${second} · ${RADIOS.find((r) => r.value === shown)?.label ?? ''}`}
             </span>
             {device.secondDriveCapable && (
               <span className="text-[12px]" style={{ color: 'var(--muted-2)' }} data-testid={`second-drive-help-${id}`}>
-                {secondDriveHelp(shown, hasPick)}
+                {nd(secondDriveHelp(shown, hasPick))}
               </span>
             )}
             <span className="text-[12px]" style={{ color: 'var(--muted-2)' }}>
               {sel1 && (
                 <>
-                  <span data-testid={`device-sel1-${id}`} data-value={String(device.sel1Wired)}>{sel1Text(device.sel1Wired!)}</span>
+                  <span data-testid={`device-sel1-${id}`} data-value={String(device.sel1Wired)}>{nd(sel1Text(device.sel1Wired!))}</span>
                   {' · '}
-                  <span data-testid={`device-df1seen-${id}`} data-value={String(device.df1Seen)}>{df1SeenText(device.df1Seen!)}</span>
+                  <span data-testid={`device-df1seen-${id}`} data-value={String(device.df1Seen)}>{nd(df1SeenText(device.df1Seen!))}</span>
                   {' · '}
                 </>
               )}
-              <span data-testid={`second-drive-status-${id}`}>{secondDriveStatus(device)}</span>
+              <span data-testid={`second-drive-status-${id}`}>{nd(secondDriveStatus(device))}</span>
+              {/* Not the usual DF0 + DF1 and no select seen on the second input: the likely reason, in words. */}
+              {(device.driveBase ?? 0) > 0 && device.sel1Wired === false && (
+                <span data-testid={`second-drive-unwired-${id}`}>
+                  {` · Your case or cable may not pass ${second}'s select line to the board.`}
+                </span>
+              )}
             </span>
           </div>
         </div>
@@ -183,12 +193,12 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
                 <button type="button" data-testid={`eject-df1-${id}`} disabled={busy || refreshing}
                         onClick={async () => {
                           setBusy(true);
-                          try { if (await requestEjectDf1(id)) startRefresh(() => router.refresh()); }
+                          try { if (await requestEjectDf1(id, second)) startRefresh(() => router.refresh()); }
                           finally { setBusy(false); }
                         }}
                         className="min-h-[30px] rounded-[10px] border px-3 text-[12px] font-medium disabled:opacity-50"
                         style={BOX_BTN_STYLE}>
-                  Eject DF1
+                  {`Eject ${second}`}
                 </button>
               )}
             </span>
@@ -200,7 +210,7 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
           {refused && (
             <div role="alert" className="flex flex-col gap-1 rounded-lg px-2 py-1" style={{ background: 'var(--warning-bg)', color: 'var(--warning-fg)' }}
                  data-testid={`second-drive-refused-${id}`}>
-              <span>{refused}. Switching DF1 on would make both drives unreadable.</span>
+              <span>{refused}. {nd('Switching DF1 on would make both drives unreadable.')}</span>
               {step === 0 ? (
                 <button type="button" className="self-start underline" onClick={() => setStep(1)}
                         data-testid={`second-drive-override-${id}`}>Switch on anyway…</button>
@@ -208,7 +218,7 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
                 <button type="button" className="self-start font-semibold underline" disabled={busy}
                         onClick={() => save(pending, true)}
                         data-testid={`second-drive-override-confirm-${id}`}>
-                  Yes, I have removed the other DF1 drive — switch DF1 on
+                  {nd('Yes, I have removed the other DF1 drive — switch DF1 on')}
                 </button>
               )}
             </div>

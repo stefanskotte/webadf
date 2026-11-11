@@ -1,5 +1,5 @@
 import { deviceState, isOnline, relative, type DeviceState } from '@/lib/device-state';
-import { asFittedAs, mainDrive, type DriveName } from '@/lib/fitted-as';
+import { asDriveBase, mainDrive, nameDrives, type DriveName } from '@/lib/drive-numbers';
 // The same predicate DeviceCard (also client-rendered) already imports.
 import { isDefaultDeviceName } from '@/lib/device-name';
 // Type-only: live-state.ts pulls in node:crypto, and this module's output is
@@ -151,8 +151,8 @@ export function toDriveChip(r: LiveStateRow, now: number): DriveChip {
     // desired-state write, so an offline board can still be asked.
     canEject: r.desiredSha256 !== null || r.mountedSha256 !== null,
     next: phase === 'loaded' ? r.next : null,
-    df1: r.secondDriveReported === 'df1' ? df1LineText(r, r.next) : null,
-    drive: mainDrive(asFittedAs(r.fittedAs)),
+    df1: r.secondDriveReported === 'df1' ? nameDrives(df1LineText(r, r.next), asDriveBase(r.driveBase)) : null,
+    drive: mainDrive(asDriveBase(r.driveBase)),
   };
 }
 

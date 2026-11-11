@@ -1,5 +1,6 @@
 // The disk page's look rules (Phase C4 spec §5.5): pure and client-safe.
 import type { AdfEntry } from '@/lib/adffs';
+import type { DriveName } from '@/lib/drive-numbers';
 import type { TreeChange } from '@/lib/disk-history/diff';
 import type { HistoryVersion } from '@/lib/disk-history/history';
 import type { MountChoice } from '@/lib/mount-choice';
@@ -80,11 +81,12 @@ export function driveLight(choices: MountChoice[]): 'in' | 'moving' | 'stale' | 
 }
 
 /** The disk row's badge rule (disk-row.tsx): DF0 converged on this disk, else DF1 holding its digest. */
-export function driveBadge(choices: MountChoice[]): 'DF0' | 'DF1' | null {
-  // The main drive is DF1 on a board fitted in an external case (src/lib/fitted-as.ts).
+export function driveBadge(choices: MountChoice[]): DriveName | null {
+  // The main drive is DF1 on a board fitted in an external case (src/lib/drive-numbers.ts).
   const main = choices.find((c) => c.state === 'converged' && c.isThisDisk);
   if (main) return main.mainDrive;
-  if (choices.some((c) => c.df1Held)) return 'DF1';
+  const second = choices.find((c) => c.df1Held);
+  if (second) return second.secondName;
   return null;
 }
 

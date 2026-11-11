@@ -1,6 +1,6 @@
 import { isOnline } from '@/lib/device-state';
 import { holdLabel, holdsByGame, type DiskRef, type HoldDeviceRow } from '@/lib/drive-holds';
-import { mainDrive, type DriveName } from '@/lib/fitted-as';
+import { mainDrive, secondDriveName, type DriveName } from '@/lib/drive-numbers';
 
 /**
  * Which titles of a bulk delete a board holds, and so are KEPT (spec 2026-10-26 library multi-select §3.3, Ruling 12).
@@ -65,21 +65,21 @@ export function planBulkDelete(
     if (mounted && !held.has(mounted.id)) {
       const label = holdLabel({
         deviceId: dev.id, deviceName: dev.name, diskId: mounted.id, diskNo: mounted.diskNo, state: 'mounted',
-        online: isOnline(dev.lastSeenAt, now), revertDiskId: null, drive: mainDrive(dev.fittedAs),
+        online: isOnline(dev.lastSeenAt, now), revertDiskId: null, drive: mainDrive(dev.driveBase),
       }, disksOf.get(mounted.gameId)?.length ?? 1);
-      add(mounted.gameId, { deviceName: dev.name, drive: mainDrive(dev.fittedAs), label });
+      add(mounted.gameId, { deviceName: dev.name, drive: mainDrive(dev.driveBase), label });
     }
     // DF1: the pick AND, separately, what the board reports in the drive when that is another disk.
     const pick = dev.df1DiskId !== null ? diskById.get(dev.df1DiskId) : undefined;
-    if (pick) add(pick.gameId, { deviceName: dev.name, drive: 'DF1', label: `In ${dev.name}${diskWords(pick.gameId, pick)}` });
+    if (pick) add(pick.gameId, { deviceName: dev.name, drive: secondDriveName(dev.driveBase) ?? 'DF1', label: `In ${dev.name}${diskWords(pick.gameId, pick)}` });
     if (dev.df1Sha256 !== null && pick?.sha256 !== dev.df1Sha256) {
       const content = disks.find((d) => d.sha256 === dev.df1Sha256);
-      if (content) add(content.gameId, { deviceName: dev.name, drive: 'DF1', label: `In ${dev.name}${diskWords(content.gameId, content)}` });
+      if (content) add(content.gameId, { deviceName: dev.name, drive: secondDriveName(dev.driveBase) ?? 'DF1', label: `In ${dev.name}${diskWords(content.gameId, content)}` });
     }
   }
   for (const s of sessions) {
     const d = diskById.get(s.diskId);
-    const drive = mainDrive(devices.find((x) => x.id === s.deviceId)?.fittedAs);
+    const drive = mainDrive(devices.find((x) => x.id === s.deviceId)?.driveBase);
     if (d) add(d.gameId, { deviceName: s.deviceName, drive, label: `Writing on ${s.deviceName}` });
   }
 

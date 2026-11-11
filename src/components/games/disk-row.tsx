@@ -88,7 +88,7 @@ export function DiskRow({ disk, gameId, choices, from, view = null, fobDevices =
       data-mounted={mounted ? 'true' : undefined}
     >
       <div className="flex min-w-0 flex-1 items-center gap-[18px]">
-        <DiskIcon color={color} size={56} hd={isHd} wp={disk.writeProtected || isHfe} mounted={mounted} drive={inMain ? inMain.mainDrive : 'DF1'}
+        <DiskIcon color={color} size={56} hd={isHd} wp={disk.writeProtected || isHfe} mounted={mounted} drive={inMain ? inMain.mainDrive : choices.find((c) => c.df1Held)?.secondName ?? 'DF1'}
                   className="shrink-0" />
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">

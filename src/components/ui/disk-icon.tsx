@@ -1,6 +1,7 @@
 'use client';
 
 import { useId } from 'react';
+import type { DriveName } from '@/lib/drive-numbers';
 import { DISK_BODIES, diskIconMetrics, type DiskColor } from '@/lib/disk-icon';
 
 /**
@@ -29,7 +30,7 @@ export function DiskIcon({
   stack?: number;
   mounted?: boolean;
   /** Which drive the badge names; the drive that actually holds the disk. */
-  drive?: 'DF0' | 'DF1';
+  drive?: DriveName;
   set?: string;
   title?: string;
   className?: string;
