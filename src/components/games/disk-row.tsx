@@ -67,7 +67,8 @@ export function DiskRow({ disk, gameId, choices, from, view = null, fobDevices =
   const isHd = isHdAdf(disk);
   // A board has CONFIRMED this disk: DF0 converged on it, or DF1 reports holding exactly its digest. A request still in
   // flight is not a hold (the hero's drive pill follows the same rule).
-  const inDf0 = choices.some((c) => c.state === 'converged' && c.isThisDisk);
+  const inMain = choices.find((c) => c.state === 'converged' && c.isThisDisk);
+  const inDf0 = inMain !== undefined;
   const mounted = inDf0 || choices.some((c) => c.df1Held);
   const name = disk.tosecName ?? disk.sourceFilename ?? `Disk ${disk.diskNo}`;
   const color = titleDiskColor({ id: disk.id, hasHd: isHd, kind, formats: [disk.imageFormat], authored });
@@ -87,7 +88,7 @@ export function DiskRow({ disk, gameId, choices, from, view = null, fobDevices =
       data-mounted={mounted ? 'true' : undefined}
     >
       <div className="flex min-w-0 flex-1 items-center gap-[18px]">
-        <DiskIcon color={color} size={56} hd={isHd} wp={disk.writeProtected || isHfe} mounted={mounted} drive={inDf0 ? 'DF0' : 'DF1'}
+        <DiskIcon color={color} size={56} hd={isHd} wp={disk.writeProtected || isHfe} mounted={mounted} drive={inMain ? inMain.mainDrive : 'DF1'}
                   className="shrink-0" />
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">

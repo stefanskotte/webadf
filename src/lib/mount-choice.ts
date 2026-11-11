@@ -1,5 +1,6 @@
 import { deviceState, isOnline, type DeviceState, type DeviceStateRow } from '@/lib/device-state';
 import { df1Option, type Df1Board, type Df1Option } from '@/lib/df1-pick';
+import { mainDrive, type DriveName, type FittedAs } from '@/lib/fitted-as';
 
 /**
  * What one device offers for one disk: what it is holding now, and whether the
@@ -28,6 +29,8 @@ export interface MountTargetRow extends DeviceStateRow, Df1Board {
    */
   df1Sha256: string | null;
   df1PickSha256: string | null;
+  /** Where the board is fitted (src/lib/fitted-as.ts); absent = inside the Amiga. */
+  fittedAs?: FittedAs;
 }
 
 /** The disk being acted on: what rule 3 of spec 2026-10-14 §3.1 (a standard DD ADF) needs besides its ids. */
@@ -67,6 +70,8 @@ export interface MountChoice {
    * and nobody is answering, DF1's equivalent of DF0's 'stale' (deviceState only knows DF0's mismatch).
    */
   df1Stale: boolean;
+  /** What the Amiga calls this board's main drive: DF0, or DF1 when it is fitted in an external case. */
+  mainDrive: DriveName;
 }
 
 /** "Lemmings — disk 2", degrading rather than rendering "null — disk null". */
@@ -125,7 +130,7 @@ export function mountChoice(row: MountTargetRow, disk: MountDisk, now: number): 
   const df1Held = df1?.isThisDisk === true && row.df1PickSha256 !== null && row.df1Sha256 === row.df1PickSha256;
   const df1Stale = df1?.isThisDisk === true && !df1Held && !isOnline(row.lastSeenAt, now);
 
-  return { id: row.id, name: row.name, state, holding, isThisDisk, action, actionLabel, revertDiskId, df1, df1Held, df1Stale };
+  return { id: row.id, name: row.name, state, holding, isThisDisk, action, actionLabel, revertDiskId, df1, df1Held, df1Stale, mainDrive: mainDrive(row.fittedAs) };
 }
 
 export function mountChoices(rows: MountTargetRow[], disk: MountDisk, now: number): MountChoice[] {

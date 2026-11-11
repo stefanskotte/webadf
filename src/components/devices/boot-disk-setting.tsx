@@ -1,5 +1,6 @@
 'use client';
 import type { KeyboardEvent } from 'react';
+import { mainDrive } from '@/lib/fitted-as';
 import type { DeviceListItem } from '@/lib/queries';
 import { bootDiskNote, BOOT_DISK_FW, type BootDisk } from '@/lib/boot-disk';
 import { HelpTip } from '@/components/help/help-tip';
@@ -13,10 +14,9 @@ import { HelpTip } from '@/components/help/help-tip';
 const RADIOS: { value: BootDisk; label: string }[] = [
   { value: 'last', label: 'Last disk' }, { value: 'empty', label: 'No disk' },
 ];
-const HINT: Record<BootDisk, string> = {
-  last: 'The board puts the last disk back in DF0 when it starts.',
-  empty: 'The board starts with DF0 empty.',
-};
+const hint = (v: BootDisk, drive: string) => v === 'last'
+  ? `The board puts the last disk back in ${drive} when it starts.`
+  : `The board starts with ${drive} empty.`;
 
 export function BootDiskSetting({ device, value, onChange, error, busy = false }: {
   device: DeviceListItem; value: BootDisk; onChange: (v: BootDisk) => void;
@@ -99,7 +99,7 @@ export function BootDiskSetting({ device, value, onChange, error, busy = false }
           </span>
         )}
       </div>
-      <span className="text-[12px]" style={{ color: 'var(--muted-2)' }} data-testid={`boot-disk-hint-${id}`}>{HINT[value]}</span>
+      <span className="text-[12px]" style={{ color: 'var(--muted-2)' }} data-testid={`boot-disk-hint-${id}`}>{hint(value, mainDrive(device.fittedAs))}</span>
       {error && (
         <span role="alert" className="text-[13px]" style={{ color: 'var(--amber-text)', overflowWrap: 'anywhere' }}
               data-testid={`boot-disk-error-${id}`}>{error}</span>

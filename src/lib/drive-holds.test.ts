@@ -60,7 +60,7 @@ describe('holdsByGame', () => {
 });
 
 describe('holdLabel and holdAction', () => {
-  const h: Hold = { deviceId: 'x', deviceName: 'WifiFloppy1', diskId: 'd', diskNo: 2, state: 'mounted', online: true, revertDiskId: null };
+  const h: Hold = { deviceId: 'x', deviceName: 'WifiFloppy1', diskId: 'd', diskNo: 2, state: 'mounted', online: true, revertDiskId: null, drive: 'DF0' };
   it('says where, which disk of a set, and offline', () => {
     expect(holdLabel(h, 1)).toBe('In WifiFloppy1');
     expect(holdLabel(h, 3)).toBe('In WifiFloppy1 — disk 2');

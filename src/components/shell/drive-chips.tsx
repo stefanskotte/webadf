@@ -482,7 +482,7 @@ export function DriveCard({ chip, close }: { chip: DriveChip; close: () => void 
               {chip.name}
             </Link>
             <span aria-hidden="true" className="shrink-0 whitespace-pre font-mono text-[12px] font-medium text-(--muted-2)">
-              {' · DF0'}
+              {` · ${chip.drive}`}
             </span>
           </span>
           {/* Flex, so a long title truncates and "disk n of N" always survives (by-hand finding, 390 px). */}

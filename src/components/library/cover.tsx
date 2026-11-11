@@ -25,6 +25,8 @@ export function DriveBadge({ holds, diskCount, inline = false }: {
 }) {
   if (!holds || holds.length === 0) return null;
   const mounted = holds.some((h) => h.state === 'mounted');
+  // DF0, or DF1 for a board in an external case (src/lib/fitted-as.ts); both when two boards differ.
+  const drive = [...new Set(holds.map((h) => h.drive))].join('/');
   return (
     <span data-testid="drive-badge" title={holds.map((h) => holdLabel(h, diskCount)).join('; ')}
           className={`flex items-center gap-[5px] rounded-full font-mono text-[11px] font-semibold leading-4 ${
@@ -34,7 +36,7 @@ export function DriveBadge({ holds, diskCount, inline = false }: {
             style={mounted
               ? { background: 'var(--online-dot)', boxShadow: '0 0 5px var(--online-dot)' }
               : { background: 'var(--fetch-dot)' }} />
-      {mounted ? 'DF0' : 'DF0…'}
+      {mounted ? drive : `${drive}…`}
     </span>
   );
 }

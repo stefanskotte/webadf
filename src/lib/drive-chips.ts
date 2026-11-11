@@ -1,4 +1,5 @@
 import { deviceState, isOnline, relative, type DeviceState } from '@/lib/device-state';
+import { asFittedAs, mainDrive, type DriveName } from '@/lib/fitted-as';
 // The same predicate DeviceCard (also client-rendered) already imports.
 import { isDefaultDeviceName } from '@/lib/device-name';
 // Type-only: live-state.ts pulls in node:crypto, and this module's output is
@@ -70,6 +71,8 @@ export interface DriveChip {
   online: boolean;
   state: DeviceState;
   phase: DrivePhase;
+  /** What the Amiga calls the board's drive: DF0, or DF1 when it is fitted in an external case. */
+  drive: DriveName;
   /**
    * The disk in the drive as the BOARD reported it -- null when empty, and
    * null while loading (the reported disk then is the OLD one, and naming it
@@ -149,6 +152,7 @@ export function toDriveChip(r: LiveStateRow, now: number): DriveChip {
     canEject: r.desiredSha256 !== null || r.mountedSha256 !== null,
     next: phase === 'loaded' ? r.next : null,
     df1: r.secondDriveReported === 'df1' ? df1LineText(r, r.next) : null,
+    drive: mainDrive(asFittedAs(r.fittedAs)),
   };
 }
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useRef, useState, type RefObject } from 'react';
+import { mainDrive } from '@/lib/fitted-as';
 import type { DeviceListItem } from '@/lib/queries';
 import { panelHeight } from '@/lib/display-editor-geometry';
 import { HelpTip } from '@/components/help/help-tip';
@@ -31,7 +32,7 @@ export function DriveFront({ device, online }: { device: DeviceListItem; online:
       <div className="flex w-full flex-col items-center gap-3.5 rounded-[16px] px-[18px] pb-[18px] pt-[22px]"
            style={{ background: 'var(--ground)' }} data-testid={`device-bezel-${device.id}`}>
         <div className="relative w-full" style={{ maxWidth: 304 }}>
-          <DriveArt name={device.name} online={online} hasDisk={hasDisk} tall={tall} />
+          <DriveArt name={device.name} online={online} hasDisk={hasDisk} tall={tall} drive={mainDrive(device.fittedAs)} />
           <DriveGlass device={device} online={online} onOpenDisplay={openDisplay} />
         </div>
         <div className="flex w-full items-center justify-between text-[12px]" style={{ color: 'var(--muted-2)' }}>

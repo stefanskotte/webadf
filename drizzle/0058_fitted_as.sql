@@ -1,0 +1,1 @@
+ALTER TABLE "devices" ADD COLUMN "fitted_as" text DEFAULT 'internal' NOT NULL;

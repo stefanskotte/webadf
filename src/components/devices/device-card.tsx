@@ -1,4 +1,5 @@
 import { firmwareCellText, signalCell, statusPill } from '@/lib/devices-look';
+import { EXTERNAL_NO_SECOND_DRIVE } from '@/lib/fitted-as';
 import { deviceState, isOnline, relative } from '@/lib/device-state';
 import { firmwareLabel, updateLabel, type FirmwareState } from '@/lib/firmware-state';
 import { isDefaultDeviceName } from '@/lib/device-name';
@@ -202,10 +203,22 @@ export function DeviceCard(
       )}
 
       <div className="mx-3 mb-3">
-        <SecondDriveSetting device={device} next={next} now={now}
-                            transfer={inNetwork ? transfer ?? null : null}
-                            sendLine={inNetwork ? sendLine ?? null : null}
-                            uploadLine={inNetwork ? uploadLine ?? null : null} />
+        {/* Fitted in an external case (src/lib/fitted-as.ts): no line reaches the board for a second drive, so
+            the setting is not offered -- in words, with where to change it, rather than a disabled control. */}
+        {device.fittedAs === 'external' && device.secondDrive === 'off' ? (
+          <div className="flex flex-col gap-[3px] rounded-[14px] border px-4 py-3.5" style={{ borderColor: 'var(--line)' }}
+               data-testid={`device-df1-external-${device.id}`}>
+            <span className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>Second drive: Off</span>
+            <span className="text-[12px]" style={{ color: 'var(--muted-2)' }}>
+              {EXTERNAL_NO_SECOND_DRIVE}. Change <em>Fitted as</em> in Board settings to use one.
+            </span>
+          </div>
+        ) : (
+          <SecondDriveSetting device={device} next={next} now={now}
+                              transfer={inNetwork ? transfer ?? null : null}
+                              sendLine={inNetwork ? sendLine ?? null : null}
+                              uploadLine={inNetwork ? uploadLine ?? null : null} />
+        )}
       </div>
     </article>
   );
