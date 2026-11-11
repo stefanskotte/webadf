@@ -110,7 +110,9 @@ test('files dropped from the computer land in the folder the pane shows, as a ne
   const review = page.getByTestId('files-drop-review');
   await expect(review.getByTestId('drop-staging-list')).toContainText('Notes.txt');
   await review.getByTestId('drop-commit').click();
-  await expect(review).toHaveCount(0);
+  // The review closes when the write answers, the same moment as the toast: the same 15 s budget. A drop is several
+  // database and blob round trips, 4-5 s from a laptop away from the database (about 120 ms each, 2026-11-11).
+  await expect(review).toHaveCount(0, { timeout: 15_000 });
   await expect(page.getByText(/^Added 1 item to .+ — saved as version 1\.$/)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId('pane-right').getByTestId('pane-row').filter({ hasText: 'Notes.txt' })).toHaveCount(1);
   await expect(page.getByTestId('disk-strip-right').getByTestId('disk-strip-history-toggle')).toHaveText('History · v1 ▾');
@@ -165,6 +167,8 @@ async function fileIn(page: Page, name: string, gameIds: string[]): Promise<stri
 }
 
 test('a filed title: Files… opens its disk inside its first collection, and the strip, a drop and its mark follow the prefixed path (Files 2 §3.1)', async ({ page }) => {
+  // Sign-up, two seeded disks, a collection, a drop and two page loads: past 30 s on a slow link to the database.
+  test.slow();
   const { orgId } = await signUpFresh(page);
   const tag = runTag();
   const { gameId, diskId } = await seedRealDisk(orgId, tag);
