@@ -200,6 +200,10 @@ test('Devices cards are one per row at 390px, and nothing overflows the viewport
   for (const box of nonNull) {
     expect(box.x + box.width).toBeLessThanOrEqual(390);
   }
+  // The error sits behind the Needs attention strip's Details (2026-11-12): open it, then measure.
+  await hydrated(page, `device-attention-toggle-${idA}`);
+  await page.getByTestId(`device-attention-toggle-${idA}`).click();
+  await expect(page.getByTestId(`device-error-${idA}`)).toBeVisible();
   const errorBox = (await page.getByTestId(`device-error-${idA}`).boundingBox())!;
   expect(errorBox.x + errorBox.width).toBeLessThanOrEqual(390);
   const overflow = await page.evaluate(

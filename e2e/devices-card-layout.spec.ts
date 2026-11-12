@@ -6,7 +6,8 @@ import { signUpFresh } from './helpers';
 import { pairDevice, cleanupSeeded } from './device-helpers';
 
 // The card's figures never break a value mid-token (C9 shots, 2026-10-26: at 1440 the MAC wrapped to "…AC:C / A"
-// and the firmware to "1.21.1+ga5424 / b4"). A MAC and a version are read and copied as one piece.
+// and the firmware to "1.21.1+ga5424 / b4"). Since 2026-11-12 the MAC is in Board settings and the firmware line
+// drops its build suffix, so the whole line fits one line.
 test.afterAll(cleanupSeeded);
 
 /** The distinct line tops a substring of `el`'s text is drawn on. */
@@ -33,14 +34,24 @@ async function seedBoard(page: Page, request: Parameters<typeof pairDevice>[1]) 
 }
 
 for (const width of [1440, 1280, 1024, 390]) {
-  test(`at ${width} px the MAC and the firmware version are each on one line`, async ({ page, request }) => {
+  test(`at ${width} px the firmware line is words on one line, the MAC is off the card`, async ({ page, request }) => {
     const id = await seedBoard(page, request);
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/devices');
-    const card = page.getByTestId(`device-firmware-${id}`).locator('xpath=ancestor::dl[1]');
-    await expect(card).toBeVisible();
-    expect(await linesOf(card, '02:D6:E7:07:AC:CA'), 'the MAC').toBe(1);
-    expect(await linesOf(page.getByTestId(`device-firmware-${id}`), '1.21.1+ga5424b4'), 'the version').toBe(1);
+    const fw = page.getByTestId(`device-firmware-${id}`);
+    await expect(fw).toBeVisible();
+    // Firmware in words (2026-11-12): no build suffix in the text, the full version in the title, and the whole line
+    // (version and state) on one line at 390 and 1440 -- it spans both columns while online.
+    await expect(fw).not.toContainText('+ga5424b4');
+    await expect(fw).toHaveAttribute('title', 'Firmware 1.21.1+ga5424b4');
+    const text = (await fw.textContent())!;
+    expect(text).toMatch(/^1\.21\.1 · /);
+    // Never broken mid-word: the version and every word of the state each sit on one line. (At 1024 the info column
+    // beside the drive tile and the aside is ~170 px, so the state may take a second line, at a space.)
+    for (const word of text.split(/\s+/).filter((w) => w.length > 1)) expect(await linesOf(fw, word), word).toBe(1);
+    if (width === 390 || width === 1440) expect(await linesOf(fw, text), 'the firmware line').toBe(1);
+    // The MAC moved to Board settings.
+    await expect(page.getByTestId(`device-facts-${id}`)).not.toContainText('02:D6:E7:07:AC:CA');
     // And the page never scrolls sideways for it.
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });

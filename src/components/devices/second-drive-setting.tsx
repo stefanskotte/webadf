@@ -1,5 +1,6 @@
 'use client';
 import { useState, useTransition } from 'react';
+import { ChevronDown } from 'lucide-react';
 import { nameDrives, secondDriveName } from '@/lib/drive-numbers';
 import { useRouter } from 'next/navigation';
 import type { DeviceListItem } from '@/lib/queries';
@@ -10,7 +11,7 @@ import { df1LineText } from '@/lib/df1-pick';
 import { requestEjectDf1 } from '@/components/devices/device-actions';
 import { NetworkChecklist } from '@/components/devices/network-checklist';
 import { TransferBox } from '@/components/devices/transfer-box';
-import { BOX_BTN, BOX_BTN_STYLE } from '@/components/devices/box-button';
+import { BOX_BTN_STYLE } from '@/components/devices/box-button';
 
 /** Second drive (DF1): Off | Next disk of the set | Any disk | Network. "Next disk of the set" and "Any disk" are both
  *  the stored 'df1' (spec 2026-10-14 D4's "On"): the menu shows Any disk while DF1 holds a disk mounted into it (a
@@ -24,10 +25,12 @@ const RADIOS: { value: Radio; label: string }[] = [
   { value: 'net', label: 'Network (PaulaNET)' }, { value: 'any', label: 'Any disk' },
 ];
 
-export function SecondDriveSetting({ device, next, now, transfer = null, sendLine = null, uploadLine = null }: {
+export function SecondDriveSetting({ device, next, now, transfer = null, sendLine = null, uploadLine = null, initiallyOpen = false }: {
   device: DeviceListItem; next?: NextInfo | null; now: number;
   /** The Transfer box lives in the Network panel when the board reports Network (spec §7). */
   transfer?: { running: boolean } | null; sendLine?: string | null; uploadLine?: { text: string; href: boolean } | null;
+  /** Start open; the card never passes it (closed by default), unit tests render the open panel with it. */
+  initiallyOpen?: boolean;
 }) {
   const id = device.id;
   // This board's drive numbers (src/lib/drive-numbers.ts): every text here is written for DF0 + DF1.
@@ -42,9 +45,11 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
   const [step, setStep] = useState<0 | 1>(0);   // 1 = "are you sure" shown
   // "Any disk" chosen while DF1 holds no pick yet: shown as chosen until the page knows otherwise.
   const [wantAny, setWantAny] = useState(false);
-  // Below sm the radios hide behind "Change second drive" (C7 spec §6.2, Ruling 18). Local state: a save's refresh
-  // re-renders this card and keeps it open.
-  const [phoneOpen, setPhoneOpen] = useState(false);
+  // Collapsed by default (operator 2026-11-12: the card overwhelmed new users): the heading row names the mode and
+  // the disk line and a Network board's Transfer box stay; the caret opens the radios, the help line, the select-line
+  // diagnostics and the network checklist. Local state: a save's refresh re-renders this card and keeps it open.
+  // Replaces the phone-only "Change second drive" button (C7 spec §6.2), which did the same below sm.
+  const [open, setOpen] = useState(initiallyOpen);
   const hasPick = device.df1DiskId !== null;
   const shown: Radio = device.secondDrive === 'df1' && (hasPick || wantAny) ? 'any' : device.secondDrive;
   // While a save runs the radios are aria-disabled, not disabled: a disabled button drops focus to the body. Input
@@ -122,7 +127,7 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
   const hasBody = showDisk || failed || refused;
   return (
     <div className="flex flex-col rounded-[14px] border" style={{ borderColor: 'var(--line)' }} data-testid={`device-df1-${id}`}>
-      <div className="flex flex-col gap-3 px-4 py-3.5 lg:flex-row lg:items-center lg:gap-4">
+      <div className="flex flex-col gap-3 px-4 py-3.5">
         <div className="flex min-w-0 flex-1 items-center gap-4">
           <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-[10px] font-mono text-[12px] font-semibold"
                 style={{ background: 'var(--track)', color: 'var(--muted)' }}>{second}</span>
@@ -131,16 +136,18 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
               {`Second drive (${second})`}
               <HelpTip topic="second-drive" />
             </span>
-            {/* Below sm the mode in words while the radios are closed (both values: the radios say it from sm). */}
-            <span data-df1-mode="" className="text-[13px] font-semibold sm:hidden" style={{ color: 'var(--ink)' }}>
-              {`${second} · ${RADIOS.find((r) => r.value === shown)?.label ?? ''}`}
-            </span>
-            {device.secondDriveCapable && (
+            {/* The mode in words while the panel is closed (both values: the radios say it when open). */}
+            {!open && (
+              <span data-df1-mode="" data-testid={`second-drive-summary-${id}`} className="text-[13px]" style={{ color: 'var(--muted)' }}>
+                {RADIOS.find((r) => r.value === shown)?.label ?? ''}
+              </span>
+            )}
+            {open && device.secondDriveCapable && (
               <span className="text-[12px]" style={{ color: 'var(--muted-2)' }} data-testid={`second-drive-help-${id}`}>
                 {nd(secondDriveHelp(shown, hasPick))}
               </span>
             )}
-            <span className="text-[12px]" style={{ color: 'var(--muted-2)' }}>
+            {open && <span className="text-[12px]" style={{ color: 'var(--muted-2)' }}>
               {sel1 && (
                 <>
                   <span data-testid={`device-sel1-${id}`} data-value={String(device.sel1Wired)}>{nd(sel1Text(device.sel1Wired!))}</span>
@@ -156,15 +163,17 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
                   {` · Your case or cable may not pass ${second}'s select line to the board.`}
                 </span>
               )}
-            </span>
+            </span>}
           </div>
+          <button type="button" data-testid={`second-drive-toggle-${id}`} aria-expanded={open}
+                  aria-controls={`second-drive-group-${id}`} onClick={() => setOpen((o) => !o)}
+                  aria-label={open ? `Hide ${second} settings` : `Show ${second} settings`}
+                  className="inline-flex size-8 shrink-0 items-center justify-center rounded-[9px] border bg-transparent hover:bg-[var(--track)] max-sm:size-11"
+                  style={{ borderColor: 'var(--line-strong)', color: 'var(--muted)' }}>
+            <ChevronDown aria-hidden className="size-4 transition-transform" style={{ transform: open ? 'rotate(180deg)' : undefined }} />
+          </button>
         </div>
-        <button type="button" data-testid={`df1-change-${id}`} aria-expanded={phoneOpen}
-                aria-controls={`second-drive-group-${id}`} onClick={() => setPhoneOpen((o) => !o)}
-                className={`${BOX_BTN} w-full sm:hidden`} style={BOX_BTN_STYLE}>
-          {phoneOpen ? 'Done' : 'Change second drive'}
-        </button>
-        <div className={`flex min-w-0 flex-col gap-1 lg:items-end ${phoneOpen ? '' : 'max-sm:hidden'}`}>
+        {open && <div className="flex min-w-0 flex-col gap-1 sm:items-start sm:pl-14">
           <div role="radiogroup" aria-label="Second drive mode" id={`second-drive-group-${id}`} data-testid={`second-drive-${id}`} data-value={shown}
                onKeyDown={onKeyDown} className="seg seg--sm max-w-full flex-wrap max-sm:flex-col max-sm:items-stretch">
             {RADIOS.map((r) => (
@@ -182,7 +191,7 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
               Network needs firmware {SECOND_DRIVE_NET_FW} or newer
             </span>
           )}
-        </div>
+        </div>}
       </div>
       {hasBody && (
         <div className="flex flex-col gap-2 px-4 pb-3.5 text-[12px]" style={{ color: 'var(--muted)' }}>
@@ -225,10 +234,11 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
           )}
         </div>
       )}
-      {netPanel && (
-        <div className="grid gap-5 border-t px-4 pb-3.5 pt-3 md:grid-cols-[minmax(0,1fr)_300px] md:pl-[72px]"
+      {/* Closed, a Network board keeps its Transfer box (that is everyday use, not a setting); the checklist opens. */}
+      {netPanel && (open || hasTransfer) && (
+        <div className={`grid gap-5 border-t px-4 pb-3.5 pt-3 md:pl-[72px] ${open ? 'md:grid-cols-[minmax(0,1fr)_300px]' : 'md:grid-cols-[300px]'}`}
              style={{ borderColor: 'var(--hairline)' }}>
-          <NetworkChecklist device={device} now={now} />
+          {open && <NetworkChecklist device={device} now={now} />}
           {hasTransfer && <TransferBox deviceId={id} transfer={transfer} sendLine={sendLine} uploadLine={uploadLine} />}
         </div>
       )}

@@ -13,7 +13,8 @@ const board = (over: Partial<DeviceListItem> = {}) => ({
   netDriverSeenAt: null, netAmigaIp: null, netFramesIn: null, netFramesOut: null, firmwareVersion: '1.21.1',
   ...over,
 }) as unknown as DeviceListItem;
-const render = (d: DeviceListItem) => renderToStaticMarkup(createElement(SecondDriveSetting, { device: d, now: 0 }));
+const render = (d: DeviceListItem, initiallyOpen = true) =>
+  renderToStaticMarkup(createElement(SecondDriveSetting, { device: d, now: 0, initiallyOpen }));
 
 describe('SecondDriveSetting radiogroup', () => {
   it('is a radiogroup of four radios in board order, Any disk checked on a pick', () => {
@@ -48,15 +49,23 @@ describe('SecondDriveSetting radiogroup', () => {
   });
 });
 
-describe('SecondDriveSetting below sm (C7 spec §6.2, Ruling 18)', () => {
-  it('says the mode in one line and offers Change second drive, which controls the radiogroup', () => {
-    const html = render(board({ secondDrive: 'net', secondDriveReported: 'net', df1DiskId: null }));
-    expect(html).toMatch(/<span data-df1-mode="" class="[^"]*sm:hidden[^"]*"[^>]*>DF1 · Network \(PaulaNET\)<\/span>/);
-    const btn = html.match(/<button[^>]*data-testid="df1-change-d1"[^>]*>[^<]*<\/button>/)![0];
+describe('SecondDriveSetting closed by default (operator 2026-11-12)', () => {
+  it('says the mode in one line behind a caret that controls the radiogroup, and draws no radios', () => {
+    const html = render(board({ secondDrive: 'net', secondDriveReported: 'net', df1DiskId: null }), false);
+    expect(html).toMatch(/<span data-df1-mode=""[^>]*data-testid="second-drive-summary-d1"[^>]*>Network \(PaulaNET\)<\/span>/);
+    const btn = html.match(/<button[^>]*data-testid="second-drive-toggle-d1"[^>]*>/)![0];
     expect(btn).toContain('aria-expanded="false"');
     expect(btn).toContain('aria-controls="second-drive-group-d1"');
-    expect(btn).toContain('sm:hidden');
-    expect(btn).toContain('>Change second drive</button>');
-    expect(html).toMatch(/<div[^>]*class="[^"]*max-sm:hidden[^"]*"[^>]*>\s*<div role="radiogroup"[^>]*id="second-drive-group-d1"/);
+    expect(btn).toContain('aria-label="Show DF1 settings"');
+    expect(html).not.toContain('role="radiogroup"');
+    expect(html).not.toContain('net-checklist-d1');
+  });
+
+  it('opened, the summary goes and the radios, help line and checklist show', () => {
+    const html = render(board({ secondDrive: 'net', secondDriveReported: 'net', df1DiskId: null }));
+    expect(html).not.toContain('second-drive-summary-d1');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('role="radiogroup"');
+    expect(html).toContain('second-drive-help-d1');
   });
 });

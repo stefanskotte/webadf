@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ratio } from '@/lib/contrast.test-util';
 import type { DeviceListItem } from '@/lib/queries';
-import { driveBoxText, firmwareCellText, signalCell, statusPill } from './devices-look';
+import { driveBoxText, firmwareCardText, firmwareCellText, needsGetStarted, networkCell, shortVersion, signalCell, statusPill } from './devices-look';
 
 // Spec docs/superpowers/specs/2026-10-24-phase-c2-devices-design.md §2.1, §2.2, §4.2, §12.
 type D = Pick<DeviceListItem, 'mountedGame' | 'mountedDiskNo' | 'mountedSha256' | 'desiredGame' | 'desiredDiskNo'
@@ -22,6 +22,40 @@ describe('firmwareCellText', () => {
   it('passes update labels through', () => {
     expect(firmwareCellText('Updating to 1.21.1')).toBe('Updating to 1.21.1');
     expect(firmwareCellText('Update failed: x')).toBe('Update failed: x');
+  });
+});
+
+describe('firmwareCardText (2026-11-12: firmware in words)', () => {
+  it('drops the build suffix and capitalises each part', () => {
+    expect(firmwareCardText('fw 1.24.2+ged0ecc5e · up to date')).toBe('1.24.2 · Up to date');
+    expect(firmwareCardText('fw 1.21.1+ga5424b4 · 2 releases behind')).toBe('1.21.1 · 2 releases behind');
+    expect(firmwareCardText('fw 1.21.1-dirty+ga5424b4 · unrecognised build')).toBe('1.21.1-dirty · Unrecognised build');
+    expect(firmwareCardText('fw 1.21.1 · no releases published')).toBe('1.21.1 · No releases published');
+    expect(firmwareCardText('fw unknown')).toBe('Unknown');
+  });
+  it('words an update in flight the same way', () => {
+    expect(firmwareCardText('downloading 1.24.2+ged0ecc5e')).toBe('Downloading 1.24.2');
+    expect(firmwareCardText('applying 1.24.2+g1 — do not power off')).toBe('Applying 1.24.2 — do not power off');
+    expect(firmwareCardText('update queued — waiting for eject')).toBe('Update queued — waiting for eject');
+    expect(firmwareCardText('update failed — trial timed out')).toBe('Update failed — trial timed out');
+  });
+  it('shortVersion keeps the semver', () => {
+    expect(shortVersion('1.24.2+ged0ecc5e')).toBe('1.24.2');
+    expect(shortVersion('1.24.2')).toBe('1.24.2');
+  });
+});
+
+describe('networkCell and needsGetStarted (2026-11-12)', () => {
+  it('names both network values in words', () => {
+    expect(networkCell(true)).toBe('Wi-Fi');
+    expect(networkCell(false)).toBe('Not connected');
+  });
+  it('Get started until a disk is held, wanted, or was ever ejected', () => {
+    const none = { desiredSha256: null, mountedSha256: null, lastDiskId: null };
+    expect(needsGetStarted(none)).toBe(true);
+    expect(needsGetStarted({ ...none, desiredSha256: 'a' })).toBe(false);
+    expect(needsGetStarted({ ...none, mountedSha256: 'a' })).toBe(false);
+    expect(needsGetStarted({ ...none, lastDiskId: 'd' })).toBe(false);
   });
 });
 
@@ -61,7 +95,7 @@ describe('driveBoxText (spec §4.2)', () => {
   });
   it('empty: No disk', () => {
     expect(driveBoxText(dev({}), 'empty')).toEqual({
-      label: 'In the drive', labelTone: 'muted-2', title: 'No disk', meta: 'Mount a disk from any title in the library.',
+      label: 'In the drive', labelTone: 'muted-2', title: 'No disk', meta: 'Pick a game in the Library and press Mount.',
     });
   });
 });
@@ -81,15 +115,15 @@ describe('statusPill (spec §2.1)', () => {
   });
 });
 
-describe('signalCell (spec §2.1)', () => {
+describe('signalCell (spec §2.1, in words 2026-11-12)', () => {
   it.each([
-    [-44, 3, '-44 dBm'], [-65, 2, '-65 dBm'], [-75, 1, '-75 dBm'], [-90, 0, '-90 dBm'],
-  ])('%i dBm lights %i', (rssi, lit, text) => {
-    expect(signalCell(rssi, true)).toEqual({ lit, text });
+    [-44, 3, 'Good'], [-60, 3, 'Good'], [-65, 2, 'Fair'], [-70, 2, 'Fair'], [-75, 1, 'Weak'], [-90, 0, 'Weak'],
+  ])('%i dBm lights %i and reads %s, with the reading as the title', (rssi, lit, text) => {
+    expect(signalCell(rssi, true)).toEqual({ lit, text, title: `${rssi} dBm` });
   });
   it('unreported or offline lights none and reads a dash', () => {
-    expect(signalCell(null, true)).toEqual({ lit: 0, text: '—' });
-    expect(signalCell(-44, false)).toEqual({ lit: 0, text: '—' });
+    expect(signalCell(null, true)).toEqual({ lit: 0, text: '—', title: null });
+    expect(signalCell(-44, false)).toEqual({ lit: 0, text: '—', title: null });
   });
 });
 

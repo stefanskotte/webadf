@@ -23,7 +23,7 @@ import { test, expect, type Page } from '@playwright/test';
  */
 import { randomUUID } from 'node:crypto';
 import { signUpFresh, runTag, openVersion, mintInviteCode } from './helpers';
-import { cleanupSeeded, seedDisk, pairDevice, authHeader, openBoardSettings, hydrated, seedDevices, publishTestRelease, cleanupTestReleases } from './device-helpers';
+import { cleanupSeeded, seedDisk, pairDevice, authHeader, openBoardSettings, openSecondDrive, hydrated, seedDevices, publishTestRelease, cleanupTestReleases } from './device-helpers';
 import { readCurrentRelease } from '@/lib/firmware-releases';
 import { revokeInvite } from '@/lib/invites';
 import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
@@ -384,7 +384,7 @@ test('header focus indicators clear 3:1 against the bar', async ({ page }) => {
 
 // Phase C2 (spec §12): the Devices pairs, measured on the real elements of a seeded org -- one online board holding a
 // disk, one offline board, and a Network board with a not-OK checklist mark -- then a modal footer.
-test('the Devices pairs are legible: drive box, tile caption, offline strip, pills, checklist mark, DF1 tile, modal footer', async ({ page, request }) => {
+test('the Devices pairs are legible: drive box, Get started, Needs attention, offline strip, pills, checklist mark, DF1 tile, modal footer', async ({ page, request }) => {
   const run = runTag();
   const u = await signUpFresh(page);
   const sha = createHash('sha256').update(`contrast-dev-${run}`).digest('hex');
@@ -407,18 +407,23 @@ test('the Devices pairs are legible: drive box, tile caption, offline strip, pil
   expect((await st({ mountedSha256: null, firmwareVersion: fw, secondDrive: 'net', driveVersion: 1, net: { framesIn: 0, framesOut: 0 } })).status()).toBe(204);
 
   await page.goto('/devices');
+  await openSecondDrive(page, net.deviceId);
   await expect(page.getByTestId(`net-checklist-${net.deviceId}`)).toBeVisible();
   await expect(page.getByTestId(`device-offline-${off.deviceId}`)).toBeVisible();
+  await hydrated(page, `device-attention-toggle-${online.deviceId}`);
+  await page.getByTestId(`device-attention-toggle-${online.deviceId}`).click();
+  await expect(page.getByTestId(`device-error-${online.deviceId}`)).toBeVisible();
   const pairs: [string, string][] = [
     ['drive-box label', `[data-testid="device-disk-${online.deviceId}"] div.flex-1 > span:first-child`],
-    ['tile caption', `[data-testid="device-bezel-${online.deviceId}"] > div:last-child > span:first-child`],
+    ['Get started step', `[data-testid="device-get-started-${off.deviceId}"] li > span:last-child`],
+    ['Needs attention heading', `[data-testid="device-attention-${online.deviceId}"] > div > span:first-child`],
     ['offline strip heading', `[data-testid="device-offline-${off.deviceId}"] p:nth-of-type(1)`],
     ['offline strip body', `[data-testid="device-offline-${off.deviceId}"] p:nth-of-type(2)`],
     ['Online pill', `[data-testid="device-status-${online.deviceId}"]`],
     ['Offline pill', `[data-testid="device-status-${off.deviceId}"]`],
     ['not-OK checklist mark', `[data-testid="net-checklist-${net.deviceId}"] li[data-ok="false"] > span:first-child`],
     ['not-OK checklist line', `[data-testid="net-checklist-${net.deviceId}"] li[data-ok="false"] > span:nth-child(2) > span:last-child`],
-    ['last error (danger-fg on danger-bg)', `[data-testid="device-error-${online.deviceId}"]`],
+    ['last error (warning-fg on warning-bg)', `[data-testid="device-error-${online.deviceId}"]`],
     ['DF1 tile', `[data-testid="device-df1-${online.deviceId}"] span[style*="--track"]`],
   ];
   for (const [what, sel] of pairs) {
@@ -439,8 +444,9 @@ test('the Devices pairs are legible: drive box, tile caption, offline strip, pil
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('board-settings-dialog')).toHaveCount(0);
 
-  // The Board display modal: hide the first element (its row sits on --modal-foot, its hint is --muted-2) and the
-  // Unsaved pill (--warning-fg on --warning-bg) appears.
+  // The Board display modal (Board settings > Change display): hide the first element (its row sits on --modal-foot,
+  // its hint is --muted-2) and the Unsaved pill (--warning-fg on --warning-bg) appears.
+  await openBoardSettings(page, online.deviceId);
   await hydrated(page, `display-toggle-${online.deviceId}`);
   await page.getByTestId(`display-toggle-${online.deviceId}`).click();
   const editor = page.getByTestId(`display-editor-${online.deviceId}`);

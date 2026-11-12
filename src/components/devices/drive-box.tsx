@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { DeviceListItem } from '@/lib/queries';
 import type { DeviceState } from '@/lib/device-state';
 import type { NextInfo } from '@/lib/next-disk';
-import { driveBoxText } from '@/lib/devices-look';
+import { driveBoxText, needsGetStarted } from '@/lib/devices-look';
 import { driveDiskColor } from '@/lib/library-look';
 import { Link } from '@/components/shell/link';
 import { HelpTip } from '@/components/help/help-tip';
@@ -20,7 +20,8 @@ const LABEL_TONE = { 'muted-2': 'var(--muted-2)', muted: 'var(--muted)', amber: 
 
 /**
  * DF0 in words and its controls (spec §4): the disk, what it is, whether it is write protected, and Next / Change
- * disk / Eject, or -- on an empty drive -- Re-insert last disk and Open library. Always visible: the glass above is
+ * disk / Eject, or -- on an empty drive -- one primary "Choose a disk" (the library) and Re-insert last disk, with no
+ * protection switch (2026-11-12: a greyed switch on an empty drive only puzzled new users). Always visible: the glass above is
  * a canvas, and a pending request is only on the board's screen once the board acts on it.
  */
 export function DriveBox({ device, state, next, preload }: {
@@ -80,7 +81,8 @@ export function DriveBox({ device, state, next, preload }: {
           <span className="text-[17px] font-semibold" style={{ overflowWrap: 'anywhere', color: 'var(--ink)' }}>{text.title}</span>
         )}
         {state === 'empty' ? (
-          <span className="text-[13px]" style={{ color: 'var(--muted)' }}>{text.meta}</span>
+          // A board that still shows Get started already says how to fill the drive (operator 2026-11-12): not twice.
+          !needsGetStarted(device) && <span className="text-[13px]" style={{ color: 'var(--muted)' }}>{text.meta}</span>
         ) : (
           <span className="font-mono text-[12px]" style={{ color: 'var(--muted)' }}>{text.meta}</span>
         )}
@@ -96,6 +98,7 @@ export function DriveBox({ device, state, next, preload }: {
       </div>
       {/* Below sm the board's two-column grid of 44 px buttons, Eject last (C7 spec §6.2); from sm a wrapped row. */}
       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+        {state !== 'empty' && (
         <button type="button" onClick={() => void toggleWp()} aria-pressed={wp === true}
                 disabled={wp === null || wpBusy || wpPending}
                 title={wp === null ? 'Shown once the board holds a disk' : undefined}
@@ -109,6 +112,7 @@ export function DriveBox({ device, state, next, preload }: {
           ) : <WpSwitch on={wp} />}
           {wp === null ? '—' : wp ? 'Protected' : 'Writable'}
         </button>
+        )}
         {next && state === 'converged' && <NextDiskButton deviceId={device.id} next={next} />}
         {(state === 'converged' || state === 'pending') && (
           <Link href="/library" data-testid={`device-change-disk-${device.id}`} className={BOX_BTN} style={BOX_BTN_STYLE}>
@@ -126,15 +130,15 @@ export function DriveBox({ device, state, next, preload }: {
             {ejecting || ejectPending ? 'Ejecting…' : 'Eject'}
           </button>
         )}
-        {state === 'empty' && device.lastDiskId && device.lastDiskTitle && (
-          <ReinsertButton deviceId={device.id} diskId={device.lastDiskId} title={device.lastDiskTitle} diskNo={device.lastDiskNo} />
-        )}
         {state === 'empty' && (
           <Link href="/library" data-testid={`device-open-library-${device.id}`}
                 className="flex h-[38px] items-center rounded-[10px] px-3.5 text-[13px] font-semibold max-sm:min-h-11 max-sm:justify-center"
                 style={{ background: 'var(--ink)', color: 'var(--surface)' }}>
-            Open library
+            Choose a disk
           </Link>
+        )}
+        {state === 'empty' && device.lastDiskId && device.lastDiskTitle && (
+          <ReinsertButton deviceId={device.id} diskId={device.lastDiskId} title={device.lastDiskTitle} diskNo={device.lastDiskNo} />
         )}
       </div>
     </div>

@@ -139,6 +139,8 @@ test('a status report carrying only a new error shows in another browser without
         headers: authHeader(token), data: { mountedSha256: null, error: message },
       })).status()).toBe(204);
 
+      // In the closed Needs attention strip: the strip and its count arrive, the note's text is behind Details.
+      await expect(pageB.getByTestId(`device-attention-count-${deviceId}`)).toHaveText('1 note', LIVE);
       await expect(pageB.getByTestId(`device-error-${deviceId}`)).toHaveText(message, LIVE);
     } finally {
       await closeB();

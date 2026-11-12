@@ -6,7 +6,7 @@ import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { decodeLayout } from '@/lib/display-layout';
 import { signUpFresh } from './helpers';
-import { pairDevice, authHeader, cleanupSeeded, hydrated } from './device-helpers';
+import { pairDevice, authHeader, cleanupSeeded, hydrated, openBoardSettings } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
 
@@ -25,8 +25,10 @@ async function reportStatus(
   expect(res.status()).toBe(204);
 }
 
+/** Change display lives in Board settings (2026-11-12); the editor opens over it. */
 async function openEditor(page: Page, deviceId: string) {
   await page.goto('/devices');
+  await openBoardSettings(page, deviceId);
   await hydrated(page, `display-toggle-${deviceId}`);
   await page.getByTestId(`display-toggle-${deviceId}`).click();
   await expect(page.getByTestId(`display-drawer-${deviceId}`)).toBeVisible();
@@ -179,6 +181,7 @@ test('closing the display modal returns focus to the opener that was pressed', a
   await reportStatus(request, token, { displayLayouts: true, displayVersion: 0 });
   await page.goto('/devices');
   for (const opener of [`device-oled-${deviceId}`, `display-toggle-${deviceId}`]) {
+    if (opener.startsWith('display-toggle')) await openBoardSettings(page, deviceId);
     await hydrated(page, opener);
     await page.getByTestId(opener).click();
     await expect(page.getByTestId(`display-canvas-${deviceId}`)).toBeVisible();
@@ -363,8 +366,10 @@ test('a 1.17.0 board can be turned 180 degrees; the preview stays upright and no
   await expect(note).toBeVisible();
   await expect(note).toContainText('upright');
   await expect(note).toContainText('180');
-  const same = await canvasPixels(page, deviceId);
-  expect(same.on).toEqual(up.on);
+  // The status icon blinks on the editor's 120 ms tick, so one capture can land on the other phase (the extra step of
+  // opening Board settings first shifted the timing, 2026-11-12): the upright frame recurs within a few ticks.
+  await expect.poll(async () => (await canvasPixels(page, deviceId)).on.join(), { timeout: 3000, intervals: [40] })
+    .toBe(up.on.join());
 
   // Dragging on the preview moves the element the way it LOOKS: the write
   // indicator (x 110) dragged 4 px right on screen is 4 px right in the layout (checked below).
