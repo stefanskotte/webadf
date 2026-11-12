@@ -23,7 +23,7 @@ import { test, expect, type Page } from '@playwright/test';
  */
 import { randomUUID } from 'node:crypto';
 import { signUpFresh, runTag, openVersion, mintInviteCode } from './helpers';
-import { cleanupSeeded, seedDisk, pairDevice, authHeader, openBoardSettings, hydrated, seedDevices, publishTestRelease, cleanupTestReleases } from './device-helpers';
+import { cleanupSeeded, seedDisk, pairDevice, authHeader, openBoardSettings, openSecondDrive, hydrated, seedDevices, publishTestRelease, cleanupTestReleases } from './device-helpers';
 import { readCurrentRelease } from '@/lib/firmware-releases';
 import { revokeInvite } from '@/lib/invites';
 import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
@@ -407,6 +407,7 @@ test('the Devices pairs are legible: drive box, tile caption, offline strip, pil
   expect((await st({ mountedSha256: null, firmwareVersion: fw, secondDrive: 'net', driveVersion: 1, net: { framesIn: 0, framesOut: 0 } })).status()).toBe(204);
 
   await page.goto('/devices');
+  await openSecondDrive(page, net.deviceId);
   await expect(page.getByTestId(`net-checklist-${net.deviceId}`)).toBeVisible();
   await expect(page.getByTestId(`device-offline-${off.deviceId}`)).toBeVisible();
   const pairs: [string, string][] = [

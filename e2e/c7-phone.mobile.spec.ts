@@ -616,7 +616,7 @@ async function deviceWithDisk(page: Page, request: Parameters<typeof pairDevice>
   return deviceId;
 }
 
-test('C7-05 Devices at 390: the head buttons one line each and full width; Change second drive opens the radios; card controls 44 px', async ({ page, request }) => {
+test('C7-05 Devices at 390: the head buttons one line each and full width; the second-drive caret opens the radios; card controls 44 px', async ({ page, request }) => {
   const u = await signUpFresh(page);
   const id = await deviceWithDisk(page, request, u.orgId);
   await page.goto('/devices');
@@ -633,15 +633,15 @@ test('C7-05 Devices at 390: the head buttons one line each and full width; Chang
     expect(b.height, tid).toBeGreaterThanOrEqual(44);
     expect(b.x + b.width, tid).toBeLessThanOrEqual(390);
   }
-  // DF1: closed, it says the mode in words; the button opens the radios in place, one per row, 44 px.
+  // DF1: closed, it says the mode in words; the caret (44 px) opens the radios in place, one per row, 44 px.
   const group = page.getByTestId(`second-drive-${id}`);
   await expect(group).toBeHidden();
-  const change = page.getByTestId(`df1-change-${id}`);
-  await expect(change).toHaveText('Change second drive');
-  await hydrated(page, `df1-change-${id}`);
+  await expect(page.getByTestId(`second-drive-summary-${id}`)).toBeVisible();
+  const change = page.getByTestId(`second-drive-toggle-${id}`);
+  expect((await change.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await hydrated(page, `second-drive-toggle-${id}`);
   await change.tap();
   await expect(change).toHaveAttribute('aria-expanded', 'true');
-  await expect(change).toHaveText('Done');
   await expect(group).toBeVisible();
   for (const m of ['off', 'df1', 'net', 'any']) {
     expect((await page.getByTestId(`second-drive-${id}-${m}`).boundingBox())!.height, m).toBeGreaterThanOrEqual(44);

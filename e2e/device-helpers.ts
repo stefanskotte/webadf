@@ -578,8 +578,18 @@ export async function df1OnBoard(
   return { deviceId, token };
 }
 
-/** Choose a second-drive mode on a board's card: click its radio in the DF1 box (Devices spec §5.1). */
+/** Open a board's second-drive panel (collapsed by default since 2026-11-12) with its caret; open stays open. */
+export async function openSecondDrive(page: Page, deviceId: string) {
+  const toggle = page.getByTestId(`second-drive-toggle-${deviceId}`);
+  await hydrated(page, `second-drive-toggle-${deviceId}`);
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+  await page.waitForFunction((tid) => document.querySelector(`[data-testid="${tid}"]`)?.getAttribute('aria-expanded') === 'true',
+    `second-drive-toggle-${deviceId}`);
+}
+
+/** Choose a second-drive mode on a board's card: open the DF1 box and click its radio (Devices spec §5.1). */
 export async function pickSecondDrive(page: Page, deviceId: string, mode: 'off' | 'df1' | 'net' | 'any') {
+  await openSecondDrive(page, deviceId);
   await page.getByTestId(`second-drive-${deviceId}-${mode}`).click();
 }
 

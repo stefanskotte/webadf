@@ -94,10 +94,9 @@ export function DeviceCard(
               {pill.label}
             </span>
           </div>
-          {/* A row that wraps, not a grid of equal columns: four equal columns split the MAC ("…AC:C / A") and the
-              version ("…+ga5424 / b4") at 1024-1440, where the board's picture takes half the card. A figure that
-              does not fit moves to the next line whole; only Firmware grows. */}
-          <dl className="flex flex-wrap gap-x-8 gap-y-4">
+          {/* A 2x2 grid under the name (operator 2026-11-12): Network and Signal, then Firmware and Last seen. Two
+              columns, not four: four equal columns split the MAC ("…AC:C / A") and the version at 1024-1440. */}
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-4" data-testid={`device-facts-${device.id}`}>
             <div className="min-w-0">
               <dt className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Network</dt>
               <dd className="whitespace-nowrap font-mono text-[13px]" style={{ color: 'var(--ink)' }}>{device.macAddress ?? '—'}</dd>
@@ -117,7 +116,7 @@ export function DeviceCard(
                 {signal.text}
               </dd>
             </div>
-            <div className="min-w-0 flex-1 basis-[12rem]">
+            <div className="min-w-0">
               <dt className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Firmware</dt>
               <dd className="flex min-w-0 flex-col items-start gap-1">
                 {/* min-w-0 plus overflow-wrap: break-word -- a failure reason holding a URL has no break point and

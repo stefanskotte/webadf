@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { signUpFresh } from './helpers';
-import { pairDevice, authHeader, cleanupSeeded, openBoardSettings } from './device-helpers';
+import { pairDevice, authHeader, cleanupSeeded, openBoardSettings, openSecondDrive } from './device-helpers';
 
 /**
  * Drive numbers (src/lib/drive-numbers.ts, 2026-11-11): DF0 + DF1 | DF1 + DF2 | DF2 + DF3 | DF3 only. The setting
@@ -45,6 +45,7 @@ test('DF1 + DF2 names both drives and keeps the second; DF3 turns it off and ref
   expect((await row(deviceId)).secondDrive).toBe('df1');
   const box = page.getByTestId(`device-df1-${deviceId}`);
   await expect(box).toContainText('Second drive (DF2)');
+  await openSecondDrive(page, deviceId);
   await expect(page.getByTestId(`device-sel1-${deviceId}`)).toHaveText('DF2 line: no signal yet');
   await expect(page.getByTestId(`second-drive-unwired-${deviceId}`)).toContainText("DF2's select line");
   await openBoardSettings(page, deviceId);
