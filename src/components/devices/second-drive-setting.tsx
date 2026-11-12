@@ -25,10 +25,12 @@ const RADIOS: { value: Radio; label: string }[] = [
   { value: 'net', label: 'Network (PaulaNET)' }, { value: 'any', label: 'Any disk' },
 ];
 
-export function SecondDriveSetting({ device, next, now, transfer = null, sendLine = null, uploadLine = null }: {
+export function SecondDriveSetting({ device, next, now, transfer = null, sendLine = null, uploadLine = null, initiallyOpen = false }: {
   device: DeviceListItem; next?: NextInfo | null; now: number;
   /** The Transfer box lives in the Network panel when the board reports Network (spec §7). */
   transfer?: { running: boolean } | null; sendLine?: string | null; uploadLine?: { text: string; href: boolean } | null;
+  /** Start open; the card never passes it (closed by default), unit tests render the open panel with it. */
+  initiallyOpen?: boolean;
 }) {
   const id = device.id;
   // This board's drive numbers (src/lib/drive-numbers.ts): every text here is written for DF0 + DF1.
@@ -47,7 +49,7 @@ export function SecondDriveSetting({ device, next, now, transfer = null, sendLin
   // the disk line and a Network board's Transfer box stay; the caret opens the radios, the help line, the select-line
   // diagnostics and the network checklist. Local state: a save's refresh re-renders this card and keeps it open.
   // Replaces the phone-only "Change second drive" button (C7 spec §6.2), which did the same below sm.
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initiallyOpen);
   const hasPick = device.df1DiskId !== null;
   const shown: Radio = device.secondDrive === 'df1' && (hasPick || wantAny) ? 'any' : device.secondDrive;
   // While a save runs the radios are aria-disabled, not disabled: a disabled button drops focus to the body. Input
