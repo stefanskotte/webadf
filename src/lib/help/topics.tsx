@@ -150,7 +150,9 @@ export const HELP_TOPICS = {
   // Pairing steps (2026-11-09): lib/pairing-guide.ts holds each fact with its firmware source; pairing-guide.tsx.
   // Disk at startup: lib/boot-disk.ts + boot-disk-store.ts (cleared at a new boot's first request; not on the same
   // boot id or an &ota=1 boot), boot-disk-setting.tsx, firmware fw_trial.h (the update-reboot mark), BOOT_DISK_FW.
-  // Stuck-start line: lib/last-boot.ts describeLastBoot, device-card.tsx; firmware boot_trail.h (fw 1.18.2).
+  // Stuck-start line: lib/last-boot.ts describeLastBoot, attention-strip.tsx; firmware boot_trail.h (fw 1.18.2).
+  // The card (2026-11-12): get-started.tsx + devices-look needsGetStarted, signalCell (Good/Fair/Weak), device-card.tsx
+  // (Update to <version>, Select for update only with 2+ updatable boards: device-list.tsx), board-settings.tsx (This board).
   boards: {
     title: 'Boards',
     short:
@@ -161,32 +163,33 @@ export const HELP_TOPICS = {
           <strong>Pairing.</strong> On Devices press <em>Pair a device</em>, give the board a name and
           press <em>Get a code</em>. Join the board&apos;s network <em>wifi-floppy-…</em> from a phone
           (password <em>wififloppy</em>; setup page at <em>http://192.168.4.1</em>) and enter your 2.4 GHz Wi-Fi
-          details and the code. <em>How pairing works</em> on Devices has every step.
+          details and the code; <em>How pairing works</em> has every step.
         </p>
         <p>
-          <strong>Online / Offline.</strong> A board is online if heard from in the last minute.
+          <strong>The card.</strong> A new board shows <em>Get started</em>. Online means heard from within a
+          minute. <em>Signal</em> reads Good, Fair or Weak. <em>Board settings</em> shows the full firmware version and MAC.
         </p>
         <p>
-          <strong>Firmware updates.</strong> Press <em>Update &lt;name&gt;</em> in the banner or tick <em>Select for update</em>,{' '}
-          then confirm with your password (unless you turned that off in Settings). The card shows <em>update queued</em>,{' '}
-          <em>downloading</em> and <em>applying — do not power off</em>. A new version runs on trial: if it doesn&apos;t
-          check in within 5 minutes, the board goes back and the card says <em>update failed</em>.
+          <strong>Firmware updates.</strong> Press <em>Update to &lt;version&gt;</em> on the card (several boards:
+          tick <em>Select for update</em>), then confirm with your password (unless you turned that off in Settings).
+          The card shows <em>Downloading</em>, then <em>Applying — do not power off</em>. A version that
+          doesn&apos;t check in within 5 minutes is undone: <em>Update failed</em>.
         </p>
         <p>
-          <strong>Disk at startup.</strong> In <em>Board settings</em>, <em>Last disk</em> (the default) puts the
+          <strong>Disk at startup.</strong> In <em>Board settings</em>, <em>Last disk</em> puts the
           board&apos;s disk back at power-up; <em>No disk</em> leaves the drive empty: the Amiga waits at its
           insert-disk screen until you tap a card or mount one. Press <em>Save to board</em>. A firmware update or a
           Wi-Fi drop keeps the disk. Needs firmware 1.18.1.
         </p>
         <p>
-          <strong>Stuck start?</strong> The card says where, e.g.{' '}
-          <em>Previous start stopped at: I2C scan</em> (firmware 1.18.2).
+          <strong>Needs attention.</strong> The last error and a stuck start (e.g.{' '}
+          <em>Previous start stopped at: I2C scan</em>, firmware 1.18.2) share one amber strip: press <em>Details</em>.
         </p>
         <p>
-          <strong>Deleting a board.</strong> <em>Delete device…</em> in <em>Board settings</em> removes a board from your account; your disks stay.
+          <strong>Deleting a board.</strong> <em>Delete device…</em> in <em>Board settings</em> removes a board; your disks stay.
         </p>
         <p>
-          <strong>Your own server.</strong> Running your own copy? See{' '}
+          <strong>Your own server?</strong> See{' '}
           <a className="underline" href="/help#own-server">Your own server</a>.
         </p>
         <GoodToKnow items={[
@@ -427,7 +430,7 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          Each board&apos;s card shows its screen, drawn from its layout and last reported disk. Press <em>Change display</em> under the drive, or its screen, to edit it.
+          Each board&apos;s card shows its screen, drawn from its layout and last reported disk. Press the screen, or <em>Change display</em> in <em>Board settings</em>, to edit it.
         </p>
         <p>
           Pick the <em>Panel</em> (128×32 or 128×64) and drag elements into place, shown or hidden, at 1× or 2×.{' '}
