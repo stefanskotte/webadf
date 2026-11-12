@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { DeviceListItem } from '@/lib/queries';
 import type { DeviceState } from '@/lib/device-state';
 import type { NextInfo } from '@/lib/next-disk';
-import { driveBoxText } from '@/lib/devices-look';
+import { driveBoxText, needsGetStarted } from '@/lib/devices-look';
 import { driveDiskColor } from '@/lib/library-look';
 import { Link } from '@/components/shell/link';
 import { HelpTip } from '@/components/help/help-tip';
@@ -81,7 +81,8 @@ export function DriveBox({ device, state, next, preload }: {
           <span className="text-[17px] font-semibold" style={{ overflowWrap: 'anywhere', color: 'var(--ink)' }}>{text.title}</span>
         )}
         {state === 'empty' ? (
-          <span className="text-[13px]" style={{ color: 'var(--muted)' }}>{text.meta}</span>
+          // A board that still shows Get started already says how to fill the drive (operator 2026-11-12): not twice.
+          !needsGetStarted(device) && <span className="text-[13px]" style={{ color: 'var(--muted)' }}>{text.meta}</span>
         ) : (
           <span className="font-mono text-[12px]" style={{ color: 'var(--muted)' }}>{text.meta}</span>
         )}

@@ -379,7 +379,7 @@ test('pair-another: with one board the aside opens the header pairing form, with
   await expect(page.getByTestId('pair-another-card')).toHaveCount(0);
 });
 
-test('firmware-notice: one updatable board gets "Update <name>", which opens the update dialog listing it', async ({ page, request }) => {
+test('firmware-notice: the banner has no action; the card button "Update to <version>" opens the update dialog listing the board', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
   await setDevice(deviceId, { name: 'Bench A500' });
@@ -394,8 +394,10 @@ test('firmware-notice: one updatable board gets "Update <name>", which opens the
   const notice = page.getByTestId('firmware-notice');
   await expect(notice).toContainText('is available');
   await expect(notice).toContainText('1 of 1 device is behind');
-  const action = page.getByTestId('firmware-notice-update');
-  await expect(action).toHaveText('Update Bench A500');
+  // The banner states the release only (2026-11-12); the card's own button updates this one board.
+  await expect(page.getByTestId('firmware-notice-update')).toHaveCount(0);
+  const action = page.getByTestId(`device-update-${deviceId}`);
+  await expect(action).toHaveText('Update to 0.0.0');
 
   await action.click();
   const dialog = page.getByTestId('update-dialog');
@@ -462,9 +464,12 @@ test('the card facts in words: online Network | Signal then Firmware across, off
   await expect(page.getByTestId(`device-facts-${deviceId}`)).not.toContainText('AA:BB:CC:DD:EE:61');
   await expect(page.getByTestId(`device-firmware-${deviceId}`)).not.toContainText('fw ');
   // Firmware spans both columns: as wide as the facts grid.
-  const grid = (await page.getByTestId(`device-facts-${deviceId}`).boundingBox())!;
-  const fwCell = (await page.getByTestId(`device-firmware-${deviceId}`).locator('xpath=ancestor::div[1]').boundingBox())!;
-  expect(fwCell.width).toBeGreaterThan(grid.width * 0.9);
+  // Polled: boundingBox does not wait, and a live refresh can re-render the card between two reads.
+  await expect.poll(async () => {
+    const grid = await page.getByTestId(`device-facts-${deviceId}`).boundingBox();
+    const fwCell = await page.getByTestId(`device-firmware-${deviceId}`).locator('xpath=ancestor::div[1]').boundingBox();
+    return grid && fwCell ? fwCell.width / grid.width : 0;
+  }).toBeGreaterThan(0.9);
   // Offline: Not connected, a dash for the signal, and Last seen in the fourth cell.
   await expect(page.getByTestId(`device-network-${off}`)).toHaveText('Not connected');
   await expect(page.getByTestId(`device-signal-${off}`)).toContainText('—');
@@ -681,7 +686,9 @@ test('the protection switch flips the disk, the disk title links to its title, a
   await expect(page.getByTestId(`device-protection-${idEmpty}`)).toHaveCount(0);
   await expect(page.getByTestId(`device-open-library-${idEmpty}`)).toHaveAttribute('href', '/library');
   await expect(page.getByTestId(`device-open-library-${idEmpty}`)).toHaveText('Choose a disk');
-  await expect(page.getByTestId(`device-disk-${idEmpty}`)).toContainText('Pick a game in the Library and press Mount.');
+  // A fresh board's Get started already says how; the drive does not say it twice (2026-11-12).
+  await expect(page.getByTestId(`device-get-started-${idEmpty}`)).toBeVisible();
+  await expect(page.getByTestId(`device-disk-${idEmpty}`)).not.toContainText('Pick a game in the Library and press Mount.');
   await expect(page.getByTestId(`device-disk-title-${idEmpty}`)).toHaveCount(0);
 });
 

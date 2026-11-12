@@ -214,15 +214,13 @@ export function DeviceList({
   // Ticking boards for one update is offered only when two or more can be updated (2026-11-12); each such card has its
   // own "Update to <version>" either way.
   const multi = selectableIds.length >= 2;
-  // The banner's one-click action exists only when exactly one board can be updated (Ruling 13).
-  const oneBoard = selectableIds.length === 1 ? devices.find((d) => d.id === selectableIds[0]) : undefined;
 
   return (
     <>
       {latest && behind > 0 && (
-        <FirmwareNotice behind={behind} total={devices.length} latest={latest} security={security}
-                        oneName={oneBoard?.name}
-                        onUpdateOne={oneBoard ? () => updateOne(oneBoard.id) : undefined} />
+        // No action in the banner (operator 2026-11-12): the card's own "Update to <version>" is the one button; the
+        // banner keeps the release and its notes.
+        <FirmwareNotice behind={behind} total={devices.length} latest={latest} security={security} />
       )}
       {latest && picked.size > 0 && !single && (
         <div className="flex flex-wrap items-center gap-3 rounded-2xl p-4" data-testid="update-bar"
