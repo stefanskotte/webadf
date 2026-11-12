@@ -8,7 +8,7 @@ import { requestFirmwareUpdate } from '@/lib/firmware-update';
 import { signUpFresh } from './helpers';
 import {
   pairDevice, authHeader, publishTestRelease, cleanupSeeded, cleanupTestReleases,
-  desiredFirmwareOf, seedDevices,
+  desiredFirmwareOf, seedDevices, hydrated,
 } from './device-helpers';
 
 // Both, and the releases FIRST. cleanupSeeded does not touch
@@ -82,7 +82,7 @@ test('a device on the newest release shows no callout', async ({ page, request }
   await report(request, token, '0.0.0+e2e3');
 
   await page.goto('/devices');
-  await expect(page.getByTestId(`device-firmware-${deviceId}`)).toContainText('up to date');
+  await expect(page.getByTestId(`device-firmware-${deviceId}`)).toContainText('Up to date');
   await expect(page.getByTestId('firmware-notice')).toHaveCount(0);
 });
 
@@ -98,7 +98,7 @@ test('an unregistered build is called unrecognised, not up to date', async ({ pa
   await report(request, token, '0.0.0+e2e4-dirty');
 
   await page.goto('/devices');
-  await expect(page.getByTestId(`device-firmware-${deviceId}`)).toContainText('unrecognised build');
+  await expect(page.getByTestId(`device-firmware-${deviceId}`)).toContainText('Unrecognised build');
   await expect(page.getByTestId('firmware-notice')).toHaveCount(0);
 });
 
@@ -115,7 +115,7 @@ test('a device that has never reported a version says so', async ({ page, reques
   await getDb().update(devices).set({ firmwareVersion: null }).where(eq(devices.id, deviceId));
 
   await page.goto('/devices');
-  await expect(page.getByTestId(`device-firmware-${deviceId}`)).toContainText('unknown');
+  await expect(page.getByTestId(`device-firmware-${deviceId}`)).toContainText('Unknown');
 });
 
 test('a security release says so in the callout', async ({ page, request }) => {
@@ -170,6 +170,7 @@ test('a board that cannot update gets no checkbox', async ({ page, request }) =>
   // Not a disabled control -- nothing at all. Every board in the field today
   // is in this state, and a dead button on all of them would be worse than none.
   await expect(page.getByTestId(`device-select-${deviceId}`)).toHaveCount(0);
+  await expect(page.getByTestId(`device-update-${deviceId}`)).toHaveCount(0);
 });
 
 test('a capable board behind the newest release can be selected and updated', async ({ page, request }) => {
@@ -183,16 +184,23 @@ test('a capable board behind the newest release can be selected and updated', as
   });
 
   await page.goto('/devices');
-  await page.getByTestId(`device-select-${deviceId}`).check();
-  await expect(page.getByTestId('update-bar')).toContainText('1 selected');
-  await page.getByTestId('update-start').click();
+  // One updatable board: its card's own button, in words without the build suffix (the full version is its title);
+  // no checkbox and no update bar (2026-11-12).
+  const button = page.getByTestId(`device-update-${deviceId}`);
+  await expect(button).toHaveText('Update to 0.0.0');
+  await expect(button).toHaveAttribute('title', 'Update to 0.0.0+e2e62');
+  await expect(page.getByTestId(`device-select-${deviceId}`)).toHaveCount(0);
+  await hydrated(page, `device-update-${deviceId}`);
+  await button.click();
+  await expect(page.getByTestId('update-bar')).toHaveCount(0);
+  await expect(page.getByTestId('update-dialog')).toContainText('Update 1 device');
   await expect(page.getByTestId('update-dialog'))
     .toContainText('will wait until it is ejected');
   await page.getByTestId('update-password').fill(password);
   await page.getByTestId('update-confirm').click();
 
   await expect(page.getByTestId(`device-firmware-${deviceId}`))
-    .toContainText('update requested');
+    .toContainText('Update requested');
 });
 
 test('with the password prompt turned off in Settings, Update asks only to confirm', async ({ page, request }) => {
@@ -208,8 +216,8 @@ test('with the password prompt turned off in Settings, Update asks only to confi
   });
 
   await page.goto('/devices');
-  await page.getByTestId(`device-select-${deviceId}`).check();
-  await page.getByTestId('update-start').click();
+  await hydrated(page, `device-update-${deviceId}`);
+  await page.getByTestId(`device-update-${deviceId}`).click();
   // Still a confirm -- never one stray click -- but no password field.
   const dialog = page.getByTestId('update-dialog');
   await expect(dialog).toContainText('0.0.0+e2e96');
@@ -219,7 +227,7 @@ test('with the password prompt turned off in Settings, Update asks only to confi
   await page.getByTestId('update-confirm').click();
 
   await expect(page.getByTestId(`device-firmware-${deviceId}`))
-    .toContainText('update requested');
+    .toContainText('Update requested');
 });
 
 test('a wrong password in the dialog changes nothing', async ({ page, request }) => {
@@ -233,8 +241,8 @@ test('a wrong password in the dialog changes nothing', async ({ page, request })
   });
 
   await page.goto('/devices');
-  await page.getByTestId(`device-select-${deviceId}`).check();
-  await page.getByTestId('update-start').click();
+  await hydrated(page, `device-update-${deviceId}`);
+  await page.getByTestId(`device-update-${deviceId}`).click();
   await page.getByTestId('update-password').fill('not-the-password');
   await page.getByTestId('update-confirm').click();
 
@@ -258,8 +266,8 @@ test('the update dialog is a keyboard modal: focused password, Enter submits, Es
   });
 
   await page.goto('/devices');
-  await page.getByTestId(`device-select-${deviceId}`).check();
-  await page.getByTestId('update-start').click();
+  await hydrated(page, `device-update-${deviceId}`);
+  await page.getByTestId(`device-update-${deviceId}`).click();
 
   const dialog = page.getByRole('dialog', { name: 'Update 1 device' });
   await expect(dialog).toBeVisible();
@@ -271,12 +279,44 @@ test('the update dialog is a keyboard modal: focused password, Enter submits, Es
 
   // Reopened, a wrong password submitted with Enter alone reaches the server:
   // the 401 toast is proof the form submitted, and nothing was written.
-  await page.getByTestId('update-start').click();
+  await page.getByTestId(`device-update-${deviceId}`).click();
   await page.getByTestId('update-password').fill('not-the-password');
   await page.getByTestId('update-password').press('Enter');
   await expect(page.getByText('That password was not right.')).toBeVisible();
   await expect(page.getByTestId('update-dialog')).toBeVisible();
   expect(await desiredFirmwareOf(deviceId)).toBeNull();
+});
+
+test('two updatable boards: each card has its Update button and a Select for update checkbox for one batch', async ({ page, request }) => {
+  await signUpFresh(page);
+  const a = await pairDevice(page, request, 'Batch A');
+  const b = await pairDevice(page, request, 'Batch B');
+  await publishTestRelease('0.0.0+e2e97');
+  await publishTestRelease('0.0.0+e2e98');
+  for (const { token } of [a, b]) {
+    await request.post('/api/device/status', {
+      headers: authHeader(token),
+      data: { mountedSha256: null, firmwareVersion: '0.0.0+e2e97', updateProtocol: 1 },
+    });
+  }
+  await page.goto('/devices');
+  for (const { deviceId } of [a, b]) {
+    await expect(page.getByTestId(`device-update-${deviceId}`)).toHaveText('Update to 0.0.0');
+    await expect(page.getByTestId(`device-select-${deviceId}`)).toHaveCount(1);
+  }
+  await hydrated(page, `device-select-${a.deviceId}`, 'onChange');
+  await page.getByTestId(`device-select-${a.deviceId}`).check();
+  await page.getByTestId(`device-select-${b.deviceId}`).check();
+  await expect(page.getByTestId('update-bar')).toContainText('2 selected');
+  await page.getByTestId('update-start').click();
+  await expect(page.getByTestId('update-dialog')).toContainText('Update 2 devices');
+  // One card's own button, after a cancelled dialog, is about that board alone.
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('update-dialog')).toHaveCount(0);
+  await page.getByTestId(`device-update-${b.deviceId}`).click();
+  await expect(page.getByTestId('update-dialog')).toContainText('Update 1 device');
+  await expect(page.getByTestId('update-dialog')).toContainText('Batch B');
+  await expect(page.getByTestId('update-dialog')).not.toContainText('Batch A');
 });
 
 /**

@@ -627,7 +627,7 @@ test('C7-05 Devices at 390: the head buttons one line each and full width; the s
     expect(b.height, tid).toBeGreaterThanOrEqual(44);
     expect(b.width, `${tid} full width`).toBeGreaterThan(300);
   }
-  for (const tid of [`alias-edit-${id}`, `board-settings-${id}`, `display-toggle-${id}`, `device-protection-${id}`,
+  for (const tid of [`alias-edit-${id}`, `board-settings-${id}`, `device-protection-${id}`,
     `device-change-disk-${id}`, `eject-${id}`]) {
     const b = (await page.getByTestId(tid).boundingBox())!;
     expect(b.height, tid).toBeGreaterThanOrEqual(44);

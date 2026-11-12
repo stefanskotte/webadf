@@ -91,6 +91,6 @@ test('the whole loop: request, poll, download, apply, verify', async ({ page, re
   });
 
   await page.reload();
-  await expect(page.getByTestId(`device-firmware-${deviceId}`)).toContainText('up to date');
+  await expect(page.getByTestId(`device-firmware-${deviceId}`)).toContainText('Up to date');
   await expect(page.getByTestId('firmware-notice')).toHaveCount(0);
 });
