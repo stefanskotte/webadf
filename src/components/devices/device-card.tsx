@@ -1,4 +1,4 @@
-import { firmwareCellText, signalCell, statusPill } from '@/lib/devices-look';
+import { firmwareCardText, needsGetStarted, networkCell, shortVersion, signalCell, statusPill } from '@/lib/devices-look';
 import { NO_SECOND_DRIVE } from '@/lib/drive-numbers';
 import { deviceState, isOnline, relative } from '@/lib/device-state';
 import { firmwareLabel, updateLabel, type FirmwareState } from '@/lib/firmware-state';
@@ -16,18 +16,24 @@ import { DeviceAlias } from './device-alias';
 import { DriveFront } from './drive-front';
 import { DriveBox } from './drive-box';
 import { TransferBox } from './transfer-box';
+import { GetStarted } from './get-started';
+import { AttentionStrip } from './attention-strip';
 
 /**
- * The Devices card (spec §2): the drive tile and the info column on top, then the offline strip, the drive box (DF0
- * in words, its protection switch and actions), the last error and stuck-start strips, a standalone Transfer box,
- * and the DF1 box. Board settings (Disk at startup, NFC reader, Delete device) is a button in the heading row that
- * opens a modal. The disk is always named in words in the drive box; the glass is a canvas.
+ * The Devices card (spec §2, simplified 2026-11-12 so a new user grasps it at once): the drive tile and the info
+ * column on top, then the offline strip, Get started (until the first disk), the drive box (DF0 in words, its
+ * protection switch and actions), one Needs attention strip (last error, stuck start), a standalone Transfer box, and
+ * the DF1 box. Board settings (Display, Drive numbers, Disk at startup, NFC reader, the full firmware version and MAC,
+ * Delete device) is a button in the heading row that opens a modal. The disk is always named in words in the drive
+ * box; the glass is a canvas.
  */
 export function DeviceCard(
-  { device, now, firmware, selection, onCancelUpdate, next, sendLine, transfer, uploadLine, openSettings }: {
+  { device, now, firmware, selection, onUpdate, onCancelUpdate, next, sendLine, transfer, uploadLine, openSettings }: {
     device: DeviceListItem; now: number; firmware: FirmwareState;
-    /** Absent when this board cannot be updated -- no checkbox is drawn at all. */
+    /** Only when two or more boards can be updated (page-level multi-select); absent otherwise -- no checkbox. */
     selection?: { selected: boolean; onToggle: (id: string) => void };
+    /** Absent when this board cannot be updated: "Update to <version>" opens the confirm dialog for this board alone. */
+    onUpdate?: (id: string) => void;
     /** Absent when no update is pending. */
     onCancelUpdate?: (id: string) => void;
     /** The next-disk verdict (multi-disk plan R3), or null/absent when there is none. */
@@ -94,17 +100,20 @@ export function DeviceCard(
               {pill.label}
             </span>
           </div>
-          {/* A 2x2 grid under the name (operator 2026-11-12): Network and Signal, then Firmware and Last seen. Two
-              columns, not four: four equal columns split the MAC ("…AC:C / A") and the version at 1024-1440. */}
+          {/* The facts in words (operator 2026-11-12). Online: Network | Signal, then Firmware across both columns (the
+              Online pill says when it was seen). Offline: a 2x2 grid with Last seen. Two columns, not four: four equal
+              columns split the version at 1024-1440. */}
           <dl className="grid grid-cols-2 gap-x-6 gap-y-4" data-testid={`device-facts-${device.id}`}>
             <div className="min-w-0">
               <dt className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Network</dt>
-              <dd className="whitespace-nowrap font-mono text-[13px]" style={{ color: 'var(--ink)' }}>{device.macAddress ?? '—'}</dd>
+              <dd className="text-[13px]" style={{ color: 'var(--ink)' }} data-testid={`device-network-${device.id}`}>
+                {networkCell(online)}
+              </dd>
             </div>
             <div className="min-w-0">
               <dt className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Signal</dt>
-              <dd className="flex items-center gap-1.5 font-mono text-[13px]" style={{ color: 'var(--ink)' }}
-                  data-testid={`device-signal-${device.id}`}>
+              <dd className="flex items-center gap-1.5 text-[13px]" style={{ color: 'var(--ink)' }}
+                  title={signal.title ?? undefined} data-testid={`device-signal-${device.id}`}>
                 <span className="flex items-end gap-[2px]" aria-hidden="true">
                   {[5, 8, 11].map((h, i) => (
                     <span key={h} style={{
@@ -114,24 +123,34 @@ export function DeviceCard(
                   ))}
                 </span>
                 {signal.text}
+                {signal.title && <span className="sr-only">{` (${signal.title})`}</span>}
               </dd>
             </div>
-            <div className="min-w-0">
+            <div className={online ? 'col-span-2 min-w-0' : 'min-w-0'}>
               <dt className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Firmware</dt>
-              <dd className="flex min-w-0 flex-col items-start gap-1">
+              <dd className="flex min-w-0 flex-col items-start gap-1.5">
                 {/* min-w-0 plus overflow-wrap: break-word -- a failure reason holding a URL has no break point and
-                    pushed the page sideways at 390 px (fix round 1). break-word, not anywhere: a version breaks at
-                    its spaces first and mid-token only when it cannot fit a line on its own. */}
+                    pushed the page sideways at 390 px (fix round 1). The build suffix is dropped from the words
+                    (firmwareCardText); the full version is the title and is in Board settings. */}
                 <span className="flex w-full min-w-0 items-start gap-1">
-                  <span className="block min-w-0 flex-1 font-mono text-[13px]"
+                  <span className="block min-w-0 text-[13px]"
                         style={{ overflowWrap: 'break-word', color: behind ? 'var(--amber-text)' : 'var(--ink)' }}
+                        title={device.firmwareVersion ? `Firmware ${device.firmwareVersion}` : undefined}
                         data-testid={`device-firmware-${device.id}`}>
-                    {firmwareCellText(update ?? firmwareLabel(firmware))}
+                    {firmwareCardText(update ?? firmwareLabel(firmware))}
                   </span>
                   <HelpTip topic="boards" className="-mt-1" />
                 </span>
+                {onUpdate && !update && firmware.kind === 'behind' && (
+                  <button type="button" onClick={() => onUpdate(device.id)} data-testid={`device-update-${device.id}`}
+                          title={`Update to ${firmware.latest.version}`}
+                          className="flex min-h-[34px] items-center rounded-[10px] px-3 text-[13px] font-semibold max-sm:min-h-11"
+                          style={{ background: 'var(--ink)', color: 'var(--surface)' }}>
+                    Update to {shortVersion(firmware.latest.version)}
+                  </button>
+                )}
                 {selection && (
-                  <label className="flex items-center gap-2 font-sans text-[12px]" style={{ color: 'var(--muted)' }}>
+                  <label className="flex items-center gap-2 text-[12px] max-sm:min-h-11" style={{ color: 'var(--muted)' }}>
                     <input type="checkbox" checked={selection.selected}
                            onChange={() => selection.onToggle(device.id)}
                            data-testid={`device-select-${device.id}`} />
@@ -141,19 +160,21 @@ export function DeviceCard(
                 {update && onCancelUpdate && (
                   <button type="button" onClick={() => onCancelUpdate(device.id)}
                           data-testid={`device-cancel-update-${device.id}`}
-                          className="font-sans text-[12px] underline"
+                          className="text-[12px] underline max-sm:min-h-11"
                           style={{ color: 'var(--muted)' }}>
                     Cancel update
                   </button>
                 )}
               </dd>
             </div>
-            <div className="min-w-0">
-              <dt className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Last seen</dt>
-              <dd className="text-[13px]" style={{ color: 'var(--ink)' }} data-testid={`device-seen-${device.id}`}>
-                {relative(device.lastSeenAt, now)}
-              </dd>
-            </div>
+            {!online && (
+              <div className="min-w-0">
+                <dt className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Last seen</dt>
+                <dd className="text-[13px]" style={{ color: 'var(--ink)' }} data-testid={`device-seen-${device.id}`}>
+                  {relative(device.lastSeenAt, now)}
+                </dd>
+              </div>
+            )}
           </dl>
         </div>
       </div>
@@ -173,26 +194,15 @@ export function DeviceCard(
         </div>
       )}
 
+      {needsGetStarted(device) && (
+        <div className="mx-3 mb-3"><GetStarted deviceId={device.id} /></div>
+      )}
+
       <div className="mx-3 mb-3">
         <DriveBox device={device} state={state} next={next ?? null} preload={preload} />
       </div>
 
-      {device.lastError && (
-        // overflowWrap: a device-reported error can be URL-shaped with no natural break point, which once gave the
-        // whole page horizontal scroll at 390px.
-        <div className="mx-3 mb-3 min-w-0 rounded-[12px] px-3.5 py-2.5 text-[13px]"
-             style={{ background: 'var(--danger-bg)', color: 'var(--danger-fg)', overflowWrap: 'anywhere' }}
-             data-testid={`device-error-${device.id}`}>
-          {device.lastError}
-        </div>
-      )}
-      {lastBoot && (
-        <div className="mx-3 mb-3 min-w-0 rounded-[12px] px-3.5 py-2.5 text-[13px]"
-             style={{ background: 'var(--warning-bg)', color: 'var(--warning-fg)', overflowWrap: 'anywhere' }}
-             data-testid={`device-last-boot-${device.id}`}>
-          {lastBoot}
-        </div>
-      )}
+      <AttentionStrip deviceId={device.id} error={device.lastError} lastBoot={lastBoot} />
 
       {/* A standalone Transfer box only when the board does not report Network: otherwise it sits in the DF1 box's
           Network panel (spec §2, §7). */}

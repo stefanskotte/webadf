@@ -61,6 +61,9 @@ export function DeviceList({
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [refusals, setRefusals] = useState<{ deviceId: string; name: string; reason: string }[]>([]);
+  // The dialog was opened for ONE board (its card's "Update to <version>", or the banner's "Update <name>"): no update
+  // bar, and closing the dialog drops the pick rather than leaving a selection behind.
+  const [single, setSingle] = useState(false);
 
   const selectable = new Set(selectableIds);
   // Intersected with `selectable`, not just with `devices`. LiveRefresh calls
@@ -79,6 +82,14 @@ export function DeviceList({
     setOpen(false);
     setRefusals([]);
     setPassword('');
+    if (single) { setPicked(new Set()); setSingle(false); }
+  }
+
+  /** One board's update: the same password-confirmed dialog, for that board alone. */
+  function updateOne(id: string) {
+    setPicked(new Set([id]));
+    setSingle(true);
+    setOpen(true);
   }
 
   // Escape closes, as on every other dialog here (delete-user-dialog.tsx) --
@@ -93,10 +104,11 @@ export function DeviceList({
       setOpen(false);
       setRefusals([]);
       setPassword('');
+      if (single) { setPicked(new Set()); setSingle(false); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, busy]);
+  }, [open, busy, single]);
 
   /**
    * Stand an update down. No password: this is not the privileged direction.
@@ -186,6 +198,7 @@ export function DeviceList({
       toast.success(`Update requested for ${chosen.length} device${chosen.length === 1 ? '' : 's'}.`);
       close();
       setPicked(new Set());
+      setSingle(false);
       router.refresh();
     } catch {
       // Without this, a dropped connection or a non-JSON body left the dialog
@@ -198,6 +211,9 @@ export function DeviceList({
     }
   }
 
+  // Ticking boards for one update is offered only when two or more can be updated (2026-11-12); each such card has its
+  // own "Update to <version>" either way.
+  const multi = selectableIds.length >= 2;
   // The banner's one-click action exists only when exactly one board can be updated (Ruling 13).
   const oneBoard = selectableIds.length === 1 ? devices.find((d) => d.id === selectableIds[0]) : undefined;
 
@@ -206,9 +222,9 @@ export function DeviceList({
       {latest && behind > 0 && (
         <FirmwareNotice behind={behind} total={devices.length} latest={latest} security={security}
                         oneName={oneBoard?.name}
-                        onUpdateOne={oneBoard ? () => { setPicked(new Set([oneBoard.id])); setOpen(true); } : undefined} />
+                        onUpdateOne={oneBoard ? () => updateOne(oneBoard.id) : undefined} />
       )}
-      {latest && picked.size > 0 && (
+      {latest && picked.size > 0 && !single && (
         <div className="flex flex-wrap items-center gap-3 rounded-2xl p-4" data-testid="update-bar"
              style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
           <span className="text-[13px]" style={{ color: 'var(--ink)' }}>
@@ -255,9 +271,10 @@ export function DeviceList({
           {devices.map((d, i) => (
             <DeviceCard
               key={d.id} device={d} now={now} firmware={states[i]}
-              selection={selectable.has(d.id)
-                ? { selected: picked.has(d.id), onToggle: toggle }
+              selection={multi && selectable.has(d.id)
+                ? { selected: picked.has(d.id) && !single, onToggle: toggle }
                 : undefined}
+              onUpdate={latest && selectable.has(d.id) ? updateOne : undefined}
               onCancelUpdate={d.desiredFirmwareVersion ? cancel : undefined}
               next={nextById[d.id] ?? null}
               sendLine={sendLineById[d.id] ?? null}

@@ -12,6 +12,8 @@ import { BootDiskSetting } from './boot-disk-setting';
 import { DriveNumbersSetting } from './drive-numbers-setting';
 import type { DriveBase } from '@/lib/drive-numbers';
 import { DeleteDeviceConfirm } from './delete-device-dialog';
+import { DisplayEditor } from './display-editor';
+import { panelHeight } from '@/lib/display-editor-geometry';
 
 /** The NFC line is known to be wrong: the attention dot's rule (spec §8.3). A board that sends no scan is unknown,
  *  not wrong, so it gets no dot. */
@@ -21,7 +23,10 @@ function needsAttention(device: DeviceListItem): boolean {
 }
 
 /**
- * Board settings (spec §8): the button in the card's heading row and the modal it opens. Disk at startup is a draft
+ * Board settings (spec §8): the button in the card's heading row and the modal it opens. Display (moved off the card
+ * 2026-11-12) opens the display editor as a dialog on top of this one, so closing it comes back here with focus on
+ * Change display; it saves on its own, not through Save to board. "This board" names the full firmware version and the
+ * MAC address the card no longer shows. Disk at startup is a draft
  * that "Save to board" sends (Ruling 20); the NFC reader line is read-only (Ruling 22); "Delete device…" closes this
  * modal and opens the delete confirmation (Ruling 23). Cancel, the X, Escape and the backdrop send nothing, and none
  * of them works while the save runs.
@@ -36,6 +41,8 @@ export function BoardSettings({ device, openOnArrival = false }: {
   const [, startRefresh] = useTransition();
   const [open, setOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [displayOpen, setDisplayOpen] = useState(false);
+  const displayToggle = useRef<HTMLButtonElement>(null);
   const [draft, setDraft] = useState<BootDisk>(device.bootDisk);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
@@ -191,6 +198,32 @@ export function BoardSettings({ device, openOnArrival = false }: {
                </>
              )}>
         <div className="flex flex-col gap-[22px] px-6 py-5">
+          <div className="flex flex-col gap-2">
+            <span className="flex items-center gap-1 text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>
+              Display
+              <HelpTip topic="display" />
+            </span>
+            <div className="flex flex-wrap items-center gap-3 rounded-[12px] px-3.5 py-3" style={{ background: 'var(--surface-2)' }}>
+              <span className="min-w-0 flex-1 text-[13px]" style={{ color: 'var(--ink)' }} data-testid={`display-panel-${id}`}>
+                Board display · {panelHeight(device.displayPanel) === 64 ? '128×64' : '128×32'}
+              </span>
+              <button type="button" ref={displayToggle} onClick={() => setDisplayOpen(true)} aria-haspopup="dialog"
+                      aria-expanded={displayOpen} data-testid={`display-toggle-${id}`} disabled={busy}
+                      className="flex min-h-[38px] items-center gap-1.5 rounded-[10px] border px-3.5 text-[13px] font-medium disabled:opacity-50 max-sm:min-h-11"
+                      style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                     strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="5" width="18" height="12" rx="2" /><path d="M8 21h8M12 17v4" />
+                </svg>
+                Change display
+              </button>
+            </div>
+            <span className="text-[12px]" style={{ color: 'var(--muted-2)' }}>
+              What the board&apos;s own screen shows. Saved to the board from the display editor.
+            </span>
+            {/* Nested in this dialog (Base UI stacks it): Escape or Cancel closes only the editor. */}
+            {displayOpen && <DisplayEditor device={device} onOpenChange={setDisplayOpen} finalFocus={displayToggle} />}
+          </div>
           <DriveNumbersSetting device={device} value={base} onChange={setBase} error={baseFailed} busy={busy} />
           <BootDiskSetting device={device} value={draft} onChange={setDraft} error={failed} busy={busy} />
           <div className="flex flex-col gap-2">
@@ -219,6 +252,20 @@ export function BoardSettings({ device, openOnArrival = false }: {
               Tap a card written from a title to mount it; a Next-disk card moves to the next disk of the set.
               <HelpTip topic="nfc" className="-mt-1" />
             </span>
+          </div>
+          <div className="flex flex-col gap-2">
+            <span className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>This board</span>
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 rounded-[12px] px-3.5 py-3 text-[13px]"
+                style={{ background: 'var(--surface-2)' }}>
+              <dt style={{ color: 'var(--muted)' }}>Firmware</dt>
+              <dd className="font-mono" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }} data-testid={`device-firmware-full-${id}`}>
+                {device.firmwareVersion ?? 'Not reported yet'}
+              </dd>
+              <dt style={{ color: 'var(--muted)' }}>MAC address</dt>
+              <dd className="font-mono" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }} data-testid={`device-mac-${id}`}>
+                {device.macAddress ?? 'Not reported yet'}
+              </dd>
+            </dl>
           </div>
         </div>
       </Modal>
