@@ -127,6 +127,10 @@
   }
   html {
     @apply font-sans;
+    /* Keep the scrollbar's lane on every page, scrolling or not: with classic (non-overlay) scrollbars a short page
+       (an empty Library) had none and a long one (Devices, Help) had 15 px of it, so the header and content jumped
+       sideways when switching tabs. No effect where scrollbars overlay. */
+    scrollbar-gutter: stable;
   }
   /* Bricolage Grotesque for every page title (spec §5); h2 and below stay Geist. */
   h1 {
