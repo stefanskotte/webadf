@@ -44,6 +44,8 @@ export type PaneProps = {
   /** A disk image's own Add to library on its STASH: row (R8): that one row, whatever is picked. */
   onAddToLibrary(index: number): void;
   strip?: ReactNode;   // the disk strip of the disk the pane is in (also one whose image could not be read)
+  /** Inside a disk, below lg: Add files to <disk> (add-files-button.tsx), under the strip. */
+  addFiles?: ReactNode;
   errorAction?: ReactNode;   // under the error (or the pending line), e.g. a way back to LIBRARY: when the place is gone
   /** The crumbs to show while there is no listing (a NET: place pending or refused). */
   fallbackCrumbs?: { label: string; path: string }[];
@@ -260,6 +262,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
       </div>
       {/* The manager passes a strip only for a pane inside a disk -- also one whose image could not be read. */}
       {p.strip}
+      {listing && p.addFiles}
 
       {p.error && (
         <p role="alert" data-testid={tid('error')} className="px-3.5 py-3 text-[13px]" style={{ color: 'var(--danger-fg)' }}>{p.error}</p>

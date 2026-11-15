@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { unsettled, holdsFiles, addToLibraryReason, offersUndo, placeOf, exactPlaceOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly, failedReason, FAILED_ROW, deleteText, deleteWhere, netVolumeReason } from './pane-rules';
+import { unsettled, holdsFiles, addToLibraryReason, offersUndo, placeOf, exactPlaceOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly, failedReason, FAILED_ROW, deleteText, deleteWhere, netVolumeReason, insideDiskPlace } from './pane-rules';
 import { NET_OPEN_VOLUME, NET_READ_ONLY } from './net-rules';
 import type { FsEntry, Listing } from './types';
 
@@ -72,6 +72,26 @@ describe('exactPlaceOf: where Create SysConf will write', () => {
   });
   it('a STASH: folder by its path', () => {
     expect(exactPlaceOf(L('STASH:/Boot', {}))).toBe('STASH:/Boot');
+  });
+});
+
+describe("insideDiskPlace: what the phone's Add files button names", () => {
+  const crumbs = (...labels: string[]) => labels.map((label) => ({ label, path: label }));
+  const titled = { ...disk, title: 'Empty' };
+  it('the title and the disk, then the folders shown', () => {
+    expect(insideDiskPlace(L('LIBRARY:/g1/d1', { disk: titled, crumbs: crumbs('LIBRARY:', 'Empty', 'Disk 1') }))).toBe('Empty · Disk 1');
+    expect(insideDiskPlace(L('LIBRARY:/g1/d1/Docs/Sub', { disk: titled, crumbs: crumbs('LIBRARY:', 'Empty', 'Disk 1', 'Docs', 'Sub') })))
+      .toBe('Empty · Disk 1/Docs/Sub');
+  });
+  it('a label that already names the title alone', () => {
+    const own = { ...disk, title: 'Turrican', label: 'Turrican (Disk 1)' };
+    expect(insideDiskPlace(L('LIBRARY:/g1/d1/C', { disk: own, crumbs: crumbs('LIBRARY:', 'Turrican', 'Turrican (Disk 1)', 'C') })))
+      .toBe('Turrican (Disk 1)/C');
+  });
+  it('null outside a disk', () => {
+    expect(insideDiskPlace(L('STASH:'))).toBeNull();
+    expect(insideDiskPlace(L('LIBRARY:/g1'))).toBeNull();
+    expect(insideDiskPlace(null)).toBeNull();
   });
 });
 

@@ -43,7 +43,8 @@ describe('help topics', () => {
       // files covers two panes, the bank, filing and (NET: volumes) browsing the Amiga: it alone may run longer.
       // ... and (NET: volumes phase 2) writing to them, in one short paragraph, with what a Move removes (§9): 415 for files.
       // ... and what a disk copied onto a volume makes (spec 2026-11-02): 520.
-      expect(words).toBeLessThanOrEqual(id === 'files' ? 530 : 280);
+      // ... and how files from the computer or a phone get onto a disk (tester report 2026-11-14): 565.
+      expect(words).toBeLessThanOrEqual(id === 'files' ? 565 : 280);
       expect(text).not.toMatch(BANNED);
     });
   }

@@ -19,7 +19,7 @@ import type { OpItem, OpRequest } from '@/lib/files/ops';
 import type { Added } from '@/lib/files/driver';
 import {
   acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, netVolumeReason, OTHER_PANE_OPENING, PANE_OPENING, unsettled,
-  offersUndo, exactPlaceOf, placeOf,
+  offersUndo, exactPlaceOf, placeOf, insideDiskPlace,
 } from '@/lib/files/pane-rules';
 import { askUntilAnswered } from '@/lib/files/ask-listing';
 import {
@@ -43,6 +43,7 @@ import { Pane } from './pane';
 import { ButtonBank } from './button-bank';
 import { DiskStrip } from './disk-strip';
 import { DropReview } from './drop-review';
+import { AddFilesButton } from './add-files-button';
 import { CopyToPicker, type ListResult } from './copy-to-picker';
 import { StashDropZone } from './stash-drop-zone';
 import { SendDropZone } from './send-drop-zone';
@@ -1432,6 +1433,31 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     guarded([disk], () => setDialog({ kind: 'drop', disk, folder, where, items: reading }));
   }
 
+  /** Why the phone's Add files button cannot add to the disk a pane shows now, or null (dimmed, a tap says it). */
+  function addFilesReason(side: Side): string | null {
+    const l = panes[side].listing;
+    if (!l?.disk) return 'Open a disk to add files to it';
+    if (!l.writable) return readOnly(l);
+    if (unsettled(panes[side])) return PANE_OPENING;
+    return dropBlocked({ busy: busy !== null, dialogOpen: dialog !== null });
+  }
+
+  /**
+   * Files picked with the phone's Add files button (a phone has no drag from the OS): the review a drop on the pane
+   * opens (dropFromComputer), for the folder the pane shows.
+   */
+  function addPicked(side: Side, picked: File[]) {
+    const l = panes[side].listing;
+    const refused = addFilesReason(side);
+    if (refused || !l?.disk) { toast.error(refused ?? 'Open a disk to add files to it'); return; }
+    activate(side);
+    const disk = l.disk;
+    const folder = diskRelative(l.path, l.diskBase) ?? '';
+    const where = l.crumbs[l.crumbs.length - 1]?.label ?? disk.label;
+    const items: Promise<DroppedItem[]> = Promise.resolve(picked.map((file) => ({ path: file.name, kind: 'file' as const, file, sizeBytes: file.size })));
+    guarded([disk], () => setDialog({ kind: 'drop', disk, folder, where, items }));
+  }
+
   /**
    * Files from the computer dropped on a pane in STASH: (any folder, or the folder row they landed on): stored there.
    * Inside an archive, which is read-only, it is said instead.
@@ -1712,6 +1738,10 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
               strip={disk && strip ? (
                 <DiskStrip key={`${disk.diskId}:${disk.volumeName}`} side={side} disk={disk} data={strip}
                            onChanged={() => stripChanged(disk.diskId)} />
+              ) : undefined}
+              addFiles={p.listing?.disk ? (
+                <AddFilesButton side={side} place={insideDiskPlace(p.listing)!} reason={addFilesReason(side)}
+                                onFiles={(picked) => addPicked(side, picked)} />
               ) : undefined}
               errorAction={p.gone ? (
                 <Button variant="outline" size="sm" onClick={() => navigate(side, deviceRoot(p.path))} data-testid={`pane-${side}-home`}>
