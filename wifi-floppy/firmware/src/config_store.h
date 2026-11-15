@@ -84,6 +84,10 @@ bool config_store_save(const device_config_t *cfg);
 // last-joined network changing, is not a re-pair. Same guards.
 bool config_store_update(const device_config_t *cfg);
 
+// Whether a valid record is stored, without copying it out (no buffer: core0
+// asks this after an erase, and its stack is 2 KB).
+bool config_store_present(void);
+
 // Clears credentials AND the token. Same mounted-disk guard.
 void config_store_erase(void);
 

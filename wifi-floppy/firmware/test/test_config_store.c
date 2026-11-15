@@ -250,6 +250,10 @@ static void test_four_networks_round_trip(void) {
     memset(&out, 0, sizeof out);   // padding included: the memcmp below is byte-wise
     CHECK(config_store_load(&out), "loads");
     CHECK(memcmp(&in, &out, sizeof in) == 0, "every byte back");
+    // Written one 256 B page at a time (review I3): this record's extension
+    // (306 B) runs into page 2, so the streamed CRC crossed a page boundary.
+    const unsigned char *raw = config_store_test_raw();
+    CHECK(raw[2 * CONFIG_STORE_PAGE_BYTES] != 0xFF, "the extension reaches page 2");
 }
 
 static void test_a_write_torn_after_page_0_keeps_the_last_joined_network(void) {
@@ -299,6 +303,16 @@ static void test_an_extension_from_another_page_0_is_ignored(void) {
     CHECK(config_store_load(&out), "loads");
     CHECK_EQ_INT(out.n_nets, 1);
     CHECK(strcmp(out.net[0].ssid, "other") == 0, "page 0 only");
+}
+
+static void test_present_says_whether_a_record_is_stored(void) {
+    config_store_erase();
+    CHECK(!config_store_present(), "erased: nothing");
+    device_config_t in = mk("home", "home-pass", "ABC123");
+    CHECK(config_store_save(&in), "save");
+    CHECK(config_store_present(), "saved: present");
+    config_store_test_corrupt_payload_byte();
+    CHECK(!config_store_present(), "a bad CRC is not a record");
 }
 
 static void test_save_erases_the_token_and_update_keeps_it(void) {
@@ -369,6 +383,7 @@ int main(void) {
     RUN(test_a_write_torn_after_page_0_keeps_the_last_joined_network);
     RUN(test_a_damaged_extension_degrades_to_one_network);
     RUN(test_an_extension_from_another_page_0_is_ignored);
+    RUN(test_present_says_whether_a_record_is_stored);
     RUN(test_save_erases_the_token_and_update_keeps_it);
     RUN(test_a_config_with_no_network_is_not_saved);
     RUN(test_the_list_operations);

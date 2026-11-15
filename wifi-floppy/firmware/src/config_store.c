@@ -56,8 +56,9 @@ static uint32_t read_u32(const uint8_t *p) {
 // Table-less bitwise CRC-32 (polynomial 0xEDB88320, the same one zlib's
 // table is derived from). This runs once per provisioning, never in a hot
 // path, so the ~8x speed a 256-entry table would buy isn't worth the flash.
-static uint32_t crc32_bitwise(const uint8_t *data, size_t len) {
-    uint32_t crc = 0xFFFFFFFFu;
+// crc32_update() carries the running (pre-inversion) state, so a record can
+// be checksummed while it is streamed out a page at a time (ext_page below).
+static uint32_t crc32_update(uint32_t crc, const uint8_t *data, size_t len) {
     for (size_t i = 0; i < len; i++) {
         crc ^= data[i];
         for (int bit = 0; bit < 8; bit++) {
@@ -65,7 +66,11 @@ static uint32_t crc32_bitwise(const uint8_t *data, size_t len) {
             crc = (crc >> 1) ^ (0xEDB88320u & mask);
         }
     }
-    return ~crc;
+    return crc;
+}
+
+static uint32_t crc32_bitwise(const uint8_t *data, size_t len) {
+    return ~crc32_update(0xFFFFFFFFu, data, len);
 }
 
 // ---------------------------------------------------------------- several networks
@@ -98,9 +103,17 @@ static uint32_t crc32_bitwise(const uint8_t *data, size_t len) {
 //     networks are invisible to it; its next save erases them (it erases the
 //     sector and programs page 0 only), which this firmware then reads as one
 //     network.
-//   * Flash programs page by page, so a write torn after page 0 leaves page 0
-//     whole and the extension invalid: this loads as the one last-joined
-//     network, the code and the token intact. Degraded, never lost.
+//   * A write erases the whole 4 KB sector first, then programs page 0, then
+//     the extension. Torn after page 0: page 0 is whole and the extension
+//     invalid, so this loads as the one network in page 0 with the code.
+//     Torn during the erase or before page 0 is programmed: the record is
+//     GONE -- every network and the pairing code. The token survives in its
+//     own sector, and the setup page then accepts a network with no code
+//     (provisioning.c), so the board stays paired; but its networks must be
+//     typed in again. That window (~tens of ms of erase and program) is why
+//     the board writes this sector only on a person's action in the setup
+//     page -- never on its own, e.g. to remember which network it joined
+//     last (review I2, operator 2026-11-15).
 #define CONFIG_PAGE      CONFIG_STORE_PAGE_BYTES
 #define CONFIG_EXT_MAGIC 0x4E434657u   // 'WFCN', little-endian
 #define CONFIG_EXT_VERSION 1u
@@ -139,13 +152,14 @@ static bool page_load(const uint8_t *page, size_t page_len, wifi_net_t *net,
     uint32_t got = crc32_bitwise(page + 4, payload_len);
     if (got != want) return false;
 
+    *crc_out = want;
+    if (!net) return true;   // config_store_present(): checked, nothing copied
     memset(net, 0, sizeof *net);
     memset(code, 0, CONFIG_CODE_MAX + 1);
     const uint8_t *p = page + CONFIG_HEADER_LEN;
     memcpy(net->ssid, p, ssid_len);           p += ssid_len;
     memcpy(net->pass, p, pass_len);           p += pass_len;
     memcpy(code, p, code_len);
-    *crc_out = want;
     return true;
 }
 
@@ -222,29 +236,49 @@ static bool ext_load(const uint8_t *ext, size_t len, uint32_t page0_crc, device_
     return true;
 }
 
-// Builds the extension for cfg into ext[0..len). False on an over-length field.
-static bool ext_build(uint8_t *ext, size_t len, const device_config_t *cfg, uint32_t page0_crc) {
-    memset(ext, 0xFF, len);
+// The extension, streamed (review I3: the device writes the record one 256 B
+// page at a time from one static page buffer, not from a 768 B record
+// buffer). The whole extension is generated on every call, byte by byte in
+// order; only bytes [base, base + CONFIG_PAGE) of it land in `out`, which the
+// caller has filled with 0xFF. The CRC is computed over the stream as it
+// goes, so it is right in whichever page its four bytes fall.
+typedef struct {
+    uint8_t *out;
+    size_t   base, off;
+    uint32_t crc;      // running CRC over ext bytes 4.. (the magic is not covered)
+} ext_stream_t;
+
+static void ext_put(ext_stream_t *e, const uint8_t *b, size_t n, bool in_crc) {
+    if (in_crc) e->crc = crc32_update(e->crc, b, n);
+    for (size_t i = 0; i < n; i++, e->off++)
+        if (e->off >= e->base && e->off < e->base + CONFIG_PAGE) e->out[e->off - e->base] = b[i];
+}
+
+static bool ext_page(const device_config_t *cfg, uint32_t page0_crc, size_t base, uint8_t *out) {
     if (cfg->n_nets < 2) return true;   // one network: no extension, pages 1-2 stay erased
-    write_u32(ext, CONFIG_EXT_MAGIC);
-    ext[4] = (uint8_t)CONFIG_EXT_VERSION;
-    ext[5] = (uint8_t)cfg->n_nets;
-    ext[6] = (uint8_t)cfg->last;
-    write_u32(ext + 7, page0_crc);
-    size_t off = CONFIG_EXT_HEADER_LEN;
+    ext_stream_t e = { out, base, 0, 0xFFFFFFFFu };
+    uint8_t hdr[CONFIG_EXT_HEADER_LEN];
+    write_u32(hdr, CONFIG_EXT_MAGIC);
+    hdr[4] = (uint8_t)CONFIG_EXT_VERSION;
+    hdr[5] = (uint8_t)cfg->n_nets;
+    hdr[6] = (uint8_t)cfg->last;
+    write_u32(hdr + 7, page0_crc);
+    ext_put(&e, hdr, 4, false);
+    ext_put(&e, hdr + 4, sizeof hdr - 4, true);
     for (int i = 0; i < cfg->n_nets; i++) {
         if (i == cfg->last) continue;
         const wifi_net_t *w = &cfg->net[i];
         size_t sl = strnlen(w->ssid, sizeof w->ssid), pl = strnlen(w->pass, sizeof w->pass);
         if (sl >= sizeof w->ssid || pl >= sizeof w->pass) return false;
-        if (off + 2 + sl + pl + 4 > len) return false;
-        ext[off++] = (uint8_t)sl;
-        ext[off++] = (uint8_t)pl;
-        memcpy(ext + off, w->ssid, sl);   off += sl;
-        memcpy(ext + off, w->pass, pl);   off += pl;
+        uint8_t lens[2] = { (uint8_t)sl, (uint8_t)pl };
+        ext_put(&e, lens, 2, true);
+        ext_put(&e, (const uint8_t *)w->ssid, sl, true);
+        ext_put(&e, (const uint8_t *)w->pass, pl, true);
     }
-    write_u32(ext + off, crc32_bitwise(ext + 4, off - 4));
-    return true;
+    uint8_t crc[4];
+    write_u32(crc, ~e.crc);
+    ext_put(&e, crc, 4, false);
+    return e.off <= CONFIG_STORE_RECORD_BYTES - CONFIG_PAGE;   // the _Static_assert above, at run time
 }
 
 // Fills *out only on success (out is untouched when nothing valid is stored:
@@ -259,17 +293,27 @@ static bool record_load(const uint8_t *rec, size_t len, device_config_t *out) {
     return true;
 }
 
-// The whole record (len = CONFIG_STORE_RECORD_BYTES) for cfg. False -- out
-// then undefined, nothing written by the callers -- on no network, an
-// out-of-range `last`, or an over-length field.
-static bool record_build(uint8_t *rec, size_t len, const device_config_t *cfg) {
-    if (len < CONFIG_STORE_RECORD_BYTES) return false;
+// Page `pg` (0..2) of the record for cfg, into out[CONFIG_PAGE]. False on no
+// network, an out-of-range `last`, or an over-length field -- the same answer
+// for every page, so a caller that checks all three before erasing anything
+// never finds out halfway through a write.
+static bool record_page(const device_config_t *cfg, int pg, uint8_t *out) {
     if (cfg->n_nets < 1 || cfg->n_nets > CONFIG_NETS_MAX) return false;
     if (cfg->last < 0 || cfg->last >= cfg->n_nets) return false;
     uint32_t crc0 = 0;
-    if (!page_build(rec, CONFIG_PAGE, &cfg->net[cfg->last], cfg->code, sizeof cfg->code, &crc0))
+    if (!page_build(out, CONFIG_PAGE, &cfg->net[cfg->last], cfg->code, sizeof cfg->code, &crc0))
         return false;
-    return ext_build(rec + CONFIG_PAGE, len - CONFIG_PAGE, cfg, crc0);
+    if (pg == 0) return true;
+    memset(out, 0xFF, CONFIG_PAGE);
+    return ext_page(cfg, crc0, (size_t)(pg - 1) * CONFIG_PAGE, out);
+}
+
+#define CONFIG_RECORD_PAGES (CONFIG_STORE_RECORD_BYTES / CONFIG_PAGE)
+
+static bool record_valid(const device_config_t *cfg, uint8_t *scratch_page) {
+    for (int pg = 0; pg < CONFIG_RECORD_PAGES; pg++)
+        if (!record_page(cfg, pg, scratch_page)) return false;
+    return true;
 }
 
 // ---------------------------------------------------------------- the list, pure
@@ -332,12 +376,22 @@ static void do_erase(void *param) {
     flash_range_erase(CONFIG_FLASH_OFFSET, FLASH_SECTOR_SIZE);
 }
 
-typedef struct { const uint8_t *data; size_t len; } program_args_t;
+typedef struct { const device_config_t *cfg; uint8_t *page; } program_args_t;
 
+// Erase, then build and program each page in turn from one 256 B buffer
+// (review I3; it was a 768 B static record). The build runs between flash
+// operations, which leave XIP usable; record_valid() has already said every
+// page builds, so nothing here can fail after the erase. A page that is all
+// 0xFF (no extension) is left erased rather than programmed.
 static void do_program(void *param) {
     program_args_t *a = param;
     flash_range_erase(CONFIG_FLASH_OFFSET, FLASH_SECTOR_SIZE);
-    flash_range_program(CONFIG_FLASH_OFFSET, a->data, a->len);
+    for (int pg = 0; pg < CONFIG_RECORD_PAGES; pg++) {
+        if (!record_page(a->cfg, pg, a->page)) return;
+        bool blank = true;
+        for (int i = 0; i < CONFIG_PAGE && blank; i++) blank = a->page[i] == 0xFF;
+        if (!blank) flash_range_program(CONFIG_FLASH_OFFSET + (uint32_t)pg * CONFIG_PAGE, a->page, CONFIG_PAGE);
+    }
 }
 
 bool config_store_load(device_config_t *out) {
@@ -349,17 +403,22 @@ bool config_store_load(device_config_t *out) {
     return record_load(p, CONFIG_STORE_CAP, out);
 }
 
+bool config_store_present(void) {
+    const uint8_t *p = (const uint8_t *)(XIP_NOCACHE_NOALLOC_NOTRANSLATE_BASE + CONFIG_FLASH_OFFSET);
+    uint32_t crc0;
+    return page_load(p, CONFIG_PAGE, NULL, NULL, &crc0);
+}
+
 static bool store_write(const device_config_t *cfg) {
     if (disk_is_mounted()) return false;
 
     // Static rather than a stack buffer -- see token_store_save()'s
     // comment: flash_safe_execute's callback disables interrupts and locks
-    // out the other core for as short a window as possible. 768 B: never
-    // on a stack (core0's is 2 KB).
-    static uint8_t page[CONFIG_STORE_CAP];
-    if (!record_build(page, sizeof page, cfg)) return false;
+    // out the other core for as short a window as possible. One page, 256 B.
+    static uint8_t page[CONFIG_PAGE];
+    if (!record_valid(cfg, page)) return false;   // before anything is erased
 
-    program_args_t args = { page, sizeof page };
+    program_args_t args = { cfg, page };
     return flash_safe_execute(do_program, &args, 1000) == PICO_OK;
 }
 
@@ -400,14 +459,25 @@ bool config_store_load(device_config_t *out) {
     return record_load(g_page, sizeof g_page, out);
 }
 
+bool config_store_present(void) {
+    ensure_init();
+    uint32_t crc0;
+    return page_load(g_page, CONFIG_PAGE, NULL, NULL, &crc0);
+}
+
 static bool store_write(const device_config_t *cfg) {
     // Same guard as the device backing -- kept identical so a host test can
     // prove this rule holds without needing flash hardware.
     if (psram_active_slot() != SLOT_NONE) return false;
     ensure_init();
-    static uint8_t rec[CONFIG_HOST_CAP];
-    if (!record_build(rec, sizeof rec, cfg)) return false;   // nothing written on failure
-    memcpy(g_page, rec, sizeof g_page);
+    // The device's order: check every page, then "erase" and write page by page.
+    static uint8_t page[CONFIG_PAGE];
+    if (!record_valid(cfg, page)) return false;   // nothing written on failure
+    memset(g_page, 0xFF, sizeof g_page);
+    for (int pg = 0; pg < CONFIG_RECORD_PAGES; pg++) {
+        record_page(cfg, pg, page);
+        memcpy(g_page + pg * CONFIG_PAGE, page, CONFIG_PAGE);
+    }
     return true;
 }
 
