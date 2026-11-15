@@ -114,6 +114,15 @@ done
 # pad, gpio_put() on it does NOTHING -- no error, no warning, just a line that
 # never moves -- so a single call that slipped back in would be invisible on
 # the bench. bus_out_set() is the only way to set one.
+# The UDP pcb budget (lwipopts.h, bench 2026-11-15): the board's own sources may open only the portal's UDP pcbs;
+# a new udp_new() must be counted there first (test_lwip_budget.c pins the arithmetic).
+udp_sites=$(for f in ../src/*.c; do sed -E 's#//.*##' "$f" | { grep -oE '\budp_new(_ip_type)?[[:space:]]*\(' || true; }; done | wc -l | tr -d ' ')
+udp_budget=$(sed -nE 's/^#define WF_UDP_PCB_PORTAL[[:space:]]+([0-9]+).*/\1/p' ../lwipopts.h)
+if [ "$udp_sites" != "$udp_budget" ]; then
+  echo "FAIL: $udp_sites udp_new() call(s) in src/, but lwipopts.h's WF_UDP_PCB_PORTAL budgets $udp_budget -- count the new pcb in the budget"
+  fail=1
+fi
+
 if grep -nE 'gpio_put\(PIN_(INDEX|CHNG|WPROT|RDY|TRK0|RDATA)\b' ../src/*.c; then
   echo "FAIL: gpio_put on a PIO-owned bus output (use bus_out_set)"
   fail=1

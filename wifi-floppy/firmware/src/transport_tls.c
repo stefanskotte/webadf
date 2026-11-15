@@ -162,6 +162,25 @@ static bool s_noverify;
 
 void tls_set_noverify(bool on) { s_noverify = on; }
 
+// The setup page opened on request (bench 2026-11-15): a Save or a Done on it must be answered within a second or
+// two, also while the server is unreachable. The long waits of a request that core1 cannot otherwise leave -- DNS
+// (10 s) and the connect and handshake (15 s) -- give way when this says so: nothing is lost, the request fails
+// as any connect failure does and is made again later. The poll's read already gives way (its interrupt).
+static bool (*s_yield)(void);
+void tls_set_yield(bool (*fn)(void)) { s_yield = fn; }
+static bool tls_yield_now(void) { return s_yield && s_yield(); }
+
+// When an allocation fails: how full lwIP's pools are, so a pool too small for what runs at once is named, not
+// guessed (bench 2026-11-15: the UDP pool, 4 by default, with the AP's servers beside the station's users).
+static void tls_log_pools(const char *what) {
+    wf_logf(WF_WARN, "lwip: %s -- udp pcbs %u/%u (err %u), tcp pcbs %u/%u (err %u), heap %u/%u (err %u)", what,
+            (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->used, (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->avail,
+            (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->err,
+            (unsigned)lwip_stats.memp[MEMP_TCP_PCB]->used, (unsigned)lwip_stats.memp[MEMP_TCP_PCB]->avail,
+            (unsigned)lwip_stats.memp[MEMP_TCP_PCB]->err,
+            (unsigned)lwip_stats.mem.used, (unsigned)lwip_stats.mem.avail, (unsigned)lwip_stats.mem.err);
+}
+
 static int accept_any(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
     (void)ctx; (void)crt; (void)depth;
     *flags = 0;
@@ -417,11 +436,14 @@ static int tls_connect(struct transport *t, const char *host, int port) {
         absolute_time_t deadline = make_timeout_time_ms(DNS_TIMEOUT_MS);
         while (!c->dns_done &&
                absolute_time_diff_us(get_absolute_time(), deadline) > 0) {
+            // A late answer lands on g_dns_token's generation, which the next connect moves on.
+            if (tls_yield_now()) return tls_fail(TLS_ERR_YIELDED, "DNS gave way to the setup page", 0);
             sleep_ms(1);
         }
         if (!c->dns_done)
             return tls_fail(TLS_ERR_DNS_TIMEOUT, "DNS timed out", DNS_TIMEOUT_MS);
     } else {
+        if (derr == ERR_MEM) tls_log_pools("DNS lookup could not allocate");
         return tls_fail(TLS_ERR_DNS, "DNS call refused", (int)derr);
     }
     if (!c->dns_ok) return tls_fail(TLS_ERR_DNS, "DNS did not resolve", 0);
@@ -457,6 +479,7 @@ static int tls_connect(struct transport *t, const char *host, int port) {
     c->pcb = altcp_tls_new(g_tls_config, IPADDR_TYPE_V4);
     if (!c->pcb) {
         net_radio_unlock();
+        tls_log_pools("altcp_tls_new could not allocate");
         return tls_fail(TLS_ERR_TLS_CONFIG, "altcp_tls_new failed (out of memory)", 0);
     }
     altcp_arg(c->pcb, c);
@@ -494,8 +517,10 @@ static int tls_connect(struct transport *t, const char *host, int port) {
     // Waits for the *full* TLS handshake, not just the TCP three-way
     // handshake: see on_connected()'s comment above.
     absolute_time_t deadline = make_timeout_time_ms(CONNECT_TIMEOUT_MS);
+    bool yielded = false;
     while (!c->connected && !c->closed &&
            absolute_time_diff_us(get_absolute_time(), deadline) > 0) {
+        if (tls_yield_now()) { yielded = true; break; }
         sleep_ms(1);
     }
     if (c->connected) {
@@ -512,6 +537,7 @@ static int tls_connect(struct transport *t, const char *host, int port) {
         c->pcb = NULL;
         detach_and_close(pcb);
     }
+    if (yielded) return tls_fail(TLS_ERR_YIELDED, "connect gave way to the setup page", 0);
     // c->err is on_err()'s snapshot of the lwIP err_t -- the ONLY place the
     // real reason for a refused handshake survives.
     return c->closed

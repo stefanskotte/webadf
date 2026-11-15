@@ -130,6 +130,7 @@ bool tls_release_if_unreusable(void);
 // Same file again. The server override's "tls noverify" (1.13.0): set once
 // at boot, below, before core1 opens any connection.
 void tls_set_noverify(bool on);
+void tls_set_yield(bool (*fn)(void));   // transport_tls.c: DNS and connect give way when fn() says so
 
 // ---------------------------------------------------------------- display
 //
@@ -1989,7 +1990,12 @@ static void wifi_handle(const wifi_cmd_t *cmd, uploader_t *up) {
 }
 
 // Once per poll-loop pass, between requests.
-static void __attribute__((noinline)) wifi_online_step(device_client_t *c, uploader_t *up, bool report_retry) {
+// The page opened on request: a Save, a Remove, a Done, and its time. Run at the TOP of every poll-loop pass, before
+// any request (bench 2026-11-15): a Save cuts the long poll short (poll_wake_pending), and a poll cut short rounds
+// straight back to the top -- so serviced only after dc_step, as before, a pending Save cut every next poll short
+// in turn and was never handled. The long waits of a pass give way to it too: the backoff sleep (below) and a
+// request's DNS and connect (tls_set_yield).
+static void __attribute__((noinline)) wifi_portal_step(uploader_t *up) {
     // 1. The page: a Save, a Remove, a Done.
     if (portal_is_open()) {
         setup_form_t f;
@@ -2012,6 +2018,12 @@ static void __attribute__((noinline)) wifi_online_step(device_client_t *c, uploa
         const unsigned char hold = wifi_hold(up);
         if (hold != g_portal_view.hold) portal_view_changed(online_view_hold_cb, (void *)&hold);
     }
+}
+
+// Once per poll-loop pass, between requests, after the poll: the page again (cheap when idle), then an instruction.
+static void __attribute__((noinline)) wifi_online_step(device_client_t *c, uploader_t *up, bool report_retry) {
+    wifi_portal_step(up);
+    const uint32_t now = clock_ms();
     // 3. An instruction from the web app: fetched when the poll's cursor moved past what was handled. Not while
     //    Amiga writes wait (they go first), and a failed fetch waits 5 s -- the server answers every poll at once
     //    while the cursor is ahead.
@@ -2673,6 +2685,8 @@ static void core1_main(void) {
         // every entry: dc_init above zeroes `c`, and nfc_ack with it -- a
         // re-paired board is a new device row whose cursor starts over.
         dc_set_poll_interrupt(&c, poll_wake_pending, NULL);
+        // A request's DNS and connect give way to a Save, Remove or Done on the setup page opened on request.
+        tls_set_yield(portal_event_pending);
         // Wi-Fi networks from the web app (wifi_ctl.h): &wifiAck= on every poll; the "wifi" tail is owed once the
         // cursor is synced (a 200 carrying wifi.v, or any 204), so the server hears the list once a boot and after
         // a re-pair. Every entry: dc_init above zeroes `c`, and a
@@ -2849,6 +2863,8 @@ static void core1_main(void) {
             // now, ahead of anything else this pass sends. Between requests,
             // never inside one -- the uploader's included (dc_tap's rule).
             nfc_core1_event(&c, &up);
+            // The setup page opened on request, before any request of this pass (wifi_portal_step).
+            wifi_portal_step(&up);
             {
                 const int r = g_nfc_reader;
                 if (r != nfc_reader_seen) {
@@ -3524,7 +3540,9 @@ static void core1_main(void) {
                 uint32_t remaining = c.backoff_ms;
                 // A tap ends the sleep too: it is answered now ("Tag: offline"
                 // if the fault persists), not after up to 60 s of backoff.
-                while (remaining > 0 && !up_has_work(&up) && !nfc_event_pending(NULL)) {
+                // ...and so does a Save, Remove or Done on the setup page opened on request (bench 2026-11-15:
+                // it waited out 30-60 s retries while the server was unreachable).
+                while (remaining > 0 && !up_has_work(&up) && !nfc_event_pending(NULL) && !portal_event_pending()) {
                     uint32_t step = remaining < 100 ? remaining : 100;
                     // A deliberate wait of up to DC_BACKOFF_CAP_MS (60 s): core1 is alive, so it ticks (at most
                     // once a second, bt_hw_tick's own pace) -- a server outage must never read as a core1 stall.
