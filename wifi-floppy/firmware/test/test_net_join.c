@@ -8,7 +8,7 @@
 #include "../src/net_join.h"
 #include <string.h>
 
-typedef enum { EV_NONE, EV_ASSOC, EV_LEASE, EV_NONET, EV_BADAUTH, EV_FAIL } ev_t;
+typedef enum { EV_NONE, EV_ASSOC, EV_LEASE, EV_NONET, EV_BADAUTH, EV_FAIL, EV_DEAUTH } ev_t;
 
 typedef struct {
     // the driver
@@ -20,7 +20,8 @@ typedef struct {
     int        n_script, step;
     int        waits, max_waits;   // the deadline, in waits
     // what the loop did
-    int        joins, drops;
+    int        joins, drops, settles;
+    bool       use_settle;         // the ops carry settle (the fix); false models 3bf330b2
     bool       drop_broken;        // a drop that clears nothing (belt and braces)
     // Bench 2026-11-15: a leave on a station that held nothing still produced
     // a DISASSOC event, processed after the next join had set the join state
@@ -67,8 +68,18 @@ static void f_wait(void *v) {
     case EV_NONET:   f->join_state = NET_LINK_NONET; break;
     case EV_BADAUTH: f->join_state = NET_LINK_BADAUTH; break;
     case EV_FAIL:    f->join_state = NET_LINK_FAIL; break;
+    // A wrong password: BADAUTH, and the AP's deauth leaves a DISASSOC on its way (pend_disassoc) that lands on
+    // a later wait -- in the next attempt, unless something waits for it.
+    case EV_DEAUTH:  f->join_state = NET_LINK_BADAUTH; f->late_disassoc = true; break;
     case EV_NONE:    break;
     }
+}
+
+// Lets a pending DISASSOC land now, before the next join (net_radio_cyw43.c j_settle).
+static void f_settle(void *v) {
+    fake_t *f = v;
+    f->settles++;
+    if (f->late_disassoc) { f->late_disassoc = false; f->join_state = NET_LINK_DOWN; }
 }
 
 static net_join_t run(fake_t *f, const ev_t *script, int n) {
@@ -77,7 +88,7 @@ static net_join_t run(fake_t *f, const ev_t *script, int n) {
     f->step = 0;
     f->waits = 0;
     if (!f->max_waits) f->max_waits = 30;
-    const net_join_ops_t ops = { f, f_status, f_join, f_held, f_drop, f_time_up, f_wait };
+    const net_join_ops_t ops = { f, f_status, f_join, f_held, f_drop, f_time_up, f_wait, f->use_settle ? f_settle : NULL };
     return net_join_run(&ops);
 }
 
@@ -178,7 +189,28 @@ static void test_after_an_unassociated_failure_the_next_join_drops_nothing(void)
     CHECK_EQ_INT(f.drops, 0);
 }
 
+// Review of 3bf330b2, I2: the online page checks a network with a wrong password, then goes back home. The wrong
+// password ends as BADAUTH holding nothing, with the deauth's DISASSOC still on its way: without a settle it lands
+// inside the home join and zeroes it (timeout); with one, home joins at the first try.
+static void test_a_wrong_password_then_home_joins_at_once(void) {
+    fake_t f = {0};
+    f.use_settle = true;
+    const ev_t bad[] = { EV_NONE, EV_DEAUTH };
+    CHECK_EQ_INT(run(&f, bad, 2), NET_JOIN_BAD_AUTH);
+    CHECK_EQ_INT(f.drops, 0);      // nothing held: no leave
+    CHECK_EQ_INT(f.settles, 1);    // but the DISASSOC was let land
+    CHECK(!f.late_disassoc, "nothing left on its way");
+    const ev_t home[] = { EV_NONE, EV_ASSOC, EV_LEASE };
+    CHECK_EQ_INT(run(&f, home, 3), NET_JOIN_OK);
+    // The same without settle (3bf330b2): the home join times out.
+    fake_t g = {0};
+    CHECK_EQ_INT(run(&g, bad, 2), NET_JOIN_BAD_AUTH);
+    g.max_waits = 10;
+    CHECK(run(&g, home, 3) != NET_JOIN_OK, "the bug, modelled: the late DISASSOC kills the next join");
+}
+
 int main(void) {
+    RUN(test_a_wrong_password_then_home_joins_at_once);
     RUN(test_a_clean_join);
     RUN(test_the_first_join_after_power_on_drops_nothing);
     RUN(test_after_an_unassociated_failure_the_next_join_drops_nothing);

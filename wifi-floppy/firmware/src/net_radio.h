@@ -54,6 +54,12 @@ bool net_radio_sta_up(void);
 /** The station's address is inside the AP's own /24 (192.168.4.0/24): both up at once would route one into the
  *  other (wifi_ctl.h, WIFI_RES_SUBNET). */
 bool net_radio_sta_in_ap_subnet(void);
+/** Pure (host-tested in test_wifi_ctl.c): the networks a/amask and b/bmask overlap. a == 0 (no address): false. */
+static inline bool net_subnets_overlap(uint32_t a, uint32_t amask, uint32_t b, uint32_t bmask) {
+    if (a == 0) return false;
+    const uint32_t m = amask & bmask;   // the shorter prefix decides
+    return (a & m) == (b & m);
+}
 /** The station MAC. */
 void net_radio_mac(uint8_t mac[6]);
 /** RSSI of the current association, dBm. */

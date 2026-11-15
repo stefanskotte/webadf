@@ -10,7 +10,11 @@ static void drop_if_held(const net_join_ops_t *ops) {
 }
 
 static net_join_t finish(const net_join_ops_t *ops, net_join_t r) {
-    if (r != NET_JOIN_OK) drop_if_held(ops);   // the next attempt starts from nothing
+    if (r == NET_JOIN_OK) return r;
+    // The next attempt starts from nothing: what is held is dropped (drop waits for its own DISASSOC), and a
+    // disassociation the driver already has on its way is let land (settle) -- never left to hit the next join.
+    if (ops->held(ops->ctx)) ops->drop(ops->ctx);
+    else if (ops->settle) ops->settle(ops->ctx);
     return r;
 }
 

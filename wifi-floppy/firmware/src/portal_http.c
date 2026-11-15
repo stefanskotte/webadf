@@ -352,6 +352,24 @@ static void msg_save(sb_t *b, const portal_view_t *v) {
     else sb_txt(b, RQ " but could not save it. Try again.");
 }
 
+// Opened on request: why Save cannot check a network now (portal_hold_t). "" for none.
+static const char *hold_text(const portal_view_t *v) {
+    switch (v ? v->hold : PORTAL_HOLD_NONE) {
+    case PORTAL_HOLD_DISK:
+        return "Save is off for now: a disk is in a drive, and the board does not change its saved networks "
+               "while one is. Eject it in the web app, then reload this page.";
+    case PORTAL_HOLD_WRITES:
+        return "Save is off for now: the board is still sending the Amiga's last saves to the web app. "
+               "Reload this page in a moment.";
+    case PORTAL_HOLD_NETWORK:
+        return "Save is off for now: the Amiga's network (DF1 Network) runs through this board, and checking a "
+               "network would cut it for up to a minute. Switch DF1 to Off or Next disk in the web app, then "
+               "reload this page.";
+    default:
+        return "";
+    }
+}
+
 // Opened on request: the network checked and saved. Not an error.
 static void msg_saved(sb_t *b, const portal_view_t *v) {
     sb_txt(b, "Saved " LQ); sb_user(b, v->notice_ssid); sb_txt(b, RQ ". The board joined it to check it");
@@ -472,6 +490,11 @@ static void render_form(sb_t *bp, const char *mac_str, const char *err,
         else sb_raw(&b, " This setup network closes by itself soon, or when you press Done.");
         sb_raw(&b, "</p>");
     }
+    if (online && view->hold != PORTAL_HOLD_NONE && !has_error(err, view)) {
+        sb_raw(&b, "<div class=\"err\">");
+        sb_txt(&b, hold_text(view));
+        sb_raw(&b, "</div>");
+    }
     if (view->err == PORTAL_NOTE_SAVED && !(err && *err)) {
         sb_raw(&b, "<div class=\"ok\">");
         err_words(&b, NULL, view);
@@ -508,7 +531,8 @@ static void render_form(sb_t *bp, const char *mac_str, const char *err,
                        "this one.</p>");
         if (n >= CONFIG_NETS_MAX)
             sb_fmt(&b, "<p class=\"hint\">%d networks are saved, the most the board holds: remove "
-                       "one to add another.</p>", CONFIG_NETS_MAX);
+                       "one to add another. A saved network's password can still be changed: enter its "
+                       "name and the new password.</p>", CONFIG_NETS_MAX);
         sb_raw(&b, "<h2>Add a network</h2>");
     }
     sb_raw(&b,
@@ -529,7 +553,8 @@ static void render_form(sb_t *bp, const char *mac_str, const char *err,
         char ap[24];
         ap_name(mac_str, ap);
         sb_raw(&b, "<p class=\"hint\">Save checks the network first: the board joins it, so this "
-                   "setup network goes away for up to a minute. Then the board goes back");
+                   "setup network goes away, usually for under a minute (up to about 3 minutes if no saved "
+                   "network answers, and then the board restarts). Then the board goes back");
         if (on_known) {
             sb_raw(&b, " to " LQ);
             sb_html(&b, view->ssid[view->last], false);
@@ -588,10 +613,9 @@ static void render_accepted(sb_t *b, const char *mac_str, const char *ssid, cons
         sb_html(b, ssid, false);
         sb_raw(b, "\xe2\x80\xa6</h1><p class=\"mac\">Board ");
         sb_html(b, mac_str, false);
-        sb_raw(b, "</p><p>This setup network now goes away for up to a minute while the board "
-                  "tries " LQ);
-        sb_html(b, ssid, false);
-        sb_raw(b, RQ ". If it works, the board saves it.</p><p>Then the board goes back");
+        sb_raw(b, "</p><p>This network goes away while the board tries it: usually under a minute, up to "
+                  "about 3 minutes if no saved network answers (then the board restarts). If it works, it is "
+                  "saved.</p><p>Then the board goes back");
         if (on_known) {
             sb_raw(b, " to " LQ);
             sb_html(b, view->ssid[view->last], false);
@@ -599,7 +623,7 @@ static void render_accepted(sb_t *b, const char *mac_str, const char *ssid, cons
         }
         sb_raw(b, ", and ");
         sb_html(b, ap[0] ? ap : "this setup network", false);
-        sb_raw(b, " comes back with the result: join it again to see it, or look in the web app.</p>"
+        sb_raw(b, " comes back with the result: join it again, or see the web app.</p>"
                   "</body></html>");
         return;
     }
@@ -697,6 +721,8 @@ static void route(sb_t *b, const char *method, const char *path, const char *bod
                 why = "Enter the WiFi network name.";
             } else if (f->code[0] == '\0' && !(view && view->have_code)) {
                 why = "Enter the pairing code. Get it in the web app: Devices, Pair a device.";
+            } else if (view && view->on_request && view->hold != PORTAL_HOLD_NONE) {
+                why = hold_text(view);   // before anything is joined (I3)
             } else if (view && view->n >= CONFIG_NETS_MAX && !view_has(view, f->ssid)) {
                 snprintf(full_msg, sizeof full_msg, "%d networks are saved, the most the board "
                          "holds. Remove one below to add another.", CONFIG_NETS_MAX);

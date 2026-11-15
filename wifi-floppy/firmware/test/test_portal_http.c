@@ -719,7 +719,45 @@ static void test_online_the_saved_notice_and_the_refusals(void) {
     CHECK(strstr(text, "Eject it in the web app") != NULL, text);
 }
 
+// Review of 3bf330b2, I3: Save leaves the board's network, so the page refuses it -- before anything is joined --
+// with a disk in a drive, saves waiting, or DF1 Network on, and says why up front.
+static void test_online_save_is_held_and_says_why(void) {
+    portal_view_t v = online_view();
+    const char *why[] = { NULL, "a disk is in a drive", "still sending the Amiga's last saves", "DF1 Network" };
+    for (unsigned h = PORTAL_HOLD_DISK; h <= PORTAL_HOLD_NETWORK; h++) {
+        v.hold = (unsigned char)h;
+        REQV("GET", "/", NULL, NULL, &v);
+        CHECK(strstr(out, "<div class=\"err\">Save is off for now: ") != NULL, out);
+        char esc[160];
+        portal_html_escape(why[h], esc, sizeof esc);
+        CHECK(strstr(out, esc) != NULL, why[h]);
+        REQV("POST", "/save", "ssid=hotspot&pass=pw12345678", NULL, &v);
+        CHECK_EQ_INT(res.action, PORTAL_ACT_NONE);   // nothing joined
+        CHECK(strstr(out, "name=\"ssid\" maxlength=\"32\" value=\"hotspot\"") != NULL, "the name kept");
+    }
+    v.hold = PORTAL_HOLD_NONE;
+    REQV("POST", "/save", "ssid=hotspot&pass=pw12345678", NULL, &v);
+    CHECK_EQ_INT(res.action, PORTAL_ACT_SUBMIT);
+    // The boot page ignores the hold (it has no network to leave).
+    v.on_request = false; v.hold = PORTAL_HOLD_DISK;
+    REQV("POST", "/save", "ssid=hotspot&pass=pw12345678&code=ABC123", NULL, &v);
+    CHECK_EQ_INT(res.action, PORTAL_ACT_SUBMIT);
+}
+
+// M6: the time the setup network is away, as it really can be.
+static void test_online_the_time_away_is_stated(void) {
+    portal_view_t v = online_view();
+    REQV("GET", "/", NULL, NULL, &v);
+    CHECK(strstr(out, "usually for under a minute (up to about 3 minutes if no saved network answers, and then the "
+                      "board restarts)") != NULL, "on the form");
+    REQV("POST", "/save", "ssid=hotspot&pass=pw12345678", NULL, &v);
+    CHECK(strstr(out, "usually under a minute, up to about 3 minutes if no saved network answers (then the board "
+                      "restarts)") != NULL, out);
+}
+
 int main(void) {
+    RUN(test_online_save_is_held_and_says_why);
+    RUN(test_online_the_time_away_is_stated);
     RUN(test_root_renders_the_form);
     RUN(test_page_has_no_external_references);
     RUN(test_unknown_path_redirects_to_the_portal);

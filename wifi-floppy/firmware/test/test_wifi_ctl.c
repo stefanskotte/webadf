@@ -8,6 +8,7 @@
 #include "../src/config_store.h"
 #include "../src/psram_image.h"
 #include "../src/token_store.h"
+#include "../src/net_radio.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -339,7 +340,19 @@ static void a_new_password_for_the_network_in_use(void) {
     CHECK(strcmp(p.cfg.net[0].pass, "new-home-pass") == 0, "in place");
 }
 
+// Review of 3bf330b2, M7: the overlap with the setup network's 192.168.4.0/24, by the station's netmask.
+static void subnets_overlap_by_the_shorter_prefix(void) {
+    const uint32_t ap = 0xC0A80401u, m24 = 0xFFFFFF00u;   // 192.168.4.1/24
+    CHECK(net_subnets_overlap(0xC0A80417u, m24, ap, m24), "192.168.4.23/24: the same network");
+    CHECK(net_subnets_overlap(0xC0A80117u, 0xFFFF0000u, ap, m24), "192.168.1.23/16 contains it");
+    CHECK(net_subnets_overlap(0xC0A80517u, 0xFFFFF800u, ap, m24), "192.168.5.23/21 (192.168.0-7) contains it");
+    CHECK(!net_subnets_overlap(0xC0A80117u, m24, ap, m24), "192.168.1.23/24 does not");
+    CHECK(!net_subnets_overlap(0x0A000005u, 0xFF000000u, ap, m24), "10.0.0.5/8 does not");
+    CHECK(!net_subnets_overlap(0, 0, ap, m24), "no address: nothing to clash with");
+}
+
 int main(void) {
+    RUN(subnets_overlap_by_the_shorter_prefix);
     RUN(parses_each_op);
     RUN(refuses_what_is_not_an_instruction);
     RUN(hex_round_trips_any_octets);

@@ -996,7 +996,8 @@ int dc_upload_close(device_client_t *c, const char *id, const char *json, char *
 void dc_set_boot(device_client_t *c, uint32_t id, bool ota);
 
 // --- Wi-Fi networks from the web app (2026-11-15, wifi_ctl.h) ---
-// Turns the feature on for this client: every poll then carries &wifiAck=<ack> and every status report the
+// Turns the feature on for this client: every poll then carries &wifiAck= (`ack` until a body carried wifi.v, then
+// the latest wifi.v seen: the server wakes the poll only for a cursor the board has not seen) and every status report the
 // "wifi" tail while it is owed. `write(ctx, buf, cap)` renders the tail (wifi_report_json) and returns its length,
 // or -1 when it does not fit `cap`. Call after dc_init (which zeroes it); set the ack on every change of it.
 void dc_set_wifi(device_client_t *c, uint32_t ack, int (*write)(void *ctx, char *buf, int cap), void *ctx);

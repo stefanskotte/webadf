@@ -45,6 +45,11 @@
 // &write=1 (fw 1.23.0) adds 8: 476, still inside 480.
 // &wifiAck=4294967295 (Wi-Fi networks, 2026-11-15) adds 19: 495, so 512.
 #define DC_POLL_REQ_BYTES 512
+// One path buffer for the leaf requests that build a path from an argument -- the image fetch, the firmware fetch,
+// a send chunk, a send's done -- which never nest (each builds its request, exchanges, returns; none calls another,
+// and nothing on another core calls any). It was one static each, 4 x 448 B; sharing it is what keeps .bss from
+// growing for the Wi-Fi networks work (review of 3bf330b2, M8; ruling F2: .bss may not grow). The poll keeps its own.
+static char s_leaf_path[DC_REQ_BUF_BYTES];
 // DC_POLL_BODY_BYTES moved to device_client.h so a test can name it -- see
 // the note there. A budget a test cannot name is a budget checked by hand.
 // 512 was never under load before the image fetch: every other response on
@@ -651,11 +656,11 @@ static dc_fetch_result_t dc_fetch_into(device_client_t *c, const char *sha256, i
                                        bool observe, bool interruptible, int *status_out) {
     *status_out = 0;
     // static: see the STACK note above.
-    static char path[DC_REQ_BUF_BYTES];
+    char *const path = s_leaf_path;   // shared: see s_leaf_path
     // Phase 3 (pre-flight I3): the driver disk for SLOT_NET comes from its own
     // route, which serves it as a DD WFAD; /api/device/image/<sha> keeps
     // serving library disks to DF0 exactly as before.
-    snprintf(path, sizeof path, target == SLOT_NET ? "/api/device/image/net/%s" : "/api/device/image/%s",
+    snprintf(path, sizeof s_leaf_path, target == SLOT_NET ? "/api/device/image/net/%s" : "/api/device/image/%s",
              sha256);
 
     static char req[DC_REQ_BUF_BYTES];
@@ -1975,9 +1980,9 @@ int dc_post(device_client_t *c, const char *path, const char *content_type,
 
 int dc_fetch_firmware(device_client_t *c, const char *version,
                       void (*sink)(void *ctx, const uint8_t *b, int n), void *ctx) {
-    static char path[DC_REQ_BUF_BYTES];   // static: see the STACK note above
-    int pn = snprintf(path, sizeof path, "/api/device/firmware/%s", version);
-    if (pn < 0 || pn >= (int)sizeof path) return -1;
+    char *const path = s_leaf_path;   // shared: see s_leaf_path
+    int pn = snprintf(path, sizeof s_leaf_path, "/api/device/firmware/%s", version);
+    if (pn < 0 || pn >= (int)sizeof s_leaf_path) return -1;
     static char req[DC_REQ_BUF_BYTES];
     int req_len = http_build_request(req, sizeof req, "GET", path, c->host_header, c->token, NULL);
     if (req_len < 0) return -1;
@@ -2069,9 +2074,9 @@ bool dc_wifi_owed(const device_client_t *c) { return c->_wifi_on && c->_wifi_owe
 
 int dc_fetch_send_chunk(device_client_t *c, const char *id, uint32_t off, uint32_t len, uint8_t *buf) {
     if (!buf || len == 0) return -1;
-    static char path[DC_REQ_BUF_BYTES];   // static: see the STACK note above
-    int pn = snprintf(path, sizeof path, "/api/device/send/%s?offset=%lu&length=%lu", id, (unsigned long)off, (unsigned long)len);
-    if (pn < 0 || pn >= (int)sizeof path) return -1;
+    char *const path = s_leaf_path;   // shared: see s_leaf_path
+    int pn = snprintf(path, sizeof s_leaf_path, "/api/device/send/%s?offset=%lu&length=%lu", id, (unsigned long)off, (unsigned long)len);
+    if (pn < 0 || pn >= (int)sizeof s_leaf_path) return -1;
     static char req[DC_REQ_BUF_BYTES];
     int req_len = http_build_request(req, sizeof req, "GET", path, c->host_header, c->token, NULL);
     if (req_len < 0) return -1;
@@ -2087,9 +2092,9 @@ int dc_fetch_send_chunk(device_client_t *c, const char *id, uint32_t off, uint32
 }
 
 int dc_post_send_done(device_client_t *c, const char *id, const char *json) {
-    static char path[DC_REQ_BUF_BYTES];   // static: see the STACK note above
-    int pn = snprintf(path, sizeof path, "/api/device/send/%s/done", id);
-    if (pn < 0 || pn >= (int)sizeof path) return -1;
+    char *const path = s_leaf_path;   // shared: see s_leaf_path
+    int pn = snprintf(path, sizeof s_leaf_path, "/api/device/send/%s/done", id);
+    if (pn < 0 || pn >= (int)sizeof s_leaf_path) return -1;
     static char req[DC_REQ_BUF_BYTES + 512];   // + the outcome JSON (amiga_send's done_json is 480)
     int req_len = http_build_request(req, sizeof req, "POST", path, c->host_header, c->token, json);
     if (req_len < 0) return -1;
@@ -2244,8 +2249,12 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     }
     // Wi-Fi networks (2026-11-15): before the boot parameters, which stay last.
     plen = (int)strnlen(path, sizeof path);
+    // The latest cursor SEEN, once one is (review of 3bf330b2, M2): the board fetches the instruction on its own
+    // pace (main.c, a failed fetch waits 5 s), and an ack it has not caught up to would make the server answer
+    // every poll at once meanwhile. Before the first body: the handled ack, so a restarted board is woken.
     if (c->_wifi_on && plen > 0 && plen < (int)sizeof path)
-        snprintf(path + plen, sizeof path - (size_t)plen, "&wifiAck=%lu", (unsigned long)c->_wifi_ack);
+        snprintf(path + plen, sizeof path - (size_t)plen, "&wifiAck=%lu",
+                 (unsigned long)(c->wifi_seen ? c->wifi_version : c->_wifi_ack));
     // Disk at startup (dc_set_boot): last, so every older parameter keeps its place.
     static char bootp[24];   // static: see the STACK note above
     dc_boot_params(c, bootp);

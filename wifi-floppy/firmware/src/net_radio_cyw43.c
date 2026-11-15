@@ -177,6 +177,23 @@ static void j_drop(void *vc) {
     JTRACE(c, "drop: netif reset");
 }
 
+// A disassociation on its way with nothing held (review of 3bf330b2, I2): a wrong password's deauth (reason 2)
+// sets pend_disassoc, which the driver's next poll turns into SET_DISASSOC, whose EV_DISASSOC zeroes the join state
+// -- after the join that follows, if nothing waits for it. Also a BADAUTH join state: the same event may follow.
+static void j_settle(void *vc) {
+    join_ctx_t *c = vc;
+    (void)c;
+    if (!cyw43_state.pend_disassoc && (cyw43_state.wifi_join_state & 0x000Fu) != 4u /* WIFI_JOIN_STATE_BADAUTH */) return;
+    JTRACE(c, "settle: wait");
+    int waited = 0;
+    while (waited < DROP_WAIT_MS && (cyw43_state.pend_disassoc || cyw43_state.wifi_join_state != 0)) {
+        cyw43_arch_poll();
+        sleep_ms(10);
+        waited += 10;
+    }
+    JTRACE(c, cyw43_state.wifi_join_state == 0 ? "settle: disassoc seen" : "settle: none came");
+}
+
 static bool j_time_up(void *vc) {
     return time_reached(((join_ctx_t *)vc)->until);
 }
@@ -188,7 +205,7 @@ static void j_wait(void *vc) {
 
 net_join_t net_radio_sta_connect(const char *ssid, const char *pass, uint32_t timeout_ms) {
     join_ctx_t c = { ssid, pass, make_timeout_time_ms(timeout_ms), get_absolute_time() };
-    const net_join_ops_t ops = { &c, j_status, j_join, j_held, j_drop, j_time_up, j_wait };
+    const net_join_ops_t ops = { &c, j_status, j_join, j_held, j_drop, j_time_up, j_wait, j_settle };
     JTRACE(&c, "start");
     net_join_t r = net_join_run(&ops);
 #if WF_JOIN_TRACE
@@ -224,11 +241,15 @@ bool net_radio_sta_up(void) {
     return cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA) == CYW43_LINK_UP;
 }
 
+// With the station's own netmask (review of 3bf330b2, M7): a home network of 192.168.0.0/16 contains the AP's /24
+// as surely as 192.168.4.0/24 is it. The two overlap when either contains the other's base address.
 bool net_radio_sta_in_ap_subnet(void) {
     cyw43_arch_lwip_begin();
-    const uint32_t ip = lwip_ntohl(ip4_addr_get_u32(netif_ip4_addr(&cyw43_state.netif[CYW43_ITF_STA])));
+    const struct netif *n = &cyw43_state.netif[CYW43_ITF_STA];
+    const uint32_t ip = lwip_ntohl(ip4_addr_get_u32(netif_ip4_addr(n)));
+    const uint32_t mask = lwip_ntohl(ip4_addr_get_u32(netif_ip4_netmask(n)));
     cyw43_arch_lwip_end();
-    return ip != 0 && (ip & 0xFFFFFF00u) == (CYW43_DEFAULT_IP_AP_ADDRESS & 0xFFFFFF00u);
+    return net_subnets_overlap(ip, mask, CYW43_DEFAULT_IP_AP_ADDRESS, 0xFFFFFF00u);
 }
 
 void net_radio_mac(uint8_t mac[6]) { cyw43_wifi_get_mac(&cyw43_state, CYW43_ITF_STA, mac); }

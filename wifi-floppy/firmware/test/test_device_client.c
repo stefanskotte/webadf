@@ -4011,6 +4011,11 @@ static void wifi_version_is_read_from_the_poll_and_blanked(void) {
     CHECK_EQ_INT(c.wifi_version, 9);
     CHECK(c.wifi_seen, "seen");
     CHECK_EQ_INT(c.since, 3);   // its v was not read as the body's version
+    // M2: from now on the poll says it has seen 9, though nothing was handled yet -- the server does not answer
+    // every poll at once while the board waits to fetch.
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&wifiAck=9") != NULL, fake_last_request());
     push_ok_json("{\"version\":4,\"desired\":null}");
     dc_step(&c);
     CHECK_EQ_INT(c.wifi_version, 9);

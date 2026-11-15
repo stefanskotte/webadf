@@ -52,6 +52,11 @@ typedef struct {
     void       (*drop)(void *ctx);       // see 1. above; called only when held()
     bool       (*time_up)(void *ctx);    // the attempt's deadline has passed
     void       (*wait)(void *ctx);       // service the driver, wait for work (bounded by the deadline)
+    // After a failed attempt that holds nothing: if the driver still has a disassociation on its way (a wrong
+    // password: the AP's deauth makes the driver send SET_DISASSOC on its next poll), wait -- bounded -- for its
+    // EV_DISASSOC to land. Landing during the NEXT attempt it would zero that join's state: the bench's 1.25.0
+    // failure, reached this time by the online page's "check, then go back" (review of 3bf330b2, I2). NULL: none.
+    void       (*settle)(void *ctx);
 } net_join_ops_t;
 
 net_join_t net_join_run(const net_join_ops_t *ops);

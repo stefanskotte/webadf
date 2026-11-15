@@ -1793,6 +1793,10 @@ static wifi_res_t g_wifi_res;          // what it came to
 static bool       g_wifi_owe;          // the tail changed where no client is in reach: owed at the next step
 static bool       g_wifi_names_owed;   // the open page's list is stale (a page was mid-send): retried each step
 static uint32_t   g_wifi_retry_at;     // a failed instruction fetch waits until then
+// The tail waits until the first wifi.v of this entry has been handled (review of 3bf330b2, I1): a restarted
+// board's ack is 0 until it has heard the cursor, and a report saying "ack 0, nothing done" -- the OTA trial's
+// reports come before any poll -- must not reach the server as news.
+static bool       g_wifi_synced;
 
 // The names and where the board is, for the page opened on request. Keeps the note (err and its fields).
 static void online_view_names(portal_view_t *v) {
@@ -1828,6 +1832,7 @@ static bool online_forget(void *ctx, const char *ssid, portal_view_t *view) {
 // The status tail, rendered by dc_report_status straight into the body.
 static int wifi_tail_write(void *ctx, char *buf, int cap) {
     (void)ctx;
+    if (!g_wifi_synced) return -1;   // left out, still owed (I1)
     const wifi_report_t r = { prov.have_config ? &prov.cfg : NULL, prov.joined ? prov.first : -1, g_wifi_ack,
                               g_wifi_res, wifi_window_left_ms(&g_wifi_win, clock_ms()) / 1000u };
     return wifi_report_json(&r, buf, cap);
@@ -1855,8 +1860,31 @@ static net_join_t online_join(void *ctx, const char *ssid, const char *pass) {
     return r;
 }
 
+// Why Save may not leave the board's network right now (review of 3bf330b2, I3): checking a network drops the
+// current one for up to a minute (about 3 if nothing answers, then a restart). Not with a disk in DF0 or DF1 (the
+// flash write guard, and the Amiga reading it), not while the Amiga's saves wait to be uploaded, not while the
+// Amiga's own network runs through the board (DF1 Network). The page shows it and refuses Save; this is asked
+// again just before leaving, and the fallback below asks it too.
+static unsigned char wifi_hold(uploader_t *up) {
+#if WF_PNET_LOOP
+    if (g_pnet_on) return PORTAL_HOLD_NETWORK;
+#endif
+    if (psram_active_slot() != SLOT_NONE || psram_df1_slot() != SLOT_NONE) return PORTAL_HOLD_DISK;
+    if (up_has_work(up)) return PORTAL_HOLD_WRITES;
+    return PORTAL_HOLD_NONE;
+}
+static void online_view_hold_cb(portal_view_t *v, void *ctx) { v->hold = *(const unsigned char *)ctx; }
+
 // Save on the page opened on request.
 static void __attribute__((noinline)) wifi_online_check(setup_form_t *f, uploader_t *up) {
+    // Asked again before anything is left: the page refused Save on what it last knew.
+    const unsigned char hold = wifi_hold(up);
+    if (hold != PORTAL_HOLD_NONE) {
+        wf_logf(WF_WARN, "wifi: %s not checked: hold %u", f->ssid, (unsigned)hold);
+        secure_zero(f, sizeof *f);
+        portal_view_changed(online_view_hold_cb, (void *)&hold);   // best effort: the next pass sets it anyway
+        return;   // the page stays up; a reload shows why
+    }
     portal_stop();                 // the AP goes: the station is about to change networks
     release_kept_connection();     // its socket belongs to the network being left
     wf_logf(WF_INFO, "wifi: checking %s (leaving %s for it)", f->ssid,
@@ -1871,15 +1899,17 @@ static void __attribute__((noinline)) wifi_online_check(setup_form_t *f, uploade
     wf_logf(WF_INFO, "wifi: %s: join %d, save %d (%s), back on %d after %d attempts", name, (int)out.join,
             out.tried_save ? (int)out.saved : -1, out.tried_save ? "tried" : "not tried", out.back_on, out.attempts);
     while (out.back_on < 0) {
-        if (!up_has_work(up)) {
+        // Never restart with a disk in a drive or saves waiting (I3): the Amiga is reading it, and the saves would
+        // be lost. Only an idle board restarts.
+        if (!up_has_work(up) && psram_active_slot() == SLOT_NONE && psram_df1_slot() == SLOT_NONE) {
             // Every saved network failed three rounds: the normal start takes over.
             wf_logf(WF_ERR, "wifi: no saved network answers -- restarting into the normal start");
             bt_hw_mark(1, BT1_WIFI);   // not the poll loop any more: core1 supervision stands down
             fw_rom_request_reboot(0);
             for (;;) sleep_ms(1000);
         }
-        // Amiga writes wait to be uploaded: a restart would lose them. Keep trying.
-        wf_logf(WF_WARN, "wifi: no saved network answers, Amiga writes waiting -- trying again");
+        // A disk in a drive, or Amiga writes to upload: a restart would cost them. Keep trying.
+        wf_logf(WF_WARN, "wifi: no saved network answers, a disk or saves on the board -- trying again");
         out.back_on = wifi_rejoin_run(&prov, prov.first, &ops, &out.attempts);
     }
     // Back on a network: the page comes back with the result, for at least two minutes.
@@ -1904,10 +1934,11 @@ static void __attribute__((noinline)) wifi_online_check(setup_form_t *f, uploade
     if (!g_wifi_win.open) wifi_window_open(&g_wifi_win, clock_ms(), WIFI_SETUP_AFTER_CHECK_MS);
     else wifi_window_at_least(&g_wifi_win, clock_ms(), WIFI_SETUP_AFTER_CHECK_MS);
     g_portal_view.left_min = wifi_window_left_min(&g_wifi_win, clock_ms());
+    g_portal_view.hold = wifi_hold(up);
     portal_open(NULL, &g_portal_view, online_forget, NULL, /*keep_sta=*/true);
 }
 
-static void wifi_handle(const wifi_cmd_t *cmd) {
+static void wifi_handle(const wifi_cmd_t *cmd, uploader_t *up) {
     wifi_res_t res = WIFI_RES_OK;
     switch (cmd->op) {
     case WIFI_OP_NONE:    res = WIFI_RES_IDLE; break;
@@ -1919,6 +1950,7 @@ static void wifi_handle(const wifi_cmd_t *cmd) {
         wifi_window_open(&g_wifi_win, clock_ms(), WIFI_SETUP_MS);
         if (!portal_is_open()) {
             online_view_reset(&g_portal_view);
+            g_portal_view.hold = wifi_hold(up);
             portal_open(NULL, &g_portal_view, online_forget, NULL, /*keep_sta=*/true);
         }
         break;
@@ -1958,6 +1990,10 @@ static void __attribute__((noinline)) wifi_online_step(device_client_t *c, uploa
         }
     }
     if (g_wifi_names_owed && portal_view_changed(online_view_names_cb, NULL)) g_wifi_names_owed = false;
+    if (portal_is_open()) {
+        const unsigned char hold = wifi_hold(up);
+        if (hold != g_portal_view.hold) portal_view_changed(online_view_hold_cb, (void *)&hold);
+    }
     // 3. An instruction from the web app: fetched when the poll's cursor moved past what was handled. Not while
     //    Amiga writes wait (they go first), and a failed fetch waits 5 s -- the server answers every poll at once
     //    while the cursor is ahead.
@@ -1972,8 +2008,12 @@ static void __attribute__((noinline)) wifi_online_step(device_client_t *c, uploa
             wifi_cmd_t cmd;
             // Not an instruction this board can read: acked as unknown, never asked for again and again.
             if (!wifi_cmd_parse(body, &cmd)) { memset(&cmd, 0, sizeof cmd); cmd.seq = c->wifi_version; cmd.op = WIFI_OP_UNKNOWN; }
-            wifi_handle(&cmd);
+            wifi_handle(&cmd, up);
         }
+    }
+    if (!g_wifi_synced && c->wifi_seen && c->wifi_version == g_wifi_ack) {
+        g_wifi_synced = true;   // the cursor heard and handled: the tail may go (I1)
+        g_wifi_owe = true;
     }
     if (g_wifi_owe) {
         g_wifi_owe = false;
@@ -2620,6 +2660,7 @@ static void core1_main(void) {
         // re-entry is a re-pair -- a new device row whose instruction cursor starts at 0.
         g_wifi_ack = 0;
         g_wifi_res = WIFI_RES_NONE;
+        g_wifi_synced = false;
         dc_set_wifi(&c, g_wifi_ack, wifi_tail_write, NULL);
         dc_wifi_owe(&c);
         static reinsert_t reins;

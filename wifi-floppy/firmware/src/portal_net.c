@@ -1029,15 +1029,19 @@ void portal_open(const char *err, portal_view_t *view, portal_forget_fn forget, 
     char ssid[24];
     snprintf(ssid, sizeof ssid, "wifi-floppy-%02X%02X", mac[4], mac[5]);
 
-    net_radio_ap_start(ssid, PORTAL_AP_PASSWORD);
     if (keep_sta) {
-        // Opened on request (2026-11-15): bringing the AP up made it lwIP's
+        // Opened on request (2026-11-15): bringing the AP up makes it lwIP's
         // default route (cyw43_cb_tcpip_init), which would send the board's
         // own traffic -- the server, the Amiga's -- into the setup network.
-        // The station stays the default; the AP keeps its own /24.
+        // The station stays the default; the AP keeps its own /24. Both in
+        // one hold of the (recursive) lock, so no packet is routed between
+        // them (review of 3bf330b2, M3).
         net_radio_lock();
+        net_radio_ap_start(ssid, PORTAL_AP_PASSWORD);
         netif_set_default(net_radio_sta_netif());
         net_radio_unlock();
+    } else {
+        net_radio_ap_start(ssid, PORTAL_AP_PASSWORD);
     }
 
     // A previous portal session's leases must not linger into this one --

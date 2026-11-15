@@ -44,6 +44,13 @@ typedef enum {
     PORTAL_NOTE_SAVED,   // not an error: notice_ssid was checked and saved (opened on request)
 } portal_err_t;
 
+typedef enum {
+    PORTAL_HOLD_NONE = 0,
+    PORTAL_HOLD_DISK,       // a disk in DF0 or DF1
+    PORTAL_HOLD_WRITES,     // Amiga saves not yet uploaded
+    PORTAL_HOLD_NETWORK,    // DF1 Network (PaulaNET) is on
+} portal_hold_t;
+
 typedef struct {
     int  n;                                            // saved networks, 0..CONFIG_NETS_MAX
     char ssid[CONFIG_NETS_MAX][CONFIG_SSID_MAX + 1];   // in saved order
@@ -68,6 +75,11 @@ typedef struct {
     // has a Done button (POST /done). left_min: minutes until it closes by itself.
     bool          on_request;
     unsigned      left_min;
+    // Opened on request: why Save cannot check a network right now (portal_hold_t; review of 3bf330b2, I3).
+    // Checking leaves the board's network for up to a minute, so: not with a disk in DF0 or DF1, not while the
+    // Amiga's saves wait to be uploaded, not while the Amiga's own network (DF1 Network) runs through the board.
+    // The page says why and refuses Save before anything is joined; main.c checks again before it leaves.
+    unsigned char hold;
     char          notice_ssid[CONFIG_SSID_MAX + 1];   // PORTAL_NOTE_SAVED
 } portal_view_t;
 
