@@ -17,6 +17,7 @@ import { DiskCrumbGlyph } from './disk-crumb-glyph';
 import { listsDisks, shelfOf } from '@/lib/files/shelf-rules';
 import { isNetVolume, netTitle, readAgo } from '@/lib/files/net-rules';
 import { DIR_CUT } from '@/lib/remote-limits';
+import { diskRowWords, paneSize } from '@/lib/files/disk-row';
 
 /**
  * One side of the Files manager. Presentational: the manager (files-manager.tsx) owns fetching, sort and selection
@@ -61,23 +62,42 @@ const COLUMNS: { key: FilesSortKey; label: string; right?: boolean }[] = [
   { key: 'protection', label: 'Protection' }, { key: 'date', label: 'Date' },
 ];
 
-/** Bytes as the panes show them: B under a KB, whole KB under a MB, then MB to one place. */
-export function paneSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+export { paneSize };
 
-/** The type chip: the Browse glyph for files and folders; a title, a disk and a board are folders here. */
+/**
+ * The type chip: the Browse glyph for files and folders; a title and a board are folders here. A disk row draws the
+ * disk sign instead (DiskRowName).
+ */
 function glyphOf(e: FsEntry): { label: string; bg: string; fg: string } {
   // A volume of a board's Amiga (NET: volumes, spec 2026-10-30) is a folder too.
   if (e.kind === 'collection' || e.kind === 'volume') return entryGlyph({ kind: 'dir', name: e.name });
   if (e.kind === 'title') return { label: 'TTL', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
-  if (e.kind === 'disk') return { label: 'DSK', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
+  if (e.kind === 'disk') return { label: 'DSK', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };   // not drawn: DiskRowName
   // A board under NET: opens as its queue, so it is a folder here too (increment 3).
   if (e.kind === 'board') return { label: 'BRD', bg: 'var(--dir-bg)', fg: 'var(--accent-blue)' };
   // An archive is a file to the glyph (its name picks it: LHA, ZIP) and to the row's look (ruling 7); its Open says more.
   return entryGlyph({ kind: e.kind === 'archive' ? 'file' : e.kind, name: e.name });
+}
+
+/**
+ * A title's disk row (tester report 2026-11-15: "DSK Disk 1" read as a folder WebADF had made): the disk sign, the
+ * label, then what the image is -- "Disk 1 · ADF, 880 KB". From lg the size is the Size column's, so the name says
+ * "Disk 1 · ADF" and the row still reads across. A screen reader hears "disk image Disk 1, ADF, 880 KB" once.
+ */
+function DiskRowName({ e }: { e: FsEntry }) {
+  const w = diskRowWords(e);
+  return (
+    <>
+      <span aria-hidden className="flex w-[30px] shrink-0 justify-center" style={{ color: 'var(--ink)' }}>
+        <DiskCrumbGlyph size={14} className="" />
+      </span>
+      <span data-testid="pane-disk-spoken" className="sr-only">{w.spoken}</span>
+      <span aria-hidden className="truncate font-semibold" style={{ color: 'var(--ink)' }}>{e.name}</span>
+      <span aria-hidden data-testid="pane-disk-image" className="shrink-0 whitespace-nowrap" style={{ color: 'var(--muted)' }}>
+        · {w.format}{w.size && <span className="lg:hidden">, {w.size}</span>}
+      </span>
+    </>
+  );
 }
 
 /** A file, or an archive (a file that also opens as a folder): the rows that have a size. */
@@ -367,7 +387,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
               )}
               {rows.map((e, i) => {
                 const sel = selection.picked.has(i);
-                const glyph = glyphOf(e);
+                const glyph = e.kind === 'disk' ? null : glyphOf(e);
                 return (
                   <tr key={e.path} data-testid="pane-row" data-name={e.name} data-kind={e.kind} aria-selected={sel}
                       data-cursor={p.active && selection.cursor === i ? 'true' : undefined}
@@ -389,9 +409,13 @@ export function Pane({ filterRef, ...p }: PaneProps) {
                     </td>
                     <td className={`${cell} max-lg:py-1.5`} style={cellStyle}>
                       <span className="flex min-w-0 items-center gap-[7px]">
-                        <span aria-hidden className="shrink-0 rounded-[4px] px-[5px] py-px font-mono text-[10px] font-semibold"
-                              style={{ background: glyph.bg, color: glyph.fg }}>{glyph.label}</span>
-                        <span className={`truncate ${e.kind === 'file' || e.kind === 'archive' ? '' : 'font-semibold'}`} style={{ color: 'var(--ink)' }}>{e.name}</span>
+                        {glyph ? (
+                          <>
+                            <span aria-hidden className="shrink-0 rounded-[4px] px-[5px] py-px font-mono text-[10px] font-semibold"
+                                  style={{ background: glyph.bg, color: glyph.fg }}>{glyph.label}</span>
+                            <span className={`truncate ${e.kind === 'file' || e.kind === 'archive' ? '' : 'font-semibold'}`} style={{ color: 'var(--ink)' }}>{e.name}</span>
+                          </>
+                        ) : <DiskRowName e={e} />}
                         {/* "New in vN": the Browse page's mark (file-tree.tsx), from the disk's History. */}
                         {e.addedIn !== undefined && (
                           <span data-testid={`pane-new-${e.name}`} title={`Added in version ${e.addedIn} — see History`}
@@ -425,7 +449,7 @@ export function Pane({ filterRef, ...p }: PaneProps) {
                       )}
                     </td>
                     <td className={`${cell} text-right font-mono text-[12px] max-lg:hidden`} style={{ ...cellStyle, color: 'var(--muted)' }}>
-                      {sized(e) ? paneSize(e.size!) : e.sizeText ?? '—'}
+                      {e.kind === 'disk' ? diskRowWords(e).size ?? '—' : sized(e) ? paneSize(e.size!) : e.sizeText ?? '—'}
                     </td>
                     <td className={`${cell} font-mono text-[11px] font-semibold max-lg:hidden`} style={cellStyle}>
                       {e.protection ? <span className="flex gap-0.5"><ProtectionCells protection={e.protection} /></span>
