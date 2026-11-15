@@ -117,7 +117,13 @@ static const pnet_lease_t *lease_of(struct netif *nif) {
 // Shared mode: the OFFER owed for the network OFFER that turned it on, into the Amiga's RX ring.
 static void pnet_owed_offer(struct netif *nif) {
     if (!s_sort.sh.owe) return;
-    uint8_t *d = pnet_ring_claim(&g_pnet_rx);          // NULL when full: counted in drops; owed until a slot frees
+    // Review M4: a full ring is counted ONCE per owed OFFER (pnet_ring_claim would count every 2 ms tick), and the
+    // OFFER stays owed until a slot frees.
+    if (pnet_ring_space(&g_pnet_rx) == 0u) {
+        if (pnet_shared_owe_full(&s_sort)) g_pnet_rx.drops = g_pnet_rx.drops + 1u;   // this context is the producer
+        return;
+    }
+    uint8_t *d = pnet_ring_claim(&g_pnet_rx);
     if (!d) return;
     const size_t n = pnet_shared_owed(&s_sort, lease_of(nif), d, PNET_RING_MTU);
     if (n) pnet_ring_commit(&g_pnet_rx, (uint16_t)n);
@@ -286,12 +292,13 @@ void pnet_bridge_stats(pnet_bridge_stats_t *o) {
 // the next frame from the Amiga, or the board's own connect (ARP over the local path), confirms or replaces it.
 void pnet_bridge_seed_amiga_ip(uint32_t ip) {
     net_radio_lock();
+    const bool hinted = s_sort.sh.seed_hint;
     const bool seeded = pnet_sort_seed(&s_sort, ip, s_board_ip);
+    const bool hint = !hinted && s_sort.sh.seed_hint;
     net_radio_unlock();
-    if (seeded) {
-        char a[16];
-        pnet_ip_text(ip, a);
-        if (ip == s_board_ip) wf_logf(WF_INFO, "pnet: Amiga address %s from the server is the board's: shared IP", a);
-        else wf_logf(WF_INFO, "pnet: Amiga address %s from the server (not seen since boot)", a);
-    }
+    char a[16];
+    pnet_ip_text(ip, a);
+    if (seeded) wf_logf(WF_INFO, "pnet: Amiga address %s from the server (not seen since boot)", a);
+    // Review I2: a hint only -- shared mode waits for the Amiga to transmit from it. Logged once.
+    else if (hint) wf_logf(WF_INFO, "pnet: Amiga address %s from the server is the board's (a hint)", a);
 }

@@ -3,14 +3,15 @@
 #include "pnet_wire.h"
 #include <string.h>
 
-#define DHCP_BOOTP_LEN 300u                 /* RFC 1542's minimum BOOTP message; the reply is padded to it */
-#define CID_MAX        20u                  /* a client-id longer than this is not echoed (AmiTCP_NG sends 7) */
+#define DHCP_OPTS_MIN  64u                  /* cookie + options in RFC 1542's 300-byte minimum BOOTP message */
+_Static_assert(PNET_DHCP_REPLY_MAX == ETH_HDR + 20u + 8u + 236u + 312u, "the longest reply: 312 bytes of options");
 
 void pnet_shared_enter(pnet_sort_t *s, uint32_t board_ip, pnet_shared_why_t why) {
     if (s->sh.on || board_ip == 0u) return;
     s->sh.on = true;
     s->sh.amiga = false;
     s->sh.owe = false;
+    s->sh.owe_full = false;
     s->sh.why = (uint8_t)why;
     s->sh.ip = board_ip;
     s->sh.entered++;
@@ -23,6 +24,7 @@ void pnet_shared_follow(pnet_sort_t *s, uint32_t board_ip) {
     s->sh.on = false;                       /* another lease: the old address is the Amiga's own from now on */
     s->sh.amiga = false;
     s->sh.owe = false;
+    s->sh.owe_full = false;
     s->sh.left++;
     /* s->amiga_ip stays the old shared address, which the Amiga still holds (it never renews). */
 }
@@ -58,11 +60,24 @@ static uint8_t *opt4(uint8_t *o, uint8_t code, uint32_t v) {
     return o + 6;
 }
 
-/* One reply, `type` 2 (OFFER), 5 (ACK) or 6 (NAK), for xid/flags from the Amiga (chaddr = the shared MAC). */
+/* One reply, `type` 2 (OFFER), 5 (ACK) or 6 (NAK), for xid/flags from the Amiga (chaddr = the shared MAC).
+ * Review I1: the options are sized BEFORE anything is written. They fill the 300-byte BOOTP minimum's 60 bytes when
+ * they fit and grow the message past it when they do not (an echoed client-id longer than 8 bytes with a gateway
+ * and two DNS servers): RFC 2131 §2 has a variable options field that every client must accept up to 312 bytes,
+ * and AmiTCP_NG's receive buffer holds exactly 312 (struct dhcp_pkt). The longest reply -- every option and a
+ * 255-byte client-id -- is 311 bytes of options, so the echo always fits; IPv4, UDP and the checksums follow the
+ * real length. Returns 0 (nothing written) when cap is short of that length. */
 static size_t build(uint8_t *out, size_t cap, const pnet_lease_t *L, uint32_t xid, uint16_t flags, uint8_t type,
                     const uint8_t *cid, size_t cidlen) {
-    if (cap < PNET_DHCP_REPLY_LEN) return 0;
-    memset(out, 0, PNET_DHCP_REPLY_LEN);
+    const unsigned nd = (L->dns[0] != 0u) + (L->dns[1] != 0u);
+    if (!cid || cidlen > 255u) cidlen = 0;
+    size_t opts = 4u + 3u + 6u + 1u;                                   /* cookie, 53, 54, END */
+    if (type != 6u) opts += 4u * 6u + (L->gw ? 6u : 0u) + (nd ? 2u + 4u * nd : 0u);   /* 51 58 59 1, 3, 6 */
+    if (cidlen) opts += 2u + cidlen;                                   /* 61, RFC 6842 */
+    const size_t bootp = 236u + (opts > DHCP_OPTS_MIN ? opts : DHCP_OPTS_MIN);
+    const size_t total = ETH_HDR + 20u + 8u + bootp;
+    if (cap < total) return 0;
+    memset(out, 0, total);
     const uint32_t server = L->server ? L->server : L->gw ? L->gw : L->ip;
     const uint32_t yi = type == 6u ? 0u : L->ip;
     const bool bcast = (flags & 0x8000u) != 0u || type == 6u;
@@ -73,7 +88,7 @@ static size_t build(uint8_t *out, size_t cap, const pnet_lease_t *L, uint32_t xi
     /* IPv4 */
     uint8_t *ip = out + ETH_HDR;
     ip[0] = 0x45u;
-    put16(ip + 2, (uint16_t)(20u + 8u + DHCP_BOOTP_LEN));
+    put16(ip + 2, (uint16_t)(20u + 8u + bootp));
     ip[8] = 64u;
     ip[9] = 17u;
     put32(ip + 12, server);
@@ -81,7 +96,7 @@ static size_t build(uint8_t *out, size_t cap, const pnet_lease_t *L, uint32_t xi
     put16(ip + 10, fold(sum16(ip, 20u, 0u)));
     /* UDP 67 -> 68 */
     uint8_t *u = ip + 20;
-    put16(u, 67u); put16(u + 2, 68u); put16(u + 4, (uint16_t)(8u + DHCP_BOOTP_LEN));
+    put16(u, 67u); put16(u + 2, 68u); put16(u + 4, (uint16_t)(8u + bootp));
     /* BOOTP */
     uint8_t *b = u + 8;
     b[0] = 2u; b[1] = 1u; b[2] = 6u;
@@ -99,22 +114,21 @@ static size_t build(uint8_t *out, size_t cap, const pnet_lease_t *L, uint32_t xi
         o = opt4(o, 59u, PNET_SHARED_LEASE_S * 7u / 8u);
         o = opt4(o, 1u, L->mask);
         if (L->gw) o = opt4(o, 3u, L->gw);
-        const unsigned nd = (L->dns[0] != 0u) + (L->dns[1] != 0u);
         if (nd) {
             *o++ = 6u; *o++ = (uint8_t)(4u * nd);
             for (unsigned i = 0; i < 2u; i++) if (L->dns[i]) { put32(o, L->dns[i]); o += 4; }
         }
     }
-    if (cid && cidlen > 0u && cidlen <= CID_MAX) {   /* RFC 6842: echo the client's identifier */
+    if (cidlen) {                                    /* RFC 6842: echo the client's identifier */
         *o++ = 61u; *o++ = (uint8_t)cidlen;
         memcpy(o, cid, cidlen); o += cidlen;
     }
-    *o = 255u;
+    *o = 255u;                                       /* at b + 236 + opts - 1, inside `total` by construction */
     /* UDP checksum over the pseudo header */
-    uint32_t acc = sum16(ip + 12, 8u, 0u) + 17u + (8u + DHCP_BOOTP_LEN);
-    uint16_t c = fold(sum16(u, 8u + DHCP_BOOTP_LEN, acc));
+    uint32_t acc = sum16(ip + 12, 8u, 0u) + 17u + (uint32_t)(8u + bootp);
+    uint16_t c = fold(sum16(u, 8u + bootp, acc));
     put16(u + 6, c ? c : 0xFFFFu);
-    return PNET_DHCP_REPLY_LEN;
+    return total;
 }
 
 bool pnet_shared_is_dhcp(const pnet_sort_t *s, const uint8_t *f, size_t len) {
@@ -160,7 +174,7 @@ size_t pnet_shared_dhcp_reply(pnet_sort_t *s, const uint8_t *f, size_t len, cons
 size_t pnet_shared_owed(pnet_sort_t *s, const pnet_lease_t *L, uint8_t *out, size_t cap) {
     if (!s->sh.on || !s->sh.owe || L->ip == 0u || L->ip != s->sh.ip) return 0;
     const size_t n = build(out, cap, L, s->sh.owe_xid, s->sh.owe_flags, 2u, NULL, 0u);
-    if (n) { s->sh.owe = false; s->sh.offers++; }
+    if (n) { s->sh.owe = false; s->sh.owe_full = false; s->sh.offers++; }
     return n;
 }
 
@@ -216,7 +230,19 @@ pnet_sort_to_t pnet_shared_rx(pnet_sort_t *s, const uint8_t *f, size_t len) {
         if (pnet_sort_is_amiga_xid(s, be32(f + b + 4u))) { s->sh.late++; return PNET_SORT_DROP; }
         return PNET_SORT_BOARD;
     }
-    if (f[0] & 1u) return counted(s, PNET_SORT_BOTH);              /* Ethernet broadcast or multicast */
+    // Review M1: the Paula link is slow, so a broadcast reaches the Amiga only when it may need it: UDP to the
+    // broadcast MAC (limited 255.255.255.255 or the subnet's broadcast) and to a port no board pcb owns -- the
+    // Amiga's alone then, lwIP would only drop it; a board-owned port is lwIP's alone. First fragments only.
+    // Multicast (224.0.0.0/4: mDNS, SSDP) and every other broadcast are the board's, as in normal mode. (ARP and
+    // DHCP replies were sorted above.)
+    if (f[0] & 1u) {
+        static const uint8_t ALL[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+        if (memcmp(f, ALL, 6) != 0 || (ip.dst >> 28) == 0xEu || ip.proto != 17u || !ip.first ||
+            len < ip.l4 + 4u)
+            return PNET_SORT_BOARD;
+        return board_owns(s, 17u, be16(f + ip.l4 + 2), ip.src, be16(f + ip.l4)) ? PNET_SORT_BOARD
+                                                                                  : counted(s, PNET_SORT_AMIGA);
+    }
     if (ip.dst != me) return PNET_SORT_BOARD;
     const uint8_t *h = f + ETH_HDR;
     const uint16_t frag = be16(h + 6);
@@ -257,6 +283,30 @@ pnet_tx_t pnet_shared_tx(pnet_sort_t *s, const uint8_t *f, size_t len) {
     if (b != 0u && f[b] == 1u) pnet_sort_learn_xid(s, be32(f + b + 4u));   /* answered locally (the glue) */
     else if (ip.src == s->sh.ip) s->sh.amiga = true;
     return PNET_TX_SEND;
+}
+
+bool pnet_shared_amiga_left(pnet_sort_t *s, const uint8_t *f, size_t len) {
+    if (!s->sh.on || len < ETH_HDR) return false;
+    uint32_t src = 0;
+    arp4_t a;
+    ip4_t ip;
+    if (arp4(f, len, &a)) src = a.spa;
+    else if (ip4(f, len, &ip)) src = ip.src;
+    if (src == 0u || src == s->sh.ip || (src >> 16) == 0xA9FEu) return false;   /* 0, shared, or 169.254/16 */
+    s->sh.on = false;
+    s->sh.amiga = false;
+    s->sh.owe = false;
+    s->sh.owe_full = false;
+    s->sh.left++;
+    s->sh.own_src++;
+    s->amiga_ip = 0;                        /* the frame's normal-mode path teaches the Amiga's own address */
+    return true;
+}
+
+bool pnet_shared_owe_full(pnet_sort_t *s) {
+    if (!s->sh.on || !s->sh.owe || s->sh.owe_full) return false;
+    s->sh.owe_full = true;
+    return true;
 }
 
 /* ---- the local path ---- */
@@ -304,6 +354,21 @@ static void readdress(uint8_t *f, size_t len, uint32_t sfrom, uint32_t sto, uint
         if (l4c) csum_swap32(l4c, dfrom, dto);
     }
     if (l4c && ip.proto == 17u && be16(l4c) == 0u) put16(l4c, 0xFFFFu);   /* UDP: 0 means "no checksum" */
+    // Review M2: an ICMP error quotes the datagram it is about, which crossed the bus the OTHER way and so was
+    // rewritten with the inverse pair: its source is restored dfrom -> dto, its destination sfrom -> sto. The quoted
+    // header's checksum follows, and the ICMP checksum (which covers the quote) follows both. The quoted TCP/UDP
+    // checksum is left alone: only 8 bytes of that header are quoted, and no stack verifies it.
+    if (ip.proto != 1u || !ip.first || len < ip.l4 + 8u + 20u) return;
+    uint8_t *ic = f + ip.l4;
+    const uint8_t t = ic[0];
+    if (t != 3u && t != 4u && t != 5u && t != 11u && t != 12u) return;
+    uint8_t *q = ic + 8;
+    if ((q[0] >> 4) != 4u || (q[0] & 0x0Fu) < 5u) return;
+    const uint16_t qc0 = be16(q + 10);
+    const uint32_t qs = be32(q + 12), qd = be32(q + 16);
+    if (qs == dfrom) { put32(q + 12, dto); csum_swap32(q + 10, dfrom, dto); csum_swap32(ic + 2, dfrom, dto); }
+    if (qd == sfrom) { put32(q + 16, sto); csum_swap32(q + 10, sfrom, sto); csum_swap32(ic + 2, sfrom, sto); }
+    csum_swap32(ic + 2, qc0, be16(q + 10));          /* the quoted checksum's own change, as a 32-bit word */
 }
 
 void pnet_shared_to_board(uint8_t *f, size_t len, uint32_t ip, const uint8_t mac[6]) {

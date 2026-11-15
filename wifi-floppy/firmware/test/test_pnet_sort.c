@@ -334,10 +334,10 @@ static void a_seed_fills_only_an_unknown_address(void) {
     CHECK(!pnet_sort_seed(&t, 0, BOARD), "0 is not an address");
     CHECK_EQ_INT(t.amiga_ip, 0);
     CHECK(!t.sh.on, "and no shared mode");
-    /* Ruling 2026-11-15: the board's own address is an Amiga that shared it before the board rebooted. */
-    CHECK(pnet_sort_seed(&t, BOARD, BOARD), "the board's own address: shared mode");
-    CHECK(t.sh.on && t.sh.why == PNET_SHARED_SEED && t.sh.amiga, "on, and the Amiga known to use it");
-    CHECK_EQ_INT(t.amiga_ip, BOARD);
+    /* Review I2 (2026-11-15): the board's own address may be a stale record -- a hint, never shared mode. */
+    CHECK(!pnet_sort_seed(&t, BOARD, BOARD), "never the board's own address");
+    CHECK(t.sh.seed_hint && !t.sh.on, "remembered as a hint only");
+    CHECK_EQ_INT(t.amiga_ip, 0);
 }
 
 /* The board's own connect attempt is the probe: lwIP's ARP for the seeded address goes to the Amiga locally; an

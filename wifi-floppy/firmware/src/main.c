@@ -3857,7 +3857,7 @@ static void pnet_l2_log(void) {
             "pnet: l2 amiga %s board %s %s clash %lu heap %lu", a, b,
             st.shared ? "SHARED" : same ? "SAME" : "distinct", PNET_SAT(st.clash, 999999u),
             PNET_SAT(g_pnet_heap_low, 999999u));
-    // Entered/left, why (1 offer, 2 ack, 3 src, 4 seed), the replies built (offer/ack/nak), the network's DHCP
+    // Entered/left, why (1 offer, 2 ack, 3 src), the replies built (offer/ack/nak), the network's DHCP
     // replies dropped, fragments dropped, ARP kept from the Amiga. 81 characters at most.
     if (st.sh_entered)
         wf_logf(st.sh_frag_drops || st.sh_naks ? WF_WARN : WF_INFO,

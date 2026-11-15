@@ -65,7 +65,9 @@ pnet_tx_t pnet_sort_tx(pnet_sort_t *s, const uint8_t *f, size_t len, const uint8
     if (len < ETH_HDR || len > PNET_SORT_MTU) return PNET_TX_LEN;
     if (memcmp(f + 6, mac, 6) != 0) return PNET_TX_MAC;
     pnet_shared_follow(s, board_ip);
-    if (s->sh.on) return pnet_shared_tx(s, f, len);
+    // Review I2: an Amiga transmitting from an address of its own ends shared mode; the frame then teaches that
+    // address below, exactly as in normal mode.
+    if (s->sh.on && !pnet_shared_amiga_left(s, f, len)) return pnet_shared_tx(s, f, len);
     const uint16_t type = be16(f + 12);
     if (type == 0x0806u) {
         if (len < ETH_HDR + 28u) return PNET_TX_LEN;
@@ -94,10 +96,9 @@ pnet_tx_t pnet_sort_tx(pnet_sort_t *s, const uint8_t *f, size_t len, const uint8
 
 bool pnet_sort_seed(pnet_sort_t *s, uint32_t ip, uint32_t board_ip) {
     if (s->amiga_ip != 0u || ip == 0u) return false;
-    if (ip == board_ip) {                                     /* the Amiga shared the board's address before */
-        pnet_shared_enter(s, board_ip, PNET_SHARED_SEED);
-        s->sh.amiga = true;
-        return true;
+    if (ip == board_ip) {        /* shared before a reboot -- or a stale record (review I2): a hint, never a trigger */
+        s->sh.seed_hint = true;
+        return false;
     }
     s->amiga_ip = ip;
     return true;

@@ -214,21 +214,34 @@ static size_t opt_at(const uint8_t *f, size_t len, uint8_t code, size_t *olen) {
     }
     return 0;
 }
+/* The options run, TLV by TLV, from the cookie to an END inside the frame, as AmiTCP_NG's dhcp_find reads them
+ * (and within its 312-byte buffer). */
+static bool options_end_inside(const uint8_t *f, size_t n) {
+    size_t i = 42 + 240;
+    while (i < n) {
+        if (f[i] == 255) return i - (42 + 236) < 312;
+        if (f[i] == 0) { i++; continue; }
+        if (i + 1 >= n) return false;
+        i += 2u + f[i + 1];
+    }
+    return false;
+}
 static void check_reply(const uint8_t *r, size_t n, uint8_t type, uint32_t xid, uint32_t yi, const char *what) {
     printf("  (%s)\n", what);
-    CHECK_EQ_INT(n, PNET_DHCP_REPLY_LEN);
+    CHECK(n >= PNET_DHCP_REPLY_MIN && n <= PNET_DHCP_REPLY_MAX, "a reply's length");
     CHECK(memcmp(r, BCAST, 6) == 0, "to the broadcast MAC (AmiTCP_NG sets the broadcast flag)");
     CHECK(memcmp(r + 6, LMAC, 6) == 0, "from the local MAC twin, never the shared one");
     CHECK_EQ_INT(get16(r + 12), 0x0800);
     CHECK_EQ_INT(r[14], 0x45);
-    CHECK_EQ_INT(get16(r + 16), 328);                       /* 20 + 8 + 300 */
+    CHECK_EQ_INT(get16(r + 16), n - 14);                    /* IPv4 total length: the whole frame */
     CHECK_EQ_INT(r[23], 17);
     CHECK_EQ_INT(ip_check(r), 0);                           /* IPv4 header checksum, independently */
     CHECK_EQ_INT(get32(r + 26), HOTSPOT);                   /* from the network's DHCP server id */
     CHECK_EQ_INT(get32(r + 30), 0xFFFFFFFFu);
-    CHECK_EQ_INT(get16(r + 34), 67); CHECK_EQ_INT(get16(r + 36), 68); CHECK_EQ_INT(get16(r + 38), 308);
+    CHECK_EQ_INT(get16(r + 34), 67); CHECK_EQ_INT(get16(r + 36), 68); CHECK_EQ_INT(get16(r + 38), n - 34);
     CHECK(get16(r + 40) != 0, "a UDP checksum is sent");
-    CHECK_EQ_INT(l4_check(r, 308), 0);                      /* UDP checksum, independently */
+    CHECK_EQ_INT(l4_check(r, n - 34), 0);                   /* UDP checksum, independently */
+    CHECK(options_end_inside(r, n), "the options end with END inside the frame");
     const uint8_t *b = r + 42;
     CHECK_EQ_INT(b[0], 2); CHECK_EQ_INT(b[1], 1); CHECK_EQ_INT(b[2], 6);
     CHECK_EQ_INT(get32(b + 4), xid);
@@ -263,7 +276,7 @@ static void a_hotspot_offer_of_the_boards_address_is_answered_by_the_board(void)
     CHECK(at && get32(R + at) == HOTSPOT, "option 3: the gateway");
     at = opt_at(R, n, 6, &ol);
     CHECK(at && ol == 8 && get32(R + at) == HOTSPOT && get32(R + at + 4) == DNS2, "option 6: both DNS servers");
-    CHECK_EQ_INT(R[PNET_DHCP_REPLY_LEN], 0xEE);             /* nothing written past the reply */
+    CHECK_EQ_INT(R[n], 0xEE);             /* nothing written past the reply */
     CHECK_EQ_INT(pnet_shared_owed(&s, &L, R, sizeof R), 0); /* owed once */
     CHECK_EQ_INT(s.sh.offers, 1);
 
@@ -297,7 +310,7 @@ static void a_hotspot_offer_of_the_boards_address_is_answered_by_the_board(void)
     CHECK_EQ_INT(pnet_shared_dhcp_reply(&s, F, n, &L, R, sizeof R), 0);
     CHECK_EQ_INT(pnet_shared_dhcp_reply(&s, F, n, &L, R, 100), 0);   /* and never past a short buffer */
     n = amitcp_dhcp(1, 0x2222u, 0, 0);
-    CHECK_EQ_INT(pnet_shared_dhcp_reply(&s, F, n, &L, R, PNET_DHCP_REPLY_LEN - 1), 0);
+    CHECK_EQ_INT(pnet_shared_dhcp_reply(&s, F, n, &L, R, PNET_DHCP_REPLY_MIN - 1), 0);
     /* The hotspot's late ACK to the Amiga's earlier REQUEST: dropped, the board answered it. */
     n = hotspot_reply(5, xid, BOARD);
     CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_DROP);
@@ -312,11 +325,11 @@ static void a_unicast_reply_without_the_broadcast_flag_goes_to_the_amigas_mac(vo
     set_l4_csum(F, 40, n - 34);
     pnet_sort_tx(&s, F, n, MAC, BOARD);
     size_t m = pnet_shared_dhcp_reply(&s, F, n, &L, R, sizeof R);
-    CHECK_EQ_INT(m, PNET_DHCP_REPLY_LEN);
+    CHECK_EQ_INT(m, PNET_DHCP_REPLY_MIN);
     CHECK(memcmp(R, MAC, 6) == 0, "to chaddr");
     CHECK_EQ_INT(get32(R + 30), BOARD);                     /* to yiaddr */
     CHECK_EQ_INT(ip_check(R), 0);
-    CHECK_EQ_INT(l4_check(R, 308), 0);
+    CHECK_EQ_INT(l4_check(R, m - 34), 0);
     pnet_lease_t lone = L;                                  /* no DHCP server id known: the gateway stands in */
     lone.server = 0; lone.dns[1] = 0;
     m = pnet_shared_dhcp_reply(&s, F, n, &lone, R, sizeof R);
@@ -422,15 +435,30 @@ static void arp_for_the_shared_address_is_the_boards_unless_it_is_a_reply(void) 
     CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_BOARD);
 }
 
-static void broadcasts_and_multicasts_go_to_both(void) {
+/* Review M1: the slow Paula link gets only the broadcasts the Amiga may need. */
+static void only_udp_broadcasts_to_ports_lwip_does_not_own_reach_the_amiga(void) {
     pnet_sort_t s = shared_and_acked();
-    size_t n = udp(BCAST, HMAC, IP(192, 168, 43, 9), 0xFFFFFFFFu, 137, 137, 50);
-    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_BOTH);
-    n = udp(BCAST, HMAC, IP(192, 168, 43, 9), IP(192, 168, 43, 255), 1900, 1900, 50);
-    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_BOTH);
+    const uint32_t to0 = s.to_amiga, both0 = s.to_both;
+    size_t n = udp(BCAST, HMAC, IP(192, 168, 43, 9), 0xFFFFFFFFu, 137, 137, 50);            /* limited */
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_AMIGA);
+    n = udp(BCAST, HMAC, IP(192, 168, 43, 9), IP(192, 168, 43, 255), 9, 4000, 50);           /* subnet-directed */
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_AMIGA);
+    n = udp(BCAST, HMAC, IP(192, 168, 43, 9), 0xFFFFFFFFu, 4000, 0x9ABC, 50);               /* a board-owned port */
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_BOARD);
     static const uint8_t MCAST[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
-    n = udp(MCAST, HMAC, IP(192, 168, 43, 9), IP(224, 0, 0, 251), 5353, 5353, 50);
-    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_BOTH);
+    n = udp(MCAST, HMAC, IP(192, 168, 43, 9), IP(224, 0, 0, 251), 5353, 5353, 50);           /* mDNS */
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_BOARD);
+    static const uint8_t SSDP[6] = {0x01, 0x00, 0x5e, 0x7f, 0xff, 0xfa};
+    n = udp(SSDP, HMAC, IP(192, 168, 43, 9), IP(239, 255, 255, 250), 1900, 1900, 50);
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_BOARD);
+    n = udp(BCAST, HMAC, IP(192, 168, 43, 9), IP(224, 0, 0, 1), 5000, 5000, 50);            /* multicast IP */
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_BOARD);
+    n = icmp(BCAST, HMAC, IP(192, 168, 43, 9), 0xFFFFFFFFu, 8, 0, NULL, 8);                 /* not UDP */
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_BOARD);
+    n = udp(BCAST, HMAC, IP(192, 168, 43, 9), 0xFFFFFFFFu, 137, 137, 50);
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, 37, BOARD), PNET_SORT_BOARD);                          /* ports cut off */
+    CHECK_EQ_INT(s.to_amiga - to0, 2);
+    CHECK_EQ_INT(s.to_both - both0, 0);
 }
 
 /* A 3000-byte UDP datagram at a 1500-byte MTU: three fragments of 1480, 1480 and 48 bytes, built from one datagram
@@ -623,13 +651,180 @@ static void a_network_that_leases_the_amiga_its_own_address_never_shares(void) {
     CHECK(!s.sh.on && s.sh.entered == 0, "never shared");
 }
 
+/* ---- review fixes 2026-11-15 ---- */
+
+/* A DISCOVER or REQUEST like AmiTCP_NG's, but with a client-id of `cidlen` bytes (0: none); REQUEST asks for BOARD. */
+static size_t dhcp_with_cid(uint8_t type, uint32_t xid, size_t cidlen) {
+    memset(F, 0, sizeof F);
+    const size_t blen = 548;
+    ipv4(BCAST, MAC, 17, 0, 0xFFFFFFFFu, 8 + blen, 0, 0);
+    uint8_t *u = F + 34;
+    put16(u, 68); put16(u + 2, 67); put16(u + 4, (uint16_t)(8 + blen));
+    uint8_t *b = u + 8;
+    b[0] = 1; b[1] = 1; b[2] = 6;
+    put32(b + 4, xid); put16(b + 10, 0x8000);
+    memcpy(b + 28, MAC, 6);
+    uint8_t *o = b + 236;
+    put32(o, 0x63825363u); o += 4;
+    *o++ = 53; *o++ = 1; *o++ = type;
+    if (cidlen) { *o++ = 61; *o++ = (uint8_t)cidlen; for (size_t i = 0; i < cidlen; i++) *o++ = (uint8_t)(0xC0 + i); }
+    if (type == 3) { *o++ = 50; *o++ = 4; put32(o, BOARD); o += 4; }
+    *o++ = 255;
+    set_l4_csum(F, 40, 8 + blen);
+    return 34 + 8 + blen;
+}
+
+/* Review I1: the options are sized before they are written; a long client-id grows the reply (RFC 2131 lets the
+ * options run to 312 bytes, AmiTCP_NG reads 312), never past the buffer, never without END. Every length is built
+ * into a heap block of exactly the reply's length (ASan), then refused one byte short with nothing written. */
+static void a_long_client_id_grows_the_reply_and_never_overflows(void) {
+    static const size_t lens[] = {0, 7, 8, 9, 20, 254, 255};
+    const pnet_lease_t L = lease();
+    for (size_t k = 0; k < sizeof lens / sizeof lens[0]; k++) {
+        for (uint8_t type = 1; type <= 3; type += 2) {     /* DISCOVER -> OFFER, REQUEST -> ACK */
+            pnet_sort_t s = shared_by_offer(5u);
+            const size_t cl = lens[k];
+            const size_t n = dhcp_with_cid(type, 0x77u, cl);
+            const size_t m = pnet_shared_dhcp_reply(&s, F, n, &L, R, sizeof R);
+            char what[48];
+            snprintf(what, sizeof what, "%s, client-id %zu", type == 1 ? "OFFER" : "ACK", cl);
+            check_reply(R, m, type == 1 ? 2 : 5, 0x77u, BOARD, what);
+            size_t ol = 0;
+            size_t at = opt_at(R, m, 61, &ol);
+            if (cl) CHECK(at && ol == cl && R[at] == 0xC0 && R[at + cl - 1] == (uint8_t)(0xC0 + cl - 1),
+                          "the whole client-id echoed");
+            else CHECK(at == 0, "no client-id, none echoed");
+            at = opt_at(R, m, 6, &ol);
+            CHECK(at && ol == 8, "and the DNS servers still there");
+            /* 300-byte BOOTP while the options fit its 64 bytes (cookie + 49 + 61's 2 + END + the id <= 64) */
+            CHECK_EQ_INT(m, cl + 2u + 54u <= 64u ? PNET_DHCP_REPLY_MIN : 14u + 20u + 8u + 236u + 54u + (cl ? cl + 2u : 0u));
+            uint8_t *exact = malloc(m);
+            CHECK_EQ_INT(pnet_shared_dhcp_reply(&s, F, n, &L, exact, m), m);
+            CHECK(memcmp(exact, R, m) == 0, "the same reply in a block of exactly its length");
+            free(exact);
+            uint8_t *shorter = malloc(m - 1);
+            memset(shorter, 0xAB, m - 1);
+            CHECK_EQ_INT(pnet_shared_dhcp_reply(&s, F, n, &L, shorter, m - 1), 0);
+            CHECK(shorter[0] == 0xAB && shorter[m - 2] == 0xAB, "refused, nothing written");
+            free(shorter);
+        }
+    }
+    /* The longest possible reply is PNET_DHCP_REPLY_MAX or less. */
+    pnet_sort_t s = shared_by_offer(5u);
+    const size_t n = dhcp_with_cid(3, 0x78u, 255);
+    CHECK(pnet_shared_dhcp_reply(&s, F, n, &L, R, sizeof R) <= PNET_DHCP_REPLY_MAX, "within the maximum");
+}
+
+/* Review I2, the reported scenario end to end: at home the router gave the board the address the Amiga used to have
+ * (the server's netAmigaIpLast), the board rebooted, and the Amiga runs on a lease of its own, .77. */
+#define HOME   IP(192, 168, 1, 40)
+#define HOME77 IP(192, 168, 1, 77)
+#define HOMEGW IP(192, 168, 1, 1)
+static void a_stale_seed_never_shares_and_the_amiga_stays_reachable(void) {
+    pnet_sort_t s = fresh();
+    CHECK(!pnet_sort_seed(&s, HOME, HOME), "the seed is the board's own address: not taken");
+    CHECK(s.sh.seed_hint && !s.sh.on, "remembered as a hint, shared mode stays off");
+    CHECK_EQ_INT(s.amiga_ip, 0);
+    CHECK(!pnet_sort_seed(&s, HOME, HOME) && !s.sh.on, "and again on the next pass");
+    size_t n = arp(BCAST, MAC, 1, HOME77, NULL, HOMEGW);    /* the Amiga's first frame from its own lease */
+    CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, HOME), PNET_TX_SEND);
+    CHECK_EQ_INT(s.amiga_ip, HOME77);
+    n = arp(BCAST, HMAC, 1, HOMEGW, NULL, HOME77);          /* the router asks for .77: the Amiga answers */
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, HOME), PNET_SORT_BOTH);
+    n = tcp(MAC, HMAC, SERVER, HOME77, 80, 0xC001, 0x12, 0);
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, HOME), PNET_SORT_AMIGA);
+    CHECK_EQ_INT(pnet_sort_send_ip(&s), HOME77);
+    CHECK(!s.sh.on && s.sh.entered == 0, "never shared");
+}
+
+/* Review I2 (b): already shared (here by a real clash), an Amiga that transmits from an address of its own leaves
+ * shared mode, and that address is its own from then on. Neither 0 (a probe) nor 169.254/16 (its fallback) does. */
+static void an_amiga_with_its_own_address_ends_shared_mode(void) {
+    pnet_sort_t s = shared_and_acked();
+    size_t n = arp(BCAST, MAC, 1, 0, NULL, BOARD);          /* an ARP probe: sender 0 */
+    CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, BOARD), PNET_TX_SEND);
+    CHECK(s.sh.on, "a probe keeps it");
+    n = arp(BCAST, MAC, 1, IP(169, 254, 12, 34), NULL, HOTSPOT);
+    CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, BOARD), PNET_TX_SEND);
+    CHECK(s.sh.on, "a link-local sender keeps it");
+    n = tcp(HMAC, MAC, BOARD, SERVER, 0xC002, 80, 0x02, 0);
+    pnet_sort_tx(&s, F, n, MAC, BOARD);
+    CHECK(s.sh.on, "the shared address keeps it");
+    const uint32_t own = IP(192, 168, 43, 77);
+    n = udp(HMAC, MAC, own, HOTSPOT, 0xC003, 53, 30);       /* the Amiga's DNS query from its own lease */
+    CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, BOARD), PNET_TX_SEND);
+    CHECK(!s.sh.on && s.sh.left == 1 && s.sh.own_src == 1, "left shared mode");
+    CHECK_EQ_INT(s.amiga_ip, own);                          /* taught by that frame, in normal mode */
+    CHECK_EQ_INT(pnet_sort_send_ip(&s), own);
+    n = udp(MAC, HMAC, HOTSPOT, own, 53, 0xC003, 60);
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_AMIGA);
+    n = udp(MAC, HMAC, HOTSPOT, BOARD, 53, 0xC003, 60);     /* the board's address is the board's again */
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_BOARD);
+    n = arp(BCAST, MAC, 1, IP(192, 168, 43, 78), NULL, HOTSPOT);   /* off: nothing more to leave */
+    CHECK(!pnet_shared_amiga_left(&s, F, n), "off: false");
+}
+
+/* Review M2: an ICMP error on the local path quotes a datagram that crossed the bus the other way; its addresses
+ * are restored for the receiver, and every checksum (outer IPv4, ICMP, quoted IPv4) verifies independently. */
+static void local_icmp_errors_carry_a_rewritten_quote(void) {
+    pnet_sort_t s = shared_and_acked();
+    /* lwIP's port unreachable for a UDP datagram the Amiga sent to 169.254.77.1 (lwIP saw it from .77.2). */
+    static uint8_t q[28];
+    memset(q, 0, sizeof q);
+    q[0] = 0x45; put16(q + 2, 41); q[8] = 64; q[9] = 17; put32(q + 12, PNET_SHARED_AMIGA); put32(q + 16, BOARD);
+    put16(q + 10, finish(add_bytes(0, q, 20)));
+    put16(q + 20, 0xC004); put16(q + 22, 7); put16(q + 24, 21);
+    size_t n = icmp(MAC, MAC, BOARD, PNET_SHARED_AMIGA, 3, 3, q, sizeof q);
+    CHECK(pnet_shared_b2a(&s, F, n), "local");
+    pnet_shared_to_amiga(F, n, BOARD, MAC);
+    CHECK_EQ_INT(get32(F + 26), PNET_SHARED_BOARD);
+    CHECK_EQ_INT(get32(F + 30), BOARD);
+    const uint8_t *iq = F + 42;
+    CHECK_EQ_INT(get32(iq + 12), BOARD);                    /* as the Amiga sent it: from its own address */
+    CHECK_EQ_INT(get32(iq + 16), PNET_SHARED_BOARD);        /* ...to 169.254.77.1 */
+    CHECK_EQ_INT(ip_check(F), 0);
+    CHECK_EQ_INT(finish(add_bytes(0, F + 34, 8 + sizeof q)), 0);   /* ICMP checksum */
+    CHECK_EQ_INT(finish(add_bytes(0, iq, 20)), 0);                 /* the quoted header's checksum */
+    CHECK_EQ_INT(get16(iq + 20), 0xC004);                   /* the quoted ports untouched */
+    /* The Amiga's port unreachable for the board's datagram to 169.254.77.2 (the Amiga saw it from .77.1). */
+    put32(q + 12, PNET_SHARED_BOARD); put32(q + 16, BOARD); put16(q + 10, 0); put16(q + 10, finish(add_bytes(0, q, 20)));
+    n = icmp(HMAC, MAC, BOARD, PNET_SHARED_BOARD, 3, 3, q, sizeof q);
+    CHECK(pnet_shared_a2b(&s, F, n), "local");
+    pnet_shared_to_board(F, n, BOARD, MAC);
+    CHECK_EQ_INT(get32(F + 42 + 12), BOARD);                /* as lwIP sent it: from the board's address */
+    CHECK_EQ_INT(get32(F + 42 + 16), PNET_SHARED_AMIGA);    /* ...to 169.254.77.2 */
+    CHECK_EQ_INT(ip_check(F), 0);
+    CHECK_EQ_INT(finish(add_bytes(0, F + 34, 8 + sizeof q)), 0);
+    CHECK_EQ_INT(finish(add_bytes(0, F + 42, 20)), 0);
+    /* An echo request is not an error: nothing past its 8-byte header is touched. */
+    n = icmp(HMAC, MAC, BOARD, PNET_SHARED_BOARD, 8, 0, q, sizeof q);
+    pnet_shared_to_board(F, n, BOARD, MAC);
+    CHECK_EQ_INT(get32(F + 42 + 12), PNET_SHARED_BOARD);
+    CHECK_EQ_INT(finish(add_bytes(0, F + 34, 8 + sizeof q)), 0);
+}
+
+/* Review M4: the owed OFFER is counted against a full ring once, not on every 2 ms tick. */
+static void a_full_ring_counts_the_owed_offer_once(void) {
+    pnet_sort_t s = shared_by_offer(5u);
+    CHECK(s.sh.owe, "owed");
+    CHECK(pnet_shared_owe_full(&s), "the first full tick counts");
+    for (int i = 0; i < 100; i++) CHECK(!pnet_shared_owe_full(&s), "later ticks do not");
+    const pnet_lease_t L = lease();
+    CHECK(pnet_shared_owed(&s, &L, R, sizeof R) != 0, "a slot freed: sent");
+    CHECK(!pnet_shared_owe_full(&s), "nothing owed: nothing to count");
+    pnet_sort_t t = shared_by_offer(6u);                    /* a new owed OFFER counts afresh */
+    CHECK(pnet_shared_owe_full(&t), "counts");
+    pnet_sort_t u = fresh();
+    CHECK(!pnet_shared_owe_full(&u), "not shared: false");
+}
+
 /* Every prefix of every kind of frame, each in a heap block of exactly its length (ASan: a read or a write past the
  * frame's end is a report, not a quiet look at the next bytes of F). */
 static void every_prefix_stays_inside_the_frame(void) {
     static uint8_t keep[3200];
     const pnet_lease_t L = lease();
     const pnet_sort_t base = shared_and_acked();
-    for (int kind = 0; kind < 9; kind++) {
+    for (int kind = 0; kind < 11; kind++) {
         size_t n = 0;
         switch (kind) {
         case 0: n = amitcp_dhcp(1, 5u, 0, 0); break;
@@ -640,11 +835,19 @@ static void every_prefix_stays_inside_the_frame(void) {
         case 5: n = arp(LMAC, MAC, 2, BOARD, LMAC, PNET_SHARED_BOARD); break;
         case 6: n = fragment(HOTSPOT, 53, 50123, 0x7001, 0); break;
         case 7: n = fragment(HOTSPOT, 53, 50123, 0x7001, 1); break;
-        default: {
+        case 8: {
             static uint8_t q[28];
             memset(q, 0, sizeof q); q[0] = 0x45; q[9] = 6; put32(q + 12, BOARD);
             n = icmp(MAC, HMAC, HOTSPOT, BOARD, 3, 4, q, sizeof q);
+            break;
         }
+        case 9: {                                           /* a local-path ICMP error: the quote is rewritten */
+            static uint8_t q[28];
+            memset(q, 0, sizeof q); q[0] = 0x45; q[9] = 17; put32(q + 12, PNET_SHARED_AMIGA); put32(q + 16, BOARD);
+            n = icmp(MAC, MAC, BOARD, PNET_SHARED_AMIGA, 3, 3, q, sizeof q);
+            break;
+        }
+        default: n = dhcp_with_cid(1, 5u, 255); break;
         }
         memcpy(keep, F, n);
         for (size_t len = 0; len <= n; len++) {
@@ -653,7 +856,9 @@ static void every_prefix_stays_inside_the_frame(void) {
             memcpy(f, keep, len);
             (void)pnet_sort_rx(&s, f, len, BOARD);
             if (len >= 14 && len <= 1518) (void)pnet_shared_tx(&s, f, len);
-            (void)pnet_shared_dhcp_reply(&s, f, len, &L, R, sizeof R);
+            uint8_t *out = malloc(PNET_DHCP_REPLY_MAX);     /* exactly the longest reply */
+            (void)pnet_shared_dhcp_reply(&s, f, len, &L, out, PNET_DHCP_REPLY_MAX);
+            free(out);
             (void)pnet_shared_a2b(&s, f, len);
             (void)pnet_shared_b2a(&s, f, len);
             pnet_shared_to_board(f, len, BOARD, MAC);
@@ -693,13 +898,18 @@ int main(void) {
     RUN(tcp_and_udp_go_to_whoever_holds_the_pcb);
     RUN(icmp_by_type_and_errors_by_their_quote);
     RUN(arp_for_the_shared_address_is_the_boards_unless_it_is_a_reply);
-    RUN(broadcasts_and_multicasts_go_to_both);
+    RUN(only_udp_broadcasts_to_ports_lwip_does_not_own_reach_the_amiga);
     RUN(fragments_follow_their_first);
     RUN(the_amiga_may_send_from_the_shared_address);
     RUN(the_local_path_gives_the_bus_a_private_pair);
     RUN(the_local_pair_is_off_outside_shared_mode);
     RUN(a_new_board_address_ends_shared_mode);
     RUN(a_network_that_leases_the_amiga_its_own_address_never_shares);
+    RUN(a_long_client_id_grows_the_reply_and_never_overflows);
+    RUN(a_stale_seed_never_shares_and_the_amiga_stays_reachable);
+    RUN(an_amiga_with_its_own_address_ends_shared_mode);
+    RUN(local_icmp_errors_carry_a_rewritten_quote);
+    RUN(a_full_ring_counts_the_owed_offer_once);
     RUN(every_prefix_stays_inside_the_frame);
     return REPORT();
 }
