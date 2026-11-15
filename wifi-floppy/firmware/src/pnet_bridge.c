@@ -290,15 +290,17 @@ void pnet_bridge_stats(pnet_bridge_stats_t *o) {
 
 // Plan 2026-10-17 R17: s_sort lives in the network context, so the seed is taken under the lwIP lock. Seeded once:
 // the next frame from the Amiga, or the board's own connect (ARP over the local path), confirms or replaces it.
-void pnet_bridge_seed_amiga_ip(uint32_t ip) {
+bool pnet_bridge_seed_amiga_ip(uint32_t ip) {
     net_radio_lock();
-    const bool hinted = s_sort.sh.seed_hint;
-    const bool seeded = pnet_sort_seed(&s_sort, ip, s_board_ip);
-    const bool hint = !hinted && s_sort.sh.seed_hint;
+    const uint32_t board = s_board_ip;
+    const bool seeded = pnet_sort_seed(&s_sort, ip, board);
     net_radio_unlock();
+    if (board == 0u) return false;                     // not decidable yet: the caller tries again
     char a[16];
     pnet_ip_text(ip, a);
-    if (seeded) wf_logf(WF_INFO, "pnet: Amiga address %s from the server (not seen since boot)", a);
-    // Review I2: a hint only -- shared mode waits for the Amiga to transmit from it. Logged once.
-    else if (hint) wf_logf(WF_INFO, "pnet: Amiga address %s from the server is the board's (a hint)", a);
+    // The board's own address: shared mode at once (PNET_SHARED_SEED); a stale record ends at the Amiga's first
+    // frame from a lease of its own (pnet_shared_amiga_left).
+    if (seeded && ip == board) wf_logf(WF_INFO, "pnet: Amiga address %s from the server is the board's: shared IP", a);
+    else if (seeded) wf_logf(WF_INFO, "pnet: Amiga address %s from the server (not seen since boot)", a);
+    return true;
 }

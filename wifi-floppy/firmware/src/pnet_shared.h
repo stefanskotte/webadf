@@ -14,14 +14,20 @@
  *   ACK    ...or ACKs it (the OFFER was missed). Dropped; the Amiga's next REQUEST is answered locally.
  *   SRC    the Amiga transmits from the board's address: it holds it from before a board reboot (AmiTCP_NG never
  *          renews), and the network still leases that address to the shared MAC.
- * NOT the server's last-known Amiga address (xfer.ip) being the board's own (review I2): that record can be stale
- * -- a router that gave the board the Amiga's old address while the Amiga runs on a lease of its own -- so it is
- * only remembered (sh.seed_hint); an Amiga that really shares the address enters by SRC with its first frame.
+ *   SEED   the server's last-known Amiga address (xfer.ip) is the board's own: an idle sharing Amiga after a board
+ *          reboot, reachable at once (sh.amiga; Transfer goes to PNET_SHARED_AMIGA, inbound for its ports is its).
+ *          The record can be stale -- a router gave the board the Amiga's old address while the Amiga runs on a
+ *          lease of its own (review I2) -- and then the Amiga's first frame from that lease ends shared mode
+ *          (below). Until it transmits, frames for its own lease reach the board only.
  * ENDS at a reboot (RAM only); when the board's address changes to another non-zero one (pnet_shared_follow): the
  * board is on another lease, maybe another network, and the Amiga keeps the old address (AmiTCP_NG has no T1/T2),
  * which from then on is simply its own in normal mode; or when the Amiga transmits from a non-zero address that is
  * neither the shared one nor 169.254/16 (pnet_shared_amiga_left, review I2): it holds a lease of its own, which
  * that frame teaches in normal mode. Its next DHCP re-enters shared mode if the clash recurs.
+ * KNOWN (review minor 4, left as is): a board connection open to PNET_SHARED_AMIGA when shared mode ends (Transfer)
+ * is not reset; its frames for 169.254.77.2 go to the radio, so it times out (lwIP's retransmits, then amiga_send's
+ * own PONG/idle limits) and the next connect goes to the Amiga's new address. Likewise 169.254/16 senders never end
+ * shared mode (review minor 2): an Amiga on link-local fallback is not on a lease of its own.
  * A board address of 0 (the link down) leaves it on. Network mode off/on does not end it (the Amiga keeps its address).
  *
  * WHILE ON:

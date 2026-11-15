@@ -45,7 +45,8 @@ typedef enum {
     PNET_SHARED_OFFER,   /* the network OFFERed an Amiga xid the board's address (the earliest signal) */
     PNET_SHARED_ACK,     /* ...or ACKed it (the OFFER was missed) */
     PNET_SHARED_SRC,     /* the Amiga transmitted from the board's address (shared before a board reboot) */
-    PNET_SHARED_SEED,    /* RETIRED (review I2, 2026-11-15): never entered; the seed is only sh.seed_hint */
+    PNET_SHARED_SEED,    /* the server's last-known Amiga address is the board's own (an idle sharing Amiga after a
+                          * board reboot); a stale one ends at the Amiga's first own-address frame */
 } pnet_shared_why_t;
 typedef struct { uint32_t src; uint16_t id; uint8_t proto, to; } pnet_frag_t;   /* a fragmented datagram's owner */
 typedef struct {
@@ -53,7 +54,7 @@ typedef struct {
     bool     amiga;      /* the Amiga is known to use the shared address (ACKed, seen, or seeded) */
     bool     owe;        /* a local OFFER is owed for owe_xid (the network OFFER that turned shared mode on) */
     bool     owe_full;   /* ...and the RX ring was full for it once (counted once, pnet_shared_owe_full) */
-    bool     seed_hint;  /* the server's last-known Amiga address was the board's own: a hint, never a trigger */
+    bool     seed_hint;  /* the server's last-known Amiga address was the board's own (PNET_SHARED_SEED) */
     uint8_t  why;        /* pnet_shared_why_t of the last entry */
     uint32_t ip;         /* the board's address, which the Amiga shares */
     uint32_t entered, left;
@@ -88,9 +89,10 @@ pnet_sort_to_t pnet_sort_rx(pnet_sort_t *s, const uint8_t *f, size_t len, uint32
 pnet_tx_t pnet_sort_tx(pnet_sort_t *s, const uint8_t *f, size_t len, const uint8_t mac[6], uint32_t board_ip);
 
 /* Plan 2026-10-17 R17 (fw 1.16.0): the server's last-known Amiga address, for a board that rebooted and has heard
- * nothing from the Amiga since. Fills amiga_ip only when it is 0; never 0, never the board's own. The board's own
- * address is only remembered (sh.seed_hint): it may be a stale record of an Amiga that now holds another lease
- * (review I2), so shared mode waits for the Amiga to transmit from it (PNET_SHARED_SRC). True = seeded. */
+ * nothing from the Amiga since. Fills amiga_ip only when it is 0; never 0. The board's own address is an Amiga
+ * that shared it before the reboot: shared mode is entered (PNET_SHARED_SEED, sh.amiga), so an idle Amiga stays
+ * reachable. A stale record (review I2: the Amiga now on a lease of its own) is corrected by its first frame from
+ * that lease (pnet_shared_amiga_left). True = seeded. */
 bool pnet_sort_seed(pnet_sort_t *s, uint32_t ip, uint32_t board_ip);
 /* Phase 4 (local reachability): the board and the Amiga share one MAC, so a frame between them never comes back
  * from the radio, and must be handed across here. a2b: a frame from the Amiga (already PNET_TX_SEND) that is ARP

@@ -720,21 +720,57 @@ static void a_long_client_id_grows_the_reply_and_never_overflows(void) {
 #define HOME   IP(192, 168, 1, 40)
 #define HOME77 IP(192, 168, 1, 77)
 #define HOMEGW IP(192, 168, 1, 1)
-static void a_stale_seed_never_shares_and_the_amiga_stays_reachable(void) {
+static void a_stale_seed_shares_until_the_amigas_first_frame_from_its_own_lease(void) {
     pnet_sort_t s = fresh();
-    CHECK(!pnet_sort_seed(&s, HOME, HOME), "the seed is the board's own address: not taken");
-    CHECK(s.sh.seed_hint && !s.sh.on, "remembered as a hint, shared mode stays off");
-    CHECK_EQ_INT(s.amiga_ip, 0);
-    CHECK(!pnet_sort_seed(&s, HOME, HOME) && !s.sh.on, "and again on the next pass");
-    size_t n = arp(BCAST, MAC, 1, HOME77, NULL, HOMEGW);    /* the Amiga's first frame from its own lease */
+    CHECK(pnet_sort_seed(&s, HOME, HOME), "the seed is the board's own address: shared mode");
+    CHECK(s.sh.on && s.sh.why == PNET_SHARED_SEED && s.sh.amiga, "on, the Amiga assumed to share it");
+    CHECK_EQ_INT(pnet_sort_send_ip(&s), PNET_SHARED_AMIGA);
+    size_t n = arp(BCAST, MAC, 1, HOME77, NULL, HOMEGW);    /* the Amiga's first frame, from its own lease */
     CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, HOME), PNET_TX_SEND);
+    CHECK(!s.sh.on && s.sh.own_src == 1, "that frame ended shared mode");
     CHECK_EQ_INT(s.amiga_ip, HOME77);
     n = arp(BCAST, HMAC, 1, HOMEGW, NULL, HOME77);          /* the router asks for .77: the Amiga answers */
     CHECK_EQ_INT(pnet_sort_rx(&s, F, n, HOME), PNET_SORT_BOTH);
     n = tcp(MAC, HMAC, SERVER, HOME77, 80, 0xC001, 0x12, 0);
     CHECK_EQ_INT(pnet_sort_rx(&s, F, n, HOME), PNET_SORT_AMIGA);
-    CHECK_EQ_INT(pnet_sort_send_ip(&s), HOME77);
-    CHECK(!s.sh.on && s.sh.entered == 0, "never shared");
+    n = tcp(MAC, HMAC, SERVER, HOME, 443, 0xC001, 0x12, 0); /* the board's address is the board's again */
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, HOME), PNET_SORT_BOARD);
+    CHECK_EQ_INT(pnet_sort_send_ip(&s), HOME77);            /* Transfer targets .77 */
+    CHECK(!pnet_sort_seed(&s, HOME, HOME), "a repeat of the seed changes nothing now");
+    CHECK(!s.sh.on, "still off");
+}
+
+/* The reason SEED exists: the board reboots (OTA, say) under an idle Amiga that shares its address. Without it the
+ * board would know no Amiga, Transfer could not start, and lwIP would RST the Amiga's open connections. */
+static void a_board_reboot_under_an_idle_sharing_amiga_shares_at_once(void) {
+    pnet_sort_t s = fresh();                                /* after the reboot: nothing learned */
+    CHECK(pnet_sort_seed(&s, BOARD, BOARD), "the server's last-known address is the board's");
+    CHECK(s.sh.on && s.sh.amiga, "shared at once, the Amiga known");
+    CHECK_EQ_INT(pnet_sort_send_ip(&s), PNET_SHARED_AMIGA);
+    /* Inbound for the Amiga's open connection (its port 0xC123 to the server): the Amiga's, not an lwIP RST. */
+    size_t n = tcp(MAC, HMAC, SERVER, BOARD, 443, 0xC123, 0x18, 40);
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_AMIGA);
+    n = udp(MAC, HMAC, HOTSPOT, BOARD, 53, 50123, 60);
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_AMIGA);
+    n = tcp(MAC, HMAC, SERVER, BOARD, 443, 0x8123, 0x18, 40);   /* the board's new TLS: the board's */
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_BOARD);
+    /* Transfer's connect to 169.254.77.2: lwIP's ARP and SYN go to the Amiga, rewritten; its SYN-ACK comes back. */
+    n = arp(BCAST, MAC, 1, BOARD, NULL, PNET_SHARED_AMIGA);
+    CHECK(pnet_shared_b2a(&s, F, n), "the board's ARP for the Amiga: local");
+    n = tcp(MAC, MAC, BOARD, PNET_SHARED_AMIGA, 0x8044, 6800, 0x02, 0);
+    CHECK(pnet_shared_b2a(&s, F, n), "the SYN: local");
+    pnet_shared_to_amiga(F, n, BOARD, MAC);
+    CHECK_EQ_INT(get32(F + 26), PNET_SHARED_BOARD);
+    CHECK_EQ_INT(get32(F + 30), BOARD);
+    CHECK_EQ_INT(l4_check(F, n - 34), 0);
+    n = tcp(HMAC, MAC, BOARD, PNET_SHARED_BOARD, 6800, 0x8044, 0x12, 0);
+    CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, BOARD), PNET_TX_SEND);
+    CHECK(s.sh.on, "the Amiga's own (shared) source keeps shared mode");
+    CHECK(pnet_shared_a2b(&s, F, n), "its SYN-ACK: local");
+    pnet_shared_to_board(F, n, BOARD, MAC);
+    CHECK_EQ_INT(get32(F + 26), PNET_SHARED_AMIGA);
+    CHECK_EQ_INT(get32(F + 30), BOARD);
+    CHECK_EQ_INT(l4_check(F, n - 34), 0);
 }
 
 /* Review I2 (b): already shared (here by a real clash), an Amiga that transmits from an address of its own leaves
@@ -906,7 +942,8 @@ int main(void) {
     RUN(a_new_board_address_ends_shared_mode);
     RUN(a_network_that_leases_the_amiga_its_own_address_never_shares);
     RUN(a_long_client_id_grows_the_reply_and_never_overflows);
-    RUN(a_stale_seed_never_shares_and_the_amiga_stays_reachable);
+    RUN(a_stale_seed_shares_until_the_amigas_first_frame_from_its_own_lease);
+    RUN(a_board_reboot_under_an_idle_sharing_amiga_shares_at_once);
     RUN(an_amiga_with_its_own_address_ends_shared_mode);
     RUN(local_icmp_errors_carry_a_rewritten_quote);
     RUN(a_full_ring_counts_the_owed_offer_once);

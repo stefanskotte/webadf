@@ -95,10 +95,13 @@ pnet_tx_t pnet_sort_tx(pnet_sort_t *s, const uint8_t *f, size_t len, const uint8
 }
 
 bool pnet_sort_seed(pnet_sort_t *s, uint32_t ip, uint32_t board_ip) {
-    if (s->amiga_ip != 0u || ip == 0u) return false;
-    if (ip == board_ip) {        /* shared before a reboot -- or a stale record (review I2): a hint, never a trigger */
+    // board_ip 0: not decidable yet (is the seed the board's own?) -- refused, the caller retries (pnet_bridge.c).
+    if (s->amiga_ip != 0u || ip == 0u || board_ip == 0u) return false;
+    if (ip == board_ip) {        /* shared before a reboot (or a stale record: pnet_shared_amiga_left corrects it) */
         s->sh.seed_hint = true;
-        return false;
+        pnet_shared_enter(s, board_ip, PNET_SHARED_SEED);
+        s->sh.amiga = true;
+        return true;
     }
     s->amiga_ip = ip;
     return true;

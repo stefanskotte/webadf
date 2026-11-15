@@ -2473,8 +2473,10 @@ static void core1_main(void) {
                 pnet_bridge_stats(&st);
                 // HANDOFF 3bu product gap: after a reboot the sorter knows no Amiga until it transmits, so a file for
                 // an idle Amiga waited. The server remembers the last address (xfer.ip, plan 2026-10-17 R17).
-                if (st.amiga_ip == 0u && c.send_ip_hint != 0u) {
-                    pnet_bridge_seed_amiga_ip(c.send_ip_hint);
+                // Review minor 3: once per address the server names, not a lock round trip every poll.
+                static uint32_t seed_tried;
+                if (st.amiga_ip == 0u && c.send_ip_hint != 0u && c.send_ip_hint != seed_tried) {
+                    if (pnet_bridge_seed_amiga_ip(c.send_ip_hint)) seed_tried = c.send_ip_hint;
                     pnet_bridge_stats(&st);
                 }
                 net.on = true;
