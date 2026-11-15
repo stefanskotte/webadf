@@ -44,7 +44,8 @@ describe('help topics', () => {
       // ... and (NET: volumes phase 2) writing to them, in one short paragraph, with what a Move removes (§9): 415 for files.
       // ... and what a disk copied onto a volume makes (spec 2026-11-02): 520.
       // ... and how files from the computer or a phone get onto a disk (tester report 2026-11-14): 565.
-      expect(words).toBeLessThanOrEqual(id === 'files' ? 565 : 280);
+      // ... and the disk sign in the path and the review's Add more files on a phone (2026-11-15): 585.
+      expect(words).toBeLessThanOrEqual(id === 'files' ? 585 : 280);
       expect(text).not.toMatch(BANNED);
     });
   }
