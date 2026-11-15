@@ -9,6 +9,7 @@
 #include "../src/psram_image.h"
 #include "../src/token_store.h"
 #include "../src/net_radio.h"
+#include "../src/yield_gate.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -351,7 +352,25 @@ static void subnets_overlap_by_the_shorter_prefix(void) {
     CHECK(!net_subnets_overlap(0, 0, ap, m24), "no address: nothing to clash with");
 }
 
+// Review of 7f3de257: a request gives way once, then not again for the quiet period -- never a hot spin of
+// connect-and-close while an event waits.
+static void a_request_gives_way_once_then_stays_quiet(void) {
+    yield_gate_t g = { 0 };
+    CHECK(!yield_gate_try(&g, 1000, false, 200), "nothing pending");
+    CHECK(yield_gate_try(&g, 1000, true, 200), "gives way");
+    CHECK(!yield_gate_try(&g, 1001, true, 200), "quiet just after");
+    CHECK(!yield_gate_try(&g, 1199, true, 200), "quiet for 200 ms");
+    CHECK(yield_gate_try(&g, 1200, true, 200), "then may again");
+    CHECK(!yield_gate_try(&g, 1500, false, 200), "nothing pending");
+    CHECK(yield_gate_try(&g, 1501, true, 200), "and at once once the quiet ended");
+    yield_gate_t w = { 0 };
+    CHECK(yield_gate_try(&w, 0xFFFFFFC0u, true, 200), "near the wrap");
+    CHECK(!yield_gate_try(&w, 0x00000010u, true, 200), "quiet across it");
+    CHECK(yield_gate_try(&w, 0x00000100u, true, 200), "and open after");
+}
+
 int main(void) {
+    RUN(a_request_gives_way_once_then_stays_quiet);
     RUN(subnets_overlap_by_the_shorter_prefix);
     RUN(parses_each_op);
     RUN(refuses_what_is_not_an_instruction);

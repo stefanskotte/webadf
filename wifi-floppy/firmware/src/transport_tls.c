@@ -38,6 +38,7 @@
 #include "pico/time.h"
 #include "wf_log.h"
 #include "tls_room.h"
+#include "yield_gate.h"
 #include "mbedtls/x509_crt.h"   // root-CA parse probe, see tls_connect()
 #include "lwip/stats.h"          // 3z: pbuf/heap counters at the stall
 #include "lwip/priv/altcp_priv.h" // 3z: reach the inner TCP pcb for rcv_wnd
@@ -168,7 +169,29 @@ void tls_set_noverify(bool on) { s_noverify = on; }
 // as any connect failure does and is made again later. The poll's read already gives way (its interrupt).
 static bool (*s_yield)(void);
 void tls_set_yield(bool (*fn)(void)) { s_yield = fn; }
-static bool tls_yield_now(void) { return s_yield && s_yield(); }
+// After a request gave way, the next ones do not for TLS_YIELD_QUIET_MS (review of 7f3de257): should the event not
+// be handled at once, a request per pass would otherwise give way on its first wait -- a new pcb, a SYN and a close
+// each time, a hot spin.
+#define TLS_YIELD_QUIET_MS 200u
+static yield_gate_t s_yield_gate;
+static bool tls_yield_now(void) {
+    const uint32_t now = to_ms_since_boot(get_absolute_time());
+    // The callback only when the gate is open: it takes the network lock (portal_event_pending).
+    if (s_yield_gate.quiet && (int32_t)(now - s_yield_gate.until) < 0) return false;
+    return yield_gate_try(&s_yield_gate, now, s_yield && s_yield(), TLS_YIELD_QUIET_MS);
+}
+
+// A DNS lookup the last connect gave way to is still in lwIP's table (lwIP has no cancel). Asking again for the same
+// host would add a duplicate request each time (dns_requests, DNS_MAX_REQUESTS of them, then ERR_MEM). So the next
+// connect to that host REUSES it: g_dns_token is one static, and moving its generation to the new attempt's makes
+// the lookup's answer -- when it comes -- this attempt's (dns_found_cb). Cleared by that answer, whatever its gen.
+static bool     s_dns_inflight;
+static uint32_t s_dns_inflight_host;   // FNV-1a of the host it is for
+static uint32_t host_hash(const char *h) {
+    uint32_t x = 2166136261u;
+    for (; *h; h++) x = (x ^ (uint8_t)*h) * 16777619u;
+    return x;
+}
 
 // When an allocation fails: how full lwIP's pools are, so a pool too small for what runs at once is named, not
 // guessed (bench 2026-11-15: the UDP pool, 4 by default, with the AP's servers beside the station's users).
@@ -191,6 +214,7 @@ static void dns_found_cb(const char *name, const ip_addr_t *ipaddr, void *arg) {
     (void)name;
     dns_token_t *tok = (dns_token_t *)arg;
     tls_conn_t *c = tok->c;
+    s_dns_inflight = false;        // answered (or timed out in lwIP): nothing left to reuse
     if (tok->gen != c->gen) return; // stale: belongs to an attempt this
                                      // transport has already moved past.
     if (ipaddr) {
@@ -424,10 +448,17 @@ static int tls_connect(struct transport *t, const char *host, int port) {
     // and what one still costs when the kept socket goes.
     const uint32_t t_start = tls_now_ms();
 
-    g_dns_token.c = c;
-    g_dns_token.gen = c->gen;
+    const uint32_t hh = host_hash(host);
     net_radio_lock();
-    err_t derr = dns_gethostbyname(host, &c->remote_ip, dns_found_cb, &g_dns_token);
+    g_dns_token.c = c;
+    g_dns_token.gen = c->gen;   // a lookup still in flight now answers THIS attempt
+    err_t derr;
+    if (s_dns_inflight && s_dns_inflight_host == hh) {
+        derr = ERR_INPROGRESS;   // reuse it: no duplicate request
+    } else {
+        derr = dns_gethostbyname(host, &c->remote_ip, dns_found_cb, &g_dns_token);
+        if (derr == ERR_INPROGRESS) { s_dns_inflight = true; s_dns_inflight_host = hh; }
+    }
     net_radio_unlock();
     if (derr == ERR_OK) {
         c->dns_ok = true;
@@ -436,7 +467,8 @@ static int tls_connect(struct transport *t, const char *host, int port) {
         absolute_time_t deadline = make_timeout_time_ms(DNS_TIMEOUT_MS);
         while (!c->dns_done &&
                absolute_time_diff_us(get_absolute_time(), deadline) > 0) {
-            // A late answer lands on g_dns_token's generation, which the next connect moves on.
+            // The lookup stays in flight (lwIP cannot cancel it): the next connect to this host reuses it, its
+            // answer then landing on that attempt (s_dns_inflight).
             if (tls_yield_now()) return tls_fail(TLS_ERR_YIELDED, "DNS gave way to the setup page", 0);
             sleep_ms(1);
         }

@@ -246,7 +246,18 @@ static void test_ota_magic_is_not_an_sdk_or_rom_watchdog_magic(void) {
     CHECK(FW_OTA_REBOOT_MAGIC != FW_PROVEN_MAGIC, "not the proven mark");
 }
 
+// Review of 7f3de257: the leave before the buy reboot never eats into the revert deadline's margin.
+static void test_the_leave_before_the_buy_is_capped_by_the_deadline(void) {
+    CHECK_EQ_INT(fw_trial_leave_budget_ms(0), 1000);
+    CHECK_EQ_INT(fw_trial_leave_budget_ms(FW_TRIAL_BUY_CUTOFF_MS), 1000);   // the last moment a buy is decided
+    CHECK_EQ_INT(fw_trial_leave_budget_ms(FW_TRIAL_DEADLINE_MS - FW_TRIAL_LEAVE_MARGIN_MS - 300), 300);
+    CHECK_EQ_INT(fw_trial_leave_budget_ms(FW_TRIAL_DEADLINE_MS - FW_TRIAL_LEAVE_MARGIN_MS), 0);
+    CHECK_EQ_INT(fw_trial_leave_budget_ms(FW_TRIAL_DEADLINE_MS), 0);
+    CHECK_EQ_INT(fw_trial_leave_budget_ms(0xFFFFFFF0u), 0);
+}
+
 int main(void) {
+    RUN(test_the_leave_before_the_buy_is_capped_by_the_deadline);
     RUN(test_an_update_reboot_marks_the_next_boot); RUN(test_the_proven_mark_is_an_update_boot_and_is_kept);
     RUN(test_ota_magic_is_not_an_sdk_or_rom_watchdog_magic);
     RUN(test_a_normal_boot_is_not_a_trial);

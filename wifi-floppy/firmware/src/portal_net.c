@@ -1084,7 +1084,19 @@ void portal_open(const char *err, portal_view_t *view, portal_forget_fn forget, 
 }
 
 bool portal_is_open(void) { return g_dhcp_pcb != NULL; }
-bool portal_event_pending(void) { return g_dhcp_pcb && (g_submitted || g_forget_pending || g_done); }
+// What core1 can act on NOW (review of 7f3de257): a Save or a Done, and a Remove only while no page is between
+// windows -- portal_service defers a Remove until then, and a phone that taps Remove mid-page and stops ACKing
+// (screen off) holds a page mid-send for up to HTTP_IDLE_POLL_LIMIT (~30 s). Saying "pending" for that would make
+// every request give way at once, every pass, for half a minute. Foreground only (the lock is recursive).
+bool portal_event_pending(void) {
+    if (!g_dhcp_pcb) return false;
+    if (g_submitted || g_done) return true;
+    if (!g_forget_pending) return false;
+    net_radio_lock();
+    const bool now = !any_page_mid_send();
+    net_radio_unlock();
+    return now;
+}
 bool portal_busy(void) { return any_http_conn_in_use(); }
 
 bool portal_view_changed(void (*change)(portal_view_t *view, void *ctx), void *ctx) {

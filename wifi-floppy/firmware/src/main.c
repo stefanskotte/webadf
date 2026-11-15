@@ -1770,11 +1770,18 @@ static void release_kept_connection(void) {
 // Before a reboot the firmware chooses (never a crash path): the kept socket goes, then the network is left cleanly
 // (net_radio_sta_leave: the router otherwise kept the old keys and refused the next join for minutes, bench
 // 2026-11-15). Core1 only -- it owns the radio; core0's console reboots cannot do this.
-static void leave_before_reboot(const char *why) {
+static void leave_before_reboot_within(const char *why, uint32_t wait_ms) {
     release_kept_connection();
-    const bool left = net_radio_sta_leave(1000);
+    const bool left = net_radio_sta_leave(wait_ms);
     wf_logf(WF_INFO, "wifi: %s before rebooting (%s)", left ? "left the network" : "nothing to leave", why);
 }
+static void leave_before_reboot(const char *why) { leave_before_reboot_within(why, 1000); }
+
+
+// An update's apply reboot (fwu_reboot) is held here until the poll loop has sent its last report, then the
+// network is left and only then is the reboot asked for (review of 7f3de257: leaving first lost that report).
+static bool     g_fwu_reboot_owed;
+static uint32_t g_fwu_reboot_off;
 
 // ---------------------------------------------------------------- Wi-Fi networks from the web app (2026-11-15)
 //
@@ -2108,7 +2115,7 @@ static bool fwu_save(void *ctx, const fw_state_t *st) { (void)ctx; return fw_sta
 // FLASH_UPDATE into the OTHER slot (the one just written): the new image then
 // trial-boots. fw_rom_request_reboot never overwrites an already-pending
 // request (g_boot_cs, fw_rom.c); core0's fw_rom_service performs it (M9).
-static void fwu_reboot(void *ctx, uint32_t off) { (void)ctx; leave_before_reboot("update"); fw_rom_request_ota_reboot(off); }   // an update's
+static void fwu_reboot(void *ctx, uint32_t off) { (void)ctx; g_fwu_reboot_off = off; g_fwu_reboot_owed = true; }   // an update's
 
 // Published by core0 every loop turn. core1 reads it for the update's idle
 // gate (D6) and the swap hold (swap_holds); dskchg.c's own state stays core0's.
@@ -2830,7 +2837,7 @@ static void core1_main(void) {
                         // boot -- where fw_boot_reconcile (CONFIRMED_LATE for
                         // an OTA's pending record, CLEAN for a USB install)
                         // does the bookkeeping fw_trial_after_buy used to do.
-                        leave_before_reboot("trial proven, buying");
+                        leave_before_reboot_within("trial proven, buying", fw_trial_leave_budget_ms(clock_ms())   /* never past the revert deadline */);
                         fw_rom_request_proven_reboot(WF_FIRMWARE_VERSION);
                         for (;;) sleep_ms(1000);   // stage PROVEN: not supervised (core1_wd.h); core0 is rebooting
                     }
@@ -3307,6 +3314,12 @@ static void core1_main(void) {
                     // last report (best effort -- core0 may reset first; the
                     // "applying" before the flash write already went out), then stop.
                     dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION);
+                    // Then leave the network, then ask core0 for the reboot (fwu_reboot only noted it).
+                    if (g_fwu_reboot_owed) {
+                        g_fwu_reboot_owed = false;
+                        leave_before_reboot("update");
+                        fw_rom_request_ota_reboot(g_fwu_reboot_off);
+                    }
                     // Parked inside the poll loop, so it keeps ticking: core0 reboots on its next pass, and must
                     // never take this wait for a stall (core1_wd.h) -- a watchdog reset here would boot the old
                     // slot instead of the update's trial.
@@ -3554,13 +3567,17 @@ static void core1_main(void) {
                 // if the fault persists), not after up to 60 s of backoff.
                 // ...and so does a Save, Remove or Done on the setup page opened on request (bench 2026-11-15:
                 // it waited out 30-60 s retries while the server was unreachable).
-                while (remaining > 0 && !up_has_work(&up) && !nfc_event_pending(NULL) && !portal_event_pending()) {
+                // At least 200 ms of it, though: a request that just gave way must not make the next pass at once.
+                uint32_t slept = 0;
+                while (remaining > 0 && !up_has_work(&up) && !nfc_event_pending(NULL) &&
+                       !(slept >= 200u && portal_event_pending())) {
                     uint32_t step = remaining < 100 ? remaining : 100;
                     // A deliberate wait of up to DC_BACKOFF_CAP_MS (60 s): core1 is alive, so it ticks (at most
                     // once a second, bt_hw_tick's own pace) -- a server outage must never read as a core1 stall.
                     bt_hw_tick(1);
                     sleep_ms(step);
                     remaining -= step;
+                    slept += step;
                 }
             } else if (s == DC_HALTED) {
                 // Review round 2, Important 1: DC_HALTED used to be a
