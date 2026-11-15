@@ -2481,10 +2481,12 @@ static void core1_main(void) {
                 net.driver_seen = seen != 0;
                 net.driver_s = seen ? dc_net_driver_age_s(clock_ms(), seen) : 0;
                 net.amiga_ip = st.amiga_ip;
+                net.shared = st.shared;             // shared-IP mode: amiga_ip is the board's own (pnet_shared.h)
                 net.frames_in = g_pnet_frames_from;
                 net.frames_out = g_pnet_frames_to;
                 dc_set_net(&c, &net);
-                as_set_inputs(&g_send, true, st.amiga_ip, c.send_version);
+                // send_ip: the learned amiga_ip, or in shared mode the Amiga's bus address (PNET_SHARED_AMIGA).
+                as_set_inputs(&g_send, true, st.send_ip, c.send_version);
             } else {
                 dc_set_net(&c, NULL);
                 as_set_inputs(&g_send, false, 0, c.send_version);
@@ -3807,7 +3809,9 @@ static void pnet_l2_log(void) {
                          g_link.fresh + g_link.dup + g_link.queued + g_link.over + g_link.malformed +
                          g_link.acked + st.clash + st.hooks + g_pnet_status_serves + g_pnet_status_early +
                          st.a2b + st.b2a + st.local_drops + g_link.lz4_in + g_link.lz4_bad +
-                         (lz4b ? g_lz4.out_lz4 + g_lz4.out_mfm : 0u);
+                         (lz4b ? g_lz4.out_lz4 + g_lz4.out_mfm : 0u) +
+                         st.sh_entered + st.sh_left + st.sh_offers + st.sh_acks + st.sh_naks + st.sh_late +
+                         st.sh_frag_drops + st.sh_arp_hidden;
     if (sum == last_sum) return;
     last_sum = sum;
 #define PNET_SAT(v, m) ((unsigned long)((v) > (m) ? (m) : (v)))
@@ -3847,8 +3851,21 @@ static void pnet_l2_log(void) {
         g_lz4.dus_max = g_lz4.dus_sum = g_lz4.dus_n = 0;
     }
     const bool same = st.amiga_ip != 0u && st.amiga_ip == st.board_ip;
-    wf_logf(st.clash || same ? WF_WARN : WF_INFO, "pnet: l2 amiga %s board %s %s clash %lu heap %lu",
-            a, b, same ? "SAME" : "distinct", PNET_SAT(st.clash, 999999u), PNET_SAT(g_pnet_heap_low, 999999u));
+    // Shared-IP mode (pnet_shared.h): the same address is the design there, not a fault; the clash that began it
+    // stays counted.
+    wf_logf((st.clash && !st.shared) || (same && !st.shared) ? WF_WARN : WF_INFO,
+            "pnet: l2 amiga %s board %s %s clash %lu heap %lu", a, b,
+            st.shared ? "SHARED" : same ? "SAME" : "distinct", PNET_SAT(st.clash, 999999u),
+            PNET_SAT(g_pnet_heap_low, 999999u));
+    // Entered/left, why (1 offer, 2 ack, 3 src, 4 seed), the replies built (offer/ack/nak), the network's DHCP
+    // replies dropped, fragments dropped, ARP kept from the Amiga. 81 characters at most.
+    if (st.sh_entered)
+        wf_logf(st.sh_frag_drops || st.sh_naks ? WF_WARN : WF_INFO,
+                "pnet: l2 shared %s why %u in %lu out %lu dhcp %lu/%lu/%lu late %lu frag %lu arp %lu",
+                st.shared ? "on" : "off", (unsigned)st.shared_why, PNET_SAT(st.sh_entered, 99u),
+                PNET_SAT(st.sh_left, 99u), PNET_SAT(st.sh_offers, 999u), PNET_SAT(st.sh_acks, 999u),
+                PNET_SAT(st.sh_naks, 999u), PNET_SAT(st.sh_late, 999u), PNET_SAT(st.sh_frag_drops, 999u),
+                PNET_SAT(st.sh_arp_hidden, 999u));
     // Phase 2: cylinder 76 -- loops streamed, reads before the MAC was known, and what it tells the driver.
     wf_logf(WF_INFO, "pnet: l2 status %lu early %lu link %s rssi %d",
             S7(g_pnet_status_serves), S7(g_pnet_status_early),

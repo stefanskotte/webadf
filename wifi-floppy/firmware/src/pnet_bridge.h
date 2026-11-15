@@ -20,6 +20,11 @@ typedef struct {
     uint32_t amiga_ip, board_ip;  // as last seen by core1 (host order; 0 = unknown)
     uint32_t a2b, b2a;            // Phase 4: frames handed across locally, Amiga -> board / board -> Amiga
     uint32_t local_drops;         // ...lost on the way (over PNET_LOCAL_A2B_MAX or no heap; a full RX ring is rx_drops)
+    // Shared-IP mode (pnet_shared.h, ruling 2026-11-15): on, why (pnet_shared_why_t), and its counters.
+    bool     shared;
+    uint8_t  shared_why;
+    uint32_t send_ip;             // where the board's Transfer connection goes (pnet_sort_send_ip)
+    uint32_t sh_entered, sh_left, sh_offers, sh_acks, sh_naks, sh_late, sh_frag_drops, sh_arp_hidden;
 } pnet_bridge_stats_t;
 
 void pnet_bridge_init(void);      // core0, before core1 launches: the rings over PSRAM
