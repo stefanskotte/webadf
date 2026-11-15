@@ -5,7 +5,8 @@ import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
 import type { FsEntry, Listing } from '@/lib/files/types';
 import { refusalWords } from '@/lib/files/words';
-import { acceptsCopies, netBoardOf } from '@/lib/files/pane-rules';
+import { acceptsCopies, isDiskCrumb, netBoardOf } from '@/lib/files/pane-rules';
+import { DiskCrumbGlyph } from './disk-crumb-glyph';
 import { isNetVolume, NET_MOVE_IN, NET_PICK_BOARD, NET_READ_ONLY } from '@/lib/files/net-rules';
 import { PANE_DEVICES } from '@/lib/files/path';
 import { managerReturnsFocus } from './dialogs';
@@ -120,7 +121,10 @@ export function CopyToPicker({ op, count, start, busy, list, onPick, onCancel, f
               {i > 0 && !crumbs[i - 1].label.endsWith(':') && <span aria-hidden style={{ color: 'var(--muted-2)' }}>/</span>}
               <button type="button" data-testid={`files-copy-to-crumb-${i}`} onClick={() => setPath(c.path)}
                       aria-current={i === crumbs.length - 1 ? 'location' : undefined}
-                      className={`rounded-[4px] px-1 font-medium [overflow-wrap:anywhere] ${tap}`}>{c.label}</button>
+                      {...(isDiskCrumb(listing, c.path) ? { 'data-kind': 'disk', 'aria-label': `disk ${c.label}` } : {})}
+                      className={`rounded-[4px] px-1 font-medium [overflow-wrap:anywhere] ${tap}`}>
+                {isDiskCrumb(listing, c.path) && <DiskCrumbGlyph />}{c.label}
+              </button>
             </span>
           ))}
         </nav>

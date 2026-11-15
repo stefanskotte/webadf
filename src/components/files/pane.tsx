@@ -12,7 +12,8 @@ import { paneRows, paneFoot, viewCounts, type PaneView } from '@/lib/files/view'
 import type { HelpTopicId } from '@/lib/help/topics';
 import { HelpTip } from '@/components/help/help-tip';
 import { Switch } from '@/components/ui/switch';
-import { acceptsCopies, addToLibraryReason, holdsFiles, netBoardOf } from '@/lib/files/pane-rules';
+import { acceptsCopies, addToLibraryReason, holdsFiles, isDiskCrumb, netBoardOf } from '@/lib/files/pane-rules';
+import { DiskCrumbGlyph } from './disk-crumb-glyph';
 import { listsDisks, shelfOf } from '@/lib/files/shelf-rules';
 import { isNetVolume, netTitle, readAgo } from '@/lib/files/net-rules';
 import { DIR_CUT } from '@/lib/remote-limits';
@@ -209,8 +210,11 @@ export function Pane({ filterRef, ...p }: PaneProps) {
               {i > 0 && !crumbs[i - 1].label.endsWith(':') && <span aria-hidden style={{ color: p.active ? 'var(--on-ink-muted)' : 'var(--muted-2)' }}>/</span>}
               <button type="button" data-testid={tid(`crumb-${i}`)} onClick={() => p.onNavigate(c.path)}
                       aria-current={i === crumbs.length - 1 ? 'location' : undefined}
+                      {...(isDiskCrumb(listing, c.path) ? { 'data-kind': 'disk', 'aria-label': `disk ${c.label}` } : {})}
                       className="rounded-[4px] font-medium [overflow-wrap:anywhere] hover:underline max-lg:min-h-11 max-lg:px-1 focus-visible:outline-2 focus-visible:outline-(--ring)"
-                      style={{ color: p.active ? 'var(--surface)' : 'var(--ink)' }}>{c.label}</button>
+                      style={{ color: p.active ? 'var(--surface)' : 'var(--ink)' }}>
+                {isDiskCrumb(listing, c.path) && <DiskCrumbGlyph testId={tid(`crumb-${i}-disk`)} />}{c.label}
+              </button>
             </span>
           ))}
         </nav>
