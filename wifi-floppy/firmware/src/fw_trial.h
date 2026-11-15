@@ -10,6 +10,12 @@
 // could race it. (Since round 4 the buy itself runs early in the NEXT boot,
 // but a trial that proves itself at the last moment still gives up instead.)
 #define FW_TRIAL_BUY_CUTOFF_MS (FW_TRIAL_DEADLINE_MS - 15000u)
+// How long the buy may spend leaving the network first (main.c leave_before_reboot, review of 7f3de257): what is left
+// of FW_TRIAL_DEADLINE_MS minus FW_TRIAL_LEAVE_MARGIN_MS, at most 1000 ms, and 0 inside the margin -- the leave must
+// never push the buy past the revert deadline. `now_ms` is ms since boot, as the deadline.
+#define FW_TRIAL_LEAVE_MARGIN_MS 5000u
+#include <stdint.h>
+uint32_t fw_trial_leave_budget_ms(uint32_t now_ms);
 
 typedef enum {
     FW_TRIAL_NONE,

@@ -76,6 +76,7 @@ typedef struct transport {
 #define TLS_ERR_WRITE_CLOSED        (-110) // write on a connection already closed/failed
 #define TLS_ERR_WRITE_TIMEOUT       (-111) // no send buffer space for the whole timeout
 #define TLS_ERR_WRITE               (-112) // altcp_write refused the bytes
+#define TLS_ERR_YIELDED             (-113) // gave way, while connecting, to the setup page opened on request (tls_set_yield)
 
 // Injected clock: milliseconds since boot, monotonic.
 typedef uint32_t (*clock_ms_fn)(void);

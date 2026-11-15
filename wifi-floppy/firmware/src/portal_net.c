@@ -144,6 +144,7 @@
 #include "lwip/pbuf.h"
 #include "lwip/ip_addr.h"
 #include "lwip/netif.h"   // netif_set_default(), see portal_stop()'s CRITICAL fix
+#include "lwip/stats.h"   // the pcb pools' use, logged (bench 2026-11-15)
 
 // Without SO_REUSE, lwIP's tcp_bind() ignores SOF_REUSEADDR entirely: the
 // option below would still compile and set its bit, and the portal would
@@ -165,10 +166,16 @@
                          // dhcp_handle()/dns_handle() refuse (return 0)
                          // rather than overrun a smaller `cap` anyway.
 
+// The pcb pools are sized for the portal beside the station (lwipopts.h's budget, bench 2026-11-15): its share
+// there must be what this file really opens -- a DHCP and a DNS server, and MAX_HTTP_CONNS connections.
+_Static_assert(WF_UDP_PCB_PORTAL == 2, "lwipopts.h's UDP budget counts the portal's DHCP and DNS servers");
+_Static_assert(MEMP_NUM_UDP_PCB >= WF_UDP_PCB_BUDGET, "the UDP pool must hold the AP+STA budget");
+_Static_assert(MEMP_NUM_TCP_PCB >= WF_TCP_PCB_BUDGET, "the TCP pool must hold the AP+STA budget");
 #define MAX_HTTP_CONNS 3      // a phone's captive-portal detection can
                                // open more than one probe connection at
                                // once; a few slots is enough headroom for
                                // that without inviting real exhaustion.
+_Static_assert(MAX_HTTP_CONNS == WF_TCP_PCB_PORTAL_HTTP, "lwipopts.h's TCP budget counts these connections");
 #define TCP_REQ_CAP  2048      // headers + body; see the accumulation
                                // comment above for what "too large" does.
 #define TCP_RESP_CAP 2048      // ONE WINDOW of a reply, not the reply: since
@@ -305,7 +312,9 @@ static const char TOO_LARGE_RESPONSE[] =
 // this line reaches the serial console -- which keeps the reboot itself on
 // the one core that owns the watchdog. This core just parks meanwhile.
 static void __attribute__((noreturn)) fatal_setup_failure(const char *step, int err) {
-    wf_logf(WF_ERR, "portal: %s failed (lwIP err %d) -- rebooting", step, err);
+    wf_logf(WF_ERR, "portal: %s failed (lwIP err %d; udp pcbs %u/%u, tcp pcbs %u/%u) -- rebooting", step, err,
+            (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->used, (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->avail,
+            (unsigned)lwip_stats.memp[MEMP_TCP_PCB]->used, (unsigned)lwip_stats.memp[MEMP_TCP_PCB]->avail);
     fw_rom_request_reboot(0);
     for (;;) sleep_ms(1000);
 }
@@ -1067,13 +1076,27 @@ void portal_open(const char *err, portal_view_t *view, portal_forget_fn forget, 
     setup_dhcp();
     setup_dns();
     setup_http();
-    wf_logf(WF_INFO, "portal: AP %s up (WPA2-AES PSK)%s; station/DHCP changes are logged", ssid,
-            keep_sta ? ", beside the station" : "");
+    wf_logf(WF_INFO, "portal: AP %s up (WPA2-AES PSK)%s; station/DHCP changes are logged; udp pcbs %u/%u, "
+            "tcp pcbs %u/%u", ssid, keep_sta ? ", beside the station" : "",
+            (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->used, (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->avail,
+            (unsigned)lwip_stats.memp[MEMP_TCP_PCB]->used, (unsigned)lwip_stats.memp[MEMP_TCP_PCB]->avail);
     portal_diag_reset();
 }
 
 bool portal_is_open(void) { return g_dhcp_pcb != NULL; }
-bool portal_event_pending(void) { return g_dhcp_pcb && (g_submitted || g_forget_pending || g_done); }
+// What core1 can act on NOW (review of 7f3de257): a Save or a Done, and a Remove only while no page is between
+// windows -- portal_service defers a Remove until then, and a phone that taps Remove mid-page and stops ACKing
+// (screen off) holds a page mid-send for up to HTTP_IDLE_POLL_LIMIT (~30 s). Saying "pending" for that would make
+// every request give way at once, every pass, for half a minute. Foreground only (the lock is recursive).
+bool portal_event_pending(void) {
+    if (!g_dhcp_pcb) return false;
+    if (g_submitted || g_done) return true;
+    if (!g_forget_pending) return false;
+    net_radio_lock();
+    const bool now = !any_page_mid_send();
+    net_radio_unlock();
+    return now;
+}
 bool portal_busy(void) { return any_http_conn_in_use(); }
 
 bool portal_view_changed(void (*change)(portal_view_t *view, void *ctx), void *ctx) {

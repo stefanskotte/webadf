@@ -565,12 +565,24 @@ static void render_form(sb_t *bp, const char *mac_str, const char *err,
         }
         sb_raw(&b, ", and ");
         sb_html(&b, ap[0] ? ap : "this setup network", false);
+        // Operator 2026-11-15 (an Android phone): Save is the form's own, filled button; Done sits apart, plain,
+        // under a line saying what it does -- not a second submit under the first. Styled here, not in the shared
+        // head, so the one-window pages (the checking page) stay under 2 KB.
         sb_raw(&b, " comes back with the result.</p>"
-                   "<button type=\"submit\">Save</button>"
+                   "<style>.save{background:#1a5fb4;color:#fff;border:0;border-radius:4px;}"
+                   ".done{margin-top:2em;padding-top:1em;border-top:1px solid #ddd;}"
+                   ".done button{background:none;border:1px solid #999;border-radius:4px;color:#333;}</style>"
+                   "<button type=\"submit\" class=\"save\">Save this network</button>"
                    "</form>"
-                   "<form method=\"POST\" action=\"/done\" style=\"margin-top:1.5em\">"
-                   "<button type=\"submit\">Done</button></form>"
-                   "</body></html>");
+                   "<div class=\"done\"><p class=\"hint\" style=\"margin:0 0 .6em\">Finished adding networks? Done "
+                   "closes this setup page; the board stays on ");
+        if (on_known) {
+            sb_raw(&b, LQ);
+            sb_html(&b, view->ssid[view->last], false);
+            sb_raw(&b, RQ);
+        } else sb_raw(&b, "its network");
+        sb_raw(&b, ".</p><form method=\"POST\" action=\"/done\"><button type=\"submit\">Done</button></form>"
+                   "</div></body></html>");
         *bp = b;
         return;
     }
