@@ -1,63 +1,88 @@
 // The CYW43439 (RM2 on the PIM726) behind net_radio.h. Each function is the
 // call it replaced in P1, unchanged -- except net_radio_sta_connect, which
-// since 2026-11-15 keeps the SDK's join loop but reports what it saw. Device-only.
+// since 2026-11-15 runs net_join.c's loop over the driver. Device-only.
 #include "net_radio.h"
 #include "pico/cyw43_arch.h"
 #include "pico/time.h"
 #include "lwip/netif.h"
+#include "lwip/dhcp.h"
+#include "net_join.h"
 #include <string.h>
 
 int  net_radio_init(void)       { return cyw43_arch_init(); }
 void net_radio_sta_enable(void) { cyw43_arch_enable_sta_mode(); }
 
-// The SDK's cyw43_arch_wifi_connect_timeout_ms(), with one difference: it
-// remembers what it saw. The SDK loop (pico-sdk 2.3.0 cyw43_arch.c,
-// cyw43_arch_wifi_connect_bssid_until) re-issues the join every time the link
-// reads CYW43_LINK_NONET and reports only PICO_ERROR_TIMEOUT at the end, so
-// "never found it", "found it but DHCP never answered" and "still mid-join"
-// all came back as the same timeout -- which main.c then called "Network not
-// found" (field report 2026-11-14). The loop below is the SDK's, step for step
-// (same async join, same re-issue on NONET, same poll and wait), plus a
-// record of the states it passed through:
+// The join itself (field report 2026-11-14; review I1, 2026-11-15). The
+// decisions are net_join.c's, host-tested against a fake of these states; this
+// file only maps the driver's link status onto them and supplies the steps:
 //
-//   CYW43_LINK_UP       -> NET_JOIN_OK
-//   CYW43_LINK_BADAUTH  -> NET_JOIN_BAD_AUTH   (an auth or PSK-supplicant failure event)
-//   CYW43_LINK_FAIL     -> NET_JOIN_FAILED     (SET_SSID failed, but not with "no networks")
-//   timeout, last state CYW43_LINK_NOIP  -> NET_JOIN_NO_ADDRESS (joined, no DHCP lease)
-//   timeout, NONET seen and never NOIP   -> NET_JOIN_NOT_FOUND
-//   timeout otherwise                    -> NET_JOIN_TIMEOUT
-//   the async join refused               -> NET_JOIN_ERROR
+//   CYW43_LINK_UP       -> NET_LINK_UP      (accepted only after this attempt saw JOIN/NOIP)
+//   CYW43_LINK_BADAUTH  -> NET_LINK_BADAUTH (an auth or PSK-supplicant failure event)
+//   CYW43_LINK_FAIL     -> NET_LINK_FAIL    (SET_SSID failed, but not with "no networks")
+//   CYW43_LINK_NONET    -> NET_LINK_NONET   (SET_SSID "no networks": no BSS matched)
+//   CYW43_LINK_NOIP / JOIN / DOWN -> the same
 //
-// NONET is the firmware's SET_SSID "no networks" status (cyw43_ctrl.c): no BSS
-// matched. Whether a WPA3-only network shows as NONET or FAIL against a WPA2
-// join is the chip firmware's choice and has not been measured on this board,
-// so the setup page names WPA3-only under both (provisioning.c).
-net_join_t net_radio_sta_connect(const char *ssid, const char *pass, uint32_t timeout_ms) {
-    const uint32_t auth = CYW43_AUTH_WPA2_AES_PSK;
-    absolute_time_t until = make_timeout_time_ms(timeout_ms);
-    if (cyw43_arch_wifi_connect_async(ssid, pass, auth)) return NET_JOIN_ERROR;
+// Whether a WPA3-only network shows as NONET or FAIL against a WPA2 join is the
+// chip firmware's choice and has not been measured on this board, so the setup
+// page names WPA3-only under both. A wrong WPA2 password often ends as a
+// timeout, not BADAUTH: the driver treats PSK-supplicant status 4/8/10 reason
+// 15 (no key message) as edge-of-cell and rejoins (cyw43_ctrl.c).
+typedef struct {
+    const char     *ssid, *pass;
+    absolute_time_t until;
+} join_ctx_t;
 
-    bool saw_nonet = false;
-    int status = CYW43_LINK_UP + 1;   // the SDK's "nothing seen yet"
-    for (;;) {
-        int s = cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA);
-        if (s == CYW43_LINK_UP)      return NET_JOIN_OK;
-        if (s == CYW43_LINK_BADAUTH) return NET_JOIN_BAD_AUTH;
-        if (s == CYW43_LINK_FAIL)    return NET_JOIN_FAILED;
-        if (s == CYW43_LINK_NONET) {
-            // As the SDK: no network yet, keep trying (a router may still be booting).
-            saw_nonet = true;
-            s = CYW43_LINK_JOIN;
-            if (cyw43_arch_wifi_connect_async(ssid, pass, auth)) return NET_JOIN_ERROR;
-        }
-        status = s;
-        if (time_reached(until)) break;
-        cyw43_arch_poll();
-        cyw43_arch_wait_for_work_until(until);
+static net_link_t j_status(void *vc) {
+    (void)vc;
+    switch (cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA)) {
+    case CYW43_LINK_UP:      return NET_LINK_UP;
+    case CYW43_LINK_NOIP:    return NET_LINK_NOIP;
+    case CYW43_LINK_JOIN:    return NET_LINK_JOIN;
+    case CYW43_LINK_FAIL:    return NET_LINK_FAIL;
+    case CYW43_LINK_NONET:   return NET_LINK_NONET;
+    case CYW43_LINK_BADAUTH: return NET_LINK_BADAUTH;
+    default:                 return NET_LINK_DOWN;
     }
-    if (status == CYW43_LINK_NOIP) return NET_JOIN_NO_ADDRESS;
-    if (saw_nonet) return NET_JOIN_NOT_FOUND;
-    return NET_JOIN_TIMEOUT;
+}
+
+static int j_join(void *vc) {
+    join_ctx_t *c = vc;
+    return cyw43_arch_wifi_connect_async(c->ssid, c->pass, CYW43_AUTH_WPA2_AES_PSK);
+}
+
+// Drop whatever the station holds. The driver's link status reads UP from the
+// netif's flags and address alone (cyw43_tcpip_link_status), and neither a
+// disassociation nor a new join clears them: the netif only goes link-down on
+// the chip's link-down event, and lwIP keeps the address across a link change
+// (DHCP "reboots" to it). So, besides the disassociation, mark the link down
+// here and give the address back -- dhcp_release_and_stop() zeroes it -- and
+// restart DHCP, so the next association starts a fresh DISCOVER rather than
+// asking the next network for the last one's address. Both idempotent: the
+// chip's own link-down event, if it comes, does the first again.
+static void j_drop(void *vc) {
+    (void)vc;
+    cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA);
+    cyw43_arch_lwip_begin();
+    struct netif *n = &cyw43_state.netif[CYW43_ITF_STA];
+    netif_set_link_down(n);
+    dhcp_release_and_stop(n);
+    dhcp_start(n);
+    cyw43_arch_lwip_end();
+}
+
+static bool j_time_up(void *vc) {
+    return time_reached(((join_ctx_t *)vc)->until);
+}
+
+static void j_wait(void *vc) {
+    cyw43_arch_poll();
+    cyw43_arch_wait_for_work_until(((join_ctx_t *)vc)->until);
+}
+
+net_join_t net_radio_sta_connect(const char *ssid, const char *pass, uint32_t timeout_ms) {
+    join_ctx_t c = { ssid, pass, make_timeout_time_ms(timeout_ms) };
+    const net_join_ops_t ops = { &c, j_status, j_join, j_drop, j_time_up, j_wait };
+    return net_join_run(&ops);
 }
 
 void net_radio_ap_start(const char *ssid, const char *pass) {
