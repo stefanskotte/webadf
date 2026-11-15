@@ -64,7 +64,10 @@ describe('WifiNetworksSetting', () => {
   it('blocks Add with the reason: a disk in the drive, offline, or four saved', () => {
     expect(render(board({ mountedSha256: 'a'.repeat(64) }))).toContain('Eject the disk first');
     expect(render(board({ lastSeenAt: new Date(NOW - 10 * 60_000) }))).toContain('The board is offline.');
-    expect(render(board({ wifiNets: [HOME, PHONE, '41', '42'] }))).toContain('The board holds 4 networks.');
+    // Four saved: Add still works (a password can change), and says so.
+    const full = render(board({ wifiNets: [HOME, PHONE, '41', '42'] }));
+    expect(full).toContain('4 saved, the most the board holds: you can change a password');
+    expect(full).not.toMatch(/data-testid="wifi-add-d1"[^>]*disabled/);
   });
 
   it('older firmware: one line, no controls', () => {

@@ -22,8 +22,9 @@ export type WifiResult =
 /** A name as the board sends it: 1-32 octets, lowercase hex, no NUL octet. */
 export const WIFI_HEX_RE = /^(?:(?!00)[0-9a-f]{2}){1,32}$/;
 export const WIFI_NETS_MAX = 4;
-/** An open that waited longer than this for the board (offline, say) goes out as 'none': a board coming back an
- *  hour later must not raise a setup network nobody is waiting for. */
+/** An open or a remove that waited longer than this for the board (offline, say) goes out as 'none': a board coming
+ *  back an hour later must not raise a setup network nobody is waiting for, nor remove a network that may have been
+ *  added again on its own page meanwhile (review of 3bf330b2, M4). */
 export const WIFI_OPEN_TTL_MS = 2 * 60 * 1000;
 /** How long the board keeps the setup page open (WIFI_SETUP_MS in wifi_ctl.h). */
 export const WIFI_SETUP_MINUTES = 10;
@@ -70,7 +71,7 @@ export interface WifiRow {
 export function deliverWifi(row: WifiRow, now: number): { seq: number; op: WifiOp; ssid?: string } {
   const op = isWifiOp(row.wifiOp) ? row.wifiOp : 'none';
   if (row.wifiAck === row.wifiSeq || op === 'none') return { seq: row.wifiSeq, op: 'none' };
-  if (op === 'open' && (!row.wifiOpAt || now - row.wifiOpAt.getTime() > WIFI_OPEN_TTL_MS)) {
+  if ((op === 'open' || op === 'remove') && (!row.wifiOpAt || now - row.wifiOpAt.getTime() > WIFI_OPEN_TTL_MS)) {
     return { seq: row.wifiSeq, op: 'none' };
   }
   if (op === 'remove') {
@@ -110,6 +111,8 @@ export type WifiSection =
       pending: WifiOp | null;
       /** Why Add a network cannot be pressed now; null when it can. */
       addBlocked: string | null;
+      /** The board holds the most it can: Add still opens the page (a password can change), and says so. */
+      full: boolean;
       /** Why Remove cannot be pressed now; null when it can (a row's own reason is in the list). */
       removeBlocked: string | null;
       /** The last request's outcome, in words; null when there is nothing to say. */
@@ -119,12 +122,14 @@ export type WifiSection =
 
 export const DISK_IN_DRIVE = 'Eject the disk first: the board doesn’t change its saved networks while a disk is in the drive.';
 export const BOARD_OFFLINE = 'The board is offline.';
-export const FULL = `The board holds ${WIFI_NETS_MAX} networks. Remove one to add another.`;
+export const FULL = `${WIFI_NETS_MAX} saved, the most the board holds: you can change a password, or remove one to add another.`;
 
 const q = (name: string) => `“${name}”`;
 
 /** The words for what the board did with the last request (ack === seq), or null. */
-export function wifiOutcome(op: WifiOp, ssidName: string | null, result: WifiResult | null): { ok: boolean; text: string } | null {
+export function wifiOutcome(
+  op: WifiOp, ssidName: string | null, result: WifiResult | null, setupOpen = false,
+): { ok: boolean; text: string } | null {
   if (result === null) return null;
   const name = ssidName ? q(ssidName) : 'the network';
   if (op === 'remove') {
@@ -135,7 +140,7 @@ export function wifiOutcome(op: WifiOp, ssidName: string | null, result: WifiRes
       case 'only_one': return { ok: false, text: `Could not remove ${name}: it is the only saved network. Add another first.` };
       case 'in_use': return { ok: false, text: `Could not remove ${name}: the board is on it now.` };
       case 'write_failed': return { ok: false, text: `Could not remove ${name}: the board could not save the change. Try again.` };
-      case 'none': return { ok: true, text: 'Cancelled.' };
+      case 'none': return { ok: false, text: `${name} was not removed: the board was offline for too long. Press Remove again.` };
       default: return { ok: false, text: 'The board did not understand the request. Update its firmware.' };
     }
   }
@@ -148,7 +153,13 @@ export function wifiOutcome(op: WifiOp, ssidName: string | null, result: WifiRes
       default: return { ok: false, text: 'The board did not understand the request. Update its firmware.' };
     }
   }
-  if (op === 'none' && result === 'none') return { ok: true, text: 'Cancelled.' };
+  // A cancel is only "Cancelled" once the board answers it -- and if the board had already opened its page before
+  // the cancel reached it (review of 3bf330b2, M1), the page is open: say so, and Close is there.
+  if (op === 'none' && result === 'none') {
+    return setupOpen
+      ? { ok: false, text: 'The board had already opened its setup page. Press Close setup page to close it.' }
+      : { ok: true, text: 'Cancelled.' };
+  }
   return null;
 }
 
@@ -162,11 +173,11 @@ export function wifiSection(d: WifiDevice, online: boolean, now: number): WifiSe
   const setupUntil = online && d.wifiSetupUntil && d.wifiSetupUntil.getTime() > now ? d.wifiSetupUntil : null;
   const addBlocked = !online ? BOARD_OFFLINE
     : diskIn ? DISK_IN_DRIVE
-    : nets.length >= WIFI_NETS_MAX ? FULL
     : null;
   const removeBlocked = diskIn ? DISK_IN_DRIVE : null;
   const outcome = pending === null && d.wifiAck === d.wifiSeq
-    ? wifiOutcome(op, d.wifiOpSsid && WIFI_HEX_RE.test(d.wifiOpSsid) ? wifiName(d.wifiOpSsid) : null, asWifiResult(d.wifiResult))
+    ? wifiOutcome(op, d.wifiOpSsid && WIFI_HEX_RE.test(d.wifiOpSsid) ? wifiName(d.wifiOpSsid) : null,
+        asWifiResult(d.wifiResult), setupUntil !== null)
     : null;
   return {
     kind: 'ready',
@@ -175,6 +186,7 @@ export function wifiSection(d: WifiDevice, online: boolean, now: number): WifiSe
     setupUntil,
     pending,
     addBlocked,
+    full: nets.length >= WIFI_NETS_MAX,
     removeBlocked,
     outcome,
     setupNetwork: setupNetworkFor(d.macAddress) ?? 'wifi-floppy-…',
@@ -186,7 +198,7 @@ export function setupSteps(setupNetwork: string, current: string | null, until: 
   return [
     `On your phone or computer, join the Wi-Fi network ${setupNetwork} (password ${SETUP_PASSWORD}).`,
     `The board’s setup page opens by itself. If it doesn’t, open ${SETUP_ADDRESS}.`,
-    `Under Add a network, enter the network’s name and password and press Save. The board joins it to check it, so its setup Wi-Fi goes away for up to a minute; then it saves it and goes back to ${current ? q(current) : 'its network'}.`,
+    `Under Add a network, enter the network’s name and password and press Save. The board joins it to check it, so its setup Wi-Fi goes away, usually for under a minute (up to about 3 minutes if no saved network answers, and then the board restarts); then it saves it and goes back to ${current ? q(current) : 'its network'}.`,
     `The setup page closes at ${until}, or when you press Done on it or Close setup page here.`,
   ];
 }

@@ -489,15 +489,20 @@ export async function recordStatus(
   // Wi-Fi networks (2026-11-15, src/lib/wifi-networks.ts). NOT build-bound the playsHd way: the tail rides only when
   // it changed, so a report without it from the build that last sent it says nothing new. A report naming ANOTHER
   // build without it is a build that cannot (older, or a reverted trial): the list goes, and the section says the
-  // firmware needs updating. The result is kept for an ack already stored: a board that restarted acks a seq it
-  // handled before as 'none' (the server sends 'none' for a seq it heard), and must not wipe what it did.
+  // firmware needs updating.
+  //
+  // The ack only rises within a row, and a result is taken only with an ack above the stored one (review of
+  // 3bf330b2, I1): a restarted board reports "ack 0, nothing done" before it has heard the cursor (the OTA trial's
+  // reports come before any poll), and re-acks a seq it handled before as 'none'. Taking either would make
+  // deliverWifi send the last request again and wipe what the board said it did. A re-paired board is a new row,
+  // which starts at null.
   if (s.wifi !== undefined) {
     const n = s.wifi.nets.length;
     patch.wifiNets = s.wifi.nets;
     patch.wifiCurrent = s.wifi.cur >= 0 && s.wifi.cur < n ? s.wifi.cur : null;
     patch.wifiSetupUntil = s.wifi.setup > 0 ? new Date(Date.now() + s.wifi.setup * 1000) : null;
-    patch.wifiResult = sql`case when ${devices.wifiAck} = ${s.wifi.ack} then ${devices.wifiResult} else ${s.wifi.res} end`;
-    patch.wifiAck = s.wifi.ack;
+    patch.wifiResult = sql`case when ${s.wifi.ack}::int > coalesce(${devices.wifiAck}, -1) then ${s.wifi.res}::text else ${devices.wifiResult} end`;
+    patch.wifiAck = sql`greatest(coalesce(${devices.wifiAck}, 0), ${s.wifi.ack}::int)`;
     if (s.firmwareVersion !== undefined) patch.wifiFirmware = s.firmwareVersion;
   } else if (s.firmwareVersion !== undefined) {
     const other = sql`${devices.wifiFirmware} is distinct from ${s.firmwareVersion}`;

@@ -55,7 +55,7 @@ describe('help topics say what the app really does', () => {
     const b = bodyText('wifi-networks').replace(/\s+/g, ' ');
     for (const w of ['Board settings', 'Connected now', 'Saved', 'Remove', 'Add a network', '10 minutes', 'wifi-floppy-',
       'wififloppy', 'http://192.168.4.1', 'Save', 'Done', 'Close setup page', 'passwords stay on the board',
-      'Eject the disk first']) expect(b).toContain(w);
+      'Eject the disk first', 'usually for under a minute', 'up to about 3 minutes', 'the board restarts']) expect(b).toContain(w);
   });
   it('files says where progress shows: the Transfers panel on every page, and what Cancel the rest keeps (spec 2026-11-01)', () => {
     const b = bodyText('files').replace(/\s+/g, ' ');

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { DeviceListItem } from '@/lib/queries';
 import { isOnline } from '@/lib/device-state';
-import { setupSteps, wifiSection, type WifiAction } from '@/lib/wifi-networks';
+import { FULL, setupSteps, wifiSection, type WifiAction } from '@/lib/wifi-networks';
 import { HelpTip } from '@/components/help/help-tip';
 
 const TICK_MS = 15_000;
@@ -145,7 +145,7 @@ export function WifiNetworksSetting({ device, serverNow, busy = false }: {
       )}
       {s.setupUntil === null && s.addBlocked === null && s.pending === null && (
         <span className="text-[12px]" style={{ color: 'var(--muted-2)' }} data-testid={`wifi-add-hint-${id}`}>
-          Add a network opens the board&apos;s setup page for 10 minutes. The board stays online meanwhile.
+          {s.full ? `${FULL} ` : ''}Add a network opens the board&apos;s setup page for 10 minutes. The board stays online meanwhile.
         </span>
       )}
 

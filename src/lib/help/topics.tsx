@@ -226,8 +226,10 @@ export const HELP_TOPICS = {
           <strong>Adding one.</strong> Press <em>Add a network</em>: the board opens its setup page for 10 minutes
           and stays online. Join its Wi-Fi <em>wifi-floppy-…</em> (password <em>wififloppy</em>) from a phone; the page
           opens by itself, or go to <em>http://192.168.4.1</em>. Enter the name and password and press <em>Save</em>.
-          The board joins the network to check it, so its setup Wi-Fi goes away for up to a minute, then saves it and
-          goes back. Press <em>Done</em> there, or <em>Close setup page</em> here, when finished.
+          The board joins the network to check it, so its setup Wi-Fi goes away, usually for under a minute (up to
+          about 3 minutes if no saved network answers, then the board restarts); it then saves it and goes back.
+          Press <em>Done</em> there, or <em>Close setup page</em> here, when finished. Changing a saved
+          network&apos;s password works the same way.
         </p>
         <p>
           Add a phone hotspot at home, before you need it: switch on its 2.4 GHz or compatibility mode first.

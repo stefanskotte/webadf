@@ -45,8 +45,11 @@ describe('deliverWifi (GET /api/device/wifi)', () => {
   it('lets an open lapse after two minutes: nobody is waiting for that setup network any more', () => {
     expect(deliverWifi({ ...row, wifiOpAt: new Date(NOW - WIFI_OPEN_TTL_MS - 1) }, NOW)).toEqual({ seq: 4, op: 'none' });
     expect(deliverWifi({ ...row, wifiOpAt: new Date(NOW - WIFI_OPEN_TTL_MS) }, NOW)).toEqual({ seq: 4, op: 'open' });
-    // A remove does not lapse.
-    expect(deliverWifi({ ...row, wifiOp: 'remove', wifiOpSsid: HOME, wifiOpAt: new Date(0) }, NOW).op).toBe('remove');
+    // M4: a remove lapses too -- the network may have been added again on the board's own page meanwhile.
+    expect(deliverWifi({ ...row, wifiOp: 'remove', wifiOpSsid: HOME, wifiOpAt: new Date(0) }, NOW).op).toBe('none');
+    expect(deliverWifi({ ...row, wifiOp: 'remove', wifiOpSsid: HOME, wifiOpAt: new Date(NOW - 1000) }, NOW).op).toBe('remove');
+    // A close never lapses: closing late is still what was asked.
+    expect(deliverWifi({ ...row, wifiOp: 'close', wifiOpAt: new Date(0) }, NOW).op).toBe('close');
   });
   it('fits the board\'s 128-byte buffer at its longest', () => {
     const longest = JSON.stringify(deliverWifi({ ...row, wifiSeq: 2_147_483_647, wifiOp: 'remove', wifiOpSsid: 'ff'.repeat(32) }, NOW));
@@ -93,7 +96,11 @@ describe('wifiSection', () => {
     expect(s({}, false).addBlocked).toBe(BOARD_OFFLINE);
     expect(s({ mountedSha256: 'a'.repeat(64) }).addBlocked).toBe(DISK_IN_DRIVE);
     expect(s({ mountedSha256: 'a'.repeat(64) }).removeBlocked).toBe(DISK_IN_DRIVE);
-    expect(s({ wifiNets: [HOME, PHONE, wifiHex('c'), wifiHex('d')] }).addBlocked).toBe(FULL);
+    // M5: four saved does not block Add -- the page changes a saved network's password -- it says so.
+    const full = s({ wifiNets: [HOME, PHONE, wifiHex('c'), wifiHex('d')] });
+    expect(full.addBlocked).toBeNull();
+    expect(full.full).toBe(true);
+    expect(FULL).toMatch(/you can change a password, or remove one/);
   });
   it('shows the setup page open only while it is, and only while the board is online', () => {
     const until = new Date(NOW + 300_000);
@@ -130,6 +137,9 @@ describe('the words', () => {
     expect(wifiOutcome('open', null, 'disk')?.text).toContain(DISK_IN_DRIVE);
     expect(wifiOutcome('open', null, 'subnet')?.text).toMatch(/192\.168\.4\.x/);
     expect(wifiOutcome('none', null, 'none')).toEqual({ ok: true, text: 'Cancelled.' });
+    // M1: the board opened its page before the cancel reached it -- not "Cancelled", and Close is offered.
+    expect(wifiOutcome('none', null, 'none', true)?.text).toMatch(/already opened its setup page\. Press Close setup page/);
+    expect(wifiOutcome('remove', 'Home', 'none')?.text).toMatch(/was not removed: the board was offline/);
     expect(wifiOutcome('remove', 'Home', null)).toBeNull();
   });
   it('gives the steps with the setup network, its password and address, where the board goes back, and the time', () => {
