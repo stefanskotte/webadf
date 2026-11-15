@@ -196,7 +196,8 @@ static uint32_t host_hash(const char *h) {
 // When an allocation fails: how full lwIP's pools are, so a pool too small for what runs at once is named, not
 // guessed (bench 2026-11-15: the UDP pool, 4 by default, with the AP's servers beside the station's users).
 static void tls_log_pools(const char *what) {
-    wf_logf(WF_WARN, "lwip: %s -- udp pcbs %u/%u (err %u), tcp pcbs %u/%u (err %u), heap %u/%u (err %u)", what,
+    wf_logf(WF_WARN, "lwip: %s", what);   // two lines: one would pass WF_LOG_MSG
+    wf_logf(WF_WARN, "lwip: udp %u/%u e%u tcp %u/%u e%u heap %u/%u e%u",
             (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->used, (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->avail,
             (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->err,
             (unsigned)lwip_stats.memp[MEMP_TCP_PCB]->used, (unsigned)lwip_stats.memp[MEMP_TCP_PCB]->avail,

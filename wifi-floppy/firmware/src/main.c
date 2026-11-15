@@ -1921,8 +1921,8 @@ static void __attribute__((noinline)) wifi_online_check(setup_form_t *f, uploade
     }
     portal_stop();                 // the AP goes: the station is about to change networks
     release_kept_connection();     // its socket belongs to the network being left
-    wf_logf(WF_INFO, "wifi: checking %s (leaving %s for it)", f->ssid,
-            prov.joined ? prov.cfg.net[prov.first].ssid : "no network");
+    wf_logf(WF_INFO, "wifi: checking %s", f->ssid);   // two names would not fit one line (WF_LOG_MSG)
+    wf_logf(WF_INFO, "wifi: leaving %s for it", prov.joined ? prov.cfg.net[prov.first].ssid : "no network");
     const wifi_check_ops_t ops = { online_join, NULL };
     wifi_check_t out;
     wifi_check_run(&prov, f->ssid, f->pass, &ops, &out);
@@ -1930,8 +1930,8 @@ static void __attribute__((noinline)) wifi_online_check(setup_form_t *f, uploade
     memcpy(name, f->ssid, sizeof name);
     secure_zero(f, sizeof *f);     // the password was needed for the join and the save only
     g_wifi_owe = true;
-    wf_logf(WF_INFO, "wifi: %s: join %d, save %d (%s), back on %d after %d attempts", name, (int)out.join,
-            out.tried_save ? (int)out.saved : -1, out.tried_save ? "tried" : "not tried", out.back_on, out.attempts);
+    wf_logf(WF_INFO, "wifi: %s: join %d save %d back %d (%d tries)", name, (int)out.join,
+            out.tried_save ? (int)out.saved : -1, out.back_on, out.attempts);
     while (out.back_on < 0) {
         // Never restart with a disk in a drive or saves waiting (I3): the Amiga is reading it, and the saves would
         // be lost. Only an idle board restarts.
@@ -2439,6 +2439,16 @@ static void core1_main(void) {
                     (int)jr, prov.round_pos + 1, prov.cfg.n_nets, prov.assoc_failures + 1,
                     PROV_MAX_ASSOC_FAILURES);
             prov_on_join_result(&prov, jr);
+            // Bench 3 (2026-11-16): an OTA trial keeps joining until its revert deadline -- the setup page would
+            // wait 5 min for its next try, which IS the deadline (fw_trial_keeps_joining).
+            if (prov.state == PROV_PORTAL && prov.have_config &&
+                fw_trial_keeps_joining(fw_rom_trial_boot(), fw_rom_trial_revertible(), clock_ms())) {
+                wf_logf(WF_WARN, "trial: no network yet, %lu s to the deadline -- joining again",
+                        (unsigned long)((FW_TRIAL_DEADLINE_MS - clock_ms()) / 1000u));
+                prov_on_portal_idle_timeout(&prov);   // a fresh run of rounds, as the page's timeout gives
+                bt_hw_tick(1);
+                continue;
+            }
             // Review round 2, Minor 1: if that was the last failure and the
             // portal just opened, show the reason a submit-path failure
             // would (spec §6's two-message requirement) -- without this, a
