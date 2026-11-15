@@ -152,7 +152,8 @@ export async function listLibrary(ctx: FsCtx, p: FsPath): Promise<Listing | null
   if (!game) return null;
   const titleCrumb = { label: game.title, path: lib(...pre, gameId) };
   if (at.level === 'title') {
-    const rows = await db.select({ id: disks.id, diskNo: disks.diskNo, label: disks.label, sizeBytes: disks.sizeBytes, sha256: disks.sha256 })
+    const rows = await db.select({ id: disks.id, diskNo: disks.diskNo, label: disks.label, sizeBytes: disks.sizeBytes, sha256: disks.sha256,
+      imageFormat: disks.imageFormat })
       .from(disks)
       .innerJoin(entitlements, and(eq(entitlements.orgId, disks.orgId), eq(entitlements.sha256, disks.sha256)))
       .where(and(eq(disks.gameId, gameId), eq(disks.orgId, ctx.orgId), isLocal(disks))).orderBy(asc(disks.diskNo));
@@ -160,7 +161,7 @@ export async function listLibrary(ctx: FsCtx, p: FsPath): Promise<Listing | null
     for (const d of rows) {
       const holder = await findHolder(db, ctx.orgId, d.sha256);
       entries.push({ name: diskName(d), kind: 'disk', path: lib(...pre, gameId, d.id), size: d.sizeBytes, date: null, protection: null,
-        comment: null, marks: holder ? [`in a drive of ${holder.name}`] : [] });
+        comment: null, marks: holder ? [`in a drive of ${holder.name}`] : [], imageFormat: d.imageFormat });
     }
     return { path: lib(...pre, gameId), crumbs: [...head, titleCrumb], entries, writable: false, readOnlyReason: null, disk: null,
       meta: count(rows.length, 'disk'), library: { level: 'title', collectionId } };

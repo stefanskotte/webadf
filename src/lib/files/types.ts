@@ -22,6 +22,8 @@ export type FsEntry = {
   inside?: { files: number; folders: number };
   /** The Size cell's words for a row without bytes: a collection's "12 titles". */
   sizeText?: string;
+  /** A disk row (a title's disk): what its image is, so the row reads "Disk 1 · ADF, 880 KB" (disk-row.ts). */
+  imageFormat?: 'adf' | 'hfe';
 };
 export type DiskInfo = {
   diskId: string; gameId: string; title: string; label: string; filesystem: 'OFS' | 'FFS' | null; hd: boolean;

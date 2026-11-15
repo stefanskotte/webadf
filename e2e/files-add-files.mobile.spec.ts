@@ -85,7 +85,15 @@ test('a blank ADF made on the phone: Add files to it puts the picked files on th
   await expect(page.getByTestId('pane-left-add-files')).toHaveCount(0);
   await page.getByTestId('files-side-right').tap();
   await page.getByTestId('pane-right-crumb-1').tap();
-  await expect(page.getByTestId('pane-right').getByTestId('pane-row').filter({ hasText: 'Disk 1' })).toBeVisible(LIVE);
+  const diskRow = page.getByTestId('pane-right').getByTestId('pane-row').filter({ hasText: 'Disk 1' });
+  await expect(diskRow).toBeVisible(LIVE);
+  // The title's row is the disk image itself, not a folder WebADF made (tester report and ruling 2026-11-15): on a
+  // phone it reads "Disk 1 · ADF, 880 KB" with the disk sign, and a screen reader hears it as a disk image.
+  await expect(diskRow).toHaveAttribute('data-name', 'Disk 1');
+  await expect(diskRow.getByTestId('pane-disk-image')).toHaveText('· ADF, 880 KB', { useInnerText: true });
+  await expect(diskRow.getByTestId('pane-disk-spoken')).toHaveText('disk image Disk 1, ADF, 880 KB');
+  await expect(diskRow.locator('svg')).toBeVisible();
+  await expect(diskRow).not.toContainText('DSK');
   await expect(page.getByTestId('pane-right-add-files')).toHaveCount(0);
 });
 

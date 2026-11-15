@@ -90,7 +90,8 @@ export const HELP_TOPICS = {
         <p>
           <strong>Three places.</strong> <em>STASH:</em> holds loose files you drop here or your Amiga sends.{' '}
           <em>NET:</em> lists your boards; copying into one sends to its Amiga. <em>LIBRARY:</em> shows your collections as
-          folders, then the titles in none.
+          folders, then the titles in none. A title lists its disk images (Disk 1 · ADF, 880 KB): files copied into one
+          land in its root.
         </p>
         <p>
           <strong>Source and destination.</strong> The pane you last clicked is the source, with the dark title bar. <em>Copy</em> and <em>Move</em> go to the other pane; the device column takes it to

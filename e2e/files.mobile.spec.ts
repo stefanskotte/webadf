@@ -138,6 +138,10 @@ test('at 390: one pane, the side switch, the bottom bar; Copy to… copies a fil
   await folder(`PhoneB-${tag}`).tap();
   await expect(picker.getByTestId('files-copy-to-crumb-1')).toHaveText(`PhoneB-${tag}`);
   expect((await folder('Disk 1').boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  // A disk is a disk image here too (ruling 2026-11-15): its format and size after the label, and so it is heard.
+  const label = (await folder('Disk 1').getAttribute('data-name'))!;
+  await expect(folder('Disk 1').getByTestId('files-copy-to-disk-image')).toHaveText('· ADF, 880 KB');
+  await expect(folder('Disk 1')).toHaveAccessibleName(`disk image ${label}, ADF, 880 KB`);
   await folder('Disk 1').tap();
   await expect(picker.getByTestId('files-copy-to-crumb-2')).toHaveText(/Disk 1/);   // the seeded disk's label names its title too
   await expect(picker.getByTestId('files-copy-to-here')).toHaveText('Copy here');
