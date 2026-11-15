@@ -45,6 +45,12 @@ int  net_radio_ap_stas(uint8_t (*macs)[6], int max);
  *  chip's "autho_sta_list" iovar. Best effort: the 43439 firmware may not
  *  support it -- then a negative error, every call. Same contract otherwise. */
 int  net_radio_ap_authorized(uint8_t (*macs)[6], int max);
+/** Before the firmware's own deliberate reboots (bench 2026-11-15): leave the network cleanly, so the router drops
+ *  this MAC's association and keys now. Rebooting without a deauth and reconnecting seconds later left the router
+ *  holding the old PTK: AUTH and LINK, never KEYED (join state 0201 -> 0601 -> 0001 every ~5 s) for ~6 minutes, after
+ *  the TBYB buy reboot and after a revert. Waits, bounded by `wait_ms`, for the leave's own DISASSOC. A no-op when
+ *  nothing is held. Core1 only, foreground; never on a crash path. Returns true if it left something. */
+bool net_radio_sta_leave(uint32_t wait_ms);
 /** The station interface, to restore it as lwIP's default route after the AP. */
 struct netif *net_radio_sta_netif(void);
 /** The AP interface (valid between net_radio_ap_start and net_radio_ap_stop): the portal binds its sockets to it. */

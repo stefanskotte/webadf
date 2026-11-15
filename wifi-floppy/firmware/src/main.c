@@ -1767,6 +1767,15 @@ static void release_kept_connection(void) {
     if (t && t->abandon) t->abandon(t);
 }
 
+// Before a reboot the firmware chooses (never a crash path): the kept socket goes, then the network is left cleanly
+// (net_radio_sta_leave: the router otherwise kept the old keys and refused the next join for minutes, bench
+// 2026-11-15). Core1 only -- it owns the radio; core0's console reboots cannot do this.
+static void leave_before_reboot(const char *why) {
+    release_kept_connection();
+    const bool left = net_radio_sta_leave(1000);
+    wf_logf(WF_INFO, "wifi: %s before rebooting (%s)", left ? "left the network" : "nothing to leave", why);
+}
+
 // ---------------------------------------------------------------- Wi-Fi networks from the web app (2026-11-15)
 //
 // Board settings > Wi-Fi networks (wifi_ctl.h has the wire). Everything here
@@ -1923,6 +1932,7 @@ static void __attribute__((noinline)) wifi_online_check(setup_form_t *f, uploade
             // Every saved network failed three rounds: the normal start takes over.
             wf_logf(WF_ERR, "wifi: no saved network answers -- restarting into the normal start");
             bt_hw_mark(1, BT1_WIFI);   // not the poll loop any more: core1 supervision stands down
+            leave_before_reboot("no saved network answers");   // a half-joined station, if any
             fw_rom_request_reboot(0);
             for (;;) sleep_ms(1000);
         }
@@ -2098,7 +2108,7 @@ static bool fwu_save(void *ctx, const fw_state_t *st) { (void)ctx; return fw_sta
 // FLASH_UPDATE into the OTHER slot (the one just written): the new image then
 // trial-boots. fw_rom_request_reboot never overwrites an already-pending
 // request (g_boot_cs, fw_rom.c); core0's fw_rom_service performs it (M9).
-static void fwu_reboot(void *ctx, uint32_t off) { (void)ctx; fw_rom_request_ota_reboot(off); }   // an update's
+static void fwu_reboot(void *ctx, uint32_t off) { (void)ctx; leave_before_reboot("update"); fw_rom_request_ota_reboot(off); }   // an update's
 
 // Published by core0 every loop turn. core1 reads it for the update's idle
 // gate (D6) and the swap hold (swap_holds); dskchg.c's own state stays core0's.
@@ -2820,6 +2830,7 @@ static void core1_main(void) {
                         // boot -- where fw_boot_reconcile (CONFIRMED_LATE for
                         // an OTA's pending record, CLEAN for a USB install)
                         // does the bookkeeping fw_trial_after_buy used to do.
+                        leave_before_reboot("trial proven, buying");
                         fw_rom_request_proven_reboot(WF_FIRMWARE_VERSION);
                         for (;;) sleep_ms(1000);   // stage PROVEN: not supervised (core1_wd.h); core0 is rebooting
                     }
@@ -2827,6 +2838,7 @@ static void core1_main(void) {
                         wf_logf(WF_WARN, "trial: giving up (%s) -- rebooting to revert", why);
                         snprintf(fst.failure, sizeof fst.failure, "%s", why);
                         fw_state_save(&fst);
+                        leave_before_reboot("trial reverting");
                         fw_rom_request_ota_reboot(0);   // a trial reverting: still the update's boot
                         for (;;) sleep_ms(1000);   // stage TRIAL: not supervised (core1_wd.h); core0 is rebooting
                     }

@@ -194,6 +194,18 @@ static void j_settle(void *vc) {
     JTRACE(c, cyw43_state.wifi_join_state == 0 ? "settle: disassoc seen" : "settle: none came");
 }
 
+bool net_radio_sta_leave(uint32_t wait_ms) {
+    if (!j_held(NULL)) return false;
+    cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA);
+    uint32_t waited = 0;
+    while (waited < wait_ms && cyw43_state.wifi_join_state != 0) {
+        cyw43_arch_poll();
+        sleep_ms(10);
+        waited += 10;
+    }
+    return true;
+}
+
 static bool j_time_up(void *vc) {
     return time_reached(((join_ctx_t *)vc)->until);
 }
