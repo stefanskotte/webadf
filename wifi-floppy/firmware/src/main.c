@@ -2236,10 +2236,18 @@ static void core1_main(void) {
                     // a different story (a disk is very plausibly mounted
                     // by the time a token goes bad in the field); see its
                     // comment for why that one explicitly ejects first.
+                    // No code stored at all (a board kept paired by its token, the
+                    // token since revoked): dc_register says BAD_CODE without asking
+                    // (review I-1), and the page says what is needed rather than
+                    // blaming a code nobody typed.
+                    const bool had_code = prov.cfg.code[0] != '\0';
                     prov_on_pairing_code_rejected(&prov);
-                    wf_logf(WF_WARN, "register: pairing code rejected "
-                            "(single-use, 10 min TTL) -- back to the portal");
-                    last_error = "Invalid or already-used pairing code";
+                    wf_logf(WF_WARN, "register: %s -- back to the portal", had_code
+                            ? "pairing code rejected (single-use, 10 min TTL)"
+                            : "no pairing code stored and no token");
+                    last_error = had_code ? "Invalid or already-used pairing code"
+                                          : "This board needs a new pairing code. Get one in the web "
+                                            "app: Devices, Pair a device.";
                     memset(&note, 0, sizeof note);
                     code_rejected = true;
                     // DC_REG_BAD_CODE comes from a clean 400, so the socket

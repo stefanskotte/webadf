@@ -59,13 +59,34 @@ static int j_join(void *vc) {
 // restart DHCP, so the next association starts a fresh DISCOVER rather than
 // asking the next network for the last one's address. Both idempotent: the
 // chip's own link-down event, if it comes, does the first again.
+//
+// Review M-2: the leave's own CYW43_EV_DISASSOC arrives later and sets the
+// join state to 0 (cyw43_ctrl.c) -- if it landed after the next join had set
+// it ACTIVE, that join would read DOWN and time out for nothing. So while the
+// join state still reads JOIN (ACTIVE: associated, or a join under way), wait
+// for that event, bounded at DROP_WAIT_MS, servicing the driver meanwhile. A
+// failed attempt (FAIL/NONET/BADAUTH) or a never-joined station is not ACTIVE
+// and waits not at all. Residual risk: an event later than the bound (not
+// expected; it follows the ioctl within a poll or two) still costs that one
+// attempt a spurious timeout, which the round simply counts as a failure.
+//
+// Review M-1: dhcp_release_and_stop() zeroes the address only when DHCP was
+// BOUND/RENEWING/REBINDING; in REBOOTING (after a link change) the old one
+// stayed, and the next link-up read UP before any lease. So zero it here too.
+#define DROP_WAIT_MS 500
 static void j_drop(void *vc) {
     (void)vc;
     cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA);
+    for (int waited = 0; waited < DROP_WAIT_MS &&
+         cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA) == CYW43_LINK_JOIN; waited += 10) {
+        cyw43_arch_poll();
+        sleep_ms(10);
+    }
     cyw43_arch_lwip_begin();
     struct netif *n = &cyw43_state.netif[CYW43_ITF_STA];
     netif_set_link_down(n);
     dhcp_release_and_stop(n);
+    netif_set_addr(n, IP4_ADDR_ANY4, IP4_ADDR_ANY4, IP4_ADDR_ANY4);
     dhcp_start(n);
     cyw43_arch_lwip_end();
 }

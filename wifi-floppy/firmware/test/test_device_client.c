@@ -908,6 +908,17 @@ static void test_bad_code_does_not_store_anything(void) {
     CHECK(!token_store_load(buf, sizeof buf), "nothing may be stored on failure");
 }
 
+// Review I-1 (feat/wifi-networks): a board paired by its token alone stores
+// no code. When the token dies, registering with "" must be terminal and
+// local: the server's 400 invalid_body would be DC_REG_RETRY, for ever.
+static void test_an_empty_code_is_bad_code_without_asking_the_server(void) {
+    boot(); token_store_erase();
+    CHECK_EQ_INT(dc_register(&c, "", "4b.0", "aa:bb:cc:dd:ee:ff"), DC_REG_BAD_CODE);
+    CHECK_EQ_INT(dc_register(&c, NULL, "4b.0", "aa:bb:cc:dd:ee:ff"), DC_REG_BAD_CODE);
+    CHECK_EQ_INT(fake_request_count(), 0);
+    CHECK(!token_store_load(buf, sizeof buf), "nothing stored");
+}
+
 // Task 7, spec D-4b-4: invalid_or_used_code is terminal, not retryable --
 // main.c routes it straight to provisioning.h's
 // prov_on_pairing_code_rejected() instead of looping dc_register() under
@@ -4098,6 +4109,7 @@ int main(void) {
     RUN(test_register_sends_the_protocol_only_when_set);
     RUN(test_bad_code_does_not_store_anything);
     RUN(test_invalid_code_is_reported_as_bad_code_not_retry);
+    RUN(test_an_empty_code_is_bad_code_without_asking_the_server);
     RUN(test_other_400_is_still_retryable);
     RUN(test_register_backs_off_on_repeated_failure);
     RUN(test_a_blocked_digest_never_repolls_without_a_delay);

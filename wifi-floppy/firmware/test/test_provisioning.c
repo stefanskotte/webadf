@@ -432,6 +432,39 @@ static void test_idle_timeout_starts_a_fresh_round(void) {
     CHECK_EQ_INT(p.result[0], NET_JOIN_OK);   // this round's results start empty
 }
 
+static void test_remove_without_a_join_this_session_keeps_page_0(void) {
+    seed_three();   // page 0 holds b
+    provisioning_t p;
+    prov_init(&p);  // nothing joined: first is only the power-on default (a)
+    CHECK_EQ_INT(prov_forget_network(&p, "c"), PROV_FORGOT);
+    device_config_t stored;
+    CHECK(config_store_load(&stored), "stored");
+    CHECK(strcmp(stored.net[stored.last].ssid, "b") == 0,
+          "page 0 stays the network it held, not the unjoined default");
+}
+
+// Review I-1: paired by a token alone (no code stored), then the token is
+// revoked. dc_register("") is BAD_CODE without asking (test_device_client.c),
+// and this is where that leads: every network wiped, the portal open, and a
+// code required -- the operator's rule for a rejected or absent code.
+static void test_a_revoked_token_with_no_code_returns_to_setup_needing_a_code(void) {
+    config_store_erase();
+    CHECK(token_store_save("tok-survivor"), "only the token survived");
+    provisioning_t p;
+    prov_init(&p);
+    setup_form_t f = form("home", "password", "");
+    CHECK(prov_on_verified_submit(&p, &f), "joined with no code");
+    CHECK(p.cfg.code[0] == '\0', "no code stored");
+    token_store_erase();   // what DC_HALTED does when the server revokes it
+    CHECK(!prov_paired(&p), "no longer paired");
+    CHECK_EQ_INT(prov_on_pairing_code_rejected(&p), PROV_PORTAL);
+    device_config_t stored;
+    CHECK(!config_store_load(&stored), "every network wiped");
+    CHECK(!prov_on_portal_idle_timeout(&p), "nothing to retry: the portal waits for a person");
+    setup_form_t g = form("home", "password", "");
+    CHECK(!prov_on_verified_submit(&p, &g), "and a network alone is refused: a code is required");
+}
+
 static void test_secure_zero_clears_every_byte(void) {
     char secret[64];
     memset(secret, 'x', sizeof secret);
@@ -469,6 +502,8 @@ int main(void) {
     RUN(test_remove_refused_while_a_disk_is_mounted_says_so);
     RUN(test_idle_timeout_starts_a_fresh_round);
     RUN(test_secure_zero_clears_every_byte);
+    RUN(test_remove_without_a_join_this_session_keeps_page_0);
+    RUN(test_a_revoked_token_with_no_code_returns_to_setup_needing_a_code);
     free(mem);
     return REPORT();
 }

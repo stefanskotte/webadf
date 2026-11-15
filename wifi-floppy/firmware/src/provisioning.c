@@ -120,9 +120,10 @@ prov_forget_t prov_forget_network(provisioning_t *p, const char *ssid) {
     if (psram_active_slot() != SLOT_NONE) return PROV_FORGET_DISK_MOUNTED;
     device_config_t edit = p->cfg;   // a local, as in prov_on_verified_submit
     // A user action writes anyway: page 0 gets the network joined last this
-    // session (operator 2026-11-15), unless that is the one going.
+    // session (operator 2026-11-15) -- if one was joined (review M-3: `first`
+    // is only the power-on default otherwise) and it is not the one going.
     int first = p->first;
-    edit.last = (first >= 0 && first < edit.n_nets && first != idx) ? first : edit.last;
+    edit.last = (p->joined && first >= 0 && first < edit.n_nets && first != idx) ? first : edit.last;
     config_remove_net(&edit, idx);
     if (!config_store_update(&edit)) { secure_zero(&edit, sizeof edit); return PROV_FORGET_WRITE_FAILED; }
     // `first` follows its network; if it was the one removed, the saved order.

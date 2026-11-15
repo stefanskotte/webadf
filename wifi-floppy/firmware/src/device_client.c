@@ -1537,6 +1537,13 @@ dc_register_result_t dc_register(device_client_t *c, const char *pairing_code,
     // a version past 31 characters registered short and then changed on the
     // first heartbeat -- reading as an unrecognised build in between.
     static char pc_esc[80], fv_esc[DC_STATUS_VER_BYTES], mac_esc[32];
+    // No pairing code at all is terminal, and known without asking (review
+    // of feat/wifi-networks, I-1). A board kept paired by its token alone
+    // stores no code; once that token is revoked the only way on is a fresh
+    // code from a person. The server would answer an empty code 400
+    // invalid_body, which is DC_REG_RETRY below -- a board retrying for ever,
+    // across power cycles, with the setup page never opening. Nothing is sent.
+    if (!pairing_code || pairing_code[0] == '\0') return DC_REG_BAD_CODE;
     dc_json_escape(pc_esc, sizeof pc_esc, pairing_code);
     dc_json_escape(fv_esc, sizeof fv_esc, firmware_version);
     dc_json_escape(mac_esc, sizeof mac_esc, mac);
