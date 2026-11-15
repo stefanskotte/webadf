@@ -66,7 +66,7 @@ const get = (qs = '') => new Request(`http://test/api/device/poll${qs}`);
 const baseTick = (over: Partial<PollTick> = {}): PollTick => ({
   version: 1, instructionVersion: 0, instructionAck: 0, nfcWriteSeq: 0, displayVersion: 0, secondDriveVersion: 0, secondDrive: 'off',
   secondDriveReported: null, secondDriveAppliedVersion: null, netNextSentVersion: null,
-  df1Version: 0, sendVersion: 0, reqVersion: 0, df1Sha256: null, netDriverSeenAt: null, netAmigaIpLast: null, ...over,
+  df1Version: 0, sendVersion: 0, reqVersion: 0, wifiSeq: 0, df1Sha256: null, netDriverSeenAt: null, netAmigaIpLast: null, ...over,
 });
 
 beforeEach(() => {
@@ -821,6 +821,41 @@ describe('GET /api/device/poll -- req (NET: volumes, spec 2026-10-30 §3)', () =
     await GET(get('?since=1&xferAck=0&rx=c&rxv=6&browse=1&write=1'));
     expect(recordSendRx).toHaveBeenLastCalledWith(expect.anything(), 'dev-1', 'c', expect.any(Date), { proto: 6, browse: true, write: true }, { poll: true });
     expect(failWritesWhenOff).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/device/poll -- wifi (Wi-Fi networks, 2026-11-15)', () => {
+  it('wakes a board whose wifiAck is behind the cursor, and carries wifi.v', async () => {
+    readPollTick.mockResolvedValue(baseTick({ wifiSeq: 4 }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&wifiAck=3'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ wifi: { v: 4 } });
+  });
+  it('wakes on an ack ABOVE the cursor too (a re-paired board), so it resets', async () => {
+    readPollTick.mockResolvedValue(baseTick({ wifiSeq: 0 }));
+    const { GET } = await import('./route');
+    expect(await (await GET(get('?since=1&wifiAck=7'))).json()).toMatchObject({ wifi: { v: 0 } });
+  });
+  it('holds a board whose wifiAck matches while nothing else moved', async () => {
+    vi.useFakeTimers();
+    try {
+      readPollTick.mockResolvedValue(baseTick({ wifiSeq: 4 }));
+      const { GET } = await import('./route');
+      const p = GET(get('?since=1&wifiAck=4'));
+      await vi.advanceTimersByTimeAsync(26_000);
+      expect((await p).status).toBe(204);
+    } finally { vi.useRealTimers(); }
+  });
+  it('never sends wifi, nor wakes for it, a board that sent no wifiAck (older firmware)', async () => {
+    readPollTick.mockResolvedValue(baseTick({ wifiSeq: 4, instructionVersion: 1, instructionAck: 0 }));
+    const { GET } = await import('./route');
+    expect(await (await GET(get('?since=1'))).json()).not.toHaveProperty('wifi');
+  });
+  it('reads a garbled wifiAck as 0, never as caught up', async () => {
+    readPollTick.mockResolvedValue(baseTick({ wifiSeq: 4 }));
+    const { GET } = await import('./route');
+    expect(await (await GET(get('?since=1&wifiAck=4abc'))).json()).toMatchObject({ wifi: { v: 4 } });
   });
 });
 

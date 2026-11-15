@@ -13,6 +13,7 @@ import { DriveNumbersSetting } from './drive-numbers-setting';
 import type { DriveBase } from '@/lib/drive-numbers';
 import { DeleteDeviceConfirm } from './delete-device-dialog';
 import { DisplayEditor } from './display-editor';
+import { WifiNetworksSetting } from './wifi-networks-setting';
 import { panelHeight } from '@/lib/display-editor-geometry';
 
 /** The NFC line is known to be wrong: the attention dot's rule (spec §8.3). A board that sends no scan is unknown,
@@ -31,10 +32,12 @@ function needsAttention(device: DeviceListItem): boolean {
  * modal and opens the delete confirmation (Ruling 23). Cancel, the X, Escape and the backdrop send nothing, and none
  * of them works while the save runs.
  */
-export function BoardSettings({ device, openOnArrival = false }: {
+export function BoardSettings({ device, openOnArrival = false, now = 0 }: {
   device: DeviceListItem;
   /** The header drive panel's gear (C8 spec §4.4, Ruling 12) landed here as /devices?settings=<this id>. */
   openOnArrival?: boolean;
+  /** The page's clock (device-card's): Wi-Fi networks reads online and the setup page's close time against it. */
+  now?: number;
 }) {
   const id = device.id;
   const router = useRouter();
@@ -226,6 +229,7 @@ export function BoardSettings({ device, openOnArrival = false }: {
           </div>
           <DriveNumbersSetting device={device} value={base} onChange={setBase} error={baseFailed} busy={busy} />
           <BootDiskSetting device={device} value={draft} onChange={setDraft} error={failed} busy={busy} />
+          <WifiNetworksSetting device={device} serverNow={now} busy={busy} />
           <div className="flex flex-col gap-2">
             <span className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>NFC reader</span>
             <div className="flex items-center gap-3 rounded-[12px] px-3.5 py-3" style={{ background: 'var(--surface-2)' }}>

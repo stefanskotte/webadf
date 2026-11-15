@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HELP_TOPICS, HELP_ORDER, HELP_GROUPS, helpGroupOf, type HelpTopicId } from './topics';
 
-const IDS: HelpTopicId[] = ['library', 'boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'from-amiga', 'cover-image', 'about', 'preferences', 'sharing', 'remote', 'files', 'stash-net', 'amiga-disks'];
+const IDS: HelpTopicId[] = ['library', 'boards', 'wifi-networks', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'from-amiga', 'cover-image', 'about', 'preferences', 'sharing', 'remote', 'files', 'stash-net', 'amiga-disks'];
 // Internal words a reader of the help should never meet (spec §5).
 const BANNED = /\b(PSRAM|TBYB|poll|sha256|cursor|WPROT)\b/i;
 
@@ -54,6 +54,12 @@ describe('help topics', () => {
 
 // Final review fixes (2026-10-05): claims that were wrong, incomplete or unverifiable.
 describe('help topics say what the app really does', () => {
+  it('wifi-networks names the controls, the setup network and its time, as the section and the board say them', () => {
+    const b = bodyText('wifi-networks').replace(/\s+/g, ' ');
+    for (const w of ['Board settings', 'Connected now', 'Saved', 'Remove', 'Add a network', '10 minutes', 'wifi-floppy-',
+      'wififloppy', 'http://192.168.4.1', 'Save', 'Done', 'Close setup page', 'passwords stay on the board',
+      'Eject the disk first', 'usually for under a minute', 'up to about 3 minutes', 'the board restarts']) expect(b).toContain(w);
+  });
   it('files says where progress shows: the Transfers panel on every page, and what Cancel the rest keeps (spec 2026-11-01)', () => {
     const b = bodyText('files').replace(/\s+/g, ' ');
     for (const w of ['Transfers', 'on every page', 'Cancel the rest', 'What has arrived stays', 'keeps the sources of what has not moved yet',
@@ -347,7 +353,7 @@ describe('help groups (C5 spec §3.1, Ruling 14)', () => {
     expect(HELP_GROUPS.map((g) => [g.id, g.name])).toEqual([
       ['drives', 'Drives'], ['disks', 'Library and disks'], ['network', 'Amiga networking'], ['server', 'This server'],
     ]);
-    expect(HELP_GROUPS[0].topics).toEqual(['boards', 'display', 'second-drive', 'next-disk', 'nfc', 'write-protect']);
+    expect(HELP_GROUPS[0].topics).toEqual(['boards', 'wifi-networks', 'display', 'second-drive', 'next-disk', 'nfc', 'write-protect']);
     expect(HELP_GROUPS[1].topics).toEqual(['library', 'files', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image']);
     expect(HELP_GROUPS[2].topics).toEqual(['network', 'stash-net', 'amiga-disks', 'send', 'from-amiga']);
     expect(HELP_GROUPS[3].topics).toEqual(['preferences', 'sharing', 'remote', 'own-server', 'about']);
@@ -355,7 +361,7 @@ describe('help groups (C5 spec §3.1, Ruling 14)', () => {
   it('put every topic in exactly one group, and HELP_ORDER is the groups flattened', () => {
     const all = HELP_GROUPS.flatMap((g) => g.topics);
     expect([...all].sort()).toEqual([...IDS].sort());
-    expect(new Set(all).size).toBe(22);
+    expect(new Set(all).size).toBe(23);
     expect(HELP_ORDER).toEqual(all);
     expect(helpGroupOf('library').name).toBe('Library and disks');
     expect(helpGroupOf('write-protect').id).toBe('drives');

@@ -1,4 +1,5 @@
 #include "harness.h"
+#include "../src/wifi_ctl.h"
 #include "transport_fake.h"
 #include "../src/device_client.h"
 #include "../src/psram_image.h"
@@ -906,6 +907,17 @@ static void test_bad_code_does_not_store_anything(void) {
         "{\"error\":\"invalid_or_used_code\",\"token\":\"should-not-be-used\"}");
     CHECK_EQ_INT(dc_register(&c, "WRONG", "4a.0", "aa:bb:cc:dd:ee:ff"), DC_REG_BAD_CODE);
     CHECK(!token_store_load(buf, sizeof buf), "nothing may be stored on failure");
+}
+
+// Review I-1 (feat/wifi-networks): a board paired by its token alone stores
+// no code. When the token dies, registering with "" must be terminal and
+// local: the server's 400 invalid_body would be DC_REG_RETRY, for ever.
+static void test_an_empty_code_is_bad_code_without_asking_the_server(void) {
+    boot(); token_store_erase();
+    CHECK_EQ_INT(dc_register(&c, "", "4b.0", "aa:bb:cc:dd:ee:ff"), DC_REG_BAD_CODE);
+    CHECK_EQ_INT(dc_register(&c, NULL, "4b.0", "aa:bb:cc:dd:ee:ff"), DC_REG_BAD_CODE);
+    CHECK_EQ_INT(fake_request_count(), 0);
+    CHECK(!token_store_load(buf, sizeof buf), "nothing stored");
 }
 
 // Task 7, spec D-4b-4: invalid_or_used_code is terminal, not retryable --
@@ -3903,10 +3915,11 @@ static void the_worst_case_poll_with_req_is_sent_whole(void) {
     c.drive_ack = 4294967295u; c.df1_ack = 4294967295u;
     dc_set_send(&c, 4294967295u, 'u');
     dc_set_req(&c, 4294967295u, 4, true, true);
+    dc_set_wifi(&c, 4294967295u, NULL, NULL);   // Wi-Fi networks (2026-11-15): path 240, request 512
     dc_set_boot(&c, 0xffffffffu, true);
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
-    CHECK(strstr(fake_last_request(), "&xferAck=4294967295&rx=u&reqAck=4294967295&rxv=4&browse=1&write=1&boot=ffffffff&ota=1 HTTP/1.1\r\n") != NULL,
+    CHECK(strstr(fake_last_request(), "&xferAck=4294967295&rx=u&reqAck=4294967295&rxv=4&browse=1&write=1&wifiAck=4294967295&boot=ffffffff&ota=1 HTTP/1.1\r\n") != NULL,
           "every parameter, in order");
 }
 
@@ -3959,6 +3972,211 @@ static void post_req_takes_a_32k_body(void) {
     CHECK_EQ_INT(dc_post_req(&c, "r", json, DC_POST_BODY_MAX), 204);
     CHECK(strstr(fake_last_request(), "Content-Length: 32768\r\n") != NULL, "32 KB");
     CHECK_EQ_INT(dc_post_req(&c, "r", json, DC_POST_BODY_MAX + 1), -1);
+}
+
+
+// --- Wi-Fi networks from the web app (2026-11-15, wifi_ctl.h) -----------------------------------------------------
+
+// A writer standing in for main.c's (wifi_report_json): a fixed tail, or "does not fit" when `fail` is set.
+static const char *wifi_tail = ",\"wifi\":{\"nets\":[\"686f6d65\"],\"cur\":0,\"ack\":3,\"res\":\"ok\",\"setup\":0}";
+static int wifi_writes;
+static int wifi_write(void *ctx, char *out, int cap) {
+    (void)ctx;
+    wifi_writes++;
+    int n = (int)strlen(wifi_tail);
+    if (n + 1 > cap) { out[0] = '\0'; return -1; }
+    memcpy(out, wifi_tail, (size_t)n + 1);
+    return n;
+}
+
+static void wifi_ack_rides_every_poll_once_set(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "wifiAck") == NULL, "an older-shaped board says nothing");
+    boot(); dc_set_wifi(&c, 7, wifi_write, NULL);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&wifiAck=7 HTTP/1.1\r\n") != NULL, fake_last_request());
+    boot(); dc_set_wifi(&c, 7, wifi_write, NULL); dc_set_boot(&c, 0x1234abcdu, false);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&wifiAck=7&boot=1234abcd HTTP/1.1\r\n") != NULL, "before the boot id, which stays last");
+}
+
+static void wifi_version_is_read_from_the_poll_and_blanked(void) {
+    boot(); dc_set_wifi(&c, 0, wifi_write, NULL);
+    push_ok_json("{\"version\":3,\"desired\":null,\"wifi\":{\"v\":9}}");
+    dc_step(&c);
+    CHECK_EQ_INT(c.wifi_version, 9);
+    CHECK(c.wifi_seen, "seen");
+    CHECK_EQ_INT(c.since, 3);   // its v was not read as the body's version
+    // M2: from now on the poll says it has seen 9, though nothing was handled yet -- the server does not answer
+    // every poll at once while the board waits to fetch.
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&wifiAck=9") != NULL, fake_last_request());
+    push_ok_json("{\"version\":4,\"desired\":null}");
+    dc_step(&c);
+    CHECK_EQ_INT(c.wifi_version, 9);
+    // A board that never turned the feature on does not take it.
+    boot();
+    push_ok_json("{\"version\":3,\"desired\":null,\"wifi\":{\"v\":9}}");
+    dc_step(&c);
+    CHECK(!c.wifi_seen, "not on: ignored");
+}
+
+// Review of ba66653b (Important): a 204 to a poll carrying wifiAck=X means the cursor is X (the server wakes on any
+// inequality), and from an older server that ignores wifiAck that nothing is pending. Either way: seen -- or a
+// board that only ever gets 204s (new, nothing mounted) never syncs and never sends its networks.
+static void a_204_counts_as_seeing_the_ack_it_answered(void) {
+    boot(); dc_set_wifi(&c, 0, wifi_write, NULL);
+    CHECK(!c.wifi_seen, "nothing seen at entry");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(c.wifi_seen, "a 204 is the cursor at what was sent");
+    CHECK_EQ_INT(c.wifi_version, 0);
+    // After a body moved it, the 204 that follows confirms the seen value, never a lower one.
+    push_ok_json("{\"version\":3,\"desired\":null,\"wifi\":{\"v\":5}}");
+    dc_step(&c);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK_EQ_INT(c.wifi_version, 5);
+    CHECK(strstr(fake_last_request(), "&wifiAck=5") != NULL, fake_last_request());
+    // An older server: 200 bodies without `wifi` never set it, a 204 does.
+    boot(); dc_set_wifi(&c, 0, wifi_write, NULL);
+    push_ok_json("{\"version\":3,\"desired\":null}");
+    dc_step(&c);
+    CHECK(!c.wifi_seen, "a body without wifi says nothing");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(c.wifi_seen, "the old server's 204: nothing pending");
+    // Off: a 204 does nothing.
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(!c.wifi_seen, "not on");
+    // And dc_set_wifi alone owes no report (main.c owes it once synced): no report every pass.
+    boot(); dc_set_wifi(&c, 0, wifi_write, NULL);
+    CHECK(!dc_wifi_owed(&c), "set, not owed");
+}
+
+static void fetch_wifi_gets_the_instruction(void) {
+    boot();
+    char out[160];
+    fake_push_response("HTTP/1.1 200 OK\r\nContent-Length: 27\r\n\r\n{\"seq\":4,\"op\":\"open\",\"x\":1}");
+    CHECK_EQ_INT(dc_fetch_wifi(&c, out, sizeof out), 27);
+    CHECK(strstr(fake_last_request(), "GET /api/device/wifi HTTP/1.1\r\n") != NULL, fake_last_request());
+    CHECK(memcmp(out, "{\"seq\":4,\"op\":\"open\"", 20) == 0, "the body");
+    fake_push_response("HTTP/1.1 409 Conflict\r\nContent-Length: 0\r\n\r\n");
+    CHECK_EQ_INT(dc_fetch_wifi(&c, out, sizeof out), -1);
+}
+
+// The tail rides while owed and stops once a report carrying it is heard; a 500 is not heard.
+static void status_carries_the_wifi_tail_while_owed(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.26.0");
+    CHECK(strstr(fake_last_request(), "\"wifi\"") == NULL, "off: no tail");
+    dc_set_wifi(&c, 3, wifi_write, NULL);
+    CHECK(!dc_wifi_owed(&c), "nothing owed until something changes");
+    dc_wifi_owe(&c);
+    CHECK(dc_wifi_owed(&c), "owed");
+    fake_push_response("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.26.0");
+    CHECK(strstr(fake_last_request(), wifi_tail) != NULL, "the tail, as written");
+    CHECK(strstr(fake_last_request(), "}}") != NULL, "and the body still closes");
+    CHECK(dc_wifi_owed(&c), "a 500 was not heard");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.26.0");
+    CHECK(!dc_wifi_owed(&c), "heard");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.26.0");
+    CHECK(strstr(fake_last_request(), "\"wifi\"") == NULL, "heard: not again");
+}
+
+// The longest tail (wifi_ctl.h WIFI_REPORT_MAX) beside a report as it really is -- no error, no failed update --
+// with this boot's once-only lastBoot still owed at its widest: it fits. The body's budget is NOT raised for it.
+static void a_real_report_carries_the_longest_wifi_tail(void) {
+    boot();
+    memset(c.mounted_sha256, 'a', 64); c.mounted_sha256[64] = '\0';
+    memset(c.mounted_disk_id, 'b', 64); c.mounted_disk_id[64] = '\0';
+    c.mounted_version = 4294967295u;
+    dc_fw_report_t fr = { DC_UPDATE_PROTOCOL, NULL, NULL, 4294967295u };
+    dc_set_fw_report(&c, &fr);
+    dc_set_nfc_reader(&c, "present");
+    static i2c_scan_t scan;
+    memset(&scan, 0, sizeof scan);
+    for (uint8_t a = 0x70; a <= 0x77; a++) i2c_scan_add(&scan, a);
+    i2c_scan_done(&scan);
+    dc_set_i2c_scan(&c, &scan);
+    dc_set_plays_hd(&c, true);
+    dc_set_sel1(&c, false, false);
+    c.preload.slot = SLOT_NONE; c.preload.loading = true;
+    memset(c.preload.next_sha256, 'd', 64); c.preload.next_sha256[64] = '\0';
+    c.display_ack = 4294967295u;
+    dc_set_df1(&c, DF1_MODE_NEXT, true);
+    c.drive_ack = 4294967295u;
+    dc_net_t net = { .on = true, .driver_seen = true, .driver_s = 999999u, .amiga_ip = 0xFFFFFFFFu,
+                     .frames_in = 999999999u, .frames_out = 999999999u };
+    dc_set_net(&c, &net);
+    dc_set_server_report(&c, true, true);
+    static char boot_json[BT_JSON_MAX + 1];
+    memset(boot_json, 'x', BT_JSON_MAX); boot_json[0] = '{'; boot_json[BT_JSON_MAX - 1] = '}'; boot_json[BT_JSON_MAX] = '\0';
+    dc_set_last_boot(&c, boot_json);
+    // The longest tail: four 32-octet names, every number at its widest, the longest result.
+    static device_config_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.n_nets = 4;
+    for (int i = 0; i < 4; i++) memset(cfg.net[i].ssid, 'A' + i, 32);
+    static char longest[WIFI_REPORT_MAX + 1];
+    wifi_report_t r = { &cfg, 3, 4294967295u, WIFI_RES_WRITE_FAILED, 3600 };
+    CHECK_EQ_INT(wifi_report_json(&r, longest, sizeof longest), WIFI_REPORT_MAX);
+    wifi_tail = longest;
+    dc_set_wifi(&c, 4294967295u, wifi_write, NULL);
+    dc_wifi_owe(&c);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 2147483647, -200, NULL, "1.26.0+g0123456789ab"), "sent");
+    CHECK(strstr(fake_last_request(), longest) != NULL, "the whole tail rides");
+    CHECK(strstr(fake_last_request(), "\"lastBoot\"") != NULL, "beside lastBoot");
+    CHECK(!dc_wifi_owed(&c), "heard");
+    wifi_tail = ",\"wifi\":{\"nets\":[\"686f6d65\"],\"cur\":0,\"ack\":3,\"res\":\"ok\",\"setup\":0}";
+}
+
+// At the body's true maximum (test_status_body_fits_at_maximum's every tail) the wifi tail does not fit: the
+// report still goes, without it, and it stays owed -- never the report lost for it.
+static void a_full_body_leaves_the_wifi_tail_owed(void) {
+    boot();
+    static char long_err[DC_STATUS_ERR_BYTES];
+    memset(long_err, 'E', sizeof long_err - 1); long_err[sizeof long_err - 1] = '\0';
+    static char long_fw_err[201]; memset(long_fw_err, 'F', 200); long_fw_err[200] = '\0';
+    dc_fw_report_t fr = { DC_UPDATE_PROTOCOL, "downloading", long_fw_err, 4294967295u };
+    dc_set_fw_report(&c, &fr);
+    memset(c.mounted_sha256, 'a', 64); c.mounted_sha256[64] = '\0';
+    memset(c.mounted_disk_id, 'b', 64); c.mounted_disk_id[64] = '\0';
+    c.display_ack = 4294967295u;
+    memset(c.display_error, '"', sizeof c.display_error - 1); c.display_error[sizeof c.display_error - 1] = '\0';
+    static char boot_json[BT_JSON_MAX + 1];
+    memset(boot_json, 'x', BT_JSON_MAX); boot_json[0] = '{'; boot_json[BT_JSON_MAX - 1] = '}'; boot_json[BT_JSON_MAX] = '\0';
+    dc_set_last_boot(&c, boot_json);
+    static device_config_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.n_nets = 4;
+    for (int i = 0; i < 4; i++) memset(cfg.net[i].ssid, 'A' + i, 32);
+    static char longest[WIFI_REPORT_MAX + 1];
+    wifi_report_t r = { &cfg, 3, 4294967295u, WIFI_RES_WRITE_FAILED, 3600 };
+    wifi_report_json(&r, longest, sizeof longest);
+    wifi_tail = longest;
+    dc_set_wifi(&c, 1, wifi_write, NULL);
+    dc_wifi_owe(&c);
+    // Fill what is left with a long version string's worth: the report must still go.
+    static char long_ver[65]; memset(long_ver, 'v', 64); long_ver[64] = '\0';
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 2147483647, -200, long_err, long_ver), "the report is sent");
+    const bool rode = strstr(fake_last_request(), "\"wifi\"") != NULL;
+    CHECK(rode == !dc_wifi_owed(&c), "owed exactly when it was left out");
+    CHECK(strstr(fake_last_request(), "\"rssi\":-200") != NULL, "the report itself is whole");
+    wifi_tail = ",\"wifi\":{\"nets\":[\"686f6d65\"],\"cur\":0,\"ack\":3,\"res\":\"ok\",\"setup\":0}";
 }
 
 // --- Disk at startup (2026-10-19): every poll and tap of one boot names that boot -----------------------------------
@@ -4098,6 +4316,7 @@ int main(void) {
     RUN(test_register_sends_the_protocol_only_when_set);
     RUN(test_bad_code_does_not_store_anything);
     RUN(test_invalid_code_is_reported_as_bad_code_not_retry);
+    RUN(test_an_empty_code_is_bad_code_without_asking_the_server);
     RUN(test_other_400_is_still_retryable);
     RUN(test_register_backs_off_on_repeated_failure);
     RUN(test_a_blocked_digest_never_repolls_without_a_delay);
@@ -4134,6 +4353,13 @@ int main(void) {
     RUN(a_chunk_retried_after_a_half_sent_request_is_whole);
     RUN(upload_open_and_close_post_json);
     RUN(status_carries_the_up_key_until_heard);
+    RUN(wifi_ack_rides_every_poll_once_set);
+    RUN(wifi_version_is_read_from_the_poll_and_blanked);
+    RUN(fetch_wifi_gets_the_instruction);
+    RUN(a_204_counts_as_seeing_the_ack_it_answered);
+    RUN(status_carries_the_wifi_tail_while_owed);
+    RUN(a_real_report_carries_the_longest_wifi_tail);
+    RUN(a_full_body_leaves_the_wifi_tail_owed);
     RUN(post_reports_a_dead_link_and_a_dead_token);
     RUN(test_fetch_firmware_streams_the_body);
     RUN(test_fetch_firmware_incomplete_is_minus_one);

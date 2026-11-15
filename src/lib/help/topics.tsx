@@ -209,6 +209,41 @@ export const HELP_TOPICS = {
   // firmware i2c_scan.h (boot scan only, fw 1.17.0). Two reader chips: firmware nfc_reader.h (Si512 at 0x28 first,
   // then a PN532 at 0x24, fw 1.18.0). Tag kinds: nfc_reader_priv.h nfc_classify (MIFARE Classic 1K; NTAG21x from
   // fw 1.18.1); the "not a disk tag" / "not supported" lines are nfc_ui.c's.
+  // Wi-Fi networks (2026-11-15): board-settings.tsx > wifi-networks-setting.tsx, lib/wifi-networks.ts (texts, the
+  // 2-minute open TTL, WIFI_SETUP_MINUTES), api/devices/[id]/wifi. Firmware: wifi_ctl.h (ten minutes, two more after a
+  // check), main.c wifi_online_* (the AP beside the station; Save joins to check, saves, goes back; a disk in the
+  // drive refuses open and remove; no Remove for the network in use), config_store.h CONFIG_NETS_MAX 4,
+  // pairing-guide.ts (setup network name, password, address).
+  'wifi-networks': {
+    title: 'Wi-Fi networks',
+    short:
+      'A board keeps up to four Wi-Fi networks and joins whichever is there. Board settings lists them, removes one, and opens the board\u2019s setup page so you can add one.',
+    body: (
+      <>
+        <p>
+          <strong>The list.</strong> <em>Board settings</em> shows each saved network as <em>Connected now</em> or{' '}
+          <em>Saved</em>. Only the names reach this app; passwords stay on the board. <em>Remove</em> takes one off,
+          except the one in use and the last one left.
+        </p>
+        <p>
+          <strong>Adding one.</strong> Press <em>Add a network</em>: the board opens its setup page for 10 minutes
+          and stays online. Join its Wi-Fi <em>wifi-floppy-…</em> (password <em>wififloppy</em>) from a phone; the page
+          opens by itself, or go to <em>http://192.168.4.1</em>. Enter the name and password and press <em>Save</em>.
+          The board joins the network to check it, so its setup Wi-Fi goes away, usually for under a minute (up to
+          about 3 minutes if no saved network answers, then the board restarts); it then saves it and goes back.
+          Press <em>Done</em> there, or <em>Close setup page</em> here, when finished. Changing a saved
+          network&apos;s password works the same way.
+        </p>
+        <p>
+          Add a phone hotspot at home, before you need it: switch on its 2.4 GHz or compatibility mode first.
+        </p>
+        <GoodToKnow items={[
+          'Eject the disk first: the board doesn\u2019t change its saved networks while a disk is in it.',
+          'A board with older firmware says so here; update it to manage its networks.',
+        ]} />
+      </>
+    ),
+  },
   nfc: {
     title: 'NFC cards',
     short:
@@ -929,7 +964,7 @@ export type HelpGroup = { id: HelpGroupId; name: string; topics: readonly HelpTo
  * its section list and the header search's Help ranking.
  */
 export const HELP_GROUPS: readonly HelpGroup[] = [
-  { id: 'drives', name: 'Drives', topics: ['boards', 'display', 'second-drive', 'next-disk', 'nfc', 'write-protect'] },
+  { id: 'drives', name: 'Drives', topics: ['boards', 'wifi-networks', 'display', 'second-drive', 'next-disk', 'nfc', 'write-protect'] },
   { id: 'disks', name: 'Library and disks', topics: ['library', 'files', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image'] },
   { id: 'network', name: 'Amiga networking', topics: ['network', 'stash-net', 'amiga-disks', 'send', 'from-amiga'] },
   { id: 'server', name: 'This server', topics: ['preferences', 'sharing', 'remote', 'own-server', 'about'] },
