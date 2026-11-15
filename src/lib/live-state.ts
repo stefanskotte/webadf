@@ -99,6 +99,10 @@ export interface LiveStateRow {
   /** Send to Amiga (Task 8): the card's line reads the queue (sendVersion moves on every queue change) and the
    *  receiver state. Only whether a connected reading is fresh is tracked, not every rx refresh (R6). */
   sendVersion: number; sendRx: string | null; sendRxAt: Date | null;
+  /** Wi-Fi networks (2026-11-15): Board settings' section reads all of these, so each is a page input -- the list
+   *  and the setup page's state update without a reload when the board reports. */
+  wifiNets: string[] | null; wifiCurrent: number | null; wifiSetupUntil: Date | null;
+  wifiSeq: number; wifiAck: number | null; wifiResult: string | null;
   /** The computed next-disk verdict for this device, or null (multi-disk plan R3). */
   next: NextInfo | null;
 }
@@ -166,6 +170,8 @@ export function liveFingerprint(
         // Not the traffic counters (final review m5): they move on every heartbeat while frames flow, and
         // ruling 18 moves the fingerprint on state transitions only. The card renders whatever it holds.
         r.sendVersion, r.sendRx ?? '',
+        r.wifiNets === null ? '' : r.wifiNets.join(','), r.wifiCurrent ?? '', r.wifiSetupUntil?.toISOString() ?? '',
+        r.wifiSeq, r.wifiAck ?? '', r.wifiResult ?? '',
         receiverRunning({ rx: r.sendRx as Rx | null, rxAt: r.sendRxAt?.getTime() ?? null }, false, now) ? 'fresh' : 'stale',
         isOnline(r.lastSeenAt, now) ? '1' : '0',
         // Every offline card, not just 'stale' -- see the doc comment above.
@@ -252,6 +258,8 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       df1PickTitle: deviceTitle(df1Game),
       df1PickDiskNo: df1Disk.diskNo,
       sendVersion: devices.sendVersion, sendRx: devices.sendRx, sendRxAt: devices.sendRxAt,
+      wifiNets: devices.wifiNets, wifiCurrent: devices.wifiCurrent, wifiSetupUntil: devices.wifiSetupUntil,
+      wifiSeq: devices.wifiSeq, wifiAck: devices.wifiAck, wifiResult: devices.wifiResult,
     })
     .from(devices)
     // Org-scoped on both sides of both joins: without `disks.orgId`, a

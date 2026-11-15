@@ -161,6 +161,15 @@ export async function GET(request: Request) {
       ? Number(reqAckRaw)
       : 0;
 
+  // wifiAck (Wi-Fi networks, 2026-11-15, src/lib/wifi-networks.ts): the board's instruction cursor. ABSENT means a
+  // board that cannot manage its networks from here -- never woken for one, never sent `wifi`. Parsed like reqAck.
+  const wifiAckRaw = new URL(request.url).searchParams.get('wifiAck');
+  const wifiAck = wifiAckRaw === null
+    ? null
+    : /^\d+$/.test(wifiAckRaw) && Number.isSafeInteger(Number(wifiAckRaw))
+      ? Number(wifiAckRaw)
+      : 0;
+
   const deadline = Date.now() + HOLD_MS;
   for (;;) {
     // Cheap single-column read per tick. The three-table join runs only when
@@ -208,6 +217,8 @@ export async function GET(request: Request) {
     const xferMoved = xferAck !== null && tick.sendVersion !== xferAck;
     // INEQUALITY, as above: the board fetches GET /api/device/req when req.v moves past what it fetched.
     const reqMoved = reqAck !== null && tick.reqVersion !== reqAck;
+    // INEQUALITY, as above: the board fetches GET /api/device/wifi when wifi.v moves past what it handled.
+    const wifiMoved = wifiAck !== null && tick.wifiSeq !== wifiAck;
 
     // Network mode (spec 2026-10-12 §2, pre-flight I2): the driver disk goes out as `next` only once the
     // board has REPORTED running Network for the current setting -- never on the choice alone, which would
@@ -230,7 +241,7 @@ export async function GET(request: Request) {
     // device echoes it back as mountedVersion and the server reads that for an
     // upload's not_mounted/behind verdict (HANDOFF 4g), so bumping it could
     // strand an Amiga write that was mid-session. See spec 4.2.
-    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved || displayMoved || driveMoved || netNextMoved || df1Moved || xferMoved || reqMoved) {
+    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved || displayMoved || driveMoved || netNextMoved || df1Moved || xferMoved || reqMoved || wifiMoved) {
       const state = await readDesired(device.deviceId);
       if (!state) return notFound();
       // Multi-disk spec §3.3 / plan R1: the disk the board should preload.
@@ -325,6 +336,9 @@ export async function GET(request: Request) {
           ...(xferAck !== null ? { xfer: buildXfer(tick.sendVersion, tick.netAmigaIpLast) } : {}),
           // The request queue's cursor (NET: volumes): on every body to a board that sent reqAck.
           ...(reqAck !== null ? { req: buildReq(tick.reqVersion) } : {}),
+          // The Wi-Fi instruction cursor: on every body to a board that sent wifiAck. Only the cursor -- the
+          // instruction (a name) does not fit the board's poll buffer (device-limits.test.ts).
+          ...(wifiAck !== null ? { wifi: { v: tick.wifiSeq } } : {}),
           ...(nfc
             ? {
                 nfcWrite: {

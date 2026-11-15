@@ -43,6 +43,10 @@ typedef enum {
     // connection open. `out` is untouched. The caller decides what to do
     // with that -- main.c retries the configuration still in flash.
     PORTAL_RUN_IDLE_TIMEOUT,
+    // portal_service() only: nothing yet (the page is still open).
+    PORTAL_RUN_NONE,
+    // POST /done on a page opened on request (view->on_request): close it.
+    PORTAL_RUN_DONE,
 } portal_run_result_t;
 
 // Assumes cyw43_arch_init() AND cyw43_arch_enable_sta_mode() have already
@@ -106,5 +110,34 @@ portal_run_result_t portal_run(setup_form_t *out, const char *err,
 // previous session's sockets were still up (see its own comment), so
 // callers no longer need to track that ordering themselves.
 void portal_stop(void);
+
+// --- The same portal, opened on request while the board stays online (2026-11-15, wifi_ctl.h) ---
+//
+// portal_run() is portal_open() then portal_service() until it answers. The
+// web app's "Add a network" uses the two halves from main.c's poll loop: the
+// AP comes up beside the associated station (the chip runs both; cyw43's AP
+// follows the station's channel, net_radio_cyw43.c), the station stays lwIP's
+// default route (`keep_sta`), and the poll loop calls portal_service() on each
+// pass, which never blocks beyond a submit's or a Done's short page flush.
+//
+// Every socket the portal opens is bound to the AP's interface, whichever
+// mode: with the station up, a DHCP server on the station side would answer
+// the home network's own DISCOVERs.
+void portal_open(const char *err, portal_view_t *view, portal_forget_fn forget, void *ctx, bool keep_sta);
+// One step of portal_run()'s wait: the Remove handling, the diagnostic, the
+// inactivity bound (0 = none), a submit (SUBMITTED, `out` filled), a Done.
+portal_run_result_t portal_service(setup_form_t *out, uint32_t idle_timeout_ms);
+// The portal is up (portal_open ran and portal_stop has not).
+bool portal_is_open(void);
+// A request is waiting for portal_service() (a submit, a Remove, a Done): the
+// poll loop cuts its long poll short for it. One volatile load each.
+bool portal_event_pending(void);
+// An HTTP connection is in progress: a deadline should wait for it.
+bool portal_busy(void);
+// Changes the view the page renders from: `change(view, ctx)` runs under the
+// network lock and only while no page is between windows (as a Remove does),
+// so a page never mixes two views. False: a page was mid-send, nothing ran --
+// call again on the next pass. True also when the portal is not open (nothing to change).
+bool portal_view_changed(void (*change)(portal_view_t *view, void *ctx), void *ctx);
 
 #endif

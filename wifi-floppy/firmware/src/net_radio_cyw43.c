@@ -198,12 +198,38 @@ net_join_t net_radio_sta_connect(const char *ssid, const char *pass, uint32_t ti
     return r;
 }
 
+// The AP beside an associated station (2026-11-15, the setup page opened on
+// request): the chip has one radio, so the AP must sit on the station's
+// channel. cyw43_ll_wifi_ap_init sets the AP's channel with WLC_SET_CHANNEL on
+// the STATION's interface (cyw43_ll.c), so a different channel there would
+// pull the station off its network. Read the station's channel first
+// (WLC_GET_CHANNEL: channel_info_t, hw_channel first) and give the AP that.
+// Not associated (the setup page at power-on): the driver's default, as before.
 void net_radio_ap_start(const char *ssid, const char *pass) {
+    if (net_radio_sta_up()) {
+        uint8_t buf[12] = {0};
+        if (cyw43_ioctl(&cyw43_state, CYW43_IOCTL_GET_CHANNEL, sizeof buf, buf, CYW43_ITF_STA) == 0) {
+            const uint32_t ch = (uint32_t)buf[0] | (uint32_t)buf[1] << 8;
+            if (ch >= 1 && ch <= 14) cyw43_wifi_ap_set_channel(&cyw43_state, ch);
+        }
+    }
     cyw43_arch_enable_ap_mode(ssid, pass, CYW43_AUTH_WPA2_AES_PSK);
 }
 void net_radio_ap_stop(void) { cyw43_arch_disable_ap_mode(); }
 
 struct netif *net_radio_sta_netif(void) { return &cyw43_state.netif[CYW43_ITF_STA]; }
+struct netif *net_radio_ap_netif(void)  { return &cyw43_state.netif[CYW43_ITF_AP]; }
+
+bool net_radio_sta_up(void) {
+    return cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA) == CYW43_LINK_UP;
+}
+
+bool net_radio_sta_in_ap_subnet(void) {
+    cyw43_arch_lwip_begin();
+    const uint32_t ip = lwip_ntohl(ip4_addr_get_u32(netif_ip4_addr(&cyw43_state.netif[CYW43_ITF_STA])));
+    cyw43_arch_lwip_end();
+    return ip != 0 && (ip & 0xFFFFFF00u) == (CYW43_DEFAULT_IP_AP_ADDRESS & 0xFFFFFF00u);
+}
 
 void net_radio_mac(uint8_t mac[6]) { cyw43_wifi_get_mac(&cyw43_state, CYW43_ITF_STA, mac); }
 

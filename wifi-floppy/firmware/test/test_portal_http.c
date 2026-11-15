@@ -1,6 +1,7 @@
 #include "harness.h"
 #include "../src/portal_http.h"
 #include "../src/provisioning.h"
+#include <stdio.h>
 #include <string.h>
 
 static char out[8192];
@@ -609,6 +610,115 @@ static void test_a_remove_while_one_is_written_says_try_again(void) {
     CHECK_EQ_INT(res.action, PORTAL_ACT_FORGET);
 }
 
+
+// --- Opened on request from the web app, the board online (2026-11-15, wifi_ctl.h) ---
+
+static portal_view_t online_view(void) {
+    const char *names[] = { "Home", "Office", "Phone" };
+    portal_view_t v = view_of(3, names, 0, true, NULL);
+    v.on_request = true;
+    v.left_min = 9;
+    return v;
+}
+
+static void test_online_the_page_says_the_board_stays_online_and_when_it_closes(void) {
+    portal_view_t v = online_view();
+    REQV("GET", "/", NULL, NULL, &v);
+    CHECK(strstr(out, "The board is on \xe2\x80\x9cHome\xe2\x80\x9d and stays online while this page is open.") != NULL, out);
+    CHECK(strstr(out, "closes by itself in about 9 minutes, or when you press Done.") != NULL, "when it closes");
+    CHECK(strstr(out, "<span>Home <span class=\"tag\">(connected now)</span></span>") != NULL, "the network in use");
+    CHECK(strstr(out, "action=\"/done\"") != NULL, "a Done button");
+    v.left_min = 1;
+    REQV("GET", "/", NULL, NULL, &v);
+    CHECK(strstr(out, "in about 1 minute,") != NULL, "one minute, singular");
+}
+
+static void test_online_there_is_no_pairing_code_and_no_remove_for_the_network_in_use(void) {
+    portal_view_t v = online_view();
+    REQV("GET", "/", NULL, NULL, &v);
+    CHECK(strstr(out, "name=\"code\"") == NULL, "no pairing code field");
+    CHECK_EQ_INT(count(out, "action=\"/forget\""), 2);
+    CHECK(strstr(out, "name=\"ssid\" value=\"Home\"") == NULL, "no Remove for the network in use");
+    CHECK(strstr(out, "name=\"ssid\" value=\"Office\"") != NULL, "the others can go");
+    CHECK(strstr(out, "Save checks the network first") != NULL, "says Save joins it to check it");
+    CHECK(strstr(out, "wifi-floppy-0203 comes back with the result") != NULL, "names its own setup network");
+    // The boot portal is unchanged: the code, the Remove for every network, no Done.
+    v.on_request = false;
+    REQV("GET", "/", NULL, NULL, &v);
+    CHECK(strstr(out, "name=\"code\"") != NULL, "the boot page keeps the code");
+    CHECK_EQ_INT(count(out, "action=\"/forget\""), 3);
+    CHECK(strstr(out, "action=\"/done\"") == NULL, "no Done at boot");
+    CHECK(strstr(out, "(joined last)") != NULL, "and its own words");
+}
+
+static void test_online_a_submitted_code_is_dropped(void) {
+    portal_view_t v = online_view();
+    REQV("POST", "/save", "ssid=hotspot&pass=pw12345678&code=EVIL01", NULL, &v);
+    CHECK_EQ_INT(res.action, PORTAL_ACT_SUBMIT);
+    CHECK(strcmp(res.submitted.ssid, "hotspot") == 0, "the network");
+    CHECK_EQ_INT(res.submitted.code[0], '\0');   // the board is paired; a code there would re-pair it
+    CHECK(strstr(out, "<h1>Checking hotspot\xe2\x80\xa6</h1>") != NULL, out);
+    CHECK(strstr(out, "goes back to \xe2\x80\x9cHome\xe2\x80\x9d") != NULL, "says where it goes back to");
+    CHECK(strstr(out, "wifi-floppy-0203 comes back with the result") != NULL, "and what to rejoin");
+    CHECK(strstr(out, "<form") == NULL, "not the form");
+}
+
+static void test_online_the_checking_page_is_one_window_at_its_worst(void) {
+    portal_view_t v;
+    memset(&v, 0, sizeof v);
+    v.n = CONFIG_NETS_MAX;
+    for (int i = 0; i < CONFIG_NETS_MAX; i++) memset(v.ssid[i], '"', CONFIG_SSID_MAX);
+    v.last = 0; v.have_code = true; v.on_request = true;
+    char body[256];
+    char *b = body;
+    b += sprintf(b, "ssid=");
+    for (int i = 0; i < 32; i++) b += sprintf(b, "%%22");
+    sprintf(b, "&pass=pw12345678");
+    char small[2048];
+    int n = portal_request("POST", "/save", body, "AB:CD:EF:01:02:03", NULL, &v, small, sizeof small, &res);
+    CHECK_EQ_INT(res.action, PORTAL_ACT_SUBMIT);
+    CHECK(n > 0 && n < (int)sizeof small, "fits one 2 KB window: the AP comes down once the phone has it");
+    printf("  (worst-case checking page: %d bytes)\n", n);
+}
+
+static void test_online_done_closes_and_only_online(void) {
+    portal_view_t v = online_view();
+    REQV("POST", "/done", "", NULL, &v);
+    CHECK_EQ_INT(res.action, PORTAL_ACT_DONE);
+    CHECK(strstr(out, "<h1>Setup closed</h1>") != NULL, out);
+    v.on_request = false;
+    REQV("POST", "/done", "", NULL, &v);
+    CHECK_EQ_INT(res.action, PORTAL_ACT_NONE);
+    CHECK(strstr(out, "302") != NULL, "at boot there is nothing to close: back to the form");
+    REQV("POST", "/done", "", NULL, NULL);
+    CHECK_EQ_INT(res.action, PORTAL_ACT_NONE);
+}
+
+static void test_online_the_saved_notice_and_the_refusals(void) {
+    portal_view_t v = online_view();
+    v.err = PORTAL_NOTE_SAVED;
+    snprintf(v.notice_ssid, sizeof v.notice_ssid, "Ph<o>ne");
+    REQV("GET", "/", NULL, NULL, &v);
+    CHECK(strstr(out, "<div class=\"ok\">Saved \xe2\x80\x9cPh&lt;o&gt;ne\xe2\x80\x9d. The board joined it to check it, "
+                      "and is back on \xe2\x80\x9cHome\xe2\x80\x9d.</div>") != NULL, out);
+    CHECK(strstr(out, "class=\"err\"") == NULL, "a notice, not an error");
+    char text[512];
+    v.err = PORTAL_ERR_FORGET; v.forget = PROV_FORGET_IN_USE;
+    snprintf(v.forget_ssid, sizeof v.forget_ssid, "Home");
+    portal_error_text(NULL, &v, text, sizeof text);
+    CHECK(strcmp(text, "\xe2\x80\x9cHome\xe2\x80\x9d is the network the board is on now, so it stays. Remove it once "
+                       "the board is on another network.") == 0, text);
+    v.forget = PROV_FORGET_DISK_MOUNTED;
+    portal_error_text(NULL, &v, text, sizeof text);
+    CHECK(strstr(text, "Eject it in the web app, then try again.") != NULL, "online: eject in the web app");
+    CHECK(strstr(text, "Switch the board off") == NULL, "not the power cycle the boot page asks for");
+    v.err = PORTAL_ERR_SAVE; v.disk_mounted = true;
+    snprintf(v.prefill, sizeof v.prefill, "Phone");
+    portal_error_text(NULL, &v, text, sizeof text);
+    CHECK(strstr(text, "Joined \xe2\x80\x9cPhone\xe2\x80\x9d but could not save it: a disk is in the drive") != NULL, text);
+    CHECK(strstr(text, "Eject it in the web app") != NULL, text);
+}
+
 int main(void) {
     RUN(test_root_renders_the_form);
     RUN(test_page_has_no_external_references);
@@ -651,5 +761,11 @@ int main(void) {
     RUN(test_a_fixed_message_wins);
     RUN(test_the_disk_guard_is_named);
     RUN(test_a_remove_while_one_is_written_says_try_again);
+    RUN(test_online_the_page_says_the_board_stays_online_and_when_it_closes);
+    RUN(test_online_there_is_no_pairing_code_and_no_remove_for_the_network_in_use);
+    RUN(test_online_a_submitted_code_is_dropped);
+    RUN(test_online_the_checking_page_is_one_window_at_its_worst);
+    RUN(test_online_done_closes_and_only_online);
+    RUN(test_online_the_saved_notice_and_the_refusals);
     return REPORT();
 }

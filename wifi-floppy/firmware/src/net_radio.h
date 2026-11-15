@@ -47,6 +47,13 @@ int  net_radio_ap_stas(uint8_t (*macs)[6], int max);
 int  net_radio_ap_authorized(uint8_t (*macs)[6], int max);
 /** The station interface, to restore it as lwIP's default route after the AP. */
 struct netif *net_radio_sta_netif(void);
+/** The AP interface (valid between net_radio_ap_start and net_radio_ap_stop): the portal binds its sockets to it. */
+struct netif *net_radio_ap_netif(void);
+/** The station is associated and holds an address (the board is online). */
+bool net_radio_sta_up(void);
+/** The station's address is inside the AP's own /24 (192.168.4.0/24): both up at once would route one into the
+ *  other (wifi_ctl.h, WIFI_RES_SUBNET). */
+bool net_radio_sta_in_ap_subnet(void);
 /** The station MAC. */
 void net_radio_mac(uint8_t mac[6]);
 /** RSSI of the current association, dBm. */

@@ -135,6 +135,7 @@
 #include "net_radio.h"
 #include "wf_log.h"          // the AP diagnostic below
 #include "fw_rom.h"          // fw_rom_request_reboot(), see fatal_setup_failure()
+#include "secure_zero.h"
 #include "pico.h"            // pico/platform.h refuses to be the first SDK include
 #include "pico/platform.h"
 #include "pico/time.h"
@@ -210,6 +211,8 @@ static setup_form_t g_pending_cfg;
 // Set (background) once the phone has ACKed every byte of the submit's
 // confirmation page; portal_run() waits up to SUBMIT_FLUSH_MS for it.
 static volatile bool   g_submit_flushed;
+// POST /done (opened on request): published like g_submitted, after its page.
+static volatile bool   g_done;
 
 // Set once by portal_run() before any socket exists (so there is no
 // concurrent reader yet) and only read afterwards -- effectively
@@ -232,6 +235,8 @@ static portal_view_t *g_view;
 // flash write) runs in portal_run()'s foreground loop, never in a callback.
 static volatile bool g_forget_pending;
 static char          g_forget_ssid[CONFIG_SSID_MAX + 1];
+static portal_forget_fn g_forget;   // portal_open's: called from portal_service, never a callback
+static void            *g_forget_ctx;
 // Bumped (under the lock) whenever the view or g_current_err changes. A page
 // is sent in windows, each rendered afresh, and the Remove handling waits
 // until no page is between windows before it changes anything (review M1) --
@@ -620,8 +625,8 @@ static err_t handle_complete_request(http_conn_t *c) {
 
     // Before start_response(): it may write the whole page at once, and
     // try_send_more() decides there whether to close or to half-close and
-    // wait for the ACK (see write_done()).
-    c->is_submit = (res.action == PORTAL_ACT_SUBMIT);
+    // wait for the ACK (see write_done()). Done's page too: the AP goes next.
+    c->is_submit = (res.action == PORTAL_ACT_SUBMIT || res.action == PORTAL_ACT_DONE);
     err_t rc = start_response(c, c->resp, n);
 
     // Review round 1 (Important 2): publish only now that the reply has
@@ -635,6 +640,8 @@ static err_t handle_complete_request(http_conn_t *c) {
         g_pending_cfg = res.submitted; // write the payload...
         g_submitted = true;            // ...then publish it -- see the
                                         // file header comment.
+    } else if (res.action == PORTAL_ACT_DONE) {
+        g_done = true;
     } else if (res.action == PORTAL_ACT_FORGET) {
         // portal_request() answers "try again" (not a forget) while
         // forget_busy is set, so one never arrives while one is pending.
@@ -844,6 +851,10 @@ static void setup_dhcp(void) {
     net_radio_lock();
     struct udp_pcb *pcb = udp_new_ip_type(IPADDR_TYPE_V4);
     if (!pcb) { net_radio_unlock(); fatal_setup_failure("DHCP udp_new", ERR_MEM); }
+    // The AP's interface only (2026-11-15): with the station up beside it, an
+    // unbound server would hear -- and answer -- the home network's DHCP. And
+    // its broadcast replies leave by this interface, not the default route.
+    udp_bind_netif(pcb, net_radio_ap_netif());
     err_t e = udp_bind(pcb, IP_ADDR_ANY, DHCP_SERVER_PORT);
     if (e != ERR_OK) {
         udp_remove(pcb);
@@ -859,6 +870,7 @@ static void setup_dns(void) {
     net_radio_lock();
     struct udp_pcb *pcb = udp_new_ip_type(IPADDR_TYPE_V4);
     if (!pcb) { net_radio_unlock(); fatal_setup_failure("DNS udp_new", ERR_MEM); }
+    udp_bind_netif(pcb, net_radio_ap_netif());   // the AP's side only, as DHCP above
     err_t e = udp_bind(pcb, IP_ADDR_ANY, DNS_SERVER_PORT);
     if (e != ERR_OK) {
         udp_remove(pcb);
@@ -877,6 +889,9 @@ static void setup_http(void) {
     // Inherited by every accepted connection (SOF_INHERITED), and it is what
     // lets this bind skip the TIME_WAIT list -- see "Re-raising the portal".
     PORTAL_REUSEADDR(pcb);
+    // The AP's side only: the setup page must not be reachable from the home
+    // network while the board is on it (anyone there could add a network).
+    tcp_bind_netif(pcb, net_radio_ap_netif());
     err_t e = tcp_bind(pcb, IP_ADDR_ANY, HTTP_SERVER_PORT);
     if (e != ERR_OK) {
         tcp_close(pcb); // pcb is still CLOSED-state here (never listened,
@@ -991,9 +1006,7 @@ static void portal_diag_tick(void) {
     dg_n_leases = n;
 }
 
-portal_run_result_t portal_run(setup_form_t *out, const char *err,
-                               uint32_t idle_timeout_ms, portal_view_t *view,
-                               portal_forget_fn forget, void *ctx) {
+void portal_open(const char *err, portal_view_t *view, portal_forget_fn forget, void *ctx, bool keep_sta) {
     // Review round 1 (Important 1): a second portal_run() call without an
     // intervening portal_stop() used to hang the board silently, because
     // re-binding ports 67/53/80 while the previous pcbs were still bound
@@ -1017,6 +1030,15 @@ portal_run_result_t portal_run(setup_form_t *out, const char *err,
     snprintf(ssid, sizeof ssid, "wifi-floppy-%02X%02X", mac[4], mac[5]);
 
     net_radio_ap_start(ssid, PORTAL_AP_PASSWORD);
+    if (keep_sta) {
+        // Opened on request (2026-11-15): bringing the AP up made it lwIP's
+        // default route (cyw43_cb_tcpip_init), which would send the board's
+        // own traffic -- the server, the Amiga's -- into the setup network.
+        // The station stays the default; the AP keeps its own /24.
+        net_radio_lock();
+        netif_set_default(net_radio_sta_netif());
+        net_radio_unlock();
+    }
 
     // A previous portal session's leases must not linger into this one --
     // see dhcp_server.h's comment on dhcp_reset_leases().
@@ -1027,9 +1049,12 @@ portal_run_result_t portal_run(setup_form_t *out, const char *err,
     // render from it until then) -- main.c's lives in the same block.
     view->forget_busy = false;
     g_view = view;
+    g_forget = forget;
+    g_forget_ctx = ctx;
     g_forget_pending = false;
     g_submitted = false;
     g_submit_flushed = false;
+    g_done = false;
     note_client_activity();   // start the inactivity clock at "now", not at
                                // whenever the last portal session saw a
                                // packet -- otherwise a second call could
@@ -1038,51 +1063,93 @@ portal_run_result_t portal_run(setup_form_t *out, const char *err,
     setup_dhcp();
     setup_dns();
     setup_http();
-    wf_logf(WF_INFO, "portal: AP %s up (WPA2-AES PSK); station/DHCP changes are logged", ssid);
+    wf_logf(WF_INFO, "portal: AP %s up (WPA2-AES PSK)%s; station/DHCP changes are logged", ssid,
+            keep_sta ? ", beside the station" : "");
     portal_diag_reset();
+}
 
-    while (!g_submitted) {
-        sleep_ms(5); // plain, unlocked poll -- never wrap a wait loop in
-                      // cyw43_arch_lwip_begin()/end(): doing so would
-                      // block the very background context that has to
-                      // run for g_submitted to ever become true.
-        portal_diag_tick();   // DIAGNOSTIC, rate-limited inside
+bool portal_is_open(void) { return g_dhcp_pcb != NULL; }
+bool portal_event_pending(void) { return g_dhcp_pcb && (g_submitted || g_forget_pending || g_done); }
+bool portal_busy(void) { return any_http_conn_in_use(); }
 
-        // A Remove button was pressed (2026-11-15). The removal writes flash,
-        // so it runs here, unlocked, never in the lwIP callback that saw the
-        // request. The AP stays up: flash_safe_execute pauses this core's
-        // interrupts (and parks core0) for the erase and program, ~tens of
-        // ms, during which the radio chip keeps the AP beaconing on its own
-        // and the lwIP background work simply runs late. The page the
-        // phone returns to then shows the result.
-        if (g_forget_pending) {
-            // The whole removal holds the lock (review M1): no request is
-            // rendered while the list and the error change, and none starts
-            // until they have. It also waits while a page is between windows,
-            // so no page ever mixes the old list with the new. Holding the
-            // lock over the flash write is safe: the background work it keeps
-            // out is deferred (it runs at unlock), flash_safe_execute parks
-            // core0 and masks this core's interrupts anyway, and nothing on
-            // core0 needs this lock in the portal.
-            net_radio_lock();
-            bool done = false, tried = false;
-            char ssid[CONFIG_SSID_MAX + 1];   // for the log line after unlock
-            if (!any_page_mid_send()) {
-                tried = true;
-                memcpy(ssid, g_forget_ssid, sizeof ssid);
-                done = forget && forget(ctx, ssid, g_view);   // updates the view and its error
-                g_view->forget_busy = false;
-                g_current_err = NULL;   // the view's error (or none) now says what is true
-                g_view_gen++;
-                g_forget_pending = false;
-            }
-            net_radio_unlock();
-            if (tried) {
-                wf_logf(done ? WF_INFO : WF_WARN, "portal: remove %s: %s", ssid, done ? "done" : "refused");
-                note_client_activity();
-            }
+bool portal_view_changed(void (*change)(portal_view_t *view, void *ctx), void *ctx) {
+    if (!g_dhcp_pcb || !g_view) return true;
+    net_radio_lock();
+    // Between pages only (review M1's rule for a Remove): a page mid-send keeps
+    // its inputs, and the caller tries again on its next pass.
+    const bool ok = !any_page_mid_send();
+    if (ok) {
+        change(g_view, ctx);
+        g_current_err = NULL;   // the view says what is true now
+        g_view_gen++;
+    }
+    net_radio_unlock();
+    return ok;
+}
+
+// The page a submit or a Done answered with: give it a short, bounded moment to
+// reach the phone before the caller tears the AP down -- see write_done(). Not
+// waiting at all is what made Submit look like a stalled form.
+static void flush_last_page(const char *what) {
+    const uint32_t flush_t0 = to_ms_since_boot(get_absolute_time());
+    uint32_t flush_ms = 0;
+    while (!g_submit_flushed && flush_ms < SUBMIT_FLUSH_MS) {
+        sleep_ms(5);   // unlocked, same rule as the wait loop
+        flush_ms = to_ms_since_boot(get_absolute_time()) - flush_t0;
+    }
+    if (g_submit_flushed)
+        wf_logf(WF_INFO, "portal: %s page delivered (%lu ms)", what, (unsigned long)flush_ms);
+    else
+        wf_logf(WF_WARN, "portal: %s page not acknowledged within %u ms -- taking the AP down anyway",
+                what, (unsigned)SUBMIT_FLUSH_MS);
+}
+
+portal_run_result_t portal_service(setup_form_t *out, uint32_t idle_timeout_ms) {
+    if (!g_dhcp_pcb) return PORTAL_RUN_NONE;
+    portal_diag_tick();   // DIAGNOSTIC, rate-limited inside
+
+    // A Remove button was pressed (2026-11-15). The removal writes flash,
+    // so it runs here, unlocked, never in the lwIP callback that saw the
+    // request. The AP stays up: flash_safe_execute pauses this core's
+    // interrupts (and parks core0) for the erase and program, ~tens of
+    // ms, during which the radio chip keeps the AP beaconing on its own
+    // and the lwIP background work simply runs late. The page the
+    // phone returns to then shows the result.
+    if (g_forget_pending) {
+        // The whole removal holds the lock (review M1): no request is
+        // rendered while the list and the error change, and none starts
+        // until they have. It also waits while a page is between windows,
+        // so no page ever mixes the old list with the new. Holding the
+        // lock over the flash write is safe: the background work it keeps
+        // out is deferred (it runs at unlock), flash_safe_execute parks
+        // core0 and masks this core's interrupts anyway, and nothing on
+        // core0 needs this lock in the portal.
+        net_radio_lock();
+        bool done = false, tried = false;
+        char ssid[CONFIG_SSID_MAX + 1];   // for the log line after unlock
+        if (!any_page_mid_send()) {
+            tried = true;
+            memcpy(ssid, g_forget_ssid, sizeof ssid);
+            done = g_forget && g_forget(g_forget_ctx, ssid, g_view);   // updates the view and its error
+            g_view->forget_busy = false;
+            g_current_err = NULL;   // the view's error (or none) now says what is true
+            g_view_gen++;
+            g_forget_pending = false;
         }
+        net_radio_unlock();
+        if (tried) {
+            wf_logf(done ? WF_INFO : WF_WARN, "portal: remove %s: %s", ssid, done ? "done" : "refused");
+            note_client_activity();
+        }
+    }
 
+    if (g_done) {
+        flush_last_page("done");
+        g_done = false;
+        return PORTAL_RUN_DONE;
+    }
+
+    if (!g_submitted) {
         // Final-review Important 2: this wait used to be unbounded, which
         // made PROV_PORTAL a one-way door -- a board that lost a race with
         // its own router at boot (three 15 s attempts spent in the 45 s
@@ -1108,38 +1175,40 @@ portal_run_result_t portal_run(setup_form_t *out, const char *err,
         //      portal half a minute, not an eternity.
         //   3. g_submitted is re-read after the deadline check. A submit
         //      published by the background context between the top of this
-        //      loop and here still wins the race, so the outcome is never
+        //      step and here still wins the race, so the outcome is never
         //      "timed out, discarding a config that had already arrived".
-        if (idle_timeout_ms == 0) continue;    // caller wants no bound
+        if (idle_timeout_ms == 0) return PORTAL_RUN_NONE;    // caller wants no bound
         if (any_http_conn_in_use()) {
             note_client_activity();
-            continue;
+            return PORTAL_RUN_NONE;
         }
         uint32_t now = to_ms_since_boot(get_absolute_time());
-        if ((uint32_t)(now - g_last_activity_ms) < idle_timeout_ms) continue;
-        if (g_submitted) break;                // point 3 above
-        return PORTAL_RUN_IDLE_TIMEOUT;
+        if ((uint32_t)(now - g_last_activity_ms) < idle_timeout_ms) return PORTAL_RUN_NONE;
+        if (!g_submitted) return PORTAL_RUN_IDLE_TIMEOUT;   // point 3 above
     }
 
-    // The caller tears the AP down next. Give the "Joining..." page a short,
-    // bounded moment to reach the phone first -- see write_done(). Not
-    // waiting at all is what made Submit look like a stalled form.
-    const uint32_t flush_t0 = to_ms_since_boot(get_absolute_time());
-    uint32_t flush_ms = 0;
-    while (!g_submit_flushed && flush_ms < SUBMIT_FLUSH_MS) {
-        sleep_ms(5);   // unlocked, same rule as the wait loop above
-        flush_ms = to_ms_since_boot(get_absolute_time()) - flush_t0;
-    }
-    if (g_submit_flushed)
-        wf_logf(WF_INFO, "portal: submit page delivered (%lu ms)", (unsigned long)flush_ms);
-    else
-        wf_logf(WF_WARN, "portal: submit page not acknowledged within %u ms -- taking the AP down anyway",
-                (unsigned)SUBMIT_FLUSH_MS);
-
+    flush_last_page("submit");
     net_radio_lock();
     *out = g_pending_cfg;
+    secure_zero(&g_pending_cfg, sizeof g_pending_cfg);   // the password lives on in `out` only
+    g_submitted = false;
     net_radio_unlock();
     return PORTAL_RUN_SUBMITTED;
+}
+
+portal_run_result_t portal_run(setup_form_t *out, const char *err,
+                               uint32_t idle_timeout_ms, portal_view_t *view,
+                               portal_forget_fn forget, void *ctx) {
+    portal_open(err, view, forget, ctx, /*keep_sta=*/false);
+    for (;;) {
+        sleep_ms(5); // plain, unlocked poll -- never wrap a wait loop in
+                      // cyw43_arch_lwip_begin()/end(): doing so would
+                      // block the very background context that has to
+                      // run for g_submitted to ever become true.
+        portal_run_result_t r = portal_service(out, idle_timeout_ms);
+        if (r == PORTAL_RUN_SUBMITTED || r == PORTAL_RUN_IDLE_TIMEOUT) return r;
+        // DONE cannot happen here: /done is a route of the page opened on request only.
+    }
 }
 
 void portal_stop(void) {
@@ -1211,4 +1280,7 @@ void portal_stop(void) {
     net_radio_lock();
     netif_set_default(net_radio_sta_netif());
     net_radio_unlock();
+    g_submitted = false;
+    g_done = false;
+    g_forget_pending = false;
 }

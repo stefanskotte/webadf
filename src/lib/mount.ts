@@ -171,6 +171,8 @@ export interface PollTick {
   sendVersion: number;
   /** The NET: volumes request queue's cursor: compared against the board's ?reqAck=. */
   reqVersion: number;
+  /** The Wi-Fi instruction cursor (2026-11-15): compared against the board's ?wifiAck=. */
+  wifiSeq: number;
   /** The Amiga's last address (R17): sent as xfer.ip. */
   netAmigaIpLast: string | null;
   /** What DF1 holds and when the Amiga's driver last read: driverDiskFor's inputs (plan 2026-10-17 R16). */
@@ -202,6 +204,7 @@ export async function readPollTick(deviceId: string): Promise<PollTick | null> {
       df1Version: devices.df1Version,
       sendVersion: devices.sendVersion,
       reqVersion: devices.reqVersion,
+      wifiSeq: devices.wifiSeq,
       netAmigaIpLast: devices.netAmigaIpLast,
       df1Sha256: devices.df1Sha256,
       netDriverSeenAt: devices.netDriverSeenAt,
@@ -368,6 +371,8 @@ export async function recordStatus(
     df1Sha256?: string | null;
     /** Network mode's readings (fw 1.11.0+), Network mode only (spec 2026-10-12 §4). */
     net?: { driver?: number; amigaIp?: string; framesIn?: number; framesOut?: number };
+    /** Wi-Fi networks (2026-11-15): sent only when it changed -- see src/lib/wifi-networks.ts. */
+    wifi?: { nets: string[]; cur: number; ack: number; res: string | null; setup: number };
   },
 ): Promise<void> {
   const db = getDb();
@@ -481,6 +486,25 @@ export async function recordStatus(
   }
   // fw 1.19.0 (spec 2026-10-18 §6): stored when sent, never cleared by a report without it (it rides until heard).
   if (s.upKey !== undefined && /^[0-9a-f]{4}$/.test(s.upKey)) patch.upKey = s.upKey;
+  // Wi-Fi networks (2026-11-15, src/lib/wifi-networks.ts). NOT build-bound the playsHd way: the tail rides only when
+  // it changed, so a report without it from the build that last sent it says nothing new. A report naming ANOTHER
+  // build without it is a build that cannot (older, or a reverted trial): the list goes, and the section says the
+  // firmware needs updating. The result is kept for an ack already stored: a board that restarted acks a seq it
+  // handled before as 'none' (the server sends 'none' for a seq it heard), and must not wipe what it did.
+  if (s.wifi !== undefined) {
+    const n = s.wifi.nets.length;
+    patch.wifiNets = s.wifi.nets;
+    patch.wifiCurrent = s.wifi.cur >= 0 && s.wifi.cur < n ? s.wifi.cur : null;
+    patch.wifiSetupUntil = s.wifi.setup > 0 ? new Date(Date.now() + s.wifi.setup * 1000) : null;
+    patch.wifiResult = sql`case when ${devices.wifiAck} = ${s.wifi.ack} then ${devices.wifiResult} else ${s.wifi.res} end`;
+    patch.wifiAck = s.wifi.ack;
+    if (s.firmwareVersion !== undefined) patch.wifiFirmware = s.firmwareVersion;
+  } else if (s.firmwareVersion !== undefined) {
+    const other = sql`${devices.wifiFirmware} is distinct from ${s.firmwareVersion}`;
+    patch.wifiNets = sql`case when ${other} then null else ${devices.wifiNets} end`;
+    patch.wifiCurrent = sql`case when ${other} then null else ${devices.wifiCurrent} end`;
+    patch.wifiSetupUntil = sql`case when ${other} then null else ${devices.wifiSetupUntil} end`;
+  }
   if (s.i2c !== undefined) patch.i2cAddrs = s.i2c;
   else if (s.firmwareVersion !== undefined) patch.i2cAddrs = null;
   if (s.updateProtocol !== undefined) patch.updateProtocol = s.updateProtocol;

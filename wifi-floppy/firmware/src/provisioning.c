@@ -136,6 +136,29 @@ prov_forget_t prov_forget_network(provisioning_t *p, const char *ssid) {
     return PROV_FORGOT;
 }
 
+prov_forget_t prov_forget_other_network(provisioning_t *p, const char *ssid) {
+    int idx = p->have_config ? config_find_net(&p->cfg, ssid) : -1;
+    if (idx >= 0 && p->joined && idx == p->first) return PROV_FORGET_IN_USE;
+    return prov_forget_network(p, ssid);
+}
+
+prov_add_t prov_add_network(provisioning_t *p, const char *ssid, const char *pass) {
+    if (!p->have_config) return PROV_ADD_NO_CONFIG;
+    // The same order of checks the page uses, so the reason given is the real one.
+    if (config_find_net(&p->cfg, ssid) < 0 && p->cfg.n_nets >= CONFIG_NETS_MAX) return PROV_ADD_FULL;
+    if (psram_active_slot() != SLOT_NONE) return PROV_ADD_DISK_MOUNTED;
+    device_config_t edit = p->cfg;   // a local, as in prov_on_verified_submit
+    int idx = config_add_net(&edit, ssid, pass);
+    // Full was answered above; -1 here is a name or password the page would not have let through.
+    if (idx < 0) { secure_zero(&edit, sizeof edit); return PROV_ADD_WRITE_FAILED; }
+    // Page 0: the network the board is on (joined this session), as a Remove writes it.
+    if (p->joined && p->first >= 0 && p->first < edit.n_nets) edit.last = p->first;
+    if (!config_store_update(&edit)) { secure_zero(&edit, sizeof edit); return PROV_ADD_WRITE_FAILED; }
+    p->cfg = edit;   // indices of the networks already saved do not move (config_add_net appends)
+    secure_zero(&edit, sizeof edit);
+    return PROV_ADDED;
+}
+
 prov_state_t prov_on_pairing_code_rejected(provisioning_t *p) {
     // Terminal, per spec D-4b-4. Erasing the config also erases the token
     // (config_store_erase does both), which is what a re-pair needs: the

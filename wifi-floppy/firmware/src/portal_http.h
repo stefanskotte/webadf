@@ -17,6 +17,7 @@ typedef enum {
     PORTAL_ACT_NONE,
     PORTAL_ACT_SUBMIT,   // POST /save: a network to join (and maybe a code)
     PORTAL_ACT_FORGET,   // POST /forget: a saved network to remove
+    PORTAL_ACT_DONE,     // POST /done: close the setup page (opened on request only)
 } portal_action_t;
 
 typedef struct {
@@ -40,6 +41,7 @@ typedef enum {
     PORTAL_ERR_ROUND,    // every saved network failed: result[] in order[]
     PORTAL_ERR_SAVE,     // the submitted network (prefill) joined but was not saved
     PORTAL_ERR_FORGET,   // removing forget_ssid was refused: `forget`
+    PORTAL_NOTE_SAVED,   // not an error: notice_ssid was checked and saved (opened on request)
 } portal_err_t;
 
 typedef struct {
@@ -58,6 +60,15 @@ typedef struct {
     // A Remove is being written (portal_net.c): a second one is answered with
     // "try again" rather than accepted and silently dropped (review M3).
     bool          forget_busy;
+    // Opened from the web app while the board stays online (2026-11-15,
+    // wifi_ctl.h). The page then: says which network the board is on (ssid[last])
+    // and that it stays online; takes no pairing code (a submitted one is
+    // dropped -- the board is paired, and a code there would re-pair it); offers
+    // no Remove for the network in use; says Save checks the network first; and
+    // has a Done button (POST /done). left_min: minutes until it closes by itself.
+    bool          on_request;
+    unsigned      left_min;
+    char          notice_ssid[CONFIG_SSID_MAX + 1];   // PORTAL_NOTE_SAVED
 } portal_view_t;
 
 // The error the page would show for (err, view), as plain text: '\n' between

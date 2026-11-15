@@ -43,7 +43,8 @@
 // The poll's own request buffer (fw 1.22.0): &reqAck=4294967295&rxv=3&browse=1 adds 33 to the worst poll request
 // (435 with &boot=ffffffff&ota=1), 468, so 480. Only the poll carries it: the other DC_REQ_BUF_BYTES users keep 448.
 // &write=1 (fw 1.23.0) adds 8: 476, still inside 480.
-#define DC_POLL_REQ_BYTES 480
+// &wifiAck=4294967295 (Wi-Fi networks, 2026-11-15) adds 19: 495, so 512.
+#define DC_POLL_REQ_BYTES 512
 // DC_POLL_BODY_BYTES moved to device_client.h so a test can name it -- see
 // the note there. A budget a test cannot name is a budget checked by hand.
 // 512 was never under load before the image fetch: every other response on
@@ -1209,6 +1210,18 @@ static void dc_take_xfer(device_client_t *c, char *json) {
     if (json_str(obj, "ip", ip, sizeof ip) && dc_parse_ipv4(ip, &hint)) c->send_ip_hint = hint;
 }
 
+// Wi-Fi networks (2026-11-15): lifts `wifi` ({"v":N}) out of a 200 poll body and BLANKS it before any flat lookup,
+// as dc_take_req does. The server sends it on every body to a board that sends wifiAck; the instruction itself is
+// fetched (GET /api/device/wifi) -- the poll body has no room for a name (device-limits.test.ts).
+static void dc_take_wifi(device_client_t *c, char *json) {
+    static char obj[32];   // {"v":4294967295} is 16, room for a field added later; static: see the STACK note
+    if (!c->_wifi_on || !json_object(json, "wifi", obj, sizeof obj, true)) return;
+    uint32_t v;
+    if (!json_u32_strict(obj, "v", &v)) return;
+    c->wifi_version = v;
+    c->wifi_seen = true;
+}
+
 // NET: volumes (fw 1.22.0): lifts `req` ({"v":N}) out of a 200 poll body and BLANKS it before any flat lookup, as
 // dc_take_xfer does. The server sends it on every body to a board that sends reqAck.
 static void dc_take_req(device_client_t *c, char *json) {
@@ -1879,6 +1892,15 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         if (k > 0 && body_len + k + 1 < (int)sizeof body) { body_len += k; key_sent = true; }
         else body[body_len] = '\0';
     }
+    // Wi-Fi networks (2026-11-15): the "wifi" tail, rendered straight into the body, only while owed; left out
+    // (still owed) when it does not fit -- the lastBoot rule.
+    bool wifi_sent = false;
+    if (c->_wifi_on && c->_wifi_owed && c->_wifi_write) {
+        const int room = (int)sizeof body - body_len - 1;   // the closing brace
+        int k = room > 0 ? c->_wifi_write(c->_wifi_ctx, body + body_len, room) : -1;
+        if (k > 0 && k < room) { body_len += k; wifi_sent = true; }
+        else body[body_len] = '\0';
+    }
     if (body_len + 1 >= (int)sizeof body) return false;
     body[body_len++] = '}';
     body[body_len] = '\0';
@@ -1911,6 +1933,7 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
     if (accepted && boot_sent) c->_last_boot_owed = false;
     if (accepted && fail_sent) c->_nfc_fail_owed = false;   // core1 only: nothing set a newer one meanwhile
     if (accepted && key_sent) c->_up_key_owed = false;
+    if (accepted && wifi_sent) c->_wifi_owed = false;   // core1 only: nothing owed it again meanwhile
     if (accepted) {
         c->_net_sent_valid = true;
         c->_net_sent_on = net_sent.on;
@@ -2030,6 +2053,19 @@ int dc_fetch_send_queue(device_client_t *c, char *buf, int cap) {
 int dc_fetch_req(device_client_t *c, char *buf, int cap) {
     return dc_get_text(c, "/api/device/req", buf, cap, /*retryable=*/false);
 }
+// A plain read: asking again over a fresh socket changes nothing server-side.
+int dc_fetch_wifi(device_client_t *c, char *buf, int cap) {
+    return dc_get_text(c, "/api/device/wifi", buf, cap, /*retryable=*/true);
+}
+
+void dc_set_wifi(device_client_t *c, uint32_t ack, int (*write)(void *ctx, char *buf, int cap), void *ctx) {
+    c->_wifi_on = true;
+    c->_wifi_ack = ack;
+    c->_wifi_write = write;
+    c->_wifi_ctx = ctx;
+}
+void dc_wifi_owe(device_client_t *c) { c->_wifi_owed = true; }
+bool dc_wifi_owed(const device_client_t *c) { return c->_wifi_on && c->_wifi_owed; }
 
 int dc_fetch_send_chunk(device_client_t *c, const char *id, uint32_t off, uint32_t len, uint8_t *buf) {
     if (!buf || len == 0) return -1;
@@ -2184,8 +2220,9 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     // startup) 166.
     // &reqAck=4294967295&rxv=3&browse=1 (fw 1.22.0, the web app's requests to Transfer) adds 33 to the worst: 199.
     // &write=1 (fw 1.23.0, NET: volumes writes) adds 8: 207, so 216 (ruling N6; the_worst_case_poll_with_req_is_sent_whole).
+    // &wifiAck=4294967295 (Wi-Fi networks, 2026-11-15) adds 19: 226, so 240.
     // test_poll_url_carries_display_ack / _drive_ack / poll_url_carries_df1_ack / send_poll_params_only_once_set send them.
-    static char path[216];
+    static char path[240];
     int plen = snprintf(path, sizeof path, "/api/device/poll?since=%lu&nfcAck=%lu&displayAck=%lu",
              (unsigned long)c->since, (unsigned long)c->nfc_ack, (unsigned long)c->display_ack);
     if (c->_df1_capable && plen > 0 && plen < (int)sizeof path)
@@ -2205,6 +2242,10 @@ static dc_state_t dc_step_inner(device_client_t *c) {
             snprintf(path + plen, sizeof path - (size_t)plen, "&rxv=%u&browse=%u&write=%u",
                      (unsigned)c->_req_proto, c->_req_browse ? 1u : 0u, c->_req_write ? 1u : 0u);
     }
+    // Wi-Fi networks (2026-11-15): before the boot parameters, which stay last.
+    plen = (int)strnlen(path, sizeof path);
+    if (c->_wifi_on && plen > 0 && plen < (int)sizeof path)
+        snprintf(path + plen, sizeof path - (size_t)plen, "&wifiAck=%lu", (unsigned long)c->_wifi_ack);
     // Disk at startup (dc_set_boot): last, so every older parameter keeps its place.
     static char bootp[24];   // static: see the STACK note above
     dc_boot_params(c, bootp);
@@ -2323,7 +2364,8 @@ static dc_state_t dc_step_inner(device_client_t *c) {
             return dc_enter_backoff(c);
         }
         dc_take_xfer(c, body.buf);           // PaulaNET Phase 4: lifted and blanked first, like the objects below
-        dc_take_req(c, body.buf);            // NET: volumes: lifted and blanked first, like xfer
+        dc_take_req(c, body.buf);
+        dc_take_wifi(c, body.buf);           // Wi-Fi networks: lifted and blanked first, like req            // NET: volumes: lifted and blanked first, like xfer
         dc_take_second_drive(c, body.buf);   // lifted and BLANKED first: its keys must never shadow ours
         dc_take_df1(c, body.buf);            // lifted and BLANKED too: its sha256 must never be read as desired's
         dc_take_fw_fields(c, body.buf);

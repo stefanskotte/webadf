@@ -26,9 +26,25 @@ const base: LiveStateRow = {
   df1Sha256: null, netDriverSeenAt: null, netAmigaIp: null, netFramesIn: null, netFramesOut: null,
   secondDriveCapable: true, sel1Wired: true, df1Seen: false,
   serverCustom: null, serverTls: null,
+  wifiNets: null, wifiCurrent: null, wifiSetupUntil: null, wifiSeq: 0, wifiAck: null, wifiResult: null,
 };
 const other: LiveStateRow = { ...base, id: 'dev-b', name: 'Second' };
 const fp = (rows: LiveStateRow[], now = NOW) => liveFingerprint(rows, now, 0);
+
+describe('Wi-Fi networks (2026-11-15)', () => {
+  it('moves with the list, the network in use, the setup page and the request cursor and answer', () => {
+    const ready: LiveStateRow = { ...base, wifiNets: ['686f6d65'], wifiCurrent: 0 };
+    const a = fp([ready]);
+    expect(fp([base])).not.toBe(a);
+    expect(fp([{ ...ready, wifiNets: ['686f6d65', '7068'] }])).not.toBe(a);
+    expect(fp([{ ...ready, wifiCurrent: null }])).not.toBe(a);
+    expect(fp([{ ...ready, wifiSetupUntil: new Date(NOW + 600_000) }])).not.toBe(a);
+    expect(fp([{ ...ready, wifiSeq: 1 }])).not.toBe(a);
+    expect(fp([{ ...ready, wifiAck: 0 }])).not.toBe(a);
+    expect(fp([{ ...ready, wifiResult: 'ok' }])).not.toBe(a);
+    expect(fp([{ ...ready }])).toBe(a);
+  });
+});
 
 describe('the DF1 pick', () => {
   it('moves with the disk mounted into DF1 (spec 2026-10-14 §3.3)', () => {

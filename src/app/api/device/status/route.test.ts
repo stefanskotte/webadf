@@ -16,6 +16,7 @@ type RecordStatusArg = {
   mountedSha256?: string | null;
   i2c?: number[];
   lastBoot?: unknown; nfcFail?: string; upKey?: string;
+  wifi?: { nets: string[]; cur: number; ack: number; res: string | null; setup: number };
 };
 const recordStatus = vi.fn<(deviceId: string, s: RecordStatusArg) => Promise<void>>(
   async () => undefined,
@@ -234,6 +235,38 @@ describe('POST /api/device/status -- upKey (fw 1.19.0)', () => {
       recordStatus.mockClear();
       expect((await POST(post({ mountedSha256: null, upKey }))).status).toBe(204);
       expect(recordStatus.mock.calls[0]![1].upKey).toBeUndefined();
+    }
+  });
+});
+
+// Wi-Fi networks (2026-11-15, src/lib/wifi-networks.ts): telemetry, dropped whole when malformed -- never a 400.
+describe('POST /api/device/status -- wifi', () => {
+  const wifi = { nets: ['486f6d65', '70686f6e65'], cur: 0, ack: 3, res: 'ok', setup: 540 };
+  it('passes the tail through as the board sent it', async () => {
+    const { POST } = await import('./route');
+    expect((await POST(post({ mountedSha256: null, wifi }))).status).toBe(204);
+    expect(recordStatus.mock.calls[0]![1].wifi).toEqual(wifi);
+    await POST(post({ mountedSha256: null, wifi: { ...wifi, cur: -1, res: null, setup: 0, nets: [] } }));
+    expect(recordStatus.mock.calls[1]![1].wifi).toEqual({ nets: [], cur: -1, ack: 3, res: null, setup: 0 });
+  });
+  it('is undefined when absent (it rides only when it changed, and older firmware never sends it)', async () => {
+    const { POST } = await import('./route');
+    await POST(post({ mountedSha256: null }));
+    expect(recordStatus.mock.calls[0]![1].wifi).toBeUndefined();
+  });
+  it('drops a malformed tail whole but still records mountedSha256', async () => {
+    const { POST } = await import('./route');
+    for (const bad of [
+      { ...wifi, nets: ['Home'] }, { ...wifi, nets: ['41', '42', '43', '44', '45'] }, { ...wifi, cur: 4 },
+      { ...wifi, ack: -1 }, { ...wifi, ack: 4294967295 }, { ...wifi, setup: 3601 }, { ...wifi, nets: ['4100'] },
+      'wifi', null,
+    ]) {
+      recordStatus.mockClear();
+      const res = await POST(post({ mountedSha256: SHA, wifi: bad }));
+      expect(res.status).toBe(204);
+      const s = recordStatus.mock.calls[0]![1];
+      expect(s.wifi).toBeUndefined();
+      expect(s.mountedSha256).toBe(SHA);
     }
   });
 });

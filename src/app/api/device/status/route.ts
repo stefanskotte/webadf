@@ -6,6 +6,7 @@ import { updateStateSchema, updateProtocolSchema } from '@/lib/firmware-update-s
 import { i2cAddrsSchema } from '@/lib/i2c-scan';
 import { lastBootSchema } from '@/lib/last-boot';
 import { NFC_FAIL_RE } from '@/lib/nfc/fail';
+import { WIFI_HEX_RE, WIFI_NETS_MAX } from '@/lib/wifi-networks';
 
 export const maxDuration = 60;
 
@@ -93,6 +94,16 @@ const statusBody = z.object({
   }).optional().catch(undefined),
   // Board server override (fw 1.13.0): dropped when malformed -- the telemetry rule above.
   server: z.object({ custom: z.boolean(), tls: z.enum(['verify', 'noverify']) }).optional().catch(undefined),
+  // Wi-Fi networks (2026-11-15, src/lib/wifi-networks.ts): the saved names in hex (never a password), the one the
+  // board is on, its instruction ack and what it came to, and how long the setup page stays open. Sent only when it
+  // changed. Dropped whole when malformed -- the telemetry rule above.
+  wifi: z.object({
+    nets: z.array(z.string().regex(WIFI_HEX_RE)).max(WIFI_NETS_MAX),
+    cur: z.number().int().min(-1).max(WIFI_NETS_MAX - 1),
+    ack: z.number().int().min(0).max(2_147_483_647),
+    res: z.string().max(16).nullable(),
+    setup: z.number().int().min(0).max(3600),
+  }).optional().catch(undefined),
   error: z.string().max(500).nullable().optional(),
   psramFree: z.number().int().nonnegative().nullable().optional(),
   // Real WiFi RSSI ranges roughly -100..0 dBm, but a marginal link can report
@@ -176,6 +187,7 @@ export async function POST(request: Request) {
     df1Sha256: parsed.data.df1Sha256,
     net: parsed.data.net,
     server: parsed.data.server,
+    wifi: parsed.data.wifi,
   });
 
   return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });

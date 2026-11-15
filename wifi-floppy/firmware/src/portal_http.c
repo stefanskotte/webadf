@@ -279,6 +279,10 @@ static const char *reason_hint(net_join_t r) {
 // drive empty (a startup disk is the server's to put back, once online).
 #define DISK_WHY "a disk is in the drive, and the board does not write its settings while " \
                  "one is. Switch the board off and on, which empties the drive, then try again."
+// Opened from the web app, the board is online: the web app can eject.
+#define DISK_WHY_ONLINE "a disk is in the drive, and the board does not change its saved networks " \
+                        "while one is. Eject it in the web app, then try again."
+static const char *disk_why(const portal_view_t *v) { return v && v->on_request ? DISK_WHY_ONLINE : DISK_WHY; }
 
 static void sb_txt(sb_t *b, const char *s);
 static void sb_user(sb_t *b, const char *s);
@@ -325,7 +329,12 @@ static void msg_forget(sb_t *b, const portal_view_t *v) {
         sb_txt(b, RQ " is the only saved network. Add another network before removing it.");
         return;
     case PROV_FORGET_DISK_MOUNTED:   // review M6: say why
-        sb_txt(b, "Could not remove " LQ); sb_user(b, v->forget_ssid); sb_txt(b, RQ ": " DISK_WHY);
+        sb_txt(b, "Could not remove " LQ); sb_user(b, v->forget_ssid); sb_txt(b, RQ ": "); sb_txt(b, disk_why(v));
+        return;
+    case PROV_FORGET_IN_USE:
+        sb_txt(b, LQ); sb_user(b, v->forget_ssid);
+        sb_txt(b, RQ " is the network the board is on now, so it stays. Remove it once the board "
+                  "is on another network.");
         return;
     case PROV_FORGET_WRITE_FAILED:
     case PROV_FORGOT:
@@ -337,12 +346,22 @@ static void msg_forget(sb_t *b, const portal_view_t *v) {
 
 static void msg_save(sb_t *b, const portal_view_t *v) {
     sb_txt(b, "Joined " LQ); sb_user(b, v->prefill);
-    sb_txt(b, v->disk_mounted ? RQ " but could not save it: " DISK_WHY
-                              : RQ " but could not save it. Try again.");
+    if (v->disk_mounted) { sb_txt(b, RQ " but could not save it: "); sb_txt(b, disk_why(v)); }
+    else if (v->on_request && v->n >= CONFIG_NETS_MAX)
+        sb_txt(b, RQ " but could not save it: the board holds 4 networks. Remove one, then add it again.");
+    else sb_txt(b, RQ " but could not save it. Try again.");
+}
+
+// Opened on request: the network checked and saved. Not an error.
+static void msg_saved(sb_t *b, const portal_view_t *v) {
+    sb_txt(b, "Saved " LQ); sb_user(b, v->notice_ssid); sb_txt(b, RQ ". The board joined it to check it");
+    if (v->last >= 0 && v->last < v->n && v->last < CONFIG_NETS_MAX) {
+        sb_txt(b, ", and is back on " LQ); sb_user(b, v->ssid[v->last]); sb_txt(b, RQ ".");
+    } else sb_txt(b, ".");
 }
 
 static bool has_error(const char *err, const portal_view_t *v) {
-    return (err && *err) || (v && v->err != PORTAL_ERR_NONE);
+    return (err && *err) || (v && v->err != PORTAL_ERR_NONE && v->err != PORTAL_NOTE_SAVED);
 }
 
 static void err_words(sb_t *b, const char *err, const portal_view_t *v) {
@@ -353,6 +372,7 @@ static void err_words(sb_t *b, const char *err, const portal_view_t *v) {
     case PORTAL_ERR_ROUND:  msg_round(b, v); break;
     case PORTAL_ERR_SAVE:   msg_save(b, v); break;
     case PORTAL_ERR_FORGET: msg_forget(b, v); break;
+    case PORTAL_NOTE_SAVED: msg_saved(b, v); break;
     case PORTAL_ERR_NONE:   break;
     }
 }
@@ -406,8 +426,21 @@ static void sb_head(sb_t *b) {
     ".nets form{margin:0;}"
     ".nets button{padding:.3em .8em;font-size:.9em;}"
     ".tag{color:#666;font-size:.85em;}"
+    ".ok{background:#e3f4e3;border:1px solid #393;padding:.6em 1em;"
+    "margin-bottom:1em;color:#155015;border-radius:4px;}"
     "</style>"
     "</head><body>");
+}
+
+// The setup network's name, from the board's MAC as the page shows it
+// ("aa:bb:cc:dd:ee:ff"): portal_net.c names the AP "wifi-floppy-%02X%02X"
+// from the last two octets. "" for anything else.
+static void ap_name(const char *mac_str, char out[24]) {
+    out[0] = '\0';
+    if (!mac_str || strlen(mac_str) != 17) return;
+    snprintf(out, 24, "wifi-floppy-%c%c%c%c", mac_str[12], mac_str[13], mac_str[15], mac_str[16]);
+    for (char *p = out + 12; *p; p++)
+        if (*p >= 'a' && *p <= 'f') *p = (char)(*p - 'a' + 'A');
 }
 
 // The form. The submitted password is never rendered -- it is never read
@@ -418,26 +451,50 @@ static void render_form(sb_t *bp, const char *mac_str, const char *err,
     static const portal_view_t fresh = { .n = 0, .last = -1 };
     if (!view) view = &fresh;
     int n = view->n < 0 ? 0 : (view->n > CONFIG_NETS_MAX ? CONFIG_NETS_MAX : view->n);
+    const bool online = view->on_request;
+    const bool on_known = view->last >= 0 && view->last < n;
     sb_t b = *bp;
     sb_head(&b);
     sb_raw(&b, "<h1>WiFi Floppy Setup</h1><p class=\"mac\">Board ");
     sb_html(&b, mac_str, false);
     sb_raw(&b, "</p>");
-    if (has_error(err, view)) {
+    if (online) {
+        // Opened from the web app (wifi_ctl.h): the board is online, and says so.
+        sb_raw(&b, "<p>");
+        if (on_known) {
+            sb_raw(&b, "The board is on " LQ);
+            sb_html(&b, view->ssid[view->last], false);
+            sb_raw(&b, RQ " and stays online while this page is open.");
+        } else sb_raw(&b, "The board stays online while this page is open.");
+        if (view->left_min > 0)
+            sb_fmt(&b, " This setup network closes by itself in about %u minute%s, or when you press "
+                       "Done.", view->left_min, view->left_min == 1 ? "" : "s");
+        else sb_raw(&b, " This setup network closes by itself soon, or when you press Done.");
+        sb_raw(&b, "</p>");
+    }
+    if (view->err == PORTAL_NOTE_SAVED && !(err && *err)) {
+        sb_raw(&b, "<div class=\"ok\">");
+        err_words(&b, NULL, view);
+        sb_raw(&b, "</div>");
+    } else if (has_error(err, view)) {
         sb_raw(&b, "<div class=\"err\">");
         err_words(&b, err, view);
         sb_raw(&b, "</div>");
     }
     if (n > 0) {
-        sb_raw(&b, "<h2>Saved networks</h2>"
-                   "<p class=\"hint\">At power-on the board tries them in this order; once it "
-                   "has joined one, that one goes first.</p><ul class=\"nets\">");
+        sb_raw(&b, online ? "<h2>Saved networks</h2><ul class=\"nets\">"
+                          : "<h2>Saved networks</h2>"
+                            "<p class=\"hint\">At power-on the board tries them in this order; once it "
+                            "has joined one, that one goes first.</p><ul class=\"nets\">");
         for (int i = 0; i < n; i++) {
             sb_raw(&b, "<li><span>");
             sb_html(&b, view->ssid[i], false);
-            if (i == view->last) sb_raw(&b, " <span class=\"tag\">(joined last)</span>");
+            if (i == view->last)
+                sb_raw(&b, online ? " <span class=\"tag\">(connected now)</span>"
+                                  : " <span class=\"tag\">(joined last)</span>");
             sb_raw(&b, "</span>");
-            if (n > 1) {
+            // Online, the network in use stays (PROV_FORGET_IN_USE): no button only to be refused.
+            if (n > 1 && !(online && i == view->last)) {
                 sb_raw(&b, "<form method=\"POST\" action=\"/forget\">"
                            "<input type=\"hidden\" name=\"ssid\" value=\"");
                 sb_html(&b, view->ssid[i], false);
@@ -466,7 +523,30 @@ static void render_form(sb_t *bp, const char *mac_str, const char *err,
     "minlength=\"8\" required>"
     "<p class=\"hint\">Required: open networks with no password are not "
     "supported. The board uses 2.4 GHz WiFi only, with WPA2 (not WPA3-only). "
-    "Networks with a sign-in page, as in hotels and venues, do not work.</p>"
+    "Networks with a sign-in page, as in hotels and venues, do not work.</p>");
+    if (online) {
+        // No pairing code: the board is paired, and stays so.
+        char ap[24];
+        ap_name(mac_str, ap);
+        sb_raw(&b, "<p class=\"hint\">Save checks the network first: the board joins it, so this "
+                   "setup network goes away for up to a minute. Then the board goes back");
+        if (on_known) {
+            sb_raw(&b, " to " LQ);
+            sb_html(&b, view->ssid[view->last], false);
+            sb_raw(&b, RQ);
+        }
+        sb_raw(&b, ", and ");
+        sb_html(&b, ap[0] ? ap : "this setup network", false);
+        sb_raw(&b, " comes back with the result.</p>"
+                   "<button type=\"submit\">Save</button>"
+                   "</form>"
+                   "<form method=\"POST\" action=\"/done\" style=\"margin-top:1.5em\">"
+                   "<button type=\"submit\">Done</button></form>"
+                   "</body></html>");
+        *bp = b;
+        return;
+    }
+    sb_raw(&b,
     "<label for=\"code\">Pairing code</label>"
     "<input type=\"text\" id=\"code\" name=\"code\" maxlength=\"16\" "
     "autocapitalize=\"off\" autocorrect=\"off\"");
@@ -497,7 +577,32 @@ static void render_form(sb_t *bp, const char *mac_str, const char *err,
 // free text, so it goes in only escaped; the password and the pairing code
 // are still never echoed. portal_net.c holds the AP up until the phone has
 // ACKed this page (bounded), so it is actually seen.
-static void render_accepted(sb_t *b, const char *mac_str, const char *ssid) {
+static void render_accepted(sb_t *b, const char *mac_str, const char *ssid, const portal_view_t *view) {
+    if (view && view->on_request) {
+        // Opened from the web app: the board checks the network, then goes back.
+        char ap[24];
+        ap_name(mac_str, ap);
+        const bool on_known = view->last >= 0 && view->last < view->n && view->last < CONFIG_NETS_MAX;
+        sb_head(b);
+        sb_raw(b, "<h1>Checking ");
+        sb_html(b, ssid, false);
+        sb_raw(b, "\xe2\x80\xa6</h1><p class=\"mac\">Board ");
+        sb_html(b, mac_str, false);
+        sb_raw(b, "</p><p>This setup network now goes away for up to a minute while the board "
+                  "tries " LQ);
+        sb_html(b, ssid, false);
+        sb_raw(b, RQ ". If it works, the board saves it.</p><p>Then the board goes back");
+        if (on_known) {
+            sb_raw(b, " to " LQ);
+            sb_html(b, view->ssid[view->last], false);
+            sb_raw(b, RQ);
+        }
+        sb_raw(b, ", and ");
+        sb_html(b, ap[0] ? ap : "this setup network", false);
+        sb_raw(b, " comes back with the result: join it again to see it, or look in the web app.</p>"
+                  "</body></html>");
+        return;
+    }
     sb_head(b);
     sb_raw(b, "<h1>Joining ");
     sb_html(b, ssid, false);
@@ -531,6 +636,16 @@ static void render_forget_busy(sb_t *b) {
     sb_raw(b, "<h1>Still removing another network</h1>"
     "<p>Wait a moment, then go back and press Remove again.</p>"
     "<p><a href=\"/\">Back to setup</a></p>"
+    "</body></html>");
+}
+
+// POST /done (opened on request only): the setup network goes off once the
+// phone has this page (portal_net.c waits for it, as for a submit).
+static void render_done(sb_t *b) {
+    sb_head(b);
+    sb_raw(b, "<h1>Setup closed</h1>"
+    "<p>This setup network is now off, and the board stays on its own network. Your phone goes "
+    "back to its usual WiFi.</p>"
     "</body></html>");
 }
 
@@ -574,6 +689,8 @@ static void route(sb_t *b, const char *method, const char *path, const char *bod
             // checks the same two things as a backstop). The form comes back
             // with the name kept, so only the missing part has to be typed.
             setup_form_t *f = &res->submitted;
+            // Opened on request: the board is paired; a code here would re-pair it.
+            if (view && view->on_request) memset(f->code, 0, sizeof f->code);
             const char *why = NULL;
             char full_msg[96];
             if (f->ssid[0] == '\0') {
@@ -598,7 +715,7 @@ static void route(sb_t *b, const char *method, const char *path, const char *bod
             // The submit worked: a distinct page, and `err` -- which
             // describes the attempt BEFORE this one -- is not passed on.
             // See render_accepted()'s comment.
-            render_accepted(b, mac_str, res->submitted.ssid);
+            render_accepted(b, mac_str, res->submitted.ssid, view);
             return;
         }
         // Not a submit: the form comes back. A caller-supplied `err` still
@@ -630,6 +747,12 @@ static void route(sb_t *b, const char *method, const char *path, const char *bod
         memcpy(res->forget, f.ssid, sizeof res->forget);
         res->action = PORTAL_ACT_FORGET;
         render_forgetting(b, res->forget);
+        return;
+    }
+
+    if (strcmp(path, "/done") == 0 && is_post && view && view->on_request) {
+        res->action = PORTAL_ACT_DONE;
+        render_done(b);
         return;
     }
 

@@ -267,6 +267,38 @@ export const devices = pgTable('devices', {
   // "Trusted board AB12" so the person can compare them. null until a 1.19.0 board reports it.
   upKey: text('up_key'),
 
+  // --- Wi-Fi networks from the web app (2026-11-15, migration 0060; src/lib/wifi-networks.ts) ---
+  /**
+   * The board's saved network names, as it last reported them (the status report's `wifi` tail): each name's octets
+   * in lowercase hex, in saved order -- never a password. Null = this firmware does not report them (older, or a
+   * build without the tail; cleared when a report names a different firmware without it).
+   */
+  wifiNets: text('wifi_nets').array(),
+  /** The index in wifiNets of the network the board is on now; null = none or not known. */
+  wifiCurrent: integer('wifi_current'),
+  /** The firmwareVersion of the report that last carried the tail: a later report naming another build without it
+   *  means that build cannot report (the tail rides only when it changed, so its absence alone says nothing). */
+  wifiFirmware: text('wifi_firmware'),
+  /** The board's setup page opened on request stays open until then; null = closed (as last reported). */
+  wifiSetupUntil: timestamp('wifi_setup_until', { withTimezone: true }),
+  /**
+   * The instruction CURSOR: bumped on every request (open the setup page, close it, remove a network, or cancel one
+   * still waiting -- op 'none'). The poll carries wifi.v; the board fetches GET /api/device/wifi when it moved past
+   * its ack, handles the seq once, and acks it (?wifiAck= on the poll, `ack` in the tail).
+   */
+  wifiSeq: integer('wifi_seq').notNull().default(0),
+  /** 'none' | 'open' | 'close' | 'remove': what wifiSeq asks. */
+  wifiOp: text('wifi_op').notNull().default('none'),
+  /** remove: the network's name in hex (one of wifiNets). */
+  wifiOpSsid: text('wifi_op_ssid'),
+  /** When wifiSeq was asked: an open older than WIFI_OPEN_TTL_MS goes out as 'none'. */
+  wifiOpAt: timestamp('wifi_op_at', { withTimezone: true }),
+  /** The board's ack as last reported; null = never. */
+  wifiAck: integer('wifi_ack'),
+  /** What wifiAck came to on the board: 'ok' | 'none' | 'disk' | 'only_one' | 'in_use' | 'not_saved' | 'write_failed'
+   *  | 'subnet' | 'unknown'; null = nothing handled since it started. */
+  wifiResult: text('wifi_result'),
+
   /**
    * 'queued' | 'downloading' | 'applying' | 'failed', as the device reports.
    * Null means nothing in flight. It is telemetry for the operator -- it no

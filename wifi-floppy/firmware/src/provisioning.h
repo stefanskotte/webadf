@@ -66,7 +66,17 @@ typedef enum {
     PROV_FORGET_ONLY_ONE,       // the only saved network stays
     PROV_FORGET_DISK_MOUNTED,   // config_store's guard: no flash write while a disk is in the drive
     PROV_FORGET_WRITE_FAILED,   // the flash write itself failed
+    PROV_FORGET_IN_USE,         // the board is on that network now (asked from the web app or its page while online)
 } prov_forget_t;
+
+// What adding a network while the board is online came to (prov_add_network).
+typedef enum {
+    PROV_ADDED = 0,
+    PROV_ADD_FULL,              // CONFIG_NETS_MAX saved and the name is new
+    PROV_ADD_DISK_MOUNTED,      // config_store's guard
+    PROV_ADD_WRITE_FAILED,      // the flash write itself failed
+    PROV_ADD_NO_CONFIG,         // nothing stored: only the setup page at power-on adds a first network
+} prov_add_t;
 
 // Decide the starting state from what is stored. Touches no radio.
 void prov_init(provisioning_t *p);
@@ -114,6 +124,21 @@ bool prov_on_verified_submit(provisioning_t *p, const setup_form_t *f);
 // nothing to join, and adding first then removing is the way to replace it.
 // Nothing changes, in RAM or flash, unless it returns PROV_FORGOT.
 prov_forget_t prov_forget_network(provisioning_t *p, const char *ssid);
+
+// Wi-Fi networks from the web app (2026-11-15): the board is online, on the
+// network it joined last (`first`, `joined`). Removing that one is refused
+// (PROV_FORGET_IN_USE) -- it is the network the board needs right now, and a
+// person moving house adds the new one, which the board is then on, before
+// removing the old. Otherwise exactly prov_forget_network.
+prov_forget_t prov_forget_other_network(provisioning_t *p, const char *ssid);
+
+// The setup page opened on request (the board stays online): a network that
+// was just verified by joining it is saved -- appended, or an SSID already
+// saved has its password replaced in place -- with the token KEPT (no pairing
+// code is ever taken on that page). `first` is NOT moved: the board goes back
+// to the network it was on, and page 0 of the record stays that one. Nothing
+// changes, in RAM or flash, unless it returns PROV_ADDED.
+prov_add_t prov_add_network(provisioning_t *p, const char *ssid, const char *pass);
 
 // Registration came back 400 invalid_or_used_code. Spec D-4b-4: terminal,
 // not retryable. A pairing code is single-use with a 10-minute TTL, and 4b

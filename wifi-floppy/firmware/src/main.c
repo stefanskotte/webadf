@@ -35,6 +35,7 @@
 #include "override_store.h"    // the server override (1.13.0): where this boot talks to
 #include "serial_cmd.h"        //   and the "wf server" console that changes it
 #include "portal_net.h"
+#include "wifi_ctl.h"          // Wi-Fi networks from the web app (2026-11-15)
 #include "lwip/netif.h"   // default_route_str(): netif_default, see portal_stop()
 #include <stdio.h>
 #include "wf_log.h"
@@ -1150,6 +1151,11 @@ static bool g_poll_held;
 static amiga_send_t *g_poll_send;   // the engine, once core1 has one
 #endif
 
+// Wi-Fi networks from the web app (2026-11-15, wifi_ctl.h): the setup page's
+// open window. Core1 only. Declared here for poll_wake_pending's sake; the rest
+// is with the provisioning code below.
+static wifi_window_t g_wifi_win;
+
 /** core1, from inside tls_read's wait while a poll is held: cut the poll
  *  short when a tap is waiting OR a write has landed since the poll began,
  *  so a save made during a held poll is uploaded at once instead of when
@@ -1158,6 +1164,9 @@ static bool poll_wake_pending(void *ctx) {
 #if WF_PNET_L2
     if (g_poll_held && g_poll_send && as_reconnect_due(g_poll_send)) return true;
 #endif
+    // The setup page opened on request: a Save, a Remove or a Done is waiting for core1 (portal_service). Not the
+    // window's deadline: a poll ends within 25 s anyway, and a page still being sent must hold the close off.
+    if (g_poll_held && portal_event_pending()) return true;
     return poll_should_yield(nfc_event_pending(ctx), g_write_last_ms, g_poll_write_mark);
 }
 
@@ -1757,6 +1766,222 @@ static void release_kept_connection(void) {
     if (t && t->abandon) t->abandon(t);
 }
 
+// ---------------------------------------------------------------- Wi-Fi networks from the web app (2026-11-15)
+//
+// Board settings > Wi-Fi networks (wifi_ctl.h has the wire). Everything here
+// runs on core1, from the poll loop, between requests:
+//   * the "wifi" status tail: the saved names (never a password), the network
+//     the board is on, the last instruction handled and what it came to, and
+//     how long the setup page stays open;
+//   * the instructions: open the setup page, close it, remove a network;
+//   * the setup page opened on request: the AP beside the station, which
+//     stays associated and the default route, so the board stays online and
+//     the web app can show "open until HH:MM" and Close. Save on that page
+//     checks the network by joining it (the station has one network at a
+//     time), saves it if it worked, goes back to the network it was on, and
+//     brings the page back with the result (wifi_check_run). If no saved
+//     network answers after that, the board restarts into its normal start:
+//     the same rounds, then the setup page at power-on -- unless Amiga writes
+//     wait to be uploaded, which are kept (it goes on trying instead).
+//
+// The page's view, at power-on or on request (never both at once). Static: the
+// online page lives across poll-loop passes; the power-on path used to keep a
+// local of its own.
+static portal_view_t g_portal_view;
+static uint32_t   g_wifi_ack;          // the last instruction seq handled (RAM: a re-pair starts at 0)
+static wifi_res_t g_wifi_res;          // what it came to
+static bool       g_wifi_owe;          // the tail changed where no client is in reach: owed at the next step
+static bool       g_wifi_names_owed;   // the open page's list is stale (a page was mid-send): retried each step
+static uint32_t   g_wifi_retry_at;     // a failed instruction fetch waits until then
+
+// The names and where the board is, for the page opened on request. Keeps the note (err and its fields).
+static void online_view_names(portal_view_t *v) {
+    v->n = prov.have_config ? prov.cfg.n_nets : 0;
+    memset(v->ssid, 0, sizeof v->ssid);
+    for (int i = 0; i < v->n && i < CONFIG_NETS_MAX; i++) memcpy(v->ssid[i], prov.cfg.net[i].ssid, sizeof v->ssid[i]);
+    v->last = prov.joined ? prov.first : -1;
+    v->have_code = true;          // paired: the online page takes no code (portal_http.c drops one)
+    v->on_request = true;
+    v->left_min = wifi_window_left_min(&g_wifi_win, clock_ms());
+}
+static void online_view_reset(portal_view_t *v) {
+    memset(v, 0, sizeof *v);
+    online_view_names(v);
+}
+static void online_view_names_cb(portal_view_t *v, void *ctx) { (void)ctx; online_view_names(v); }
+static void online_view_minutes_cb(portal_view_t *v, void *ctx) { v->left_min = *(const unsigned *)ctx; }
+
+// The online page's Remove: the network in use stays (prov_forget_other_network). From portal_service.
+static bool online_forget(void *ctx, const char *ssid, portal_view_t *view) {
+    (void)ctx;
+    prov_forget_t why = prov_forget_other_network(&prov, ssid);
+    online_view_reset(view);
+    if (why != PROV_FORGOT) {
+        view->err = PORTAL_ERR_FORGET;
+        view->forget = why;
+        memcpy(view->forget_ssid, ssid, sizeof view->forget_ssid);
+    }
+    g_wifi_owe = true;
+    return why == PROV_FORGOT;
+}
+
+// The status tail, rendered by dc_report_status straight into the body.
+static int wifi_tail_write(void *ctx, char *buf, int cap) {
+    (void)ctx;
+    const wifi_report_t r = { prov.have_config ? &prov.cfg : NULL, prov.joined ? prov.first : -1, g_wifi_ack,
+                              g_wifi_res, wifi_window_left_ms(&g_wifi_win, clock_ms()) / 1000u };
+    return wifi_report_json(&r, buf, cap);
+}
+
+static void wifi_online_close(const char *why) {
+    if (portal_is_open()) {
+        portal_stop();
+        wf_logf(WF_INFO, "wifi: setup page closed (%s)", why);
+    }
+    if (g_wifi_win.open) {
+        wifi_window_close(&g_wifi_win);
+        g_wifi_owe = true;
+    }
+}
+
+// One join attempt while online, with the heartbeat either side: a join is up
+// to 15 s, and core1 supervision judges the poll loop (core1_wd.h).
+static net_join_t online_join(void *ctx, const char *ssid, const char *pass) {
+    (void)ctx;
+    bt_hw_tick(1);
+    net_join_t r = net_radio_sta_connect(ssid, pass, 15000);
+    bt_hw_tick(1);
+    wf_logf(r == NET_JOIN_OK ? WF_INFO : WF_WARN, "wifi: join %s: %d", ssid, (int)r);
+    return r;
+}
+
+// Save on the page opened on request.
+static void __attribute__((noinline)) wifi_online_check(setup_form_t *f, uploader_t *up) {
+    portal_stop();                 // the AP goes: the station is about to change networks
+    release_kept_connection();     // its socket belongs to the network being left
+    wf_logf(WF_INFO, "wifi: checking %s (leaving %s for it)", f->ssid,
+            prov.joined ? prov.cfg.net[prov.first].ssid : "no network");
+    const wifi_check_ops_t ops = { online_join, NULL };
+    wifi_check_t out;
+    wifi_check_run(&prov, f->ssid, f->pass, &ops, &out);
+    char name[CONFIG_SSID_MAX + 1];
+    memcpy(name, f->ssid, sizeof name);
+    secure_zero(f, sizeof *f);     // the password was needed for the join and the save only
+    g_wifi_owe = true;
+    wf_logf(WF_INFO, "wifi: %s: join %d, save %d (%s), back on %d after %d attempts", name, (int)out.join,
+            out.tried_save ? (int)out.saved : -1, out.tried_save ? "tried" : "not tried", out.back_on, out.attempts);
+    while (out.back_on < 0) {
+        if (!up_has_work(up)) {
+            // Every saved network failed three rounds: the normal start takes over.
+            wf_logf(WF_ERR, "wifi: no saved network answers -- restarting into the normal start");
+            bt_hw_mark(1, BT1_WIFI);   // not the poll loop any more: core1 supervision stands down
+            fw_rom_request_reboot(0);
+            for (;;) sleep_ms(1000);
+        }
+        // Amiga writes wait to be uploaded: a restart would lose them. Keep trying.
+        wf_logf(WF_WARN, "wifi: no saved network answers, Amiga writes waiting -- trying again");
+        out.back_on = wifi_rejoin_run(&prov, prov.first, &ops, &out.attempts);
+    }
+    // Back on a network: the page comes back with the result, for at least two minutes.
+    if (net_radio_sta_in_ap_subnet()) {   // the network it ended on clashes with the setup network's addresses
+        wf_logf(WF_WARN, "wifi: this network uses 192.168.4.x -- the setup page stays closed");
+        wifi_window_close(&g_wifi_win);
+        return;
+    }
+    online_view_reset(&g_portal_view);
+    if (out.join != NET_JOIN_OK) {
+        g_portal_view.err = PORTAL_ERR_JOIN;
+        g_portal_view.join = out.join;
+        memcpy(g_portal_view.prefill, name, sizeof g_portal_view.prefill);
+    } else if (out.saved != PROV_ADDED) {
+        g_portal_view.err = PORTAL_ERR_SAVE;
+        g_portal_view.disk_mounted = out.saved == PROV_ADD_DISK_MOUNTED;
+        memcpy(g_portal_view.prefill, name, sizeof g_portal_view.prefill);
+    } else {
+        g_portal_view.err = PORTAL_NOTE_SAVED;
+        memcpy(g_portal_view.notice_ssid, name, sizeof g_portal_view.notice_ssid);
+    }
+    if (!g_wifi_win.open) wifi_window_open(&g_wifi_win, clock_ms(), WIFI_SETUP_AFTER_CHECK_MS);
+    else wifi_window_at_least(&g_wifi_win, clock_ms(), WIFI_SETUP_AFTER_CHECK_MS);
+    g_portal_view.left_min = wifi_window_left_min(&g_wifi_win, clock_ms());
+    portal_open(NULL, &g_portal_view, online_forget, NULL, /*keep_sta=*/true);
+}
+
+static void wifi_handle(const wifi_cmd_t *cmd) {
+    wifi_res_t res = WIFI_RES_OK;
+    switch (cmd->op) {
+    case WIFI_OP_NONE:    res = WIFI_RES_IDLE; break;
+    case WIFI_OP_UNKNOWN: res = WIFI_RES_UNKNOWN; break;
+    case WIFI_OP_OPEN:
+        res = wifi_open_check(psram_active_slot() != SLOT_NONE, net_radio_sta_in_ap_subnet());
+        if (res != WIFI_RES_OK) break;
+        // A re-request while open starts the ten minutes again; the page keeps what it says.
+        wifi_window_open(&g_wifi_win, clock_ms(), WIFI_SETUP_MS);
+        if (!portal_is_open()) {
+            online_view_reset(&g_portal_view);
+            portal_open(NULL, &g_portal_view, online_forget, NULL, /*keep_sta=*/true);
+        }
+        break;
+    case WIFI_OP_CLOSE:
+        wifi_online_close("closed from the web app");
+        break;
+    case WIFI_OP_REMOVE: {
+        const prov_forget_t why = prov_forget_other_network(&prov, cmd->ssid);
+        res = wifi_res_from_forget(why);
+        if (why == PROV_FORGOT && portal_is_open()) g_wifi_names_owed = true;
+        break;
+    }
+    }
+    wf_logf(res == WIFI_RES_OK || res == WIFI_RES_IDLE ? WF_INFO : WF_WARN, "wifi: instruction %lu (op %d): %s",
+            (unsigned long)cmd->seq, (int)cmd->op, wifi_res_wire(res));
+    g_wifi_ack = cmd->seq;
+    g_wifi_res = res;
+    g_wifi_owe = true;
+}
+
+// Once per poll-loop pass, between requests.
+static void __attribute__((noinline)) wifi_online_step(device_client_t *c, uploader_t *up, bool report_retry) {
+    // 1. The page: a Save, a Remove, a Done.
+    if (portal_is_open()) {
+        setup_form_t f;
+        const portal_run_result_t r = portal_service(&f, 0);
+        if (r == PORTAL_RUN_DONE) wifi_online_close("Done on the page");
+        else if (r == PORTAL_RUN_SUBMITTED) wifi_online_check(&f, up);   // wipes f
+    }
+    // 2. Its time, and what the page says about it.
+    const uint32_t now = clock_ms();
+    if (g_wifi_win.open) {
+        if (wifi_window_due(&g_wifi_win, now) && !portal_busy()) wifi_online_close("its time is up");
+        else {
+            const unsigned m = wifi_window_left_min(&g_wifi_win, now);
+            if (m != g_portal_view.left_min) portal_view_changed(online_view_minutes_cb, (void *)&m);
+        }
+    }
+    if (g_wifi_names_owed && portal_view_changed(online_view_names_cb, NULL)) g_wifi_names_owed = false;
+    // 3. An instruction from the web app: fetched when the poll's cursor moved past what was handled. Not while
+    //    Amiga writes wait (they go first), and a failed fetch waits 5 s -- the server answers every poll at once
+    //    while the cursor is ahead.
+    if (!report_retry && c->state != DC_HALTED && c->state != DC_UNPROVISIONED && c->wifi_seen &&
+        c->wifi_version != g_wifi_ack && !up_has_work(up) && (int32_t)(now - g_wifi_retry_at) >= 0) {
+        static char body[128];   // {"seq":4294967295,"op":"remove","ssid":"<64 hex>"} is 105
+        const int n = dc_fetch_wifi(c, body, (int)sizeof body - 1);
+        if (n < 0) {
+            g_wifi_retry_at = now + 5000u;
+        } else {
+            body[n] = '\0';
+            wifi_cmd_t cmd;
+            // Not an instruction this board can read: acked as unknown, never asked for again and again.
+            if (!wifi_cmd_parse(body, &cmd)) { memset(&cmd, 0, sizeof cmd); cmd.seq = c->wifi_version; cmd.op = WIFI_OP_UNKNOWN; }
+            wifi_handle(&cmd);
+        }
+    }
+    if (g_wifi_owe) {
+        g_wifi_owe = false;
+        dc_set_wifi(c, g_wifi_ack, wifi_tail_write, NULL);
+        dc_wifi_owe(c);
+    }
+}
+
 // ---------------------------------------------------------------- firmware update (2b)
 //
 // 2b staging (spec D3): a verified download lives here until it is flashed.
@@ -1993,6 +2218,7 @@ static void core1_main(void) {
             // AP goes up a few lines below, and a kept STA socket must not
             // still be holding its buffers when it does.
             release_kept_connection();
+            wifi_online_close("the setup page at power-on takes over");   // a re-pair can leave the online one open
             wf_logf(WF_INFO, "portal: raising AP%s%s (note %d)",
                     last_error ? ", last error: " : "", last_error ? last_error : "", (int)note.err);
             // Blocks until a POST /save decodes to a complete
@@ -2013,8 +2239,8 @@ static void core1_main(void) {
             // Locals (~290 B), as `submitted` always was: this block is the
             // portal path, which peaks far below the TLS path on this stack.
             setup_form_t submitted;
-            portal_view_t view;
-            portal_view_fill(&view, &prov, &note);
+            portal_view_t *view = &g_portal_view;   // static: shared with the page opened on request
+            portal_view_fill(view, &prov, &note);
             // Final-review Important 2: the wait is bounded ONLY when
             // there is a stored configuration worth going back to.
             //   * have_config true: the portal was opened by three
@@ -2031,7 +2257,7 @@ static void core1_main(void) {
             uint32_t portal_wait_ms =
                 prov.have_config ? PORTAL_IDLE_TIMEOUT_MS : 0u;
             portal_run_result_t pr =
-                portal_run(&submitted, last_error, portal_wait_ms, &view, portal_forget, &pctx);
+                portal_run(&submitted, last_error, portal_wait_ms, view, portal_forget, &pctx);
 
             if (pr == PORTAL_RUN_IDLE_TIMEOUT) {
                 // Same teardown as the submit path below -- an idle
@@ -2389,6 +2615,13 @@ static void core1_main(void) {
         // every entry: dc_init above zeroes `c`, and nfc_ack with it -- a
         // re-paired board is a new device row whose cursor starts over.
         dc_set_poll_interrupt(&c, poll_wake_pending, NULL);
+        // Wi-Fi networks from the web app (wifi_ctl.h): &wifiAck= on every poll, the "wifi" tail owed at once (the
+        // server hears the list once a boot, and after a re-pair). Every entry: dc_init above zeroes `c`, and a
+        // re-entry is a re-pair -- a new device row whose instruction cursor starts at 0.
+        g_wifi_ack = 0;
+        g_wifi_res = WIFI_RES_NONE;
+        dc_set_wifi(&c, g_wifi_ack, wifi_tail_write, NULL);
+        dc_wifi_owe(&c);
         static reinsert_t reins;
         reinsert_init(&reins);
         wf_logf(WF_INFO, "write-back: session %s", session);
@@ -2803,6 +3036,9 @@ static void core1_main(void) {
             }
 #endif
 
+            // Wi-Fi networks from the web app (2026-11-15): the setup page opened on request, and the instructions.
+            wifi_online_step(&c, &up, report_retry);
+
 #if WF_FW_DEBUG
             // Fix round 3, bench-only: a minimal USB-serial command that
             // deliberately reproduces the nested-flash_safe_execute wedge the
@@ -3100,6 +3336,7 @@ static void core1_main(void) {
             // below) rides here too -- but never ahead of a waiting tap.
             if (!report_retry && s != DC_HALTED && (disk_changed || version_changed || fw_report_owed ||
                                     dc_sel1_owed(&c) || dc_drive_report_owed(&c) || dc_net_owed(&c) || nfc_report_owed || display_report_owed ||
+                                    dc_wifi_owed(&c) ||
                                     (preload_report_owed && !nfc_event_pending(NULL)) ||
                                     (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
                 if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION)) {
