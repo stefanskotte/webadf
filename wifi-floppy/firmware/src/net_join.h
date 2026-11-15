@@ -15,12 +15,18 @@
 //
 // So, every attempt:
 //   1. starts by dropping whatever the station holds (`drop`: disassociate,
-//      mark the link down, forget the address and restart DHCP), and
+//      mark the link down, forget the address and restart DHCP) -- but ONLY
+//      if it holds something (`held`). Bench 2026-11-15 (1.25.0 TEST, seq
+//      134): dropping a station that held nothing broke the very first join
+//      after power-on, three rounds running; see net_radio_cyw43.c's j_held.
+//      With nothing held, an attempt is exactly the SDK's join (pico-sdk
+//      cyw43_arch_wifi_connect_async + polling), as 1.24.2 did it, and
 //   2. accepts "up" only after this attempt has itself seen the join in
 //      progress (JOIN or NOIP) -- a stale "up" can never be the answer, even
 //      if a drop did not take effect, and
-//   3. drops again on every result but success, so the next attempt -- on
-//      another network, or the same one -- starts from nothing.
+//   3. drops again on every result but success (if anything is held), so
+//      the next attempt -- on another network, or the same one -- starts
+//      from nothing.
 //
 // Pure C, no SDK include (test/run.sh's radio rule: only net_radio_cyw43.c
 // names the chip).
@@ -42,7 +48,8 @@ typedef struct {
     void       *ctx;
     net_link_t (*status)(void *ctx);
     int        (*join)(void *ctx);       // start the join; 0 = started
-    void       (*drop)(void *ctx);       // see 1. above
+    bool       (*held)(void *ctx);       // associated (at 802.11 or link level) or an address: see 1. above
+    void       (*drop)(void *ctx);       // see 1. above; called only when held()
     bool       (*time_up)(void *ctx);    // the attempt's deadline has passed
     void       (*wait)(void *ctx);       // service the driver, wait for work (bounded by the deadline)
 } net_join_ops_t;

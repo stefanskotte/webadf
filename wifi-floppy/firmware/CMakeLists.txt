@@ -206,6 +206,16 @@ endif ()
 # Diagnostic: a PIO logic analyser on the eight bus inputs, one log record per
 # change. See bus_sniff in floppy.pio. Off by default. It runs on pio2 (IRQ1),
 # beside flux_in, step_dir and the radio; pio1 is the SEL0 gating's.
+# Diagnostic (bench 2026-11-15): log every station state change during a WiFi
+# join -- the driver's join state, both link statuses, netif flags, address,
+# DHCP state -- and each drop step (net_radio_cyw43.c). TEST builds only: it
+# is not in the image marker list (src/lib/firmware-manifest.ts), so the
+# publish script cannot refuse it; build it only for the bench.
+option(WF_JOIN_TRACE "Bench-only: trace every WiFi join step on the serial log" OFF)
+if (WF_JOIN_TRACE)
+  list(APPEND WFMF_COMMON_DEFS WF_JOIN_TRACE=1)
+  message(WARNING "WF_JOIN_TRACE is ON: a TEST build. Publish it only with --notes starting \"TEST build\".")
+endif ()
 option(WF_BUS_SNIFF "Log every change on the bus inputs, in exact order" OFF)
 if (WF_BUS_SNIFF)
   list(APPEND WFMF_COMMON_DEFS WF_BUS_SNIFF=1 WF_LOG_SLOTS=512)

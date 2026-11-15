@@ -22,6 +22,11 @@ typedef struct {
     // what the loop did
     int        joins, drops;
     bool       drop_broken;        // a drop that clears nothing (belt and braces)
+    // Bench 2026-11-15: a leave on a station that held nothing still produced
+    // a DISASSOC event, processed after the next join had set the join state
+    // -- zeroing it, so the join could never complete. Modelled: a drop of an
+    // idle station leaves this event pending for the next wait.
+    bool       late_disassoc;
 } fake_t;
 
 static net_link_t f_status(void *v) {
@@ -31,9 +36,16 @@ static net_link_t f_status(void *v) {
     return f->join_state;
 }
 static int  f_join(void *v)    { fake_t *f = v; f->joins++; f->join_state = NET_LINK_JOIN; return 0; }
+// Held = associated (the link) or an address. A join merely under way is not:
+// a scan for an absent network holds nothing to leave.
+static bool f_held(void *v) {
+    fake_t *f = v;
+    return f->link_up || f->has_ip;
+}
 static void f_drop(void *v)    {
     fake_t *f = v;
     f->drops++;
+    if (!f_held(f)) f->late_disassoc = true;   // the failure the bench showed
     if (f->drop_broken) return;
     f->link_up = false;
     f->has_ip = false;
@@ -42,6 +54,12 @@ static bool f_time_up(void *v) { fake_t *f = v; return f->waits >= f->max_waits;
 static void f_wait(void *v) {
     fake_t *f = v;
     f->waits++;
+    if (f->late_disassoc) {          // the late event: join state zeroed, the join can never finish
+        f->late_disassoc = false;
+        f->join_state = NET_LINK_DOWN;
+        f->step = f->n_script;       // nothing the network does reaches the driver now
+        return;
+    }
     ev_t e = f->step < f->n_script ? f->script[f->step++] : EV_NONE;
     switch (e) {
     case EV_ASSOC:   f->link_up = true; break;
@@ -59,7 +77,7 @@ static net_join_t run(fake_t *f, const ev_t *script, int n) {
     f->step = 0;
     f->waits = 0;
     if (!f->max_waits) f->max_waits = 30;
-    const net_join_ops_t ops = { f, f_status, f_join, f_drop, f_time_up, f_wait };
+    const net_join_ops_t ops = { f, f_status, f_join, f_held, f_drop, f_time_up, f_wait };
     return net_join_run(&ops);
 }
 
@@ -87,7 +105,8 @@ static void test_a_stale_up_from_the_last_network_is_not_this_join(void) {
     const ev_t b[] = { EV_NONET, EV_NONET, EV_NONET };
     int drops = f.drops;
     CHECK_EQ_INT(run(&f, b, 3), NET_JOIN_NOT_FOUND);
-    CHECK(f.drops >= drops + 2, "B dropped first, and again when it failed");
+    CHECK_EQ_INT(f.drops, drops + 1);   // B dropped A's stale link first; B itself held nothing
+    CHECK(!f.link_up && !f.has_ip, "and nothing is left held");
 }
 
 // Belt and braces: even when the drop clears nothing, a stale UP is never
@@ -134,8 +153,35 @@ static void test_each_outcome(void) {
     CHECK_EQ_INT(run(&k, late, 3), NET_JOIN_NO_ADDRESS);
 }
 
+// Bench 2026-11-15 (1.25.0 TEST): the first join after power-on failed three
+// rounds running. Nothing is held at boot, so nothing may be dropped: the
+// attempt must be exactly the SDK's join.
+static void test_the_first_join_after_power_on_drops_nothing(void) {
+    fake_t f = {0};
+    const ev_t s[] = { EV_NONE, EV_ASSOC, EV_LEASE };
+    CHECK_EQ_INT(run(&f, s, 3), NET_JOIN_OK);
+    CHECK_EQ_INT(f.drops, 0);
+}
+
+// A failed attempt that never associated (no network, wrong password) holds
+// nothing either: the next attempt is again the SDK's join, as the SDK itself
+// re-issues on no-network without leaving.
+static void test_after_an_unassociated_failure_the_next_join_drops_nothing(void) {
+    fake_t f = {0};
+    f.max_waits = 4;
+    const ev_t nonet[] = { EV_NONET, EV_NONET };
+    CHECK_EQ_INT(run(&f, nonet, 2), NET_JOIN_NOT_FOUND);
+    CHECK_EQ_INT(f.drops, 0);
+    f.max_waits = 30;
+    const ev_t good[] = { EV_NONE, EV_ASSOC, EV_LEASE };
+    CHECK_EQ_INT(run(&f, good, 3), NET_JOIN_OK);
+    CHECK_EQ_INT(f.drops, 0);
+}
+
 int main(void) {
     RUN(test_a_clean_join);
+    RUN(test_the_first_join_after_power_on_drops_nothing);
+    RUN(test_after_an_unassociated_failure_the_next_join_drops_nothing);
     RUN(test_a_stale_up_from_the_last_network_is_not_this_join);
     RUN(test_up_counts_only_after_this_attempt_was_seen_joining);
     RUN(test_a_wrong_password_after_a_good_join_is_still_wrong);

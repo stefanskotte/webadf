@@ -5,13 +5,17 @@
 // join was seen in progress.
 #include "net_join.h"
 
+static void drop_if_held(const net_join_ops_t *ops) {
+    if (ops->held(ops->ctx)) ops->drop(ops->ctx);
+}
+
 static net_join_t finish(const net_join_ops_t *ops, net_join_t r) {
-    if (r != NET_JOIN_OK) ops->drop(ops->ctx);   // the next attempt starts from nothing
+    if (r != NET_JOIN_OK) drop_if_held(ops);   // the next attempt starts from nothing
     return r;
 }
 
 net_join_t net_join_run(const net_join_ops_t *ops) {
-    ops->drop(ops->ctx);
+    drop_if_held(ops);
     if (ops->join(ops->ctx)) return finish(ops, NET_JOIN_ERROR);
 
     bool saw_nonet = false;
