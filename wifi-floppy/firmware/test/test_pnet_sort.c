@@ -103,16 +103,31 @@ static void an_offer_to_an_unknown_address_goes_by_xid(void) {
     CHECK_EQ_INT(s.amiga_ip, AMIGA);                                /* the lease is learned */
 }
 
-static void an_ack_naming_the_boards_address_is_refused(void) {
+/* Ruling 2026-11-15: the ACK is still refused, and now also turns shared-IP mode on (test_pnet_shared.c has it all);
+ * an OFFER naming the board's address does the same, earlier. */
+static void an_ack_or_offer_naming_the_boards_address_is_refused_and_shares(void) {
     pnet_sort_t s = fresh(0);
     size_t n = dhcp(BCAST, MAC, 0, IP(255, 255, 255, 255), 1, 7u, 0, 3);       /* REQUEST */
     CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, BOARD), PNET_TX_SEND);
     n = dhcp(MAC, RMAC, ROUTER, BOARD, 2, 7u, BOARD, 5);
     CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_DROP);
     CHECK_EQ_INT(s.clash, 1);
-    CHECK_EQ_INT(s.amiga_ip, 0);
-    n = dhcp(MAC, RMAC, ROUTER, BOARD, 2, 7u, BOARD, 2);            /* the same, as an OFFER */
-    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_AMIGA);   /* only an ACK is a lease */
+    CHECK(s.sh.on && s.sh.why == PNET_SHARED_ACK, "the ACK turned shared mode on");
+    CHECK(!s.sh.owe, "no OFFER is owed for an ACK: the Amiga's next REQUEST is answered");
+    n = dhcp(MAC, RMAC, ROUTER, BOARD, 2, 7u, BOARD, 2);            /* the same, as an OFFER, late */
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_DROP);    /* shared: the network's replies are not the Amiga's */
+    CHECK_EQ_INT(s.sh.late, 1);
+    pnet_sort_t t = fresh(0);
+    n = dhcp(BCAST, MAC, 0, IP(255, 255, 255, 255), 1, 8u, 0, 1);              /* DISCOVER */
+    pnet_sort_tx(&t, F, n, MAC, BOARD);
+    n = dhcp(BCAST, RMAC, ROUTER, IP(255, 255, 255, 255), 2, 8u, BOARD, 2);    /* OFFER of the board's address */
+    CHECK_EQ_INT(pnet_sort_rx(&t, F, n, BOARD), PNET_SORT_DROP);
+    CHECK(t.sh.on && t.sh.why == PNET_SHARED_OFFER && t.sh.owe && t.sh.owe_xid == 8u, "the OFFER: shared, one owed");
+    pnet_sort_t u = fresh(0);
+    pnet_sort_tx(&u, F, dhcp(BCAST, MAC, 0, IP(255, 255, 255, 255), 1, 9u, 0, 1), MAC, 0);
+    n = dhcp(BCAST, RMAC, ROUTER, IP(255, 255, 255, 255), 2, 9u, 0, 2);
+    CHECK_EQ_INT(pnet_sort_rx(&u, F, n, 0), PNET_SORT_AMIGA);       /* the board has no address: nothing to clash */
+    CHECK(!u.sh.on, "no address, no shared mode");
 }
 
 static void the_boards_own_dhcp_replies_stay_the_boards(void) {
@@ -192,10 +207,18 @@ static void tx_learns_the_amigas_address_and_refuses_what_cannot_go(void) {
     CHECK_EQ_INT(s.amiga_ip, AMIGA);
     n = arp(BCAST, RMAC, 1, AMIGA, ROUTER);                         /* someone else's MAC */
     CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, BOARD), PNET_TX_MAC);
-    n = arp(BCAST, MAC, 1, BOARD, ROUTER);                          /* the board's address */
-    CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, BOARD), PNET_TX_CLASH);
-    n = udp(RMAC, MAC, BOARD, ROUTER, 4000, 53, 40);
-    CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, BOARD), PNET_TX_CLASH);
+    {   /* Ruling 2026-11-15: the board's address from the Amiga is shared mode (it kept it across a board reboot),
+         * no longer refused. */
+        pnet_sort_t c = fresh(0);
+        n = arp(BCAST, MAC, 1, BOARD, ROUTER);
+        CHECK_EQ_INT(pnet_sort_tx(&c, F, n, MAC, BOARD), PNET_TX_SEND);
+        CHECK(c.sh.on && c.sh.why == PNET_SHARED_SRC && c.sh.amiga, "ARP from the board's address: shared");
+        pnet_sort_t d = fresh(0);
+        n = udp(RMAC, MAC, BOARD, ROUTER, 50000, 53, 40);
+        CHECK_EQ_INT(pnet_sort_tx(&d, F, n, MAC, BOARD), PNET_TX_SEND);
+        CHECK(d.sh.on && d.sh.why == PNET_SHARED_SRC && d.sh.amiga, "IPv4 from the board's address: shared");
+        CHECK_EQ_INT(c.clash + d.clash, 2);
+    }
     eth(RMAC, MAC, 0x86DD);
     CHECK_EQ_INT(pnet_sort_tx(&s, F, 60, MAC, BOARD), PNET_TX_TYPE);
     CHECK_EQ_INT(pnet_sort_tx(&s, F, 13, MAC, BOARD), PNET_TX_LEN);
@@ -308,9 +331,13 @@ static void a_seed_fills_only_an_unknown_address(void) {
     CHECK(!pnet_sort_seed(&s, IP(192, 168, 1, 99), BOARD), "a known address is never replaced by a seed");
     CHECK_EQ_INT(s.amiga_ip, AMIGA);
     pnet_sort_t t = fresh(0);
-    CHECK(!pnet_sort_seed(&t, BOARD, BOARD), "never the board's own address");
     CHECK(!pnet_sort_seed(&t, 0, BOARD), "0 is not an address");
     CHECK_EQ_INT(t.amiga_ip, 0);
+    CHECK(!t.sh.on, "and no shared mode");
+    /* Ruling 2026-11-15: the board's own address is an Amiga that shared it before the board rebooted. */
+    CHECK(pnet_sort_seed(&t, BOARD, BOARD), "the board's own address: shared mode");
+    CHECK(t.sh.on && t.sh.why == PNET_SHARED_SEED && t.sh.amiga, "on, and the Amiga known to use it");
+    CHECK_EQ_INT(t.amiga_ip, BOARD);
 }
 
 /* The board's own connect attempt is the probe: lwIP's ARP for the seeded address goes to the Amiga locally; an
@@ -329,7 +356,7 @@ int main(void) {
     RUN(arp_for_the_amiga_goes_to_both);
     RUN(ipv4_unicast_to_the_amiga_goes_to_the_amiga_only);
     RUN(an_offer_to_an_unknown_address_goes_by_xid);
-    RUN(an_ack_naming_the_boards_address_is_refused);
+    RUN(an_ack_or_offer_naming_the_boards_address_is_refused_and_shares);
     RUN(the_boards_own_dhcp_replies_stay_the_boards);
     RUN(a_clash_never_steals_the_boards_traffic);
     RUN(ipv6_short_and_odd_frames_stay_the_boards);
