@@ -103,6 +103,13 @@ test('copy a file between disks makes one version', async ({ page }) => {
   await page.getByTestId('pane-left').getByTestId('pane-row').filter({ hasText: 'Disk 1' }).dblclick();
   await expect(page.getByTestId('disk-strip-left')).toBeVisible();
   await expect.poll(() => new URL(page.url()).searchParams.get('left')).toBe(b.path);
+  // The crumb that is the disk image reads as a disk, not a folder (tester report 2026-11-15): a disk glyph, and its
+  // name says "disk"; the title crumb above it is not marked.
+  const diskCrumb = page.getByTestId('pane-left-crumb-2');
+  await expect(diskCrumb).toHaveAttribute('data-kind', 'disk');
+  await expect(diskCrumb).toHaveAccessibleName(/^disk .*Disk 1/);
+  await expect(page.getByTestId('pane-left-crumb-2-disk')).toBeVisible();
+  await expect(page.getByTestId('pane-left-crumb-1')).not.toHaveAttribute('data-kind', 'disk');
   // The phone's Add files to <disk> is not drawn from lg: here a drop from the computer adds files, as before.
   for (const s of ['left', 'right']) await expect(page.getByTestId(`pane-${s}-add-files`)).toBeHidden();
 

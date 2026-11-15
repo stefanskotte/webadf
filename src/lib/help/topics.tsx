@@ -110,7 +110,7 @@ export const HELP_TOPICS = {
           4 MB or one that cannot be read whole, or a name the Amiga cannot take. Disks stay in the library: no Move.
         </p>
         <p>
-          <strong>Inside a disk.</strong> The strip shows the drive, <em>Mount</em>, <em>History</em> and{' '}
+          <strong>Inside a disk.</strong> A disk sign in the path marks the disk. The strip shows the drive, <em>Mount</em>, <em>History</em> and{' '}
           <em>⬇ ADF</em>. Drop files from your computer on the pane to add them. Each change saves one new version, with Undo; <em>Eject to edit</em> a disk in a drive.{' '}
           <em>Protect</em> sets bits; <em>Info</em> shows details. Type in a filter box; <em>Show .info</em> hides or shows icon files.
         </p>
@@ -132,7 +132,8 @@ export const HELP_TOPICS = {
         <p>
           <strong>On a phone.</strong> One pane at a time: <em>Left</em> and <em>Right</em> switch.{' '}
           <em>Copy to…</em> and <em>Move to…</em> ask where. Inside a disk, <em>Add files to …</em> puts files from the
-          phone on that disk, in the folder shown; the top tile puts them in STASH:.
+          phone on that disk, in the folder shown; the review&apos;s <em>Add more files</em> adds more. The top tile puts
+          them in STASH:.
         </p>
         <GoodToKnow items={[
           'Settings › Account › Files sets the opening panes, .info files, the Comment column, the delete confirm and the answer when a name is already there.',

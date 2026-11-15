@@ -136,6 +136,11 @@ test('an .lha dropped on a disk pane opens the review; a clash offers rename, sk
   await expect(list).toContainText('src/readme.txt');
   await expect(list).not.toContainText('h1.lha');   // expanded, not staged as one file
   await expect(review.getByTestId('drop-destination-select')).toHaveValue(String(880));   // the folder the pane shows
+  // Named as a person reads it, the disk and not "/" (2026-11-15); a desktop drop still says "drop more".
+  await expect(review.getByTestId('drop-destination-select').locator('option:checked')).toHaveText(/Disk 1/);
+  await expect(review.getByTestId('drop-destination-select').locator('option:checked')).not.toHaveText('/');
+  expect(await review.getByTestId('drop-staged-line').innerText()).toMatch(/staged below — drop more to add to the same batch\.$/);
+  await expect(review.getByTestId('drop-pick-more')).toBeHidden();
 
   const rows = review.locator('[data-testid^="stage-row-"]');
   const at = async (text: string) => {

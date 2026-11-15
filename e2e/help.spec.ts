@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signUpFresh } from './helpers';
-import { pairDevice, authHeader, cleanupSeeded, hydrated } from './device-helpers';
+import { pairDevice, authHeader, cleanupSeeded, hydrated, openBoardSettings } from './device-helpers';
 
 // Context help (spec docs/superpowers/specs/2026-10-05-context-help-design.md).
 
@@ -45,7 +45,8 @@ test('keyboard: Enter opens the "?", Esc closes it and returns focus', async ({ 
 });
 
 test('the help button does not trigger the control beside it', async ({ page, request }) => {
-  // The Display "?" sits beside the Display toggle; opening help must not expand the editor.
+  // The Display "?" sits beside the Display heading, over Change display, in Board settings (the simpler Devices card,
+  // 2026-11-12, moved Display there); opening help must not open the display editor.
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
   const r = await request.post('/api/device/status', {
@@ -53,8 +54,13 @@ test('the help button does not trigger the control beside it', async ({ page, re
   });
   expect(r.status()).toBe(204);
   await page.goto('/devices');
-  await page.getByTestId('help-tip-display').first().click();
+  await openBoardSettings(page, deviceId);
+  const dialog = page.getByTestId('board-settings-dialog');
+  await hydrated(page, 'help-tip-display');
+  await dialog.getByTestId('help-tip-display').click();
   await expect(page.getByTestId('help-pop-display')).toBeVisible();
+  await expect(page.getByTestId(`display-toggle-${deviceId}`)).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByTestId(`display-drawer-${deviceId}`)).toHaveCount(0);
   await expect(page.getByTestId(`display-canvas-${deviceId}`)).toHaveCount(0);
 });
 

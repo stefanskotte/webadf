@@ -142,10 +142,28 @@ export function placeName(where: { title: string; label: string } | null): strin
  */
 export function insideDiskPlace(l: Listing | null): string | null {
   if (!l?.disk) return null;
-  const { title, label } = l.disk;
-  const at = l.crumbs.findLastIndex((c) => c.label === label);
-  const disk = title && !label.includes(title) ? placeName(l.disk) : label;
-  return [disk, ...(at < 0 ? [] : l.crumbs.slice(at + 1).map((c) => c.label))].join('/');
+  const at = l.crumbs.findLastIndex((c) => c.label === l.disk!.label);
+  return [diskPlace(l.disk), ...(at < 0 ? [] : l.crumbs.slice(at + 1).map((c) => c.label))].join('/');
+}
+
+/**
+ * A disk as a person reads it: "Empty · Disk 1"; a label that already names its title ("Turrican (Disk 1)") alone.
+ * With `folder` (from the disk's root, names joined by '/', '' for the root), the place inside it: "Empty · Disk 1/Docs"
+ * -- the drop review's destination says this, not "/" (follow-up to the phone's Add files, 2026-11-15).
+ */
+export function diskPlace(disk: { title: string; label: string }, folder = ''): string {
+  const { title, label } = disk;
+  const named = title && !label.includes(title) ? placeName(disk) : label;
+  return folder ? `${named}/${folder}` : named;
+}
+
+/**
+ * Whether a crumb is the disk image itself, not a folder (tester report 2026-11-15: "LIBRARY: Empty / Disk 1" read as
+ * a folder, "I have to upload them to disk1/"): the crumb at the listing's diskBase. The pane and the Copy to picker
+ * mark it with a disk glyph.
+ */
+export function isDiskCrumb(l: Pick<Listing, 'diskBase'> | null, path: string): boolean {
+  return !!l?.diskBase && l.diskBase === path;
 }
 
 /**
