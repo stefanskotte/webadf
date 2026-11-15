@@ -13,9 +13,25 @@ struct netif;
 int  net_radio_init(void);
 /** Station mode on (no association yet). */
 void net_radio_sta_enable(void);
-/** Associate with a WPA2-PSK network. Returns PICO_OK (0) or a PICO_ERROR_* code,
- *  exactly as the SDK's blocking WiFi connect call did (main.c's assoc_failure_message maps them). */
-int  net_radio_sta_connect(const char *ssid, const char *pass, uint32_t timeout_ms);
+// What one join attempt came to (field report 2026-11-14: the setup page said
+// only "Network not found", for a network the board may well have seen).
+// Only what the driver's own link states can tell apart -- see
+// net_radio_cyw43.c for which state maps to which value. In particular the
+// driver cannot say WHY a network was not found (absent, out of range, 5 GHz
+// only, or a WPA3-only network the chip filters out of its join scan), so
+// neither does this.
+typedef enum {
+    NET_JOIN_OK = 0,      // associated and holding an IP address
+    NET_JOIN_NOT_FOUND,   // the join scan never matched the SSID (and nothing better followed)
+    NET_JOIN_BAD_AUTH,    // the network rejected the key exchange: the password, as far as the driver can tell
+    NET_JOIN_FAILED,      // the join failed for another reason the driver does not name
+    NET_JOIN_NO_ADDRESS,  // associated, but DHCP gave no address before the time ran out
+    NET_JOIN_TIMEOUT,     // still joining when the time ran out, with no verdict
+    NET_JOIN_ERROR,       // the driver would not start the join at all
+} net_join_t;
+
+// Associate with a WPA2-PSK network, waiting up to timeout_ms. Core1 only.
+net_join_t net_radio_sta_connect(const char *ssid, const char *pass, uint32_t timeout_ms);
 /** Start / stop the WPA2-PSK access point the setup portal serves on. */
 void net_radio_ap_start(const char *ssid, const char *pass);
 void net_radio_ap_stop(void);

@@ -23,7 +23,7 @@
 // The one shared, compound piece of state this file hands from a
 // background callback to portal_run()'s foreground blocking loop is
 // `g_pending_cfg`/`g_submitted`: the HTTP recv callback (background)
-// writes the whole device_config_t into g_pending_cfg and only then sets
+// writes the whole setup_form_t into g_pending_cfg and only then sets
 // g_submitted, so a foreground read that observes g_submitted true is
 // guaranteed to see a fully-written g_pending_cfg alongside it -- same
 // "write the payload, then flip the flag that publishes it" ordering
@@ -170,16 +170,16 @@
                                // that without inviting real exhaustion.
 #define TCP_REQ_CAP  2048      // headers + body; see the accumulation
                                // comment above for what "too large" does.
-#define TCP_RESP_CAP 2048      // portal_http.c's largest rendered page is
-                               // 1339 B fully substituted (re-measured
-                               // against PAGE_FMT + a full MAC + a
-                               // buffer-filling err block; its second
-                               // template, the accepted-submit
-                               // confirmation page, is 827 B with a
-                               // worst-case escaped SSID -- pinned by
-                               // test_portal_http.c). This leaves
-                               // comfortable headroom without costing much
-                               // RAM.
+#define TCP_RESP_CAP 2048      // ONE WINDOW of a reply, not the reply: since
+                               // 2026-11-15 (several networks, named failures)
+                               // the form runs 2.4-6 KB, and SRAM has no room
+                               // for 3 x 6 KB (the heap low-water sits near its
+                               // 20 KB floor, HANDOFF). A longer page is
+                               // rendered again for each next 2 KB window
+                               // (portal_request_window(), next_window()).
+                               // The accepted-submit page is 1422 B worst
+                               // case, so it is always one window -- pinned
+                               // by test_portal_http.c.
 
 #define SUBMIT_FLUSH_MS 2000      // how long portal_run() waits, after a
                                    // complete POST /save, for the phone to
@@ -206,7 +206,7 @@ static struct tcp_pcb *g_http_listen_pcb;
 // foreground wait loop -- see the file header comment on the ordering
 // that makes this safe.
 static volatile bool   g_submitted;
-static device_config_t g_pending_cfg;
+static setup_form_t g_pending_cfg;
 // Set (background) once the phone has ACKed every byte of the submit's
 // confirmation page; portal_run() waits up to SUBMIT_FLUSH_MS for it.
 static volatile bool   g_submit_flushed;
@@ -216,6 +216,27 @@ static volatile bool   g_submit_flushed;
 // read-only for the rest of this call, like an ordinary parameter, even
 // though the HTTP callback reads it from a different context.
 static const char *g_current_err;
+
+// Several networks (2026-11-15). What the form shows besides the error: the
+// saved names, whether a code is stored, the name to prefill. Copied in by
+// portal_run() before any socket exists, and replaced only by the foreground
+// under net_radio_lock() after a Remove -- the HTTP callback reads it on the
+// locked background context, so it never sees half a copy.
+static portal_view_t g_view;
+
+// POST /forget, background -> foreground, the same publish ordering as
+// g_pending_cfg/g_submitted: the name first, then the flag. The removal (a
+// flash write) runs in portal_run()'s foreground loop, never in a callback.
+static volatile bool g_forget_pending;
+static char          g_forget_ssid[CONFIG_SSID_MAX + 1];
+// The forget callback's reason when a removal is refused; g_current_err
+// points here then. Foreground-written under the lock, callback-read.
+static char          g_forget_err[PORTAL_FORGET_MSG_MAX];
+// Bumped (under the lock) whenever g_view or g_current_err changes. A page is
+// sent in windows, each rendered afresh; one whose inputs changed between two
+// windows would splice two different pages, so that connection is closed
+// instead (next_window()) and the phone just reloads.
+static unsigned      g_view_gen;
 
 // Final-review Important 2: portal_run()'s wait is now bounded, so it
 // needs to know whether anyone is actually out there. This is a
@@ -248,8 +269,11 @@ typedef struct {
     int              header_end;      // index just past "\r\n\r\n", or -1
     int              content_length;  // valid once header_end >= 0
     char             resp[TCP_RESP_CAP];
-    int              resp_len;
-    int              resp_sent;
+    int              resp_len;     // bytes in resp: this window
+    int              resp_sent;    // of this window
+    int              page_off;     // page offset of resp[0]
+    int              page_total;   // the whole reply's length (>= page_off + resp_len)
+    unsigned         view_gen;     // g_view_gen when the page's first window rendered
     int              poll_ticks;
     bool             handled;      // set once a response has started --
                                    // see start_response()'s comment (MINOR 2
@@ -391,6 +415,40 @@ static void abort_conn(http_conn_t *c) {
     tcp_abort(pcb);
 }
 
+static void parse_request_line(const char *buf, int header_end,
+                               char *method, int method_cap, char *path, int path_cap);
+
+// Renders window `skip` of this connection's reply into c->resp. The request
+// is still whole in c->req (nothing touches it until finish_conn()), so the
+// same inputs give the same page: portal_http.h's portal_request_window().
+static int render_window(http_conn_t *c, int skip, portal_result_t *res, int *total) {
+    char method[8];
+    char path[192];
+    parse_request_line(c->req, c->header_end, method, sizeof method, path, sizeof path);
+    char mac_str[18];
+    format_mac_colon(mac_str, sizeof mac_str);
+    return portal_request_window(method, path, c->req + c->header_end, mac_str, g_current_err,
+                                 &g_view, skip, c->resp, (int)sizeof c->resp, res, total);
+}
+
+// After a window has gone to lwIP whole (tcp_write copies it, so c->resp is
+// free again): 1 = the next window is in c->resp, 0 = the reply is complete,
+// -1 = it cannot be continued (its inputs changed, see g_view_gen, or the
+// re-render disagrees) and the connection must close.
+static int next_window(http_conn_t *c) {
+    int off = c->page_off + c->resp_len;
+    if (off >= c->page_total) return 0;
+    if (c->view_gen != g_view_gen) return -1;
+    portal_result_t ignored;   // only the first render publishes anything
+    int total = 0;
+    int n = render_window(c, off, &ignored, &total);
+    if (n <= 0 || total != c->page_total) return -1;
+    c->page_off = off;
+    c->resp_len = n;
+    c->resp_sent = 0;
+    return 1;
+}
+
 // Sends as much of c->resp[c->resp_sent .. c->resp_len) as tcp_sndbuf()
 // currently allows and finishes the connection once it has all gone out.
 // Not a blocking loop -- this runs inside lwIP callbacks (recv/sent/poll)
@@ -416,20 +474,28 @@ static err_t write_done(http_conn_t *c) {
 
 static err_t try_send_more(http_conn_t *c) {
     if (!c->pcb) return ERR_OK;
-    int remaining = c->resp_len - c->resp_sent;
-    if (remaining <= 0) return write_done(c);
+    for (;;) {
+        int remaining = c->resp_len - c->resp_sent;
+        if (remaining <= 0) {
+            // This window is with lwIP. A longer page continues with its
+            // next window (2026-11-15); otherwise the reply is done.
+            int w = next_window(c);
+            if (w == 0) return write_done(c);
+            if (w < 0) return finish_conn(c);
+            continue;
+        }
 
-    u16_t avail = tcp_sndbuf(c->pcb);
-    int chunk = ((int)avail < remaining) ? (int)avail : remaining;
-    if (chunk <= 0) return ERR_OK;
+        u16_t avail = tcp_sndbuf(c->pcb);
+        int chunk = ((int)avail < remaining) ? (int)avail : remaining;
+        if (chunk <= 0) return ERR_OK;
 
-    err_t werr = tcp_write(c->pcb, c->resp + c->resp_sent, (u16_t)chunk,
-                            TCP_WRITE_FLAG_COPY);
-    if (werr != ERR_OK) return ERR_OK; // retry later, see comment above
-    c->resp_sent += chunk;
-    tcp_output(c->pcb);
-    if (c->resp_sent >= c->resp_len) return write_done(c);
-    return ERR_OK;
+        err_t werr = tcp_write(c->pcb, c->resp + c->resp_sent, (u16_t)chunk,
+                                TCP_WRITE_FLAG_COPY);
+        if (werr != ERR_OK) return ERR_OK; // retry later, see comment above
+        c->resp_sent += chunk;
+        tcp_output(c->pcb);
+        if (c->resp_sent < c->resp_len) return ERR_OK;   // the rest when the window opens
+    }
 }
 
 // `data` is either c->resp itself (the normal path: portal_request()
@@ -450,6 +516,8 @@ static err_t start_response(http_conn_t *c, const char *data, int len) {
     if (data != c->resp) memcpy(c->resp, data, (size_t)n);
     c->resp_len = n;
     c->resp_sent = 0;
+    c->page_off = 0;
+    if (c->page_total < n) c->page_total = n;   // a literal: one window
     return try_send_more(c);
 }
 
@@ -535,18 +603,12 @@ static void parse_request_line(const char *buf, int header_end,
 static err_t handle_complete_request(http_conn_t *c) {
     c->req[c->req_used] = '\0'; // room for this is reserved -- see the
                                  // "-1" in http_recv_cb's `avail` below.
-    char method[8];
-    char path[192];
-    parse_request_line(c->req, c->header_end, method, sizeof method,
-                        path, sizeof path);
-    const char *body = c->req + c->header_end;
-
-    char mac_str[18];
-    format_mac_colon(mac_str, sizeof mac_str);
-
+    // The first window of the reply; next_window() renders the rest, if any.
     portal_result_t res;
-    int n = portal_request(method, path, body, mac_str, g_current_err,
-                            c->resp, (int)sizeof c->resp, &res);
+    int total = 0;
+    int n = render_window(c, 0, &res, &total);
+    c->page_total = total;
+    c->view_gen = g_view_gen;
 
     if (n <= 0) {
         // portal_request()'s "would not fit" case. Not expected given
@@ -572,6 +634,9 @@ static err_t handle_complete_request(http_conn_t *c) {
         g_pending_cfg = res.submitted; // write the payload...
         g_submitted = true;            // ...then publish it -- see the
                                         // file header comment.
+    } else if (res.action == PORTAL_ACT_FORGET && !g_forget_pending) {
+        memcpy(g_forget_ssid, res.forget, sizeof g_forget_ssid);   // same ordering
+        g_forget_pending = true;
     }
     return rc;
 }
@@ -658,7 +723,7 @@ static err_t http_sent_cb(void *arg, struct tcp_pcb *tpcb, u16_t len) {
                               // mid-send by portal_run()'s timeout.
     if (c->is_submit) {
         c->resp_acked += len;   // may count our FIN too; >= covers that
-        if (c->resp_sent >= c->resp_len && c->resp_acked >= c->resp_len) {
+        if (c->page_off + c->resp_sent >= c->page_total && c->resp_acked >= c->page_total) {
             g_submit_flushed = true;   // the phone has the whole page
             return finish_conn(c);
         }
@@ -902,8 +967,9 @@ static void portal_diag_tick(void) {
     dg_n_leases = n;
 }
 
-portal_run_result_t portal_run(device_config_t *out, const char *err,
-                               uint32_t idle_timeout_ms) {
+portal_run_result_t portal_run(setup_form_t *out, const char *err,
+                               uint32_t idle_timeout_ms, const portal_view_t *view,
+                               portal_forget_fn forget) {
     // Review round 1 (Important 1): a second portal_run() call without an
     // intervening portal_stop() used to hang the board silently, because
     // re-binding ports 67/53/80 while the previous pcbs were still bound
@@ -933,6 +999,9 @@ portal_run_result_t portal_run(device_config_t *out, const char *err,
     dhcp_reset_leases();
 
     g_current_err = err;
+    if (view) g_view = *view;
+    else { memset(&g_view, 0, sizeof g_view); g_view.last = -1; }
+    g_forget_pending = false;
     g_submitted = false;
     g_submit_flushed = false;
     note_client_activity();   // start the inactivity clock at "now", not at
@@ -952,6 +1021,43 @@ portal_run_result_t portal_run(device_config_t *out, const char *err,
                       // block the very background context that has to
                       // run for g_submitted to ever become true.
         portal_diag_tick();   // DIAGNOSTIC, rate-limited inside
+
+        // A Remove button was pressed (2026-11-15). The removal writes flash,
+        // so it runs here, unlocked, never in the lwIP callback that saw the
+        // request. The AP stays up: flash_safe_execute pauses this core's
+        // interrupts (and parks core0) for the erase and program, ~tens of
+        // ms, during which the radio chip keeps the AP beaconing on its own
+        // and the lwIP background work simply runs late. The page the
+        // phone returns to then shows the result.
+        if (g_forget_pending) {
+            // Locals, ~400 B on core1's stack: this is the portal path, which
+            // peaks near 2.3 KB of the 16 KB (main.c's CORE1_STACK_BYTES
+            // comment) -- far below the TLS path -- while every static byte
+            // comes out of a heap that sits near its floor.
+            char ssid[CONFIG_SSID_MAX + 1];
+            portal_view_t next;
+            char msg[PORTAL_FORGET_MSG_MAX];
+            net_radio_lock();
+            memcpy(ssid, g_forget_ssid, sizeof ssid);
+            next = g_view;
+            net_radio_unlock();
+            msg[0] = '\0';
+            bool done = forget && forget(ssid, &next, msg, (int)sizeof msg);
+            wf_logf(done ? WF_INFO : WF_WARN, "portal: remove %s: %s", ssid,
+                    done ? "done" : (msg[0] ? msg : "refused"));
+            net_radio_lock();
+            g_view = next;
+            if (done) {
+                g_current_err = NULL;   // an old join failure may name the network just removed
+            } else if (msg[0]) {
+                memcpy(g_forget_err, msg, sizeof g_forget_err);
+                g_current_err = g_forget_err;
+            }
+            g_view_gen++;   // a page mid-send must not splice the old list with the new
+            g_forget_pending = false;
+            net_radio_unlock();
+            note_client_activity();
+        }
 
         // Final-review Important 2: this wait used to be unbounded, which
         // made PROV_PORTAL a one-way door -- a board that lost a race with

@@ -12,12 +12,24 @@
 // wrong place: pass the fact in as a parameter instead.
 #include <stdbool.h>
 #include "config_store.h"
+#include "net_radio.h"   // net_join_t only: the header itself includes no SDK header
 
 // Spec S3, D-4b-1. Three consecutive failed associations open the portal.
-// An "attempt" is one cyw43_arch_wifi_connect_timeout_ms() call with a
-// 15 s timeout (main.c owns that call), so this is roughly 45 s of trying
-// rather than three instantaneous retries.
+// An "attempt" is one net_radio_sta_connect() call with a 15 s timeout
+// (main.c owns that call), so this is roughly 45 s of trying rather than
+// three instantaneous retries.
+//
+// Several networks (field report 2026-11-14): the count is of ROUNDS. A
+// round tries every saved network once -- the one last joined first, then
+// the others in saved order -- and fails only if every attempt in it failed.
+// So with one network nothing changed (three attempts, ~45 s); with four the
+// portal opens after 3 x 4 attempts, ~3 minutes. Any success ends the run of
+// failures, exactly as one success did before.
 #define PROV_MAX_ASSOC_FAILURES 3
+
+// Room for the longest message prov_round_message() / prov_join_message()
+// write: four networks' lines plus every hint (host-tested).
+#define PROV_MSG_MAX 800
 
 typedef enum {
     PROV_PORTAL,     // offer the AP and the config page
@@ -31,23 +43,67 @@ typedef struct {
     // eventually park a perfectly healthy device in AP mode for good --
     // the same trap plan 4a's spec S4.1 records for the poll cursor.
     // A power cycle restores patience.
+    // Counts consecutive failed ROUNDS (see PROV_MAX_ASSOC_FAILURES).
     int             assoc_failures;
+    int             round_pos;     // attempts already made in the current round
+    // This round's outcome per cfg.net index; NET_JOIN_OK means "not tried
+    // this round" (a success ends the round). What the portal says when a
+    // round of failures opens it (prov_round_message).
+    net_join_t      result[CONFIG_NETS_MAX];
     bool            have_config;
-    device_config_t cfg;    // valid only when have_config is true
+    device_config_t cfg;    // valid only when have_config is true; ~410 B, keep the struct static
 } provisioning_t;
 
 // Decide the starting state from what is stored. Touches no radio.
 void prov_init(provisioning_t *p);
 
-// Report the outcome of one association attempt. Returns the new state.
-// A success resets the failure count, so a flaky router costs retries but
-// never accumulates toward the portal across separate outages.
-prov_state_t prov_on_assoc_result(provisioning_t *p, bool ok);
+// The cfg.net index of the network to try next: position round_pos of the
+// order "net[last], then the others in saved order". -1 without a config.
+int prov_next_net(const provisioning_t *p);
 
-// The portal collected credentials AND associating with them succeeded --
-// spec D-4b-3's verify-then-commit, with this called only after the verify.
-// Commits them and returns true; false if the commit itself failed.
-bool prov_on_verified_submit(provisioning_t *p, const device_config_t *cfg);
+// Report the outcome of the attempt on prov_next_net(p). Returns the new
+// state. A success resets the failure count and the round, so a flaky
+// router costs retries but never accumulates toward the portal across
+// separate outages -- and makes that network the one tried first from now
+// on: cfg.last changes, and is written to flash (config_store_update, which
+// keeps the token) only when it changed. That write is refused while a disk
+// is mounted; the change then holds in RAM until the next save.
+//
+// Named for net_join_t on purpose: it replaced prov_on_assoc_result(p, bool),
+// and NET_JOIN_OK is 0 -- a leftover `true` would have read as a failure.
+prov_state_t prov_on_join_result(provisioning_t *p, net_join_t r);
+
+// The portal collected a network (and maybe a pairing code) AND associating
+// with it succeeded -- spec D-4b-3's verify-then-commit, with this called
+// only after the verify. The network is added (or, if that SSID is already
+// saved, its password replaced in place) and becomes the last joined.
+//   * A pairing code in the form: a new pairing -- config_store_save(), which
+//     erases the token, exactly as every submit did before.
+//   * No code, and one is stored: the board stays paired --
+//     config_store_update(), token kept.
+// Returns true once committed; false (nothing changed, in RAM or flash) if
+// the commit failed, the list is full and the SSID is new, or there is no
+// code at all. The portal page refuses the last two before anything is
+// joined; this is the backstop.
+bool prov_on_verified_submit(provisioning_t *p, const setup_form_t *f);
+
+// The portal's Remove button. Removes `ssid` and writes the list (token
+// kept). Refuses to remove the only saved network -- a board with a code and
+// no network has nothing to join, and adding first then removing is the way
+// to replace it. Returns true when done; false with the reason in msg
+// (plain text, PROV_MSG_MAX is plenty) otherwise.
+bool prov_forget_network(provisioning_t *p, const char *ssid, char *msg, int cap);
+
+// The setup page's words for a failed join of `ssid` (plain text, '\n'
+// between lines, never markup -- portal_http.c escapes it). Names the network
+// and the reason, and how to fix it. Returns the length, or -1 if it would
+// not fit `cap` (then buf holds "").
+int prov_join_message(char *buf, int cap, const char *ssid, net_join_t r);
+
+// The same for the round of failures that just opened the portal: every
+// saved network with its own reason, then each kind of hint once. One
+// network reads exactly as prov_join_message.
+int prov_round_message(const provisioning_t *p, char *buf, int cap);
 
 // Registration came back 400 invalid_or_used_code. Spec D-4b-4: terminal,
 // not retryable. A pairing code is single-use with a 10-minute TTL, and 4b

@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "config_store.h"
+#include "portal_http.h"   // portal_view_t
 
 // How long portal_run() will sit with the AP up and nobody talking to it
 // before giving up and handing control back (see portal_run_result_t and
@@ -36,7 +37,7 @@
 #define PORTAL_IDLE_TIMEOUT_MS (5u * 60u * 1000u)
 
 typedef enum {
-    // A POST /save decoded to a complete device_config_t; `out` is filled.
+    // A POST /save decoded to a complete setup_form_t; `out` is filled.
     PORTAL_RUN_SUBMITTED,
     // `idle_timeout_ms` elapsed with no client activity and no HTTP
     // connection open. `out` is untouched. The caller decides what to do
@@ -59,7 +60,7 @@ typedef enum {
 // Brings up the WPA2 AP (SSID "wifi-floppy-XXXX" built from the last two
 // MAC octets, password PORTAL_AP_PASSWORD -- see CMakeLists.txt), starts
 // the DHCP/DNS/HTTP servers, and waits for a POST /save request that
-// decodes to a complete device_config_t (portal_http.h's
+// decodes to a complete setup_form_t (portal_http.h's
 // PORTAL_ACT_SUBMIT). `err`, when non-NULL, is shown on the form -- e.g.
 // the caller's own "Wrong password" from a previous verify-then-commit
 // attempt (spec D-4b-3).
@@ -80,8 +81,20 @@ typedef enum {
 //
 // There is no path back to the caller on setup failure (see portal_net.c's
 // header comment for why).
-portal_run_result_t portal_run(device_config_t *out, const char *err,
-                               uint32_t idle_timeout_ms);
+//
+// Several networks (2026-11-15): `view` is what the form lists (saved names,
+// whether a pairing code is stored, the name to prefill); NULL is a fresh
+// board. A Remove button (POST /forget) does NOT return: portal_run() calls
+// `forget` from its own foreground loop -- never from an lwIP callback, since
+// it writes flash -- with the AP still up, and the page shows the result.
+// `forget` gets the SSID and a copy of the view to update; it returns true
+// once removed, or false with the reason (plain text) in msg, which the form
+// then shows. NULL `forget` refuses every removal.
+#define PORTAL_FORGET_MSG_MAX 192
+typedef bool (*portal_forget_fn)(const char *ssid, portal_view_t *view, char *msg, int cap);
+portal_run_result_t portal_run(setup_form_t *out, const char *err,
+                               uint32_t idle_timeout_ms, const portal_view_t *view,
+                               portal_forget_fn forget);
 
 // Tears down the sockets and the AP, and restores the already-enabled
 // STA interface as lwIP's default route (see portal_net.c: bringing the

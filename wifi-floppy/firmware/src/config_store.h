@@ -1,7 +1,8 @@
 #ifndef CONFIG_STORE_H
 #define CONFIG_STORE_H
-// Persists the credentials the captive portal collects -- the home WiFi's
-// SSID/passphrase and the device's pairing code -- across power cycles.
+// Persists the credentials the captive portal collects -- up to
+// CONFIG_NETS_MAX WiFi networks (SSID/passphrase) and the device's pairing
+// code -- across power cycles.
 // Plan 4a compiled these into the image; plan 4b's portal writes them here
 // instead. See token_store.h for the sibling store this one is modelled on
 // (same flash-sector-behind-a-magic-word approach) and this file's .c for
@@ -17,12 +18,49 @@
 #define CONFIG_SSID_MAX 32     // 802.11 limit
 #define CONFIG_PASS_MAX 63     // WPA2 passphrase limit
 #define CONFIG_CODE_MAX 16     // pairing codes are 6; headroom
+// Several saved WiFi networks (field report 2026-11-14: a tester's board fell
+// into setup at a meeting because only his home network was stored). Four is
+// a phone hotspot, home, and two places a board travels to; the record that
+// holds them still fits three flash pages (see config_store.c).
+#define CONFIG_NETS_MAX 4
 
 typedef struct {
     char ssid[CONFIG_SSID_MAX + 1];
     char pass[CONFIG_PASS_MAX + 1];
+} wifi_net_t;
+
+// ~410 bytes: never a local on core0 (2 KB stack, HANDOFF) and not on core1's
+// stack either -- main.c keeps its one copy static.
+typedef struct {
+    // In the order they were saved: the board tries net[last] first, then the
+    // rest in this order (provisioning.h). n_nets is 1..CONFIG_NETS_MAX in a
+    // loaded record; 0 only in a zeroed struct.
+    wifi_net_t net[CONFIG_NETS_MAX];
+    int  n_nets;
+    int  last;     // index into net[] of the network last joined successfully
     char code[CONFIG_CODE_MAX + 1];
 } device_config_t;
+
+// What the setup portal collects in one submit: one network and, optionally,
+// a pairing code (empty = keep the stored one). Small on purpose -- it is
+// decoded in an lwIP callback, on core1's IRQ stack.
+typedef struct {
+    char ssid[CONFIG_SSID_MAX + 1];
+    char pass[CONFIG_PASS_MAX + 1];
+    char code[CONFIG_CODE_MAX + 1];
+} setup_form_t;
+
+// The list operations, pure (no flash). config_find_net: the index of `ssid`
+// (exact, case-sensitive: SSIDs are octets), or -1. config_add_net: an SSID
+// already saved has its password replaced in place, keeping its position;
+// a new one is appended. Returns the index, or -1 when the list is full and
+// `ssid` is new -- the rule is "refuse, never silently drop a network": the
+// portal says so and shows the Remove buttons (operator to confirm, see the
+// branch report). config_remove_net keeps `last` pointing at the same
+// network (or 0 if that one went); false if idx is out of range.
+int  config_find_net(const device_config_t *cfg, const char *ssid);
+int  config_add_net(device_config_t *cfg, const char *ssid, const char *pass);
+bool config_remove_net(device_config_t *cfg, int idx);
 
 // False if nothing valid is stored (erased sector, bad magic, or CRC
 // mismatch). A CRC mismatch means a write that completed the magic but
@@ -34,12 +72,17 @@ typedef struct {
 // likely to walk away and pull the power.
 bool config_store_load(device_config_t *out);
 
-// False on over-length fields or while a disk is mounted (same guard as
-// token_store_save() -- see its comment for why). Erases the token on
-// success: re-pairing issues a new device row and a new token server-side,
-// and keeping the old token around would leave the board authenticating as
-// a device the server no longer associates with these credentials.
+// False on over-length fields, no network, or while a disk is mounted (same
+// guard as token_store_save() -- see its comment for why). Erases the token on
+// success: this is the save a NEW PAIRING CODE makes -- re-pairing issues a
+// new device row and a new token server-side, and keeping the old token
+// around would leave the board authenticating as a device the server no
+// longer associates with these credentials.
 bool config_store_save(const device_config_t *cfg);
+
+// The same write, but the token is KEPT: a network added or removed, or the
+// last-joined network changing, is not a re-pair. Same guards.
+bool config_store_update(const device_config_t *cfg);
 
 // Clears credentials AND the token. Same mounted-disk guard.
 void config_store_erase(void);
@@ -100,5 +143,13 @@ void config_store_test_corrupt_payload_byte(void);
 // must fail if-and-only-if the magic comparison is deleted (unlike the
 // during-magic torn-write case above, where the version check also fires).
 void config_store_test_corrupt_magic(void);
+// Several networks: the bytes as stored (host backing), so a test can write
+// the exact single-network layout an older firmware left on a board in the
+// field, and read back what an older firmware would read after this one
+// saved. config_store_test_raw's length is CONFIG_STORE_RECORD_BYTES.
+#define CONFIG_STORE_RECORD_BYTES 768
+#define CONFIG_STORE_PAGE_BYTES   256
+void config_store_test_write_raw(const unsigned char *bytes, int len);   // rest reads erased
+const unsigned char *config_store_test_raw(void);
 
 #endif

@@ -1604,7 +1604,22 @@ static void mac_address_string(char *out, size_t out_len) {
 //     (round 2 review). (Before this task, with core1_main's smaller
 //     pre-provisioning frame: 2304 B -- this task's +232 B here is
 //     entirely provisioning_t/device_config_t locals in core1_main itself;
-//     see its definition.)
+//     see its definition.) 2026-11-15 (several WiFi networks; estimated
+//     from the types, NOT re-measured with -fstack-usage): `prov` grew to
+//     ~436 B and moved to a file static; the portal block's locals are now
+//     the 114 B setup_form_t and a 176 B portal_view_t (~290 B, where
+//     device_config_t + provisioning_t were ~232 B) -- about +60 B on this
+//     frame, which the TLS path below also carries. Portal path only, never
+//     with TLS: prov_on_verified_submit()/prov_forget_network() each hold
+//     a ~410 B device_config_t copy, and portal_run()'s Remove handling
+//     ~400 B; on the portal path's IRQ chain, portal_request()'s POST /save
+//     check (a 96 B message + a 33 B name), POST /forget's 114 B form and
+//     the next-window render (a 152 B portal_result_t + method/path/MAC,
+//     ~370 B, in tcp_sent context), against the 192 B error block + 193 B
+//     escaped SSID the old renderers held. Locals rather than statics on
+//     purpose: every static byte comes out of a heap whose low-water sits
+//     near its 20 KB floor, while this stack has ~10 KB of headroom on the
+//     TLS path and far more on the portal path.
 //   * IRQ: the first pass here started counting from
 //     altcp_mbedtls_lower_recv (2576 B down through the deepest branch of
 //     the TLS 1.3 client handshake state machine --
@@ -1653,22 +1668,40 @@ static void mac_address_string(char *out, size_t out_len) {
 #define CORE1_STACK_BYTES 16384
 static __attribute__((aligned(32))) uint32_t core1_stack[CORE1_STACK_BYTES / 4];
 
-// Maps a failed cyw43_arch_wifi_connect_timeout_ms() into one of the two
-// corrections spec §6 requires the portal to distinguish, plus a generic
-// fallback -- a bare "failed" would send the user back to retype a
-// password that was already right. Per pico_cyw43_arch.h's own
-// documentation of this call: PICO_ERROR_BADAUTH means the password was
-// wrong; PICO_ERROR_TIMEOUT means the timeout elapsed without ever
-// joining, which for a *_timeout_ms() (as opposed to *_blocking()) call
-// is what a persistently-unmatched SSID looks like --
-// cyw43_arch_wifi_connect_bssid_until() (pico-sdk's cyw43_arch.c) treats
-// CYW43_LINK_NONET as "keep retrying" internally rather than surfacing it,
-// so the timeout is the only signal this call exposes for "never found
-// it". Anything else (PICO_ERROR_CONNECT_FAILED, etc.) gets the fallback.
-static const char *assoc_failure_message(int err) {
-    if (err == PICO_ERROR_BADAUTH)  return "Wrong password";
-    if (err == PICO_ERROR_TIMEOUT)  return "Network not found";
-    return "Could not connect";
+// Provisioning (plan 4b; several networks 2026-11-15). Static, not a
+// core1_main local (~436 B of bss): portal_forget() below reaches it from
+// portal_run()'s loop, and it lives as long as core1_main does -- through
+// the TLS path, the deepest use of core1's stack. Core1 only.
+static provisioning_t prov;
+
+// What the setup form shows after a failed join: which network, why, and what
+// to do (provisioning.c's prov_join_message / prov_round_message, field report
+// 2026-11-14). Static for the same reason (800 B); `last_error` in core1_main
+// points here, or at a fixed string, or is NULL.
+static char g_last_error[PROV_MSG_MAX];
+// The network-name field's initial value: what was just submitted and
+// failed, so only the password (or the network) has to be retyped.
+static char g_portal_prefill[CONFIG_SSID_MAX + 1];
+
+// The form's view of prov: names only, never a password.
+static void portal_view_fill(portal_view_t *v) {
+    memset(v, 0, sizeof *v);
+    v->last = -1;
+    if (prov.have_config) {
+        v->n = prov.cfg.n_nets;
+        for (int i = 0; i < v->n && i < CONFIG_NETS_MAX; i++)
+            memcpy(v->ssid[i], prov.cfg.net[i].ssid, sizeof v->ssid[i]);
+        v->last = prov.cfg.last;
+        v->have_code = prov.cfg.code[0] != '\0';
+    }
+    memcpy(v->prefill, g_portal_prefill, sizeof v->prefill);
+}
+
+// portal_run()'s Remove button, called from its foreground loop (portal_net.h).
+static bool portal_forget(const char *ssid, portal_view_t *view, char *msg, int cap) {
+    bool done = prov_forget_network(&prov, ssid, msg, cap);
+    portal_view_fill(view);
+    return done;
 }
 
 // transport_tls.c keeps a clean TLS connection open between requests, which
@@ -1908,12 +1941,11 @@ static void core1_main(void) {
     // protocol loop against stored credentials. Touches no radio itself
     // (provisioning.h's file-wide rule) -- prov.state is what the loop
     // below acts on.
-    provisioning_t prov;
-    prov_init(&prov);
+    prov_init(&prov);   // file-static since 2026-11-15, see its definition
 
     // Shown on the portal form after a failed association with freshly
-    // submitted credentials (spec D-4b-3's verify-then-commit). NULL
-    // until that happens.
+    // submitted credentials (spec D-4b-3's verify-then-commit), or after a
+    // round of failures over the saved networks. NULL until that happens.
     const char *last_error = NULL;
 
     for (;;) {
@@ -1946,7 +1978,11 @@ static void core1_main(void) {
                 // portal's address is handed over by DNS once joined.
                 ui_publish(DS_PORTAL, "Setup needed", ssid, -1);
             }
-            device_config_t submitted;
+            // Locals (~290 B), as `submitted` always was: this block is the
+            // portal path, which peaks far below the TLS path on this stack.
+            setup_form_t submitted;
+            portal_view_t view;
+            portal_view_fill(&view);
             // Final-review Important 2: the wait is bounded ONLY when
             // there is a stored configuration worth going back to.
             //   * have_config true: the portal was opened by three
@@ -1963,7 +1999,7 @@ static void core1_main(void) {
             uint32_t portal_wait_ms =
                 prov.have_config ? PORTAL_IDLE_TIMEOUT_MS : 0u;
             portal_run_result_t pr =
-                portal_run(&submitted, last_error, portal_wait_ms);
+                portal_run(&submitted, last_error, portal_wait_ms, &view, portal_forget);
 
             if (pr == PORTAL_RUN_IDLE_TIMEOUT) {
                 // Same teardown as the submit path below -- an idle
@@ -1992,11 +2028,17 @@ static void core1_main(void) {
             wf_logf(WF_INFO, "portal: AP down, default route now %s",
                     default_route_str());
 
-            int err = net_radio_sta_connect(submitted.ssid, submitted.pass, 15000);
-            if (err != PICO_OK) {
-                last_error = assoc_failure_message(err);
-                wf_logf(WF_WARN, "portal: association failed (%d): %s",
-                        err, last_error);
+            // The OLED names the network being tried, as the RUNNING path does.
+            ui_publish(DS_WIFI, "Connecting", submitted.ssid, -1);
+            net_join_t jr = net_radio_sta_connect(submitted.ssid, submitted.pass, 15000);
+            if (jr != NET_JOIN_OK) {
+                // Which network, why, and what to do -- and the name stays in
+                // the field (field report 2026-11-14: "Network not found" alone
+                // read as the board still hunting for the OLD network).
+                prov_join_message(g_last_error, sizeof g_last_error, submitted.ssid, jr);
+                last_error = g_last_error;
+                memcpy(g_portal_prefill, submitted.ssid, sizeof g_portal_prefill);
+                wf_logf(WF_WARN, "portal: join %s failed (%d)", submitted.ssid, (int)jr);
                 continue;   // portal_run() comes back up showing last_error
             }
 
@@ -2016,49 +2058,62 @@ static void core1_main(void) {
             wf_logf(WF_INFO, "portal: associated, default route %s",
                     default_route_str());
             if (prov_on_verified_submit(&prov, &submitted)) {
-                wf_logf(WF_INFO, "portal: credentials verified and saved");
+                wf_logf(WF_INFO, "portal: network %s verified and saved (%d saved, %s)",
+                        submitted.ssid, prov.cfg.n_nets,
+                        submitted.code[0] ? "new pairing code" : "pairing kept");
                 last_error = NULL;
+                g_portal_prefill[0] = '\0';
             } else {
                 last_error = "Could not save configuration, try again";
+                memcpy(g_portal_prefill, submitted.ssid, sizeof g_portal_prefill);
             }
+            // The password was only needed for the join and the save.
+            memset(&submitted, 0, sizeof submitted);
             continue;
         }
 
         // PROV_RUNNING: prov.cfg is populated either by prov_init() (a
         // config already on flash) or by prov_on_verified_submit() just
-        // above.
-        ui_publish(DS_WIFI, "Connecting", prov.cfg.ssid, -1);
-        int err = net_radio_sta_connect(prov.cfg.ssid, prov.cfg.pass, 15000);
-        if (err != PICO_OK) {
-            // prov_on_assoc_result(p, false) is the only call in this
-            // loop that may move `state`: three consecutive failures
+        // above. One attempt per pass: prov_next_net() walks the round --
+        // the network last joined first, then the others in saved order.
+        const int ni = prov_next_net(&prov);
+        const wifi_net_t *net = &prov.cfg.net[ni < 0 ? 0 : ni];
+        ui_publish(DS_WIFI, "Connecting", net->ssid, -1);   // the one being tried
+        net_join_t jr = net_radio_sta_connect(net->ssid, net->pass, 15000);
+        if (jr != NET_JOIN_OK) {
+            // prov_on_join_result(p, failure) is the only call in this
+            // loop that may move `state`: three consecutive failed ROUNDS
             // (PROV_MAX_ASSOC_FAILURES) send it back to PROV_PORTAL, and
             // the top of this loop picks that up on the next iteration.
-            wf_logf(WF_WARN, "assoc failed (%d), failure %d of %d", err,
-                    prov.assoc_failures + 1, PROV_MAX_ASSOC_FAILURES);
-            prov_on_assoc_result(&prov, false);
-            // Review round 2, Minor 1: if that was the third failure and
-            // the portal just opened, show the same reason a submit-path
-            // failure would (spec §6's two-message requirement) -- without
-            // this, a boot that never had a chance to submit anything
-            // shows a blank form instead of "wrong password"/"network not
-            // found". A first or second failure leaves state at
-            // PROV_RUNNING, so this is a no-op then.
+            wf_logf(WF_WARN, "join %s failed (%d): network %d of %d, round %d of %d", net->ssid,
+                    (int)jr, prov.round_pos + 1, prov.cfg.n_nets, prov.assoc_failures + 1,
+                    PROV_MAX_ASSOC_FAILURES);
+            prov_on_join_result(&prov, jr);
+            // Review round 2, Minor 1: if that was the last failure and the
+            // portal just opened, show the reason a submit-path failure
+            // would (spec §6's two-message requirement) -- without this, a
+            // boot that never had a chance to submit anything shows a blank
+            // form. Since 2026-11-15 it names every saved network and its
+            // own reason (prov_round_message). Otherwise a no-op.
             if (prov.state == PROV_PORTAL) {
-                last_error = assoc_failure_message(err);
+                prov_round_message(&prov, g_last_error, sizeof g_last_error);
+                last_error = g_last_error;
+                g_portal_prefill[0] = '\0';
             }
             continue;
         }
-        // Carried from task 2's review: prov_on_assoc_result(p, true)
+        // Carried from task 2's review: prov_on_join_result(p, OK)
         // returns p->state UNCHANGED rather than forcing PROV_RUNNING --
         // that is correct only because this call site is reached
         // exclusively from the PROV_RUNNING branch (this `else`, in
         // effect) above, never from PROV_PORTAL. Do not add another call
-        // site to prov_on_assoc_result(true) without preserving that.
-        prov_on_assoc_result(&prov, true);
+        // site to prov_on_join_result(OK) without preserving that. It also
+        // makes this network the one tried first from now on (a flash write
+        // only when that changed, refused under a mounted disk -- then RAM only).
+        prov_on_join_result(&prov, NET_JOIN_OK);
         // Success was previously silent -- only failures logged -- so "did it
         // associate?" could not be answered from the console at all.
-        wf_logf(WF_INFO, "associated, default route %s", default_route_str());
+        wf_logf(WF_INFO, "associated with %s, default route %s", net->ssid, default_route_str());
         bt_hw_mark(1, BT1_SERVER);
         ut_hw_mark(UT_SERVER);
         g_ui_bars = rssi_bars(wifi_rssi());
