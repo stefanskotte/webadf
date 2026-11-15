@@ -771,7 +771,45 @@ static void test_online_a_save_held_after_its_page_says_why(void) {
     CHECK(strstr(out, "<meta http-equiv=\"refresh\" content=\"8;url=/\">") != NULL, "the checking page reloads");
 }
 
+// Operator 2026-11-15 (an Android phone): Save and Done read as two submits. Save belongs to the Add a network form,
+// inside it with its fields; Done sits apart after it, under a line saying what it does, and plain.
+static void test_online_save_is_the_forms_and_done_stands_apart(void) {
+    portal_view_t v = online_view();
+    REQV("GET", "/", NULL, NULL, &v);
+    const char *save_form = strstr(out, "action=\"/save\"");
+    const char *pass = strstr(out, "name=\"pass\"");
+    const char *save_btn = strstr(out, "<button type=\"submit\" class=\"save\">Save this network</button>");
+    const char *save_end = save_btn ? strstr(save_btn, "</form>") : NULL;
+    const char *done_box = strstr(out, "<div class=\"done\">");
+    const char *done_btn = strstr(out, "action=\"/done\"><button type=\"submit\">Done</button>");
+    CHECK(save_form && pass && save_btn && save_end && done_box && done_btn, out);
+    if (save_form && pass && save_btn && save_end && done_box && done_btn) {
+        CHECK(save_form < pass && pass < save_btn, "Save after its fields, in its form");
+        CHECK(save_end < done_box && done_box < done_btn, "Done after the form closes, in its own box");
+    }
+    CHECK(strstr(out, "Finished adding networks? Done closes this setup page; the board stays on \xe2\x80\x9cHome\xe2\x80\x9d.") != NULL, "says what Done does");
+    CHECK(strstr(out, ".done button{background:none;") != NULL, "Done is plain");
+    CHECK(strstr(out, "name=\"viewport\" content=\"width=device-width, initial-scale=1\"") != NULL, "laid out for a phone");
+    // The worst-case online form still goes out in 2 KB windows that join to the page.
+    portal_view_t w;
+    memset(&w, 0, sizeof w);
+    w.n = CONFIG_NETS_MAX; w.last = 0; w.have_code = true; w.on_request = true; w.left_min = 10;
+    for (int i = 0; i < CONFIG_NETS_MAX; i++) memset(w.ssid[i], '"', CONFIG_SSID_MAX);
+    static char whole[16384], joined[16384], win[2048];
+    int n = portal_request("GET", "/", NULL, "AB:CD:EF:01:02:03", NULL, &w, whole, sizeof whole, &res);
+    int off = 0, total = 0;
+    for (;;) {
+        int k = portal_request_window("GET", "/", NULL, "AB:CD:EF:01:02:03", NULL, &w, off, win, sizeof win, &res, &total);
+        if (k <= 0) break;
+        memcpy(joined + off, win, (size_t)k);
+        off += k;
+    }
+    CHECK(n > 0 && off == n && memcmp(joined, whole, (size_t)n) == 0, "the windows are the page");
+    printf("  (worst-case online form: %d bytes)\n", n);
+}
+
 int main(void) {
+    RUN(test_online_save_is_the_forms_and_done_stands_apart);
     RUN(test_online_a_save_held_after_its_page_says_why);
     RUN(test_online_save_is_held_and_says_why);
     RUN(test_online_the_time_away_is_stated);
