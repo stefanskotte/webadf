@@ -103,6 +103,8 @@ test('copy a file between disks makes one version', async ({ page }) => {
   await page.getByTestId('pane-left').getByTestId('pane-row').filter({ hasText: 'Disk 1' }).dblclick();
   await expect(page.getByTestId('disk-strip-left')).toBeVisible();
   await expect.poll(() => new URL(page.url()).searchParams.get('left')).toBe(b.path);
+  // The phone's Add files to <disk> is not drawn from lg: here a drop from the computer adds files, as before.
+  for (const s of ['left', 'right']) await expect(page.getByTestId(`pane-${s}-add-files`)).toBeHidden();
 
   await row(page, 'right', 'ReadMe').click();
   await expect(row(page, 'right', 'ReadMe')).toHaveAttribute('aria-selected', 'true');

@@ -75,7 +75,7 @@ export const HELP_TOPICS = {
   // answer, R6 the filter, R7 Show .info, R9 this topic); pane.tsx (device buttons, filter box "Filter names", Show .info
   // switch), files-manager.tsx (the button column Copy/Move/Delete/Rename/Makedir/Protect/Info/Download/Swap, the
   // phone's Left/Right and Copy to…/Move to…, a drag copies and Shift at the drop moves -- Chromium reads Shift only once
-  // the drag has begun, increment-1 ledger Task 11), disk-strip.tsx (drive chip, Mount or Eject to edit, History, ⬇ ADF),
+  // the drag has begun, increment-1 ledger Task 11), add-files-button.tsx (the phone's Add files to <disk>), disk-strip.tsx (drive chip, Mount or Eject to edit, History, ⬇ ADF),
   // dialogs.tsx (Replace, Skip, Keep both), keys.ts (the keys), view.ts (filter, Show .info, folders copied whole).
   // Files 2 (spec 2026-10-29-files-2-design.md): button-bank.tsx, bank.ts, shelf.ts/shelf-rules.ts, create-adf-dialog.tsx.
   // Progress: spec docs/superpowers/specs/2026-11-01-progress-panel-design.md; src/components/shell/transfers-panel.tsx,
@@ -111,7 +111,7 @@ export const HELP_TOPICS = {
         </p>
         <p>
           <strong>Inside a disk.</strong> The strip shows the drive, <em>Mount</em>, <em>History</em> and{' '}
-          <em>⬇ ADF</em>. Each change saves one new version, with Undo; <em>Eject to edit</em> a disk in a drive.{' '}
+          <em>⬇ ADF</em>. Drop files from your computer on the pane to add them. Each change saves one new version, with Undo; <em>Eject to edit</em> a disk in a drive.{' '}
           <em>Protect</em> sets bits; <em>Info</em> shows details. Type in a filter box; <em>Show .info</em> hides or shows icon files.
         </p>
         <p>
@@ -131,7 +131,8 @@ export const HELP_TOPICS = {
         </p>
         <p>
           <strong>On a phone.</strong> One pane at a time: <em>Left</em> and <em>Right</em> switch.{' '}
-          <em>Copy to…</em> and <em>Move to…</em> ask where.
+          <em>Copy to…</em> and <em>Move to…</em> ask where. Inside a disk, <em>Add files to …</em> puts files from the
+          phone on that disk, in the folder shown; the top tile puts them in STASH:.
         </p>
         <GoodToKnow items={[
           'Settings › Account › Files sets the opening panes, .info files, the Comment column, the delete confirm and the answer when a name is already there.',

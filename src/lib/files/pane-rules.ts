@@ -136,6 +136,19 @@ export function placeName(where: { title: string; label: string } | null): strin
 }
 
 /**
+ * Inside a disk, the place the phone's Add files button names (tester report 2026-11-14: a crumb "Disk 1" did not read
+ * as the inside of the ADF he had made): the title and the disk, then the folders shown -- "Empty · Disk 1",
+ * "Empty · Disk 1/Docs". A label that already names the title ("Turrican (Disk 1)") is said alone. Null outside a disk.
+ */
+export function insideDiskPlace(l: Listing | null): string | null {
+  if (!l?.disk) return null;
+  const { title, label } = l.disk;
+  const at = l.crumbs.findLastIndex((c) => c.label === label);
+  const disk = title && !label.includes(title) ? placeName(l.disk) : label;
+  return [disk, ...(at < 0 ? [] : l.crumbs.slice(at + 1).map((c) => c.label))].join('/');
+}
+
+/**
  * What a delete of `entries` removes, counting everything inside a folder (the Browse page's bulk-delete words):
  * "“ReadMe”", "“C” and the 2 files in it", "3 files and 1 folder".
  */
