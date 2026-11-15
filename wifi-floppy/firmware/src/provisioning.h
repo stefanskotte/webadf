@@ -20,16 +20,13 @@
 // three instantaneous retries.
 //
 // Several networks (field report 2026-11-14): the count is of ROUNDS. A
-// round tries every saved network once -- the one last joined first, then
-// the others in saved order -- and fails only if every attempt in it failed.
+// round tries every saved network once -- the one joined last THIS SESSION
+// first (at power-on: the first saved), then the others in saved order --
+// and fails only if every attempt in it failed.
 // So with one network nothing changed (three attempts, ~45 s); with four the
 // portal opens after 3 x 4 attempts, ~3 minutes. Any success ends the run of
 // failures, exactly as one success did before.
 #define PROV_MAX_ASSOC_FAILURES 3
-
-// Room for the longest message prov_round_message() / prov_join_message()
-// write: four networks' lines plus every hint (host-tested).
-#define PROV_MSG_MAX 800
 
 typedef enum {
     PROV_PORTAL,     // offer the AP and the config page
@@ -48,26 +45,48 @@ typedef struct {
     int             round_pos;     // attempts already made in the current round
     // This round's outcome per cfg.net index; NET_JOIN_OK means "not tried
     // this round" (a success ends the round). What the portal says when a
-    // round of failures opens it (prov_round_message).
+    // round of failures opens it (portal_http.c renders it).
     net_join_t      result[CONFIG_NETS_MAX];
+    // The cfg.net index a round starts with: the network joined last in THIS
+    // session. RAM only (review I2, operator 2026-11-15): remembering it in
+    // flash meant erasing the config sector unattended, seconds after
+    // power-on, on a board whose Amiga is switched off often -- and a cut
+    // during that erase loses every network and the code. At power-on it is
+    // 0: the saved order.
+    int             first;
+    bool            joined;   // `first` was joined this session (not merely the power-on default)
     bool            have_config;
-    device_config_t cfg;    // valid only when have_config is true; ~410 B, keep the struct static
+    device_config_t cfg;    // valid only when have_config is true; ~410 B
 } provisioning_t;
+
+// Why a Remove did not happen (prov_forget_network); the setup page words it.
+typedef enum {
+    PROV_FORGOT = 0,
+    PROV_FORGET_NOT_SAVED,      // no such network
+    PROV_FORGET_ONLY_ONE,       // the only saved network stays
+    PROV_FORGET_DISK_MOUNTED,   // config_store's guard: no flash write while a disk is in the drive
+    PROV_FORGET_WRITE_FAILED,   // the flash write itself failed
+} prov_forget_t;
 
 // Decide the starting state from what is stored. Touches no radio.
 void prov_init(provisioning_t *p);
 
 // The cfg.net index of the network to try next: position round_pos of the
-// order "net[last], then the others in saved order". -1 without a config.
+// order "net[first], then the others in saved order". -1 without a config.
 int prov_next_net(const provisioning_t *p);
+// Position k of that order (the setup page lists a failed round in it).
+int prov_order_at(const provisioning_t *p, int k);
+
+// The board is paired, so the setup page may take a network with no code:
+// a code is stored, or a token is (the token outlives a lost config record,
+// see config_store.c's erase-window comment).
+bool prov_paired(const provisioning_t *p);
 
 // Report the outcome of the attempt on prov_next_net(p). Returns the new
 // state. A success resets the failure count and the round, so a flaky
 // router costs retries but never accumulates toward the portal across
-// separate outages -- and makes that network the one tried first from now
-// on: cfg.last changes, and is written to flash (config_store_update, which
-// keeps the token) only when it changed. That write is refused while a disk
-// is mounted; the change then holds in RAM until the next save.
+// separate outages -- and makes that network the one tried first for the
+// rest of the session (`first`, RAM only: this never writes flash).
 //
 // Named for net_join_t on purpose: it replaced prov_on_assoc_result(p, bool),
 // and NET_JOIN_OK is 0 -- a leftover `true` would have read as a failure.
@@ -76,10 +95,12 @@ prov_state_t prov_on_join_result(provisioning_t *p, net_join_t r);
 // The portal collected a network (and maybe a pairing code) AND associating
 // with it succeeded -- spec D-4b-3's verify-then-commit, with this called
 // only after the verify. The network is added (or, if that SSID is already
-// saved, its password replaced in place) and becomes the last joined.
+// saved, its password replaced in place) and becomes the last joined -- in
+// RAM, and as page 0 of the record (cfg.last: what an older firmware would
+// read after a rollback).
 //   * A pairing code in the form: a new pairing -- config_store_save(), which
 //     erases the token, exactly as every submit did before.
-//   * No code, and one is stored: the board stays paired --
+//   * No code, and the board is paired (prov_paired): it stays paired --
 //     config_store_update(), token kept.
 // Returns true once committed; false (nothing changed, in RAM or flash) if
 // the commit failed, the list is full and the SSID is new, or there is no
@@ -88,22 +109,11 @@ prov_state_t prov_on_join_result(provisioning_t *p, net_join_t r);
 bool prov_on_verified_submit(provisioning_t *p, const setup_form_t *f);
 
 // The portal's Remove button. Removes `ssid` and writes the list (token
-// kept). Refuses to remove the only saved network -- a board with a code and
-// no network has nothing to join, and adding first then removing is the way
-// to replace it. Returns true when done; false with the reason in msg
-// (plain text, PROV_MSG_MAX is plenty) otherwise.
-bool prov_forget_network(provisioning_t *p, const char *ssid, char *msg, int cap);
-
-// The setup page's words for a failed join of `ssid` (plain text, '\n'
-// between lines, never markup -- portal_http.c escapes it). Names the network
-// and the reason, and how to fix it. Returns the length, or -1 if it would
-// not fit `cap` (then buf holds "").
-int prov_join_message(char *buf, int cap, const char *ssid, net_join_t r);
-
-// The same for the round of failures that just opened the portal: every
-// saved network with its own reason, then each kind of hint once. One
-// network reads exactly as prov_join_message.
-int prov_round_message(const provisioning_t *p, char *buf, int cap);
+// kept), with the network joined last this session as page 0. Refuses to
+// remove the only saved network -- a board with a code and no network has
+// nothing to join, and adding first then removing is the way to replace it.
+// Nothing changes, in RAM or flash, unless it returns PROV_FORGOT.
+prov_forget_t prov_forget_network(provisioning_t *p, const char *ssid);
 
 // Registration came back 400 invalid_or_used_code. Spec D-4b-4: terminal,
 // not retryable. A pairing code is single-use with a 10-minute TTL, and 4b

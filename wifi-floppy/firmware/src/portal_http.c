@@ -142,6 +142,7 @@ typedef struct {
     int   skip;    // page offset of out[0]
     int   pos;     // page bytes rendered so far, kept or not
     int   len;     // bytes in out
+    bool  plain;   // portal_error_text(): text as is, no escaping, '\n' kept
 } sb_t;
 
 static void sb_put(sb_t *b, const char *s, int n) {
@@ -194,7 +195,9 @@ static const char *escape_one(unsigned char c, char one[2]) {
 }
 
 // Escaped text; with `br`, each '\n' becomes <br> (the error block's lines).
+// In a plain sink (portal_error_text) the text goes in as it is.
 static void sb_html(sb_t *b, const char *text, bool br) {
+    if (b->plain) { sb_raw(b, text ? text : ""); return; }
     for (const char *p = text ? text : ""; *p; p++) {
         char one[2];
         sb_raw(b, (br && *p == '\n') ? "<br>" : escape_one((unsigned char)*p, one));
@@ -215,6 +218,166 @@ int portal_html_escape(const char *in, char *out, int cap) {
     out[o] = '\0';
     return o;
 }
+
+// ---------------------------------------------------------------- the error's words
+//
+// Moved here from provisioning.c (review I3): the page words the error from
+// the view's few bytes as it renders, so no message buffer has to be kept.
+// Only distinctions net_radio_sta_connect can actually make (net_join.c).
+// Spec §6's two-message requirement is "wrong password" vs "not found"; both
+// stay, with the network named.
+
+// Curly quotes around an SSID: a straight " would become &quot; in the page,
+// and the SSID itself may hold one.
+#define LQ "\xe2\x80\x9c"
+#define RQ "\xe2\x80\x9d"
+
+static const char *reason_short(net_join_t r) {
+    switch (r) {
+    case NET_JOIN_NOT_FOUND:  return "not found";
+    case NET_JOIN_BAD_AUTH:   return "wrong password";
+    case NET_JOIN_FAILED:     return "the network refused the connection";
+    case NET_JOIN_NO_ADDRESS: return "joined, but the network gave the board no address";
+    case NET_JOIN_TIMEOUT:    return "no answer in time";
+    case NET_JOIN_ERROR:      return "the board's WiFi chip did not start the join";
+    case NET_JOIN_OK:         break;
+    }
+    return "could not connect";
+}
+
+static const char *reason_hint(net_join_t r) {
+    switch (r) {
+    case NET_JOIN_NOT_FOUND:
+        return "The board only sees 2.4 GHz networks, and cannot join one that is WPA3-only. "
+               "Phone hotspots often need " LQ "Maximise compatibility" RQ " (iPhone) or a "
+               "2.4 GHz band (Android) turned on.";
+    case NET_JOIN_BAD_AUTH:
+        return "Check the password; it is case-sensitive. If it is right, the network may be "
+               "WPA3-only: the board needs WPA2.";
+    case NET_JOIN_FAILED:
+        return "A network that refuses the board may be WPA3-only (the board needs WPA2) or "
+               "admit only devices it knows.";
+    case NET_JOIN_NO_ADDRESS:
+        return "Restart the router or hotspot, then try again.";
+    case NET_JOIN_TIMEOUT:
+        // Review M4: a wrong WPA2 password often ends here, not as "wrong
+        // password" -- the driver takes a missing key message for the edge of
+        // the cell and rejoins until the time runs out (net_radio_cyw43.c).
+        return "A wrong password often looks like this: check it (it is case-sensitive). "
+               "Otherwise move the board closer to the router, then try again.";
+    case NET_JOIN_ERROR:
+    case NET_JOIN_OK:
+        break;
+    }
+    return "Try again.";
+}
+
+// The words for "a disk is in the drive": config_store's write guard is
+// psram_active_slot() != SLOT_NONE -- a disk image is mounted (being served),
+// and a flash write would park core0, which serves it. In the setup page the
+// board cannot reach the web app to eject, but a power cycle starts with the
+// drive empty (a startup disk is the server's to put back, once online).
+#define DISK_WHY "a disk is in the drive, and the board does not write its settings while " \
+                 "one is. Switch the board off and on, which empties the drive, then try again."
+
+static void sb_txt(sb_t *b, const char *s);
+static void sb_user(sb_t *b, const char *s);
+
+static void msg_join(sb_t *b, const char *ssid, net_join_t r) {
+    sb_txt(b, "Could not join " LQ);
+    sb_user(b, ssid);
+    sb_txt(b, RQ ": ");
+    sb_txt(b, reason_short(r));
+    sb_txt(b, ".\n");
+    sb_txt(b, reason_hint(r));
+}
+
+static void msg_round(sb_t *b, const portal_view_t *v) {
+    int n = v->n < 0 ? 0 : (v->n > CONFIG_NETS_MAX ? CONFIG_NETS_MAX : v->n);
+    if (n == 1) { msg_join(b, v->ssid[0], v->result[0]); return; }
+    sb_txt(b, "Could not join any saved network:");
+    for (int k = 0; k < n; k++) {   // in the order tried, so the list reads as what happened
+        int i = v->order[k] < n ? v->order[k] : 0;
+        sb_txt(b, "\n" LQ);
+        sb_user(b, v->ssid[i]);
+        sb_txt(b, RQ ": ");
+        sb_txt(b, reason_short(v->result[i]));
+        sb_txt(b, ".");
+    }
+    // Each kind of advice once, in a fixed order.
+    static const net_join_t kinds[] = { NET_JOIN_NOT_FOUND, NET_JOIN_BAD_AUTH, NET_JOIN_FAILED,
+                                        NET_JOIN_NO_ADDRESS, NET_JOIN_TIMEOUT, NET_JOIN_ERROR,
+                                        NET_JOIN_OK };
+    for (unsigned k = 0; k < sizeof kinds / sizeof kinds[0]; k++) {
+        bool seen = false;
+        for (int i = 0; i < n; i++) seen = seen || v->result[i] == kinds[k];
+        if (seen) { sb_txt(b, "\n"); sb_txt(b, reason_hint(kinds[k])); }
+    }
+}
+
+static void msg_forget(sb_t *b, const portal_view_t *v) {
+    switch (v->forget) {
+    case PROV_FORGET_NOT_SAVED:
+        sb_txt(b, LQ); sb_user(b, v->forget_ssid); sb_txt(b, RQ " is not saved on this board.");
+        return;
+    case PROV_FORGET_ONLY_ONE:
+        sb_txt(b, LQ); sb_user(b, v->forget_ssid);
+        sb_txt(b, RQ " is the only saved network. Add another network before removing it.");
+        return;
+    case PROV_FORGET_DISK_MOUNTED:   // review M6: say why
+        sb_txt(b, "Could not remove " LQ); sb_user(b, v->forget_ssid); sb_txt(b, RQ ": " DISK_WHY);
+        return;
+    case PROV_FORGET_WRITE_FAILED:
+    case PROV_FORGOT:
+        break;
+    }
+    sb_txt(b, "Could not remove " LQ); sb_user(b, v->forget_ssid);
+    sb_txt(b, RQ ": the change was not saved. Try again.");
+}
+
+static void msg_save(sb_t *b, const portal_view_t *v) {
+    sb_txt(b, "Joined " LQ); sb_user(b, v->prefill);
+    sb_txt(b, v->disk_mounted ? RQ " but could not save it: " DISK_WHY
+                              : RQ " but could not save it. Try again.");
+}
+
+static bool has_error(const char *err, const portal_view_t *v) {
+    return (err && *err) || (v && v->err != PORTAL_ERR_NONE);
+}
+
+static void err_words(sb_t *b, const char *err, const portal_view_t *v) {
+    if (err && *err) { sb_txt(b, err); return; }
+    if (!v) return;
+    switch (v->err) {
+    case PORTAL_ERR_JOIN:   msg_join(b, v->prefill, v->join); break;
+    case PORTAL_ERR_ROUND:  msg_round(b, v); break;
+    case PORTAL_ERR_SAVE:   msg_save(b, v); break;
+    case PORTAL_ERR_FORGET: msg_forget(b, v); break;
+    case PORTAL_ERR_NONE:   break;
+    }
+}
+
+int portal_error_text(const char *err, const portal_view_t *view, char *buf, int cap) {
+    if (!buf || cap <= 0) return -1;
+    buf[0] = '\0';
+    sb_t b = { buf, cap, 0, 0, 0, true };
+    err_words(&b, err, view);
+    if (b.pos != b.len) { buf[0] = '\0'; return -1; }   // refused, never truncated
+    return b.len;
+}
+
+int portal_join_message(char *buf, int cap, const char *ssid, net_join_t r) {
+    if (!buf || cap <= 0) return -1;
+    buf[0] = '\0';
+    sb_t b = { buf, cap, 0, 0, 0, true };
+    msg_join(&b, ssid, r);
+    if (b.pos != b.len) { buf[0] = '\0'; return -1; }
+    return b.len;
+}
+
+// Developer text (may hold '\n': a line break) and user text (an SSID).
+static void sb_txt(sb_t *b, const char *s)  { sb_html(b, s, true); }
+static void sb_user(sb_t *b, const char *s) { sb_html(b, s, false); }
 
 // The head every page shares: inline <style>, no external URLs of any kind
 // (the AP has no route to the internet -- an external reference just hangs).
@@ -260,15 +423,15 @@ static void render_form(sb_t *bp, const char *mac_str, const char *err,
     sb_raw(&b, "<h1>WiFi Floppy Setup</h1><p class=\"mac\">Board ");
     sb_html(&b, mac_str, false);
     sb_raw(&b, "</p>");
-    if (err && *err) {
+    if (has_error(err, view)) {
         sb_raw(&b, "<div class=\"err\">");
-        sb_html(&b, err, true);
+        err_words(&b, err, view);
         sb_raw(&b, "</div>");
     }
     if (n > 0) {
         sb_raw(&b, "<h2>Saved networks</h2>"
-                   "<p class=\"hint\">The board tries the network it joined last first, then the "
-                   "others in this order.</p><ul class=\"nets\">");
+                   "<p class=\"hint\">At power-on the board tries them in this order; once it "
+                   "has joined one, that one goes first.</p><ul class=\"nets\">");
         for (int i = 0; i < n; i++) {
             sb_raw(&b, "<li><span>");
             sb_html(&b, view->ssid[i], false);
@@ -361,6 +524,16 @@ static void render_forgetting(sb_t *b, const char *ssid) {
     "</body></html>");
 }
 
+// POST /forget while another Remove is still being written (review M3): it
+// was accepted and silently dropped while the phone said "Removing".
+static void render_forget_busy(sb_t *b) {
+    sb_head(b);
+    sb_raw(b, "<h1>Still removing another network</h1>"
+    "<p>Wait a moment, then go back and press Remove again.</p>"
+    "<p><a href=\"/\">Back to setup</a></p>"
+    "</body></html>");
+}
+
 static void redirect_to_portal_root(sb_t *b) {
     sb_fmt(b,
         "HTTP/1.1 302 Found\r\n"
@@ -432,7 +605,8 @@ static void route(sb_t *b, const char *method, const char *path, const char *bod
         // wins over the generic message, since it names an actual failure
         // (a wrong password) rather than just "that body didn't decode".
         memset(&res->submitted, 0, sizeof res->submitted);
-        render_form(b, mac_str, err ? err : "Please fill in every field correctly.", view, prefill);
+        render_form(b, mac_str, has_error(err, view) ? err : "Please fill in every field correctly.",
+                    view, prefill);
         return;
     }
 
@@ -452,6 +626,7 @@ static void route(sb_t *b, const char *method, const char *path, const char *bod
             }
         }
         if (!got) { redirect_to_portal_root(b); return; }
+        if (view && view->forget_busy) { render_forget_busy(b); return; }   // not a forget
         memcpy(res->forget, f.ssid, sizeof res->forget);
         res->action = PORTAL_ACT_FORGET;
         render_forgetting(b, res->forget);
@@ -477,7 +652,7 @@ int portal_request_window(const char *method, const char *path, const char *body
     if (total) *total = 0;
     if (!out || cap <= 0 || skip < 0) return 0;
     out[0] = '\0';
-    sb_t b = { out, cap, skip, 0, 0 };
+    sb_t b = { out, cap, skip, 0, 0, false };
     route(&b, method, path, body, mac_str, err, view, res);
     if (total) *total = b.pos;
     return b.len;

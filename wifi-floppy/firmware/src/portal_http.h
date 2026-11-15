@@ -9,6 +9,7 @@
 // setup_form_t) and dns_server.h (for PORTAL_IP_*) -- so this links
 // into the host test build. Task 6 binds a TCP listener to it.
 #include "config_store.h"
+#include "provisioning.h"   // net_join_t, prov_forget_t: pure headers
 
 #include <stdbool.h>
 
@@ -28,19 +29,52 @@ typedef struct {
 // report 2026-11-14). Names only -- a password never reaches this file except
 // in a request body, and is never rendered. NULL renders as a fresh board: no
 // saved networks, a pairing code required, nothing prefilled.
+//
+// The error, too, is data here rather than text (review I3: an 800 B message
+// buffer and a 192 B remove-reason buffer were static RAM the heap could not
+// spare). The page words it as it renders, from these few bytes; the words
+// are portal_http.c's, and portal_error_text() gives them as plain text.
+typedef enum {
+    PORTAL_ERR_NONE,
+    PORTAL_ERR_JOIN,     // the submitted network (prefill) failed with `join`
+    PORTAL_ERR_ROUND,    // every saved network failed: result[] in order[]
+    PORTAL_ERR_SAVE,     // the submitted network (prefill) joined but was not saved
+    PORTAL_ERR_FORGET,   // removing forget_ssid was refused: `forget`
+} portal_err_t;
+
 typedef struct {
     int  n;                                            // saved networks, 0..CONFIG_NETS_MAX
     char ssid[CONFIG_NETS_MAX][CONFIG_SSID_MAX + 1];   // in saved order
     int  last;                                         // index of the last joined, -1 for none
-    bool have_code;        // a pairing code is stored: the code field may be left empty
+    bool have_code;        // paired (prov_paired): the code field may be left empty
     char prefill[CONFIG_SSID_MAX + 1];   // the network-name field's initial value
+    portal_err_t  err;
+    net_join_t    join;                       // PORTAL_ERR_JOIN
+    net_join_t    result[CONFIG_NETS_MAX];    // PORTAL_ERR_ROUND, per ssid[] index
+    unsigned char order[CONFIG_NETS_MAX];     // PORTAL_ERR_ROUND: ssid[] indices, in the order tried
+    bool          disk_mounted;               // PORTAL_ERR_SAVE: the reason it was not saved
+    prov_forget_t forget;                     // PORTAL_ERR_FORGET
+    char          forget_ssid[CONFIG_SSID_MAX + 1];
+    // A Remove is being written (portal_net.c): a second one is answered with
+    // "try again" rather than accepted and silently dropped (review M3).
+    bool          forget_busy;
 } portal_view_t;
+
+// The error the page would show for (err, view), as plain text: '\n' between
+// lines, SSIDs unescaped. `err` (a fixed string, e.g. a rejected pairing
+// code) wins over view->err when both are set. Returns the length, 0 for no
+// error, or -1 if it would not fit `cap` (then buf holds ""). For tests and
+// logs; the page renders the same words, escaped.
+int portal_error_text(const char *err, const portal_view_t *view, char *buf, int cap);
+// The words for one failed join of `ssid`, the same way.
+int portal_join_message(char *buf, int cap, const char *ssid, net_join_t r);
 
 
 // Render a reply for one request. `err` is shown on the form when non-NULL
-// (e.g. "Could not join ...: wrong password." from a previous attempt); NULL
-// shows no error block. It is plain text -- escaped here, '\n' becomes a line
-// break -- because it now carries an SSID, which is attacker-shaped.
+// (a fixed string, e.g. "Invalid or already-used pairing code"); otherwise
+// view->err is worded (portal_error_text). Both are plain text -- escaped
+// here, '\n' becomes a line break -- since the words carry SSIDs, which are
+// attacker-shaped.
 //
 // A POST /save that decodes completely does NOT come back as the form: it
 // renders a distinct "Credentials accepted / connecting" confirmation

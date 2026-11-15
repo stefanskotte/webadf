@@ -82,19 +82,19 @@ typedef enum {
 // There is no path back to the caller on setup failure (see portal_net.c's
 // header comment for why).
 //
-// Several networks (2026-11-15): `view` is what the form lists (saved names,
-// whether a pairing code is stored, the name to prefill); NULL is a fresh
-// board. A Remove button (POST /forget) does NOT return: portal_run() calls
-// `forget` from its own foreground loop -- never from an lwIP callback, since
-// it writes flash -- with the AP still up, and the page shows the result.
-// `forget` gets the SSID and a copy of the view to update; it returns true
-// once removed, or false with the reason (plain text) in msg, which the form
-// then shows. NULL `forget` refuses every removal.
-#define PORTAL_FORGET_MSG_MAX 192
-typedef bool (*portal_forget_fn)(const char *ssid, portal_view_t *view, char *msg, int cap);
+// Several networks (2026-11-15): `view` is what the form shows (saved names,
+// whether the board is paired, the name to prefill, the error as data). It is
+// the caller's struct, read in place -- required, and it must stay valid until
+// the portal_stop() that follows. A Remove button (POST /forget) does NOT
+// return: portal_run() calls `forget(ctx, ssid, view)` from its own
+// foreground loop -- never from an lwIP callback, since it writes flash --
+// with the AP still up and net_radio_lock() held, and the page shows the
+// result. `forget` updates the view (the list, and view->err for a refusal)
+// and returns true once removed. NULL `forget` refuses every removal.
+typedef bool (*portal_forget_fn)(void *ctx, const char *ssid, portal_view_t *view);
 portal_run_result_t portal_run(setup_form_t *out, const char *err,
-                               uint32_t idle_timeout_ms, const portal_view_t *view,
-                               portal_forget_fn forget);
+                               uint32_t idle_timeout_ms, portal_view_t *view,
+                               portal_forget_fn forget, void *ctx);
 
 // Tears down the sockets and the AP, and restores the already-enabled
 // STA interface as lwIP's default route (see portal_net.c: bringing the

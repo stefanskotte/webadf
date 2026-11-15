@@ -30,6 +30,7 @@
 #include "token_store.h"
 #include "sntp_time.h"
 #include "provisioning.h"
+#include "secure_zero.h"
 #include "config_store.h"
 #include "override_store.h"    // the server override (1.13.0): where this boot talks to
 #include "serial_cmd.h"        //   and the "wf server" console that changes it
@@ -1604,22 +1605,27 @@ static void mac_address_string(char *out, size_t out_len) {
 //     (round 2 review). (Before this task, with core1_main's smaller
 //     pre-provisioning frame: 2304 B -- this task's +232 B here is
 //     entirely provisioning_t/device_config_t locals in core1_main itself;
-//     see its definition.) 2026-11-15 (several WiFi networks; estimated
-//     from the types, NOT re-measured with -fstack-usage): `prov` grew to
-//     ~436 B and moved to a file static; the portal block's locals are now
-//     the 114 B setup_form_t and a 176 B portal_view_t (~290 B, where
-//     device_config_t + provisioning_t were ~232 B) -- about +60 B on this
-//     frame, which the TLS path below also carries. Portal path only, never
-//     with TLS: prov_on_verified_submit()/prov_forget_network() each hold
-//     a ~410 B device_config_t copy, and portal_run()'s Remove handling
-//     ~400 B; on the portal path's IRQ chain, portal_request()'s POST /save
-//     check (a 96 B message + a 33 B name), POST /forget's 114 B form and
-//     the next-window render (a 152 B portal_result_t + method/path/MAC,
-//     ~370 B, in tcp_sent context), against the 192 B error block + 193 B
-//     escaped SSID the old renderers held. Locals rather than statics on
-//     purpose: every static byte comes out of a heap whose low-water sits
-//     near its 20 KB floor, while this stack has ~10 KB of headroom on the
-//     TLS path and far more on the portal path.
+//     see its definition.) 2026-11-15, several WiFi networks -- MEASURED
+//     with -fstack-usage (-O3, this build's flags), frame sizes in bytes,
+//     master 8f754e03 -> this branch:
+//       core1_main                      424 -> 536  (+112, on the TLS path too:
+//                                                    ~5560 -> ~5672 of 16384)
+//       portal_run                      128 -> 144
+//       http_recv_cb (+inlined handle_complete_request)  56+392 -> 208
+//       portal_request                  408 -> 208  (the old renderers' error
+//                                                    block + escaped SSID are gone)
+//       portal_request_window             -  -> 200  (route/render inlined)
+//       try_send_more (+inlined next/render_window) 24 -> 184  (tcp_sent/poll context)
+//       render_form 96, sb_fmt 188 (a 160 B piece buffer), parse_form inlined
+//       prov_on_verified_submit           -  -> 440  } a device_config_t copy each;
+//       prov_forget_network               -  -> 440  } portal path only, never with TLS
+//       prov_paired                       -  -> 136  (the token, wiped after)
+//       net_radio_sta_connect 56, net_join_run 24
+//     `prov` itself is a file static (it would take core1_main to 912, over
+//     the 768 B frame limit in CMakeLists.txt); the deepest new portal IRQ
+//     chain (recv -> portal_request_window -> render_form -> sb_fmt) is
+//     ~690 B plus vsnprintf, against ~856 B before, so the portal path got
+//     shallower.
 //   * IRQ: the first pass here started counting from
 //     altcp_mbedtls_lower_recv (2576 B down through the deepest branch of
 //     the TLS 1.3 client handshake state machine --
@@ -1668,40 +1674,62 @@ static void mac_address_string(char *out, size_t out_len) {
 #define CORE1_STACK_BYTES 16384
 static __attribute__((aligned(32))) uint32_t core1_stack[CORE1_STACK_BYTES / 4];
 
-// Provisioning (plan 4b; several networks 2026-11-15). Static, not a
-// core1_main local (~436 B of bss): portal_forget() below reaches it from
-// portal_run()'s loop, and it lives as long as core1_main does -- through
-// the TLS path, the deepest use of core1's stack. Core1 only.
+// Provisioning (plan 4b; several networks 2026-11-15). Static: with four
+// networks provisioning_t is ~440 B, and as a core1_main local it took that
+// frame to 912 B, over the build's 768 B per-frame limit (CMakeLists.txt,
+// -Werror=frame-larger-than). Core1 only.
 static provisioning_t prov;
 
-// What the setup form shows after a failed join: which network, why, and what
-// to do (provisioning.c's prov_join_message / prov_round_message, field report
-// 2026-11-14). Static for the same reason (800 B); `last_error` in core1_main
-// points here, or at a fixed string, or is NULL.
-static char g_last_error[PROV_MSG_MAX];
-// The network-name field's initial value: what was just submitted and
-// failed, so only the password (or the network) has to be retyped.
-static char g_portal_prefill[CONFIG_SSID_MAX + 1];
+// What the setup page should say next, kept between portal sessions as a few
+// bytes of data (review I3: an 800 B message buffer was static RAM the heap
+// could not spare). portal_http.c words it as the page renders. A core1_main
+// local (~48 B).
+typedef struct {
+    portal_err_t err;                     // NONE, JOIN, ROUND or SAVE (FORGET lives in the view)
+    net_join_t   join;                    // JOIN: the submitted network's result
+    bool         disk_mounted;            // SAVE: why it was not saved
+    char         prefill[CONFIG_SSID_MAX + 1];   // the name to put back in the field
+} portal_note_t;
 
-// The form's view of prov: names only, never a password.
-static void portal_view_fill(portal_view_t *v) {
+typedef struct {
+    provisioning_t *prov;
+    portal_note_t  *note;
+} portal_ctx_t;
+
+// The form's view of prov and the note: names only, never a password.
+static void portal_view_fill(portal_view_t *v, const provisioning_t *prov, const portal_note_t *note) {
     memset(v, 0, sizeof *v);
     v->last = -1;
-    if (prov.have_config) {
-        v->n = prov.cfg.n_nets;
-        for (int i = 0; i < v->n && i < CONFIG_NETS_MAX; i++)
-            memcpy(v->ssid[i], prov.cfg.net[i].ssid, sizeof v->ssid[i]);
-        v->last = prov.cfg.last;
-        v->have_code = prov.cfg.code[0] != '\0';
+    if (prov->have_config) {
+        v->n = prov->cfg.n_nets;
+        for (int i = 0; i < v->n && i < CONFIG_NETS_MAX; i++) {
+            memcpy(v->ssid[i], prov->cfg.net[i].ssid, sizeof v->ssid[i]);
+            v->result[i] = prov->result[i];
+            int k = prov_order_at(prov, i);
+            v->order[i] = (unsigned char)(k < 0 ? 0 : k);
+        }
+        v->last = prov->joined ? prov->first : -1;   // joined last THIS session (RAM; review I2)
     }
-    memcpy(v->prefill, g_portal_prefill, sizeof v->prefill);
+    v->have_code = prov_paired(prov);
+    memcpy(v->prefill, note->prefill, sizeof v->prefill);
+    v->err = note->err;
+    v->join = note->join;
+    v->disk_mounted = note->disk_mounted;
 }
 
-// portal_run()'s Remove button, called from its foreground loop (portal_net.h).
-static bool portal_forget(const char *ssid, portal_view_t *view, char *msg, int cap) {
-    bool done = prov_forget_network(&prov, ssid, msg, cap);
-    portal_view_fill(view);
-    return done;
+// portal_run()'s Remove button, called from its foreground loop with the
+// network lock held (portal_net.h).
+static bool portal_forget(void *vctx, const char *ssid, portal_view_t *view) {
+    portal_ctx_t *c = vctx;
+    prov_forget_t why = prov_forget_network(c->prov, ssid);
+    c->note->err = PORTAL_ERR_NONE;   // an old join failure may name the network just removed
+    portal_view_fill(view, c->prov, c->note);
+    if (why != PROV_FORGOT) {
+        view->err = PORTAL_ERR_FORGET;
+        view->forget = why;
+        memcpy(view->forget_ssid, ssid, sizeof view->forget_ssid);
+    }
+    return why == PROV_FORGOT;
 }
 
 // transport_tls.c keeps a clean TLS connection open between requests, which
@@ -1941,11 +1969,15 @@ static void core1_main(void) {
     // protocol loop against stored credentials. Touches no radio itself
     // (provisioning.h's file-wide rule) -- prov.state is what the loop
     // below acts on.
-    prov_init(&prov);   // file-static since 2026-11-15, see its definition
+    prov_init(&prov);   // file-static, see its definition
+    // What the form says after a failed join (spec D-4b-3's verify-then-
+    // commit), or after a round of failures over the saved networks.
+    portal_note_t note;
+    memset(&note, 0, sizeof note);
+    portal_ctx_t pctx = { &prov, &note };
 
-    // Shown on the portal form after a failed association with freshly
-    // submitted credentials (spec D-4b-3's verify-then-commit), or after a
-    // round of failures over the saved networks. NULL until that happens.
+    // A fixed message for the form (a rejected pairing code); it wins over
+    // `note`. NULL until that happens.
     const char *last_error = NULL;
 
     for (;;) {
@@ -1961,8 +1993,8 @@ static void core1_main(void) {
             // AP goes up a few lines below, and a kept STA socket must not
             // still be holding its buffers when it does.
             release_kept_connection();
-            wf_logf(WF_INFO, "portal: raising AP%s%s",
-                    last_error ? ", last error: " : "", last_error ? last_error : "");
+            wf_logf(WF_INFO, "portal: raising AP%s%s (note %d)",
+                    last_error ? ", last error: " : "", last_error ? last_error : "", (int)note.err);
             // Blocks until a POST /save decodes to a complete
             // device_config_t. portal_run() tears down any sockets still
             // up from a previous call itself (it is re-entrant-safe), so
@@ -1982,7 +2014,7 @@ static void core1_main(void) {
             // portal path, which peaks far below the TLS path on this stack.
             setup_form_t submitted;
             portal_view_t view;
-            portal_view_fill(&view);
+            portal_view_fill(&view, &prov, &note);
             // Final-review Important 2: the wait is bounded ONLY when
             // there is a stored configuration worth going back to.
             //   * have_config true: the portal was opened by three
@@ -1999,7 +2031,7 @@ static void core1_main(void) {
             uint32_t portal_wait_ms =
                 prov.have_config ? PORTAL_IDLE_TIMEOUT_MS : 0u;
             portal_run_result_t pr =
-                portal_run(&submitted, last_error, portal_wait_ms, &view, portal_forget);
+                portal_run(&submitted, last_error, portal_wait_ms, &view, portal_forget, &pctx);
 
             if (pr == PORTAL_RUN_IDLE_TIMEOUT) {
                 // Same teardown as the submit path below -- an idle
@@ -2035,10 +2067,12 @@ static void core1_main(void) {
                 // Which network, why, and what to do -- and the name stays in
                 // the field (field report 2026-11-14: "Network not found" alone
                 // read as the board still hunting for the OLD network).
-                prov_join_message(g_last_error, sizeof g_last_error, submitted.ssid, jr);
-                last_error = g_last_error;
-                memcpy(g_portal_prefill, submitted.ssid, sizeof g_portal_prefill);
+                note.err = PORTAL_ERR_JOIN;
+                note.join = jr;
+                memcpy(note.prefill, submitted.ssid, sizeof note.prefill);
+                last_error = NULL;
                 wf_logf(WF_WARN, "portal: join %s failed (%d)", submitted.ssid, (int)jr);
+                secure_zero(&submitted, sizeof submitted);
                 continue;   // portal_run() comes back up showing last_error
             }
 
@@ -2062,13 +2096,16 @@ static void core1_main(void) {
                         submitted.ssid, prov.cfg.n_nets,
                         submitted.code[0] ? "new pairing code" : "pairing kept");
                 last_error = NULL;
-                g_portal_prefill[0] = '\0';
+                memset(&note, 0, sizeof note);
             } else {
-                last_error = "Could not save configuration, try again";
-                memcpy(g_portal_prefill, submitted.ssid, sizeof g_portal_prefill);
+                // Say why when it is config_store's mounted-disk guard (review M6).
+                note.err = PORTAL_ERR_SAVE;
+                note.disk_mounted = psram_active_slot() != SLOT_NONE;
+                memcpy(note.prefill, submitted.ssid, sizeof note.prefill);
+                last_error = NULL;
             }
             // The password was only needed for the join and the save.
-            memset(&submitted, 0, sizeof submitted);
+            secure_zero(&submitted, sizeof submitted);   // not elidable, unlike a memset of a dead local
             continue;
         }
 
@@ -2094,11 +2131,11 @@ static void core1_main(void) {
             // would (spec §6's two-message requirement) -- without this, a
             // boot that never had a chance to submit anything shows a blank
             // form. Since 2026-11-15 it names every saved network and its
-            // own reason (prov_round_message). Otherwise a no-op.
+            // own reason (portal_http.c words prov.result[]). Otherwise a no-op.
             if (prov.state == PROV_PORTAL) {
-                prov_round_message(&prov, g_last_error, sizeof g_last_error);
-                last_error = g_last_error;
-                g_portal_prefill[0] = '\0';
+                memset(&note, 0, sizeof note);
+                note.err = PORTAL_ERR_ROUND;   // prov.result[] carries each network's reason
+                last_error = NULL;
             }
             continue;
         }
@@ -2108,8 +2145,8 @@ static void core1_main(void) {
         // exclusively from the PROV_RUNNING branch (this `else`, in
         // effect) above, never from PROV_PORTAL. Do not add another call
         // site to prov_on_join_result(OK) without preserving that. It also
-        // makes this network the one tried first from now on (a flash write
-        // only when that changed, refused under a mounted disk -- then RAM only).
+        // makes this network the one tried first for the rest of the session
+        // (RAM only, never a flash write: review I2).
         prov_on_join_result(&prov, NET_JOIN_OK);
         // Success was previously silent -- only failures logged -- so "did it
         // associate?" could not be answered from the console at all.
@@ -2203,6 +2240,7 @@ static void core1_main(void) {
                     wf_logf(WF_WARN, "register: pairing code rejected "
                             "(single-use, 10 min TTL) -- back to the portal");
                     last_error = "Invalid or already-used pairing code";
+                    memset(&note, 0, sizeof note);
                     code_rejected = true;
                     // DC_REG_BAD_CODE comes from a clean 400, so the socket
                     // was KEPT -- this leaks exactly as the DC_HALTED path
@@ -5575,11 +5613,12 @@ int main(void) {
                         // server's bearer token. Static: core0's stack is small.
                         config_store_erase();
                         static char left_token[TOKEN_STORE_MAX_LEN + 1];
-                        static device_config_t left_cfg;
+                        // config_store_present(), not a load: with four networks a
+                        // device_config_t is ~416 B, held static only to ask "is
+                        // anything left" (review I3).
                         if (token_store_load(left_token, sizeof left_token) ||
-                            config_store_load(&left_cfg)) {
-                            memset(left_token, 0, sizeof left_token);
-                            memset(&left_cfg, 0, sizeof left_cfg);
+                            config_store_present()) {
+                            secure_zero(left_token, sizeof left_token);
                             wf_logf(WF_ERR, "server: forgetting the pairing failed -- nothing changed");
                             break;
                         }

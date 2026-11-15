@@ -292,7 +292,8 @@ static void test_the_form_lists_saved_networks_with_remove_buttons(void) {
     CHECK_EQ_INT(count(out, "action=\"/forget\""), 2);
     CHECK(strstr(out, "name=\"ssid\" value=\"Home\"") != NULL, "each Remove names its network");
     CHECK(strstr(out, "Add a network") != NULL, "the form adds one");
-    CHECK(strstr(out, "joined last first") != NULL, "says the order it tries them in");
+    CHECK(strstr(out, "At power-on the board tries them in this order") != NULL,
+          "says the order it tries them in");
 }
 
 static void test_the_only_network_has_no_remove_button(void) {
@@ -413,16 +414,12 @@ static void test_the_worst_case_form_fits(void) {
     v.last = 1;
     v.have_code = true;
     memset(v.prefill, '"', CONFIG_SSID_MAX);
-    // The longest error: a round over four worst-case names, every hint.
-    provisioning_t p;
-    memset(&p, 0, sizeof p);
-    p.have_config = true;
-    p.cfg.n_nets = CONFIG_NETS_MAX;
-    for (int i = 0; i < CONFIG_NETS_MAX; i++) memset(p.cfg.net[i].ssid, '"', CONFIG_SSID_MAX);
-    p.result[0] = NET_JOIN_NO_ADDRESS; p.result[1] = NET_JOIN_FAILED;
-    p.result[2] = NET_JOIN_BAD_AUTH;   p.result[3] = NET_JOIN_NOT_FOUND;
-    char err[PROV_MSG_MAX];
-    CHECK(prov_round_message(&p, err, sizeof err) > 0, "the error");
+    // The longest error: a round over the four worst-case names, the longest hints.
+    v.err = PORTAL_ERR_ROUND;
+    v.result[0] = NET_JOIN_NO_ADDRESS; v.result[1] = NET_JOIN_FAILED;
+    v.result[2] = NET_JOIN_TIMEOUT;    v.result[3] = NET_JOIN_NOT_FOUND;
+    for (int i = 0; i < CONFIG_NETS_MAX; i++) v.order[i] = (unsigned char)i;
+    const char *err = NULL;   // the view carries it
     static char big[16384];
     int n = portal_request("GET", "/", NULL, "AB:CD:EF:01:02:03", err, &v, big, sizeof big, &res);
     CHECK(n > 2048, "longer than one 2 KB window: it goes out in several");
@@ -469,6 +466,149 @@ static void test_a_windowed_submit_is_still_one_submit(void) {
     CHECK(total < 2048, "the accepted page fits one window");
 }
 
+// --- The error's words (moved from test_provisioning.c with the text, review I3) ---
+
+// The texts the setup page shows, verbatim (the operator reviews these).
+static void test_the_join_messages_name_the_network_and_the_reason(void) {
+    char m[1024];
+    CHECK(portal_join_message(m, sizeof m, "VenueWiFi", NET_JOIN_NOT_FOUND) > 0, "fits");
+    CHECK(strcmp(m, "Could not join \xe2\x80\x9cVenueWiFi\xe2\x80\x9d: not found.\n"
+                    "The board only sees 2.4 GHz networks, and cannot join one that is WPA3-only. "
+                    "Phone hotspots often need \xe2\x80\x9cMaximise compatibility\xe2\x80\x9d (iPhone) "
+                    "or a 2.4 GHz band (Android) turned on.") == 0, "not found");
+    portal_join_message(m, sizeof m, "Home", NET_JOIN_BAD_AUTH);
+    CHECK(strcmp(m, "Could not join \xe2\x80\x9cHome\xe2\x80\x9d: wrong password.\n"
+                    "Check the password; it is case-sensitive. If it is right, the network may be "
+                    "WPA3-only: the board needs WPA2.") == 0, "wrong password");
+    char nf[1024];
+    portal_join_message(nf, sizeof nf, "Home", NET_JOIN_NOT_FOUND);
+    CHECK(strcmp(m, nf) != 0 && strstr(nf, "wrong password") == NULL &&
+          strstr(m, "not found") == NULL, "wrong password and not found read differently");
+    const net_join_t all[] = { NET_JOIN_NOT_FOUND, NET_JOIN_BAD_AUTH, NET_JOIN_FAILED,
+                               NET_JOIN_NO_ADDRESS, NET_JOIN_TIMEOUT, NET_JOIN_ERROR };
+    for (unsigned i = 0; i < sizeof all / sizeof all[0]; i++) {
+        portal_join_message(m, sizeof m, "Home", all[i]);
+        const char *pre = "Could not join \xe2\x80\x9cHome\xe2\x80\x9d: ";
+        CHECK(strncmp(m, pre, strlen(pre)) == 0, "names the network");
+        printf("  %d: %s\n", (int)all[i], m);
+    }
+    CHECK_EQ_INT(portal_join_message(m, 20, "Home", NET_JOIN_NOT_FOUND), -1);
+    CHECK(m[0] == '\0', "refused, not truncated");
+}
+
+// Review M4: a wrong WPA2 password often ends as a timeout on this driver.
+static void test_a_timeout_also_says_to_check_the_password(void) {
+    char m[1024];
+    portal_join_message(m, sizeof m, "Home", NET_JOIN_TIMEOUT);
+    CHECK(strstr(m, "no answer in time") != NULL, "the reason");
+    CHECK(strstr(m, "A wrong password often looks like this") != NULL, "and the password, first");
+}
+
+static portal_view_t round_view(void) {
+    const char *names[] = { "a", "b", "c" };
+    portal_view_t v = view_of(3, names, 1, true, NULL);
+    v.err = PORTAL_ERR_ROUND;
+    v.result[0] = NET_JOIN_BAD_AUTH; v.result[1] = NET_JOIN_NOT_FOUND; v.result[2] = NET_JOIN_NOT_FOUND;
+    v.order[0] = 1; v.order[1] = 0; v.order[2] = 2;   // tried b, a, c
+    return v;
+}
+
+static void test_the_round_message_names_every_network(void) {
+    portal_view_t v = round_view();
+    char m[1024];
+    CHECK(portal_error_text(NULL, &v, m, sizeof m) > 0, "fits");
+    printf("  round: %s\n", m);
+    const char *want = "Could not join any saved network:\n"
+                       "\xe2\x80\x9c" "b\xe2\x80\x9d: not found.\n"
+                       "\xe2\x80\x9c" "a\xe2\x80\x9d: wrong password.\n"
+                       "\xe2\x80\x9c" "c\xe2\x80\x9d: not found.\n"
+                       "The board only sees 2.4 GHz";
+    CHECK(strncmp(m, want, strlen(want)) == 0, "each network, in the order tried");
+    const char *h = strstr(m, "The board only sees 2.4 GHz");
+    CHECK(h && strstr(h + 1, "The board only sees 2.4 GHz") == NULL, "each hint once");
+    CHECK(strstr(m, "Check the password") != NULL, "and the password hint");
+
+    // One network reads exactly as a single join message.
+    const char *one[] = { "home" };
+    portal_view_t w = view_of(1, one, 0, true, NULL);
+    w.err = PORTAL_ERR_ROUND;
+    w.result[0] = NET_JOIN_BAD_AUTH;
+    char single[1024];
+    portal_error_text(NULL, &w, m, sizeof m);
+    portal_join_message(single, sizeof single, "home", NET_JOIN_BAD_AUTH);
+    CHECK(strcmp(m, single) == 0, "one network: the single message");
+
+    // On the page: the same words, escaped, with line breaks.
+    REQV("GET", "/", NULL, NULL, &v);
+    CHECK(strstr(out, "<div class=\"err\">Could not join any saved network:<br>\xe2\x80\x9c" "b") != NULL,
+          "rendered in the error block");
+}
+
+static void test_a_submitted_join_failure_names_that_network(void) {
+    const char *names[] = { "Home" };
+    portal_view_t v = view_of(1, names, 0, true, "<Venue>");
+    v.err = PORTAL_ERR_JOIN;
+    v.join = NET_JOIN_NOT_FOUND;
+    REQV("GET", "/", NULL, NULL, &v);
+    CHECK(strstr(out, "Could not join \xe2\x80\x9c&lt;Venue&gt;\xe2\x80\x9d: not found.<br>") != NULL,
+          "the submitted network, escaped");
+    CHECK(strstr(out, "value=\"&lt;Venue&gt;\"") != NULL, "and its name back in the field");
+}
+
+// A fixed message (a rejected pairing code) wins over the view's.
+static void test_a_fixed_message_wins(void) {
+    portal_view_t v = round_view();
+    char m[256];
+    portal_error_text("Invalid or already-used pairing code", &v, m, sizeof m);
+    CHECK(strcmp(m, "Invalid or already-used pairing code") == 0, "the fixed text alone");
+    portal_view_t none = view_of(0, NULL, -1, false, NULL);
+    CHECK_EQ_INT(portal_error_text(NULL, &none, m, sizeof m), 0);
+}
+
+// Review M6: a refused Remove or save says why when it is the disk guard.
+static void test_the_disk_guard_is_named(void) {
+    const char *names[] = { "Home", "Phone" };
+    portal_view_t v = view_of(2, names, 0, true, NULL);
+    v.err = PORTAL_ERR_FORGET;
+    v.forget = PROV_FORGET_DISK_MOUNTED;
+    snprintf(v.forget_ssid, sizeof v.forget_ssid, "Phone");
+    char m[512];
+    portal_error_text(NULL, &v, m, sizeof m);
+    printf("  forget/disk: %s\n", m);
+    CHECK(strstr(m, "Could not remove \xe2\x80\x9cPhone\xe2\x80\x9d: a disk is in the drive") != NULL,
+          "names the disk");
+    CHECK(strstr(m, "Switch the board off and on") != NULL, "and what to do");
+    v.forget = PROV_FORGET_WRITE_FAILED;
+    portal_error_text(NULL, &v, m, sizeof m);
+    CHECK(strstr(m, "the change was not saved. Try again.") != NULL, "a write failure is not the disk");
+    CHECK(strstr(m, "disk") == NULL, "and does not blame one");
+    v.forget = PROV_FORGET_ONLY_ONE;
+    portal_error_text(NULL, &v, m, sizeof m);
+    CHECK(strstr(m, "is the only saved network") != NULL, "only one");
+
+    portal_view_t s = view_of(1, names, 0, true, "Phone");
+    s.err = PORTAL_ERR_SAVE;
+    s.disk_mounted = true;
+    portal_error_text(NULL, &s, m, sizeof m);
+    printf("  save/disk: %s\n", m);
+    CHECK(strstr(m, "Joined \xe2\x80\x9cPhone\xe2\x80\x9d but could not save it: a disk is in the drive") != NULL,
+          "a save says it too");
+}
+
+// Review M3: a second Remove while one is being written is not silently dropped.
+static void test_a_remove_while_one_is_written_says_try_again(void) {
+    const char *names[] = { "a", "b", "c" };
+    portal_view_t v = view_of(3, names, 0, true, NULL);
+    v.forget_busy = true;
+    REQV("POST", "/forget", "ssid=b", NULL, &v);
+    CHECK_EQ_INT(res.action, PORTAL_ACT_NONE);
+    CHECK(strstr(out, "Still removing another network") != NULL, "says so");
+    CHECK(strstr(out, "Removing \xe2\x80\x9c") == NULL, "and does not claim to remove it");
+    v.forget_busy = false;
+    REQV("POST", "/forget", "ssid=b", NULL, &v);
+    CHECK_EQ_INT(res.action, PORTAL_ACT_FORGET);
+}
+
 int main(void) {
     RUN(test_root_renders_the_form);
     RUN(test_page_has_no_external_references);
@@ -504,5 +644,12 @@ int main(void) {
     RUN(test_the_hint_names_wpa3_and_sign_in_pages);
     RUN(test_the_worst_case_form_fits);
     RUN(test_a_windowed_submit_is_still_one_submit);
+    RUN(test_the_join_messages_name_the_network_and_the_reason);
+    RUN(test_a_timeout_also_says_to_check_the_password);
+    RUN(test_the_round_message_names_every_network);
+    RUN(test_a_submitted_join_failure_names_that_network);
+    RUN(test_a_fixed_message_wins);
+    RUN(test_the_disk_guard_is_named);
+    RUN(test_a_remove_while_one_is_written_says_try_again);
     return REPORT();
 }

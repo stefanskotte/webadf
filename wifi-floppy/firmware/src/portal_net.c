@@ -217,25 +217,26 @@ static volatile bool   g_submit_flushed;
 // though the HTTP callback reads it from a different context.
 static const char *g_current_err;
 
-// Several networks (2026-11-15). What the form shows besides the error: the
-// saved names, whether a code is stored, the name to prefill. Copied in by
-// portal_run() before any socket exists, and replaced only by the foreground
-// under net_radio_lock() after a Remove -- the HTTP callback reads it on the
-// locked background context, so it never sees half a copy.
-static portal_view_t g_view;
+// Several networks (2026-11-15). What the form shows besides `err`: the saved
+// names, whether the board is paired, the name to prefill, the structured
+// error. The CALLER's struct (portal_run's `view`), not a copy -- review I3:
+// static RAM comes out of a heap near its floor. Set by portal_run() before
+// any socket exists; changed only by the Remove handling below, which holds
+// net_radio_lock() throughout, and by the HTTP callback (forget_busy), which
+// runs on the locked background context -- so a render never sees half a
+// change.
+static portal_view_t *g_view;
 
 // POST /forget, background -> foreground, the same publish ordering as
 // g_pending_cfg/g_submitted: the name first, then the flag. The removal (a
 // flash write) runs in portal_run()'s foreground loop, never in a callback.
 static volatile bool g_forget_pending;
 static char          g_forget_ssid[CONFIG_SSID_MAX + 1];
-// The forget callback's reason when a removal is refused; g_current_err
-// points here then. Foreground-written under the lock, callback-read.
-static char          g_forget_err[PORTAL_FORGET_MSG_MAX];
-// Bumped (under the lock) whenever g_view or g_current_err changes. A page is
-// sent in windows, each rendered afresh; one whose inputs changed between two
-// windows would splice two different pages, so that connection is closed
-// instead (next_window()) and the phone just reloads.
+// Bumped (under the lock) whenever the view or g_current_err changes. A page
+// is sent in windows, each rendered afresh, and the Remove handling waits
+// until no page is between windows before it changes anything (review M1) --
+// so this is a backstop: a page whose inputs changed between two windows
+// would splice two pages, and is closed instead.
 static unsigned      g_view_gen;
 
 // Final-review Important 2: portal_run()'s wait is now bounded, so it
@@ -428,7 +429,7 @@ static int render_window(http_conn_t *c, int skip, portal_result_t *res, int *to
     char mac_str[18];
     format_mac_colon(mac_str, sizeof mac_str);
     return portal_request_window(method, path, c->req + c->header_end, mac_str, g_current_err,
-                                 &g_view, skip, c->resp, (int)sizeof c->resp, res, total);
+                                 g_view, skip, c->resp, (int)sizeof c->resp, res, total);
 }
 
 // After a window has gone to lwIP whole (tcp_write copies it, so c->resp is
@@ -634,8 +635,11 @@ static err_t handle_complete_request(http_conn_t *c) {
         g_pending_cfg = res.submitted; // write the payload...
         g_submitted = true;            // ...then publish it -- see the
                                         // file header comment.
-    } else if (res.action == PORTAL_ACT_FORGET && !g_forget_pending) {
+    } else if (res.action == PORTAL_ACT_FORGET) {
+        // portal_request() answers "try again" (not a forget) while
+        // forget_busy is set, so one never arrives while one is pending.
         memcpy(g_forget_ssid, res.forget, sizeof g_forget_ssid);   // same ordering
+        g_view->forget_busy = true;
         g_forget_pending = true;
     }
     return rc;
@@ -685,6 +689,16 @@ static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t
     if (!p) {
         // Remote closed (or reset cleanly) before completing a request.
         return finish_conn(c);
+    }
+
+    if (c->handled) {
+        // Review M2: the request is answered (or being answered). Later bytes
+        // -- pipelined, or the rest of an over-long body -- used to be
+        // appended to c->req over its NUL, so a later window of the reply
+        // re-parsed a longer body. Ack and drop them.
+        tcp_recved(tpcb, p->tot_len);
+        pbuf_free(p);
+        return ERR_OK;
     }
 
     c->poll_ticks = 0; // saw data -- the idle watchdog only fires on silence
@@ -775,6 +789,16 @@ static err_t http_poll_cb(void *arg, struct tcp_pcb *tpcb) {
 // "after silence". A slot is occupied from http_accept_cb() until
 // finish_conn(), which covers a request still arriving, a response still
 // being written, and everything in between.
+// A reply is between windows: more of its page is still to be rendered
+// (review M1). Called with the lock held.
+static bool any_page_mid_send(void) {
+    for (int i = 0; i < MAX_HTTP_CONNS; i++) {
+        const http_conn_t *c = &g_http_conns[i];
+        if (c->in_use && c->pcb && c->page_off + c->resp_len < c->page_total) return true;
+    }
+    return false;
+}
+
 static bool any_http_conn_in_use(void) {
     for (int i = 0; i < MAX_HTTP_CONNS; i++) {
         if (g_http_conns[i].in_use) return true;
@@ -968,8 +992,8 @@ static void portal_diag_tick(void) {
 }
 
 portal_run_result_t portal_run(setup_form_t *out, const char *err,
-                               uint32_t idle_timeout_ms, const portal_view_t *view,
-                               portal_forget_fn forget) {
+                               uint32_t idle_timeout_ms, portal_view_t *view,
+                               portal_forget_fn forget, void *ctx) {
     // Review round 1 (Important 1): a second portal_run() call without an
     // intervening portal_stop() used to hang the board silently, because
     // re-binding ports 67/53/80 while the previous pcbs were still bound
@@ -999,8 +1023,10 @@ portal_run_result_t portal_run(setup_form_t *out, const char *err,
     dhcp_reset_leases();
 
     g_current_err = err;
-    if (view) g_view = *view;
-    else { memset(&g_view, 0, sizeof g_view); g_view.last = -1; }
+    // Required, and must outlive the portal_stop() that follows (callbacks
+    // render from it until then) -- main.c's lives in the same block.
+    view->forget_busy = false;
+    g_view = view;
     g_forget_pending = false;
     g_submitted = false;
     g_submit_flushed = false;
@@ -1030,33 +1056,31 @@ portal_run_result_t portal_run(setup_form_t *out, const char *err,
         // and the lwIP background work simply runs late. The page the
         // phone returns to then shows the result.
         if (g_forget_pending) {
-            // Locals, ~400 B on core1's stack: this is the portal path, which
-            // peaks near 2.3 KB of the 16 KB (main.c's CORE1_STACK_BYTES
-            // comment) -- far below the TLS path -- while every static byte
-            // comes out of a heap that sits near its floor.
-            char ssid[CONFIG_SSID_MAX + 1];
-            portal_view_t next;
-            char msg[PORTAL_FORGET_MSG_MAX];
+            // The whole removal holds the lock (review M1): no request is
+            // rendered while the list and the error change, and none starts
+            // until they have. It also waits while a page is between windows,
+            // so no page ever mixes the old list with the new. Holding the
+            // lock over the flash write is safe: the background work it keeps
+            // out is deferred (it runs at unlock), flash_safe_execute parks
+            // core0 and masks this core's interrupts anyway, and nothing on
+            // core0 needs this lock in the portal.
             net_radio_lock();
-            memcpy(ssid, g_forget_ssid, sizeof ssid);
-            next = g_view;
-            net_radio_unlock();
-            msg[0] = '\0';
-            bool done = forget && forget(ssid, &next, msg, (int)sizeof msg);
-            wf_logf(done ? WF_INFO : WF_WARN, "portal: remove %s: %s", ssid,
-                    done ? "done" : (msg[0] ? msg : "refused"));
-            net_radio_lock();
-            g_view = next;
-            if (done) {
-                g_current_err = NULL;   // an old join failure may name the network just removed
-            } else if (msg[0]) {
-                memcpy(g_forget_err, msg, sizeof g_forget_err);
-                g_current_err = g_forget_err;
+            bool done = false, tried = false;
+            char ssid[CONFIG_SSID_MAX + 1];   // for the log line after unlock
+            if (!any_page_mid_send()) {
+                tried = true;
+                memcpy(ssid, g_forget_ssid, sizeof ssid);
+                done = forget && forget(ctx, ssid, g_view);   // updates the view and its error
+                g_view->forget_busy = false;
+                g_current_err = NULL;   // the view's error (or none) now says what is true
+                g_view_gen++;
+                g_forget_pending = false;
             }
-            g_view_gen++;   // a page mid-send must not splice the old list with the new
-            g_forget_pending = false;
             net_radio_unlock();
-            note_client_activity();
+            if (tried) {
+                wf_logf(done ? WF_INFO : WF_WARN, "portal: remove %s: %s", ssid, done ? "done" : "refused");
+                note_client_activity();
+            }
         }
 
         // Final-review Important 2: this wait used to be unbounded, which
