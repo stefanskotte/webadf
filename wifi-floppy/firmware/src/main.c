@@ -1873,17 +1873,34 @@ static unsigned char wifi_hold(uploader_t *up) {
     if (up_has_work(up)) return PORTAL_HOLD_WRITES;
     return PORTAL_HOLD_NONE;
 }
-static void online_view_hold_cb(portal_view_t *v, void *ctx) { v->hold = *(const unsigned char *)ctx; }
+static void online_view_hold_cb(portal_view_t *v, void *ctx) {
+    v->hold = *(const unsigned char *)ctx;
+    if (v->hold == PORTAL_HOLD_NONE && v->err == PORTAL_ERR_HELD) v->err = PORTAL_ERR_NONE;   // nothing holds it now
+}
+// A Save refused after its page said "Checking": the reason and the name, for the page.
+static struct { unsigned char hold; char name[CONFIG_SSID_MAX + 1]; } g_wifi_held_note;
+static bool g_wifi_held_owed;
+static void online_view_held_cb(portal_view_t *v, void *ctx) {
+    (void)ctx;
+    v->hold = g_wifi_held_note.hold;
+    v->err = PORTAL_ERR_HELD;
+    memcpy(v->prefill, g_wifi_held_note.name, sizeof v->prefill);
+}
 
 // Save on the page opened on request.
 static void __attribute__((noinline)) wifi_online_check(setup_form_t *f, uploader_t *up) {
     // Asked again before anything is left: the page refused Save on what it last knew.
     const unsigned char hold = wifi_hold(up);
     if (hold != PORTAL_HOLD_NONE) {
+        // The page had already said "Checking" (a mount landed between the last hold refresh and the Save --
+        // review of ba66653b, minor 2): it comes back with the reason and the name kept, and the checking page
+        // reloads it by itself.
         wf_logf(WF_WARN, "wifi: %s not checked: hold %u", f->ssid, (unsigned)hold);
+        g_wifi_held_note.hold = hold;
+        memcpy(g_wifi_held_note.name, f->ssid, sizeof g_wifi_held_note.name);
         secure_zero(f, sizeof *f);
-        portal_view_changed(online_view_hold_cb, (void *)&hold);   // best effort: the next pass sets it anyway
-        return;   // the page stays up; a reload shows why
+        if (!portal_view_changed(online_view_held_cb, NULL)) g_wifi_held_owed = true;   // a page mid-send: next pass
+        return;
     }
     portal_stop();                 // the AP goes: the station is about to change networks
     release_kept_connection();     // its socket belongs to the network being left
@@ -1990,6 +2007,7 @@ static void __attribute__((noinline)) wifi_online_step(device_client_t *c, uploa
         }
     }
     if (g_wifi_names_owed && portal_view_changed(online_view_names_cb, NULL)) g_wifi_names_owed = false;
+    if (g_wifi_held_owed && portal_view_changed(online_view_held_cb, NULL)) g_wifi_held_owed = false;
     if (portal_is_open()) {
         const unsigned char hold = wifi_hold(up);
         if (hold != g_portal_view.hold) portal_view_changed(online_view_hold_cb, (void *)&hold);
@@ -2015,7 +2033,7 @@ static void __attribute__((noinline)) wifi_online_step(device_client_t *c, uploa
         g_wifi_synced = true;   // the cursor heard and handled: the tail may go (I1)
         g_wifi_owe = true;
     }
-    if (g_wifi_owe) {
+    if (g_wifi_owe && g_wifi_synced) {   // unsynced, it waits here: the writer would refuse it (see wifi_tail_write)
         g_wifi_owe = false;
         dc_set_wifi(c, g_wifi_ack, wifi_tail_write, NULL);
         dc_wifi_owe(c);
@@ -2655,14 +2673,16 @@ static void core1_main(void) {
         // every entry: dc_init above zeroes `c`, and nfc_ack with it -- a
         // re-paired board is a new device row whose cursor starts over.
         dc_set_poll_interrupt(&c, poll_wake_pending, NULL);
-        // Wi-Fi networks from the web app (wifi_ctl.h): &wifiAck= on every poll, the "wifi" tail owed at once (the
-        // server hears the list once a boot, and after a re-pair). Every entry: dc_init above zeroes `c`, and a
+        // Wi-Fi networks from the web app (wifi_ctl.h): &wifiAck= on every poll; the "wifi" tail is owed once the
+        // cursor is synced (a 200 carrying wifi.v, or any 204), so the server hears the list once a boot and after
+        // a re-pair. Every entry: dc_init above zeroes `c`, and a
         // re-entry is a re-pair -- a new device row whose instruction cursor starts at 0.
         g_wifi_ack = 0;
         g_wifi_res = WIFI_RES_NONE;
         g_wifi_synced = false;
+        // Not owed yet: the tail is owed at the synced transition (wifi_online_step), so an unsynced board never has
+        // a report owed that its writer would refuse -- which forced a status report every pass (review of ba66653b).
         dc_set_wifi(&c, g_wifi_ack, wifi_tail_write, NULL);
-        dc_wifi_owe(&c);
         static reinsert_t reins;
         reinsert_init(&reins);
         wf_logf(WF_INFO, "write-back: session %s", session);

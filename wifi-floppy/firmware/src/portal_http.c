@@ -391,6 +391,9 @@ static void err_words(sb_t *b, const char *err, const portal_view_t *v) {
     case PORTAL_ERR_SAVE:   msg_save(b, v); break;
     case PORTAL_ERR_FORGET: msg_forget(b, v); break;
     case PORTAL_NOTE_SAVED: msg_saved(b, v); break;
+    case PORTAL_ERR_HELD:
+        sb_txt(b, LQ); sb_user(b, v->prefill); sb_txt(b, RQ " was not checked. "); sb_txt(b, hold_text(v));
+        break;
     case PORTAL_ERR_NONE:   break;
     }
 }
@@ -624,7 +627,9 @@ static void render_accepted(sb_t *b, const char *mac_str, const char *ssid, cons
         sb_raw(b, ", and ");
         sb_html(b, ap[0] ? ap : "this setup network", false);
         sb_raw(b, " comes back with the result: join it again, or see the web app.</p>"
-                  "</body></html>");
+                  // Reloads the setup page: when the board did not leave (a Save held at the last moment), it
+                  // shows why; when it did, the reload fails until this network is back.
+                  "<meta http-equiv=\"refresh\" content=\"8;url=/\"></body></html>");
         return;
     }
     sb_head(b);

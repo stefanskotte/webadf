@@ -94,6 +94,8 @@ export interface WifiDevice {
   wifiSeq: number;
   wifiOp: string;
   wifiOpSsid: string | null;
+  /** A cancel: the op it withdrew. */
+  wifiCancelled?: string | null;
   wifiAck: number | null;
   wifiResult: string | null;
 }
@@ -128,7 +130,7 @@ const q = (name: string) => `“${name}”`;
 
 /** The words for what the board did with the last request (ack === seq), or null. */
 export function wifiOutcome(
-  op: WifiOp, ssidName: string | null, result: WifiResult | null, setupOpen = false,
+  op: WifiOp, ssidName: string | null, result: WifiResult | null, setupOpen = false, cancelled: WifiOp | null = null,
 ): { ok: boolean; text: string } | null {
   if (result === null) return null;
   const name = ssidName ? q(ssidName) : 'the network';
@@ -140,7 +142,7 @@ export function wifiOutcome(
       case 'only_one': return { ok: false, text: `Could not remove ${name}: it is the only saved network. Add another first.` };
       case 'in_use': return { ok: false, text: `Could not remove ${name}: the board is on it now.` };
       case 'write_failed': return { ok: false, text: `Could not remove ${name}: the board could not save the change. Try again.` };
-      case 'none': return { ok: false, text: `${name} was not removed: the board was offline for too long. Press Remove again.` };
+      case 'none': return { ok: false, text: `${name} was not removed: the board didn’t pick the request up within 2 minutes (offline, or busy uploading the Amiga’s saves). Press Remove again.` };
       default: return { ok: false, text: 'The board did not understand the request. Update its firmware.' };
     }
   }
@@ -149,16 +151,22 @@ export function wifiOutcome(
       case 'ok': return null;   // the open page speaks for itself
       case 'disk': return { ok: false, text: `The setup page did not open: a disk is in the drive. ${DISK_IN_DRIVE}` };
       case 'subnet': return { ok: false, text: 'The setup page did not open: your network uses 192.168.4.x addresses, the same as the board’s setup Wi-Fi. Add the network from the setup page at power-on instead (switch the board on away from your network).' };
-      case 'none': return { ok: false, text: 'The board did not open its setup page in time (it may have been offline). Press Add a network again.' };
+      case 'none': return { ok: false, text: 'The board didn’t pick the request up within 2 minutes (offline, or busy uploading the Amiga’s saves), so its setup page did not open. Press Add a network again.' };
       default: return { ok: false, text: 'The board did not understand the request. Update its firmware.' };
     }
   }
   // A cancel is only "Cancelled" once the board answers it -- and if the board had already opened its page before
   // the cancel reached it (review of 3bf330b2, M1), the page is open: say so, and Close is there.
+  // Worded by what the cancel withdrew (review of ba66653b, minor 3).
   if (op === 'none' && result === 'none') {
-    return setupOpen
-      ? { ok: false, text: 'The board had already opened its setup page. Press Close setup page to close it.' }
-      : { ok: true, text: 'Cancelled.' };
+    if (cancelled === 'open' && setupOpen) {
+      return { ok: false, text: 'The board had already opened its setup page. Press Close setup page to close it.' };
+    }
+    if (cancelled === 'close' && setupOpen) return { ok: true, text: 'Cancelled: the setup page stays open.' };
+    if (cancelled === 'remove') {
+      return { ok: true, text: `Cancelled. If the board had already removed ${name}, it is gone from the list above.` };
+    }
+    return { ok: true, text: 'Cancelled.' };
   }
   return null;
 }
@@ -177,7 +185,8 @@ export function wifiSection(d: WifiDevice, online: boolean, now: number): WifiSe
   const removeBlocked = diskIn ? DISK_IN_DRIVE : null;
   const outcome = pending === null && d.wifiAck === d.wifiSeq
     ? wifiOutcome(op, d.wifiOpSsid && WIFI_HEX_RE.test(d.wifiOpSsid) ? wifiName(d.wifiOpSsid) : null,
-        asWifiResult(d.wifiResult), setupUntil !== null)
+        asWifiResult(d.wifiResult), setupUntil !== null,
+        d.wifiCancelled && isWifiOp(d.wifiCancelled) ? d.wifiCancelled : null)
     : null;
   return {
     kind: 'ready',

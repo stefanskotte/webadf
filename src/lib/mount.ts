@@ -502,6 +502,7 @@ export async function recordStatus(
     patch.wifiCurrent = s.wifi.cur >= 0 && s.wifi.cur < n ? s.wifi.cur : null;
     patch.wifiSetupUntil = s.wifi.setup > 0 ? new Date(Date.now() + s.wifi.setup * 1000) : null;
     patch.wifiResult = sql`case when ${s.wifi.ack}::int > coalesce(${devices.wifiAck}, -1) then ${s.wifi.res}::text else ${devices.wifiResult} end`;
+    // After a database restore that rolled wifi_seq back below this, the ack stays ahead until the cursor passes it.
     patch.wifiAck = sql`greatest(coalesce(${devices.wifiAck}, 0), ${s.wifi.ack}::int)`;
     if (s.firmwareVersion !== undefined) patch.wifiFirmware = s.firmwareVersion;
   } else if (s.firmwareVersion !== undefined) {

@@ -755,7 +755,24 @@ static void test_online_the_time_away_is_stated(void) {
                       "restarts)") != NULL, out);
 }
 
+// Review of ba66653b, minor 2: a Save accepted and then held at the last moment comes back with why, the name kept;
+// the checking page reloads the setup page by itself so that is seen.
+static void test_online_a_save_held_after_its_page_says_why(void) {
+    portal_view_t v = online_view();
+    v.hold = PORTAL_HOLD_DISK;
+    v.err = PORTAL_ERR_HELD;
+    snprintf(v.prefill, sizeof v.prefill, "hotspot");
+    REQV("GET", "/", NULL, NULL, &v);
+    CHECK(strstr(out, "<div class=\"err\">\xe2\x80\x9chotspot\xe2\x80\x9d was not checked. Save is off for now: a disk is in a drive") != NULL, out);
+    CHECK_EQ_INT(count(out, "class=\"err\""), 1);   // once, not the hold box as well
+    CHECK(strstr(out, "value=\"hotspot\"") != NULL, "the name kept");
+    v.hold = PORTAL_HOLD_NONE; v.err = PORTAL_ERR_NONE;
+    REQV("POST", "/save", "ssid=hotspot&pass=pw12345678", NULL, &v);
+    CHECK(strstr(out, "<meta http-equiv=\"refresh\" content=\"8;url=/\">") != NULL, "the checking page reloads");
+}
+
 int main(void) {
+    RUN(test_online_a_save_held_after_its_page_says_why);
     RUN(test_online_save_is_held_and_says_why);
     RUN(test_online_the_time_away_is_stated);
     RUN(test_root_renders_the_form);

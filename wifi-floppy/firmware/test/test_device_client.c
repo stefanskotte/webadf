@@ -4026,6 +4026,41 @@ static void wifi_version_is_read_from_the_poll_and_blanked(void) {
     CHECK(!c.wifi_seen, "not on: ignored");
 }
 
+// Review of ba66653b (Important): a 204 to a poll carrying wifiAck=X means the cursor is X (the server wakes on any
+// inequality), and from an older server that ignores wifiAck that nothing is pending. Either way: seen -- or a
+// board that only ever gets 204s (new, nothing mounted) never syncs and never sends its networks.
+static void a_204_counts_as_seeing_the_ack_it_answered(void) {
+    boot(); dc_set_wifi(&c, 0, wifi_write, NULL);
+    CHECK(!c.wifi_seen, "nothing seen at entry");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(c.wifi_seen, "a 204 is the cursor at what was sent");
+    CHECK_EQ_INT(c.wifi_version, 0);
+    // After a body moved it, the 204 that follows confirms the seen value, never a lower one.
+    push_ok_json("{\"version\":3,\"desired\":null,\"wifi\":{\"v\":5}}");
+    dc_step(&c);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK_EQ_INT(c.wifi_version, 5);
+    CHECK(strstr(fake_last_request(), "&wifiAck=5") != NULL, fake_last_request());
+    // An older server: 200 bodies without `wifi` never set it, a 204 does.
+    boot(); dc_set_wifi(&c, 0, wifi_write, NULL);
+    push_ok_json("{\"version\":3,\"desired\":null}");
+    dc_step(&c);
+    CHECK(!c.wifi_seen, "a body without wifi says nothing");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(c.wifi_seen, "the old server's 204: nothing pending");
+    // Off: a 204 does nothing.
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(!c.wifi_seen, "not on");
+    // And dc_set_wifi alone owes no report (main.c owes it once synced): no report every pass.
+    boot(); dc_set_wifi(&c, 0, wifi_write, NULL);
+    CHECK(!dc_wifi_owed(&c), "set, not owed");
+}
+
 static void fetch_wifi_gets_the_instruction(void) {
     boot();
     char out[160];
@@ -4321,6 +4356,7 @@ int main(void) {
     RUN(wifi_ack_rides_every_poll_once_set);
     RUN(wifi_version_is_read_from_the_poll_and_blanked);
     RUN(fetch_wifi_gets_the_instruction);
+    RUN(a_204_counts_as_seeing_the_ack_it_answered);
     RUN(status_carries_the_wifi_tail_while_owed);
     RUN(a_real_report_carries_the_longest_wifi_tail);
     RUN(a_full_body_leaves_the_wifi_tail_owed);

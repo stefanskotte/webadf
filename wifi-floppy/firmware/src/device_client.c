@@ -2252,9 +2252,9 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     // The latest cursor SEEN, once one is (review of 3bf330b2, M2): the board fetches the instruction on its own
     // pace (main.c, a failed fetch waits 5 s), and an ack it has not caught up to would make the server answer
     // every poll at once meanwhile. Before the first body: the handled ack, so a restarted board is woken.
+    const uint32_t wifi_ack_sent = c->wifi_seen ? c->wifi_version : c->_wifi_ack;
     if (c->_wifi_on && plen > 0 && plen < (int)sizeof path)
-        snprintf(path + plen, sizeof path - (size_t)plen, "&wifiAck=%lu",
-                 (unsigned long)(c->wifi_seen ? c->wifi_version : c->_wifi_ack));
+        snprintf(path + plen, sizeof path - (size_t)plen, "&wifiAck=%lu", (unsigned long)wifi_ack_sent);
     // Disk at startup (dc_set_boot): last, so every older parameter keeps its place.
     static char bootp[24];   // static: see the STACK note above
     dc_boot_params(c, bootp);
@@ -2309,6 +2309,14 @@ static dc_state_t dc_step_inner(device_client_t *c) {
         // already self-throttling and there is nothing to back off from.
         dc_backoff_reset(c);
         c->state = DC_IDLE_POLL;
+        // Wi-Fi networks (review of ba66653b, Important): a 204 to a poll that carried wifiAck=X is the server
+        // saying the cursor IS X -- it wakes on any inequality -- and from an older server that ignores wifiAck it
+        // says nothing is pending at all. Either way the board has "seen" X. Without this a board that never got
+        // a 200 (new, nothing mounted, every cursor 0) never sent its networks.
+        if (c->_wifi_on) {
+            c->wifi_version = wifi_ack_sent;
+            c->wifi_seen = true;
+        }
         return c->state;
 
     case 401:

@@ -31,7 +31,9 @@ export async function requestWifi(
     .set({
       wifiSeq: sql`${devices.wifiSeq} + 1`,
       wifiOp: action === 'cancel' ? 'none' : action,
-      wifiOpSsid: action === 'remove' ? ssid : null,
+      // A cancel keeps what it withdrew (the op and a remove's name), so its answer is worded by it.
+      wifiOpSsid: action === 'remove' ? ssid : action === 'cancel' ? sql`${devices.wifiOpSsid}` : null,
+      wifiCancelled: action === 'cancel' ? sql`${devices.wifiOp}` : null,
       wifiOpAt: new Date(),
     })
     .where(and(scope, capable, guard))

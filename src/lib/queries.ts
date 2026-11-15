@@ -518,6 +518,7 @@ export interface DeviceListItem {
   wifiSeq: number;
   wifiOp: string;
   wifiOpSsid: string | null;
+  wifiCancelled: string | null;
   wifiAck: number | null;
   wifiResult: string | null;
   /** The disk DF0 last held before a web eject (A4): offered as "Re-insert last disk" while the drive is empty. */
@@ -623,6 +624,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       wifiSeq: devices.wifiSeq,
       wifiOp: devices.wifiOp,
       wifiOpSsid: devices.wifiOpSsid,
+      wifiCancelled: devices.wifiCancelled,
       wifiAck: devices.wifiAck,
       wifiResult: devices.wifiResult,
       lastDiskId: lastDisk.id,

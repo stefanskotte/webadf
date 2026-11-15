@@ -289,8 +289,10 @@ export const devices = pgTable('devices', {
   wifiSeq: integer('wifi_seq').notNull().default(0),
   /** 'none' | 'open' | 'close' | 'remove': what wifiSeq asks. */
   wifiOp: text('wifi_op').notNull().default('none'),
-  /** remove: the network's name in hex (one of wifiNets). */
+  /** remove: the network's name in hex (one of wifiNets). A cancel keeps the name of the remove it withdrew. */
   wifiOpSsid: text('wifi_op_ssid'),
+  /** A cancel (op 'none'): the op it withdrew ('open' | 'close' | 'remove'), so the answer can be worded by it. */
+  wifiCancelled: text('wifi_cancelled'),
   /** When wifiSeq was asked: an open older than WIFI_OPEN_TTL_MS goes out as 'none'. */
   wifiOpAt: timestamp('wifi_op_at', { withTimezone: true }),
   /** The board's ack as last reported; null = never. */

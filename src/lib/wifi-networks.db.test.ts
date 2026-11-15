@@ -60,7 +60,8 @@ describe('Wi-Fi networks in the database', () => {
     expect(await requestWifi('other-org', ID, 'remove', PHONE)).toBe('not_found');
     expect(await requestWifi(ORG, ID, 'remove', PHONE)).toEqual({ seq: 1 });
     expect(await requestWifi(ORG, ID, 'cancel', null)).toEqual({ seq: 2 });   // still waiting: a cancel is a seq
-    expect((await row()).wifiOp).toBe('none');
+    const r = await row();
+    expect([r.wifiOp, r.wifiCancelled, r.wifiOpSsid]).toEqual(['none', 'remove', PHONE]);   // what it withdrew
   });
 
   it('a restarted board can neither lower the ack nor wipe the result (I1)', async () => {

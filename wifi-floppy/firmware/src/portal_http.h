@@ -42,6 +42,7 @@ typedef enum {
     PORTAL_ERR_SAVE,     // the submitted network (prefill) joined but was not saved
     PORTAL_ERR_FORGET,   // removing forget_ssid was refused: `forget`
     PORTAL_NOTE_SAVED,   // not an error: notice_ssid was checked and saved (opened on request)
+    PORTAL_ERR_HELD,     // opened on request: prefill's Save was accepted, then held (`hold` says why)
 } portal_err_t;
 
 typedef enum {

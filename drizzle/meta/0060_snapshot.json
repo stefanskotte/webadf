@@ -1,5 +1,5 @@
 {
-  "id": "67480fd2-501c-479c-af11-2ba16983e34b",
+  "id": "c66b66f0-e0d5-47e4-b41c-329b93c987db",
   "prevId": "f04f7a89-d481-4d6a-99bd-da8c8a769d8b",
   "version": "7",
   "dialect": "postgresql",
@@ -2904,6 +2904,12 @@
         },
         "wifi_op_ssid": {
           "name": "wifi_op_ssid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wifi_cancelled": {
+          "name": "wifi_cancelled",
           "type": "text",
           "primaryKey": false,
           "notNull": false

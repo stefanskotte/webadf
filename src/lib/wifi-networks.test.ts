@@ -125,7 +125,10 @@ describe('wifiSection', () => {
       .toEqual({ ok: true, text: 'Removed “Phone”.' });
     expect(s({ wifiSeq: 2, wifiOp: 'remove', wifiOpSsid: PHONE, wifiAck: 2, wifiResult: 'disk' }).outcome?.ok).toBe(false);
     expect(s({ wifiSeq: 3, wifiOp: 'open', wifiAck: 3, wifiResult: 'ok' }).outcome).toBeNull();
-    expect(s({ wifiSeq: 3, wifiOp: 'open', wifiAck: 3, wifiResult: 'none' }).outcome?.text).toMatch(/did not open its setup page in time/);
+    expect(s({ wifiSeq: 3, wifiOp: 'open', wifiAck: 3, wifiResult: 'none' }).outcome?.text).toMatch(/setup page did not open/);
+    // A cancelled remove, read from the row: the cancel kept the op and the name.
+    expect(s({ wifiSeq: 4, wifiOp: 'none', wifiCancelled: 'remove', wifiOpSsid: PHONE, wifiAck: 4, wifiResult: 'none',
+      wifiSetupUntil: new Date(NOW + 60_000) }).outcome?.text).toMatch(/^Cancelled\. If the board had already removed “Phone”/);
   });
 });
 
@@ -138,8 +141,14 @@ describe('the words', () => {
     expect(wifiOutcome('open', null, 'subnet')?.text).toMatch(/192\.168\.4\.x/);
     expect(wifiOutcome('none', null, 'none')).toEqual({ ok: true, text: 'Cancelled.' });
     // M1: the board opened its page before the cancel reached it -- not "Cancelled", and Close is offered.
-    expect(wifiOutcome('none', null, 'none', true)?.text).toMatch(/already opened its setup page\. Press Close setup page/);
-    expect(wifiOutcome('remove', 'Home', 'none')?.text).toMatch(/was not removed: the board was offline/);
+    expect(wifiOutcome('none', null, 'none', true, 'open')?.text).toMatch(/already opened its setup page\. Press Close setup page/);
+    // Minor 3: worded by the op the cancel withdrew -- a cancelled remove while the page is open says nothing about opening.
+    expect(wifiOutcome('none', 'Home', 'none', true, 'remove')?.text).toBe('Cancelled. If the board had already removed “Home”, it is gone from the list above.');
+    expect(wifiOutcome('none', null, 'none', true, 'close')?.text).toBe('Cancelled: the setup page stays open.');
+    expect(wifiOutcome('none', null, 'none', false, 'open')?.text).toBe('Cancelled.');
+    // Minor 4: a lapse can be a busy board, not only an offline one.
+    expect(wifiOutcome('remove', 'Home', 'none')?.text).toMatch(/didn’t pick the request up within 2 minutes \(offline, or busy uploading/);
+    expect(wifiOutcome('open', null, 'none')?.text).toMatch(/within 2 minutes \(offline, or busy uploading/);
     expect(wifiOutcome('remove', 'Home', null)).toBeNull();
   });
   it('gives the steps with the setup network, its password and address, where the board goes back, and the time', () => {
