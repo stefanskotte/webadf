@@ -19,6 +19,7 @@ bool fw_rom_trial_boot(void);          // this boot is an unconfirmed TBYB trial
 // safe side for an OTA). main() loads the update record and sets this on
 // core0 before core1 starts, so fw_rom never reads the record itself.
 void fw_rom_set_trial_revertible(bool revertible);
+bool fw_rom_trial_revertible(void);   // an OTA trial: there is an image to revert to (the deadline applies)
 int  fw_rom_booted_partition(void);    // 0, 1, or -1 (unpartitioned)
 bool fw_rom_other_slot(uint32_t *flash_off, uint32_t *len);
 // Device flash ops for fw_apply_image: hardware_flash under pico/flash's

@@ -252,12 +252,24 @@ static void test_the_leave_before_the_buy_is_capped_by_the_deadline(void) {
     CHECK_EQ_INT(fw_trial_leave_budget_ms(FW_TRIAL_BUY_CUTOFF_MS), 1000);   // the last moment a buy is decided
     CHECK_EQ_INT(fw_trial_leave_budget_ms(FW_TRIAL_DEADLINE_MS - FW_TRIAL_LEAVE_MARGIN_MS - 300), 300);
     CHECK_EQ_INT(fw_trial_leave_budget_ms(FW_TRIAL_DEADLINE_MS - FW_TRIAL_LEAVE_MARGIN_MS), 0);
-    CHECK_EQ_INT(fw_trial_leave_budget_ms(FW_TRIAL_DEADLINE_MS), 0);
-    CHECK_EQ_INT(fw_trial_leave_budget_ms(0xFFFFFFF0u), 0);
+    CHECK_EQ_INT(fw_trial_leave_budget_ms(FW_TRIAL_DEADLINE_MS - 1), 0);
+    // Bench 3: past the deadline there is nothing to protect -- it leaves.
+    CHECK_EQ_INT(fw_trial_leave_budget_ms(FW_TRIAL_DEADLINE_MS), 1000);
+    CHECK_EQ_INT(fw_trial_leave_budget_ms(386000u), 1000);
+}
+
+// Bench 3 (2026-11-16): an OTA trial keeps joining until its deadline instead of opening the setup page.
+static void test_a_trial_keeps_joining_until_its_deadline(void) {
+    CHECK(fw_trial_keeps_joining(true, true, 45000u), "an OTA trial after 3 failed rounds: keep joining");
+    CHECK(fw_trial_keeps_joining(true, true, FW_TRIAL_DEADLINE_MS - 1), "up to the deadline");
+    CHECK(!fw_trial_keeps_joining(true, true, FW_TRIAL_DEADLINE_MS), "past it: the page (core0 reverts anyway)");
+    CHECK(!fw_trial_keeps_joining(true, false, 45000u), "a USB-install trial: nothing to revert to, it needs the page");
+    CHECK(!fw_trial_keeps_joining(false, true, 45000u), "not a trial: the page, as always");
 }
 
 int main(void) {
     RUN(test_the_leave_before_the_buy_is_capped_by_the_deadline);
+    RUN(test_a_trial_keeps_joining_until_its_deadline);
     RUN(test_an_update_reboot_marks_the_next_boot); RUN(test_the_proven_mark_is_an_update_boot_and_is_kept);
     RUN(test_ota_magic_is_not_an_sdk_or_rom_watchdog_magic);
     RUN(test_a_normal_boot_is_not_a_trial);

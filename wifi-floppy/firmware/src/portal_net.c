@@ -312,7 +312,8 @@ static const char TOO_LARGE_RESPONSE[] =
 // this line reaches the serial console -- which keeps the reboot itself on
 // the one core that owns the watchdog. This core just parks meanwhile.
 static void __attribute__((noreturn)) fatal_setup_failure(const char *step, int err) {
-    wf_logf(WF_ERR, "portal: %s failed (lwIP err %d; udp pcbs %u/%u, tcp pcbs %u/%u) -- rebooting", step, err,
+    wf_logf(WF_ERR, "portal: %s failed (lwIP err %d) -- rebooting", step, err);
+    wf_logf(WF_ERR, "portal: pcbs udp %u/%u tcp %u/%u",
             (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->used, (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->avail,
             (unsigned)lwip_stats.memp[MEMP_TCP_PCB]->used, (unsigned)lwip_stats.memp[MEMP_TCP_PCB]->avail);
     fw_rom_request_reboot(0);
@@ -1076,8 +1077,9 @@ void portal_open(const char *err, portal_view_t *view, portal_forget_fn forget, 
     setup_dhcp();
     setup_dns();
     setup_http();
-    wf_logf(WF_INFO, "portal: AP %s up (WPA2-AES PSK)%s; station/DHCP changes are logged; udp pcbs %u/%u, "
-            "tcp pcbs %u/%u", ssid, keep_sta ? ", beside the station" : "",
+    // Two lines: one would pass WF_LOG_MSG (bench 3: the pool counts were cut off).
+    wf_logf(WF_INFO, "portal: AP %s up (WPA2-AES)%s", ssid, keep_sta ? " beside the station" : "");
+    wf_logf(WF_INFO, "portal: pcbs udp %u/%u tcp %u/%u; station/DHCP changes logged",
             (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->used, (unsigned)lwip_stats.memp[MEMP_UDP_PCB]->avail,
             (unsigned)lwip_stats.memp[MEMP_TCP_PCB]->used, (unsigned)lwip_stats.memp[MEMP_TCP_PCB]->avail);
     portal_diag_reset();

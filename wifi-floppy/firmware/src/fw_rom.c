@@ -142,6 +142,7 @@ bool fw_rom_trial_boot(void)      { return g_trial && !g_bought; }
 bool fw_rom_bought_this_boot(void) { return g_bought; }
 bool fw_rom_boot_after_ota(void)  { return g_boot_after_ota; }
 void fw_rom_set_trial_revertible(bool revertible) { g_revertible = revertible; }
+bool fw_rom_trial_revertible(void) { return g_revertible; }
 int  fw_rom_booted_partition(void) { return g_partition; }
 
 static bool part_range(int n, uint32_t *off, uint32_t *len) {
@@ -269,6 +270,10 @@ void fw_rom_service(void) {
         }
         bt_hw_mark(0, BT0_REBOOT);   // the boot trail: this reset was asked for (bt_reset_reason "software")
         wf_log_drain(64);
+        // Bench 3: the last lines before a reboot never reached the console (the reset came within a second of
+        // "wifi: left the network"). The drain hands them to stdio; flush it and give USB a moment to send.
+        stdio_flush();
+        sleep_ms(50);
         rom_reboot(type | REBOOT2_FLAG_NO_RETURN_ON_SUCCESS, 100, base, 0);
         for (;;) tight_loop_contents();
     }
