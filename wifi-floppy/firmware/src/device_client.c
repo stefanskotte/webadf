@@ -1860,8 +1860,9 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
 
     // Phase 3 (plan 2026-10-12 ruling 13): Network mode's readings, only in Network mode. "driver" and "amigaIp"
     // only when known -- an absent key is "not yet", never a zero. "shared":true only in shared-IP mode (the Amiga
-    // uses the board's own address, pnet_shared.h). 109 bytes at most (header note).
-    static char net_tail[128];
+    // uses the board's own address, pnet_shared.h). 110 bytes at most (header note); the buffer is larger than that
+    // because GCC's -Wformat-truncation sizes drv[] and ip[] by their capacity, not their longest content (CI, 2026-11-16).
+    static char net_tail[160];
     const dc_net_t net_sent = c->_net;
     if (c->_net.on) {
         char drv[32] = "", ip[56] = "";

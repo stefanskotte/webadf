@@ -201,8 +201,8 @@ bool pnet_shared_is_dhcp(const pnet_sort_t *s, const uint8_t *f, size_t len) {
 size_t pnet_shared_dhcp_reply(pnet_sort_t *s, const uint8_t *f, size_t len, const pnet_lease_t *L,
                               uint8_t *out, size_t cap) {
     if (!pnet_shared_is_dhcp(s, f, len) || L->ip == 0u || L->ip != s->sh.ip) return 0;
-    ip4_t ip;
-    ip4(f, len, &ip);
+    ip4_t ip = {0};   // pnet_shared_is_dhcp parsed this frame already; zeroed for GCC's -Wmaybe-uninitialized
+    if (!ip4(f, len, &ip)) return 0;
     const size_t b = bootp_at(f, len, &ip, 68u, 67u);
     const uint32_t xid = be32(f + b + 4u);
     const uint16_t flags = be16(f + b + 10u);
