@@ -206,6 +206,40 @@ bool net_radio_sta_leave(uint32_t wait_ms) {
     return true;
 }
 
+// The scan's state: the callback runs in the driver's background context, the caller reads `seen` after.
+static struct {
+    const char *const *names;
+    int                n;
+    volatile uint32_t  seen;
+} s_scan;
+static int scan_result(void *env, const cyw43_ev_scan_result_t *r) {
+    (void)env;
+    for (int i = 0; i < s_scan.n; i++) {
+        const size_t len = strlen(s_scan.names[i]);
+        if (len != 0 && len == r->ssid_len && memcmp(r->ssid, s_scan.names[i], len) == 0) s_scan.seen |= 1u << i;
+    }
+    return 0;
+}
+
+int net_radio_scan_names(const char *const *names, int n, uint32_t timeout_ms) {
+    if (n <= 0 || n > 31 || cyw43_wifi_scan_active(&cyw43_state)) return -1;
+    s_scan.names = names;
+    s_scan.n = n;
+    s_scan.seen = 0;
+    cyw43_wifi_scan_options_t opts;
+    memset(&opts, 0, sizeof opts);
+    cyw43_arch_lwip_begin();
+    const int err = cyw43_wifi_scan(&cyw43_state, &opts, NULL, scan_result);
+    cyw43_arch_lwip_end();
+    if (err) return -1;
+    const absolute_time_t until = make_timeout_time_ms(timeout_ms);
+    while (cyw43_wifi_scan_active(&cyw43_state) && !time_reached(until)) {
+        cyw43_arch_poll();
+        sleep_ms(10);
+    }
+    return (int)s_scan.seen;   // a scan still running at the deadline: what it saw so far
+}
+
 static bool j_time_up(void *vc) {
     return time_reached(((join_ctx_t *)vc)->until);
 }
