@@ -11,6 +11,7 @@ static void enter(pnet_sort_t *s, uint32_t board_ip) {
     s->sh.own = false;
     s->sh.amiga = false;
     s->sh.spent = false;
+    s->sh.asks = 0;
     s->sh.down_want = false;
     s->sh.ip = board_ip;
     s->sh.entered++;
@@ -18,10 +19,31 @@ static void enter(pnet_sort_t *s, uint32_t board_ip) {
     s->amiga_ip = board_ip;                 /* what the report and the log say the Amiga uses */
 }
 
-/* The Amiga must ask for a lease again: core0 tells its driver the link is down once (pnet_down_t). */
-static void ask_readdress(pnet_sort_t *s) {
+/* Remembers `ip` as an address the Amiga is being moved off (pnet_shared.h FORMER), round-robin over two. */
+static void remember_former(pnet_sort_t *s, uint32_t ip) {
+    for (unsigned i = 0; i < PNET_SHARED_FORMER; i++)
+        if (s->sh.former[i].ip == ip) { s->sh.former[i].t = s->sh.now; return; }
+    pnet_former_t *e = &s->sh.former[s->sh.former_next];
+    s->sh.former_next = (uint8_t)((s->sh.former_next + 1u) % PNET_SHARED_FORMER);
+    e->ip = ip;
+    e->t = s->sh.now;
+}
+
+static bool is_former(const pnet_sort_t *s, uint32_t ip) {
+    for (unsigned i = 0; i < PNET_SHARED_FORMER; i++)
+        if (s->sh.former[i].ip == ip && s->sh.now - s->sh.former[i].t < PNET_FORMER_MS) return true;
+    return false;
+}
+
+/* The Amiga must ask for a lease again: core0 tells its driver the link is down once (pnet_down_t). Review minor 2:
+ * down_want is stored BEFORE down_req, with a barrier between, so core0 (which reads down_req, a barrier, then
+ * down_want) never sees the new request with the old (false) wish and closes it without a pulse. */
+static void ask_readdress(pnet_sort_t *s, uint32_t from) {
+    if (from) remember_former(s, from);
     s->sh.spent = true;
+    s->sh.asks++;
     s->sh.down_want = true;
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);   /* a DMB on the RP2350; a compiler barrier too */
     s->sh.down_req++;
 }
 
@@ -30,6 +52,7 @@ static void ask_readdress(pnet_sort_t *s) {
 static void known(pnet_sort_t *s) {
     s->sh.amiga = true;
     s->sh.spent = false;
+    s->sh.asks = 0;
     s->sh.down_want = false;
 }
 
@@ -41,7 +64,8 @@ void pnet_shared_follow(pnet_sort_t *s, uint32_t board_ip) {
     // -- so if it holds it, it is made to ask again (pnet_shared.h); its frames from the old one are held meanwhile.
     s->sh.moved++;
     s->sh.old = s->sh.ip;
-    if (s->sh.amiga) ask_readdress(s);
+    remember_former(s, s->sh.ip);           /* whether or not the Amiga was seen on it */
+    if (s->sh.amiga) { s->sh.asks = 0; ask_readdress(s, 0u); }
     s->sh.amiga = false;
     s->sh.ip = board_ip;
     memset(s->sh.frag, 0, sizeof s->sh.frag);
@@ -264,7 +288,8 @@ pnet_sort_to_t pnet_shared_rx(pnet_sort_t *s, const uint8_t *f, size_t len) {
             pnet_frag_t *e = &s->sh.frag[i];
             if (e->to != 0u && e->src == ip.src && e->id == id && e->proto == ip.proto) {
                 const pnet_sort_to_t to = (pnet_sort_to_t)e->to;
-                if (!more) e->to = 0u;                             /* the last fragment: forget the datagram */
+                // Review minor 4: kept after the last fragment too (it may arrive before a middle one); entries
+                // age out round-robin as new datagrams' first fragments arrive.
                 return counted(s, to);
             }
         }
@@ -304,12 +329,20 @@ pnet_foreign_t pnet_shared_foreign(pnet_sort_t *s, const uint8_t *f, size_t len)
     if (arp4(f, len, &a)) src = a.spa;
     else if (ip4(f, len, &ip)) src = ip.src;
     if (src == 0u || src == s->sh.ip) return PNET_FOREIGN_NO;
-    const bool here = s->sh.mask != 0u && ((src ^ s->sh.ip) & s->sh.mask) == 0u && (src >> 16) != 0xA9FEu;
+    const bool former = is_former(s, src);
+    // Review I1: a LATE frame from an address the Amiga was moved off, once it is on the shared address (AmiTCP_NG's
+    // old pcbs retransmit and FIN for minutes after the offline): dropped, counted -- never a new ask, never the
+    // escape -- until PNET_FORMER_MS has passed.
+    if (former && s->sh.amiga) { s->sh.stale++; return PNET_FOREIGN_HOLD; }
+    const bool here = !former && s->sh.mask != 0u && ((src ^ s->sh.ip) & s->sh.mask) == 0u &&
+                      (src >> 16) != 0xA9FEu;
     if (!(here && !s->sh.spent)) {
-        // Not an address that works here, or the Amiga is being moved off one: hold, and ask it once to come back
-        // through DHCP. Once that is over and it still sends from there, it is its own (below).
-        if (!s->sh.spent) ask_readdress(s);
+        // Not an address that works here (or one the Amiga is being moved off): hold, and ask it to come back
+        // through DHCP -- again once a pulse is over, PNET_READDRESS_TRIES pulses in all (review minor 3: nothing
+        // confirms the driver read the DOWN). If it still sends from there after that, it is its own (below).
+        if (!s->sh.spent) { s->sh.asks = 0; ask_readdress(s, src); }
         if (s->sh.down_done != s->sh.down_req) { s->sh.held++; return PNET_FOREIGN_HOLD; }
+        if (s->sh.asks < PNET_READDRESS_TRIES) { ask_readdress(s, src); s->sh.held++; return PNET_FOREIGN_HOLD; }
     }
     s->sh.on = false;                       /* two-address mode: the escape */
     s->sh.own = true;

@@ -490,15 +490,15 @@ static void fragments_follow_their_first(void) {
     CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_AMIGA);
     n = fragment(HOTSPOT, 53, 50123, 0x7002, 1);
     CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_BOARD);
-    n = fragment(HOTSPOT, 53, 50123, 0x7001, 2);           /* the last: the datagram is forgotten */
+    n = fragment(HOTSPOT, 53, 50123, 0x7001, 2);           /* the last */
     CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_AMIGA);
     n = fragment(HOTSPOT, 53, 50123, 0x7002, 2);
     CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_BOARD);
-    n = fragment(HOTSPOT, 53, 50123, 0x7001, 1);           /* a duplicate after the last: no owner */
-    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_DROP);
+    n = fragment(HOTSPOT, 53, 50123, 0x7001, 1);           /* review minor 4: a middle one AFTER the last (reordered) */
+    CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_AMIGA);   /* still its owner's: entries only age out */
     n = fragment(IP(9, 9, 9, 9), 53, 50123, 0x7001, 1);    /* same id, another source: never confused */
     CHECK_EQ_INT(pnet_sort_rx(&s, F, n, BOARD), PNET_SORT_DROP);
-    CHECK_EQ_INT(s.sh.frag_drops, 2);
+    CHECK_EQ_INT(s.sh.frag_drops, 1);
     for (uint16_t id = 0x100; id < 0x100 + PNET_SORT_FRAGS + 1u; id++) {   /* the table holds the last four */
         n = fragment(HOTSPOT, 53, 50123, id, 0);
         pnet_sort_rx(&s, F, n, BOARD);
@@ -680,9 +680,16 @@ static void an_amiga_that_does_not_ask_again_keeps_its_old_address(void) {
     CHECK(s.sh.on && s.sh.down_req == 1, "moved, asked");
     n = arp(BCAST, MAC, 1, BOARD, NULL, HOTSPOT);           /* the old address: held while the pulse runs */
     CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, moved), PNET_TX_HOLD);
+    for (uint32_t k = 2; k <= PNET_READDRESS_TRIES; k++) {  /* review minor 3: asked again after each pulse */
+        readdress_done(&s);
+        CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, moved), PNET_TX_HOLD);
+        CHECK_EQ_INT(s.sh.down_req, k);
+        CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, moved), PNET_TX_HOLD);   /* pending: no extra ask */
+        CHECK_EQ_INT(s.sh.down_req, k);
+    }
     readdress_done(&s);
     CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, moved), PNET_TX_SEND);
-    CHECK(!s.sh.on && s.sh.own && s.sh.own_n == 1, "two-address mode");
+    CHECK(!s.sh.on && s.sh.own && s.sh.own_n == 1 && s.sh.down_req == PNET_READDRESS_TRIES, "two-address mode");
     CHECK_EQ_INT(s.amiga_ip, BOARD);
     CHECK_EQ_INT(pnet_sort_send_ip(&s), BOARD);
     n = tcp(MAC, HMAC, SERVER, BOARD, 80, 0xC001, 0x12, 0);
@@ -704,6 +711,73 @@ static void a_move_under_an_unknown_amiga_asks_only_when_it_sends(void) {
     n = arp(BCAST, MAC, 1, BOARD, NULL, HOTSPOT);
     CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, PHONE), PNET_TX_HOLD);
     CHECK(s.sh.down_req == 1 && s.sh.on, "asked at its first frame from another network");
+}
+
+/* Review I1: AmiTCP_NG keeps its old-address connections retransmitting and FINing for minutes after the offline.
+ * Once the Amiga is ACKed on the new address, a LATE frame from the old one is dropped and counted: no second DOWN
+ * (off-subnet), no escape to two-address mode (same subnet). After PNET_FORMER_MS it is just a foreign address. */
+static void late_frames_from_the_old_address_are_dropped(void) {
+    for (int same = 0; same < 2; same++) {
+        pnet_sort_t s = shared_and_acked();                 /* BOARD 192.168.43.5/24 */
+        pnet_sort_set_clock(&s, 1000);
+        const uint32_t to = same ? IP(192, 168, 43, 23) : PHONE;
+        if (!same) pnet_sort_set_mask(&s, IP(255, 255, 255, 240));
+        size_t n = udp(MAC, HMAC, HOTSPOT, to, 53, 50123, 60);
+        pnet_sort_rx(&s, F, n, to);
+        CHECK(s.sh.down_req == 1 && s.sh.old == BOARD, "moved, asked once");
+        readdress_done(&s);
+        pnet_lease_t L = lease();
+        L.ip = to;
+        n = amitcp_dhcp(1, 0x21u, 0, 0);
+        pnet_sort_tx(&s, F, n, MAC, to);
+        n = amitcp_dhcp(3, 0x21u, to, HOTSPOT);
+        pnet_sort_tx(&s, F, n, MAC, to);
+        CHECK(pnet_shared_dhcp_reply(&s, F, n, &L, R, sizeof R) != 0 && s.sh.amiga, "ACKed on the new address");
+        pnet_sort_set_clock(&s, 1000 + 9u * 60u * 1000u);   /* nine minutes of FIN_WAIT retransmits later */
+        n = tcp(HMAC, MAC, BOARD, SERVER, 0xC001, 443, 0x11, 0);   /* FIN from the old address */
+        CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, to), PNET_TX_HOLD);
+        n = arp(BCAST, MAC, 1, BOARD, NULL, HOTSPOT);
+        CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, to), PNET_TX_HOLD);
+        CHECK(s.sh.on && !s.sh.own && s.sh.down_req == 1 && s.sh.stale == 2, "dropped: no new ask, no escape");
+        CHECK_EQ_INT(s.amiga_ip, to);
+        n = tcp(HMAC, MAC, to, SERVER, 0xC002, 443, 0x02, 0);   /* its new connections go out */
+        CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, to), PNET_TX_SEND);
+        pnet_sort_set_clock(&s, 1000 + PNET_FORMER_MS + 1u);    /* long after: a foreign address like any other */
+        n = tcp(HMAC, MAC, BOARD, SERVER, 0xC001, 443, 0x11, 0);
+        const pnet_tx_t v = pnet_sort_tx(&s, F, n, MAC, to);
+        if (same) CHECK(v == PNET_TX_SEND && s.sh.own, "same subnet: the static escape again");
+        else CHECK(v == PNET_TX_HOLD && s.sh.down_req == 2, "off subnet: asked again");
+    }
+}
+
+/* The same for a foreign address the Amiga was asked to leave (link-local here): once it took the lease, late frames
+ * from 169.254 are dropped, not a new DOWN. */
+static void late_frames_from_a_left_foreign_address_are_dropped(void) {
+    pnet_sort_t s = fresh();
+    size_t n = arp(BCAST, MAC, 1, IP(169, 254, 12, 34), NULL, HOTSPOT);
+    CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, BOARD), PNET_TX_HOLD);
+    readdress_done(&s);
+    n = amitcp_dhcp(3, 0x31u, BOARD, HOTSPOT);
+    pnet_sort_tx(&s, F, n, MAC, BOARD);
+    const pnet_lease_t L = lease();
+    CHECK(pnet_shared_dhcp_reply(&s, F, n, &L, R, sizeof R) != 0, "ACKed");
+    n = arp(BCAST, MAC, 1, IP(169, 254, 12, 34), NULL, HOTSPOT);
+    CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, BOARD), PNET_TX_HOLD);
+    CHECK(s.sh.down_req == 1 && s.sh.stale == 1 && s.sh.on, "dropped, no new ask");
+}
+
+/* A board move under an Amiga never seen on the shared address, on the SAME subnet: its old address is a former
+ * shared one, so it is asked about, not taken as a static address. */
+static void a_former_address_on_the_same_subnet_is_asked_about(void) {
+    pnet_sort_t s = fresh();
+    size_t n = udp(MAC, HMAC, HOTSPOT, BOARD, 53, 50123, 60);
+    pnet_sort_rx(&s, F, n, BOARD);
+    const uint32_t to = IP(192, 168, 43, 23);
+    pnet_sort_rx(&s, F, n, to);
+    CHECK(s.sh.moved == 1 && s.sh.down_req == 0, "moved, nothing asked yet");
+    n = arp(BCAST, MAC, 1, BOARD, NULL, HOTSPOT);
+    CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, to), PNET_TX_HOLD);
+    CHECK(s.sh.on && !s.sh.own && s.sh.down_req == 1, "asked, not the static escape");
 }
 
 /* ---- the hotspot of 2026-11-16 ---- */
@@ -1024,6 +1098,9 @@ int main(void) {
     RUN(a_board_move_asks_the_amiga_for_a_new_lease);
     RUN(an_amiga_that_does_not_ask_again_keeps_its_old_address);
     RUN(a_move_under_an_unknown_amiga_asks_only_when_it_sends);
+    RUN(late_frames_from_the_old_address_are_dropped);
+    RUN(late_frames_from_a_left_foreign_address_are_dropped);
+    RUN(a_former_address_on_the_same_subnet_is_asked_about);
     RUN(a_hotspot_never_leases_the_amiga_a_second_address);
     RUN(a_long_client_id_grows_the_reply_and_never_overflows);
     RUN(transfer_goes_to_the_amigas_bus_address);
