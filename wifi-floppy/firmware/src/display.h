@@ -63,8 +63,8 @@ typedef struct {
     uint8_t side;
     /** The board's Wi-Fi is up but the server does not answer (operator ruling 2026-11-16): a request went
      *  unanswered since the last answer, or the link dropped and nothing has answered since. The Wi-Fi glyph keeps
-     *  its signal arcs and is struck through -- offline, as "no radio" is, while still showing the signal (a bare
-     *  struck dot stays "no radio"). The next padding byte after `side`: no other offset or the size moves
+     *  its signal arcs under a bold X, both diagonals (bench: a single strike was hard to see); "no radio" stays a
+     *  bare dot with one thin strike. The next padding byte after `side`: no other offset or the size moves
      *  (display.wasm's table). */
     uint8_t no_server;
     int  cyl;        // 0..max_cyl

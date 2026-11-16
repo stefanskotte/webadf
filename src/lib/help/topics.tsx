@@ -467,7 +467,7 @@ export const HELP_TOPICS = {
   // display_layout_for (built-in screens take the icon), display-layout.ts STATUS_ICON_FIRMWARE 1.15.0.
   // Rotation (1.17.0): oled_cmds.c (A0/C0 in the controller, every screen turns), display_layout.h
   // REC_ROTATION, display-editor.tsx (Rotation select, reset keeps the turn), drive-glass.tsx (stripRotation), route.ts tooOldReason.
-  // Wi-Fi strike: display.c draw_wifi (bars < 0: struck bare dot; no_server: struck over the arcs), main.c
+  // Wi-Fi marks: display.c draw_wifi (bars < 0: bare dot, one thin strike; no_server: bold X over the arcs), main.c
   // g_ui_no_server from wifi_fallback.h wfb_no_server (first unanswered request or a link drop, until an answer).
   // Track counter side arrow (1.18.0): display.c track_text ("42" arrow "79", down = side 0, up = side 1).
   // The 1.17.0 head element (id 10) was withdrawn; stored layouts that name it lose it silently.
@@ -489,7 +489,7 @@ export const HELP_TOPICS = {
           The <em>Track</em> counter reads cylinder, a side arrow, then the last cylinder, as{' '}
           <em>42↑79</em> or <em>42↓79</em>: up is side 1, down side 0. The <em>NFC</em> element, hidden until you tick it, shows
           the NFC reader (struck through when none is found, inverted while a tag write waits). The <em>Wi-Fi</em>{' '}
-          signal is struck through while the board can&apos;t reach this app.
+          signal shows a bold X while the board can&apos;t reach this app.
         </p>
         <p>
           The <em>Status</em> shows <em>as</em> a word or an icon: an empty or filled floppy, filling while
