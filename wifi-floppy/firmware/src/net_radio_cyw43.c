@@ -266,10 +266,11 @@ int net_radio_scan_names(const char *const *names, int n, uint32_t timeout_ms, i
     cyw43_arch_lwip_end();
     const uint32_t all = (1u << n) - 1u;
     const absolute_time_t until = make_timeout_time_ms(timeout_ms);
+    // Each stage starts only with time left (review of bb89103e): never off-channel past the deadline.
     const int first = scan_once(NULL, 0, until);
     bool more = first == 1;
-    if (more && (s_scan.seen & all) != all) more = scan_once(NULL, 1, until) == 1;
-    for (int i = 0; more && i < n; i++)
+    if (more && (s_scan.seen & all) != all && !time_reached(until)) more = scan_once(NULL, 1, until) == 1;
+    for (int i = 0; more && i < n && !time_reached(until); i++)
         if (!(s_scan.seen & (1u << i)) && s_scan.names[i][0]) more = scan_once(s_scan.names[i], 0, until) == 1;
     cyw43_arch_lwip_begin();
     s_scan.n = 0;              // a scan still running: its later results count for nothing

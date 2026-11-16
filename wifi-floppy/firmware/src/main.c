@@ -1822,9 +1822,10 @@ static uint32_t   g_wifi_retry_at;     // a failed instruction fetch waits until
 static bool       g_wifi_synced;
 // The Wi-Fi fallback's clocks (wifi_fallback.h, wifi_fallback_step below). started = false restarts them.
 static wifi_fb_t  g_wfb;
-// This boot's network was chosen on the power-on setup page (prov_on_verified_submit): the fallback never returns
-// from it to an earlier saved network (third review, Important 2) -- the person standing there picked it.
-static bool       g_wifi_chosen_on_page;
+// The network chosen on the power-on setup page this boot (prov_on_verified_submit), -1 none: the fallback never
+// returns from it to an earlier saved network while the board is on it (third review, Important 2) -- the person
+// standing there picked it. A move the fallback makes ends the choice (review of bb89103e, wfb_page_after_run).
+static int        g_wifi_page_idx = -1;
 
 // The names and where the board is, for the page opened on request. Keeps the note (err and its fields).
 static void online_view_names(portal_view_t *v) {
@@ -2106,7 +2107,7 @@ static void __attribute__((noinline)) wifi_fallback_step(device_client_t *c, upl
         .hold = portal_is_open() || g_wifi_win.open || trial || g_fwu_reboot_owed,
         .hold_dead = hold == PORTAL_HOLD_NETWORK,              // DF1 Network: no "no answer" move (review I2)
         .idle = hold == PORTAL_HOLD_NONE && !fw_busy,          // an update under way is not idle
-        .cur = cur, .no_return = g_wifi_chosen_on_page, .fails = c->unanswered,
+        .cur = cur, .page_idx = g_wifi_page_idx, .fails = c->unanswered,
     };
     const wfb_due_t due = wfb_due(&g_wfb, &in);
     g_ui_no_server = wfb_no_server(&g_wfb);   // the panel's honest state, every pass
@@ -2133,8 +2134,8 @@ static void __attribute__((noinline)) wifi_fallback_step(device_client_t *c, upl
         bt_hw_tick(1);
         if (seen >= 0) wf_logf(WF_INFO, "wifi: scan: %d results, saved in range 0x%x (this one %d)", results,
                                (unsigned)seen, cur);
-        // Nothing heard at all, not even the network the board is on: the scan did not work (bench e92807d8).
-        if (seen >= 0 && results == 0) seen = -1;
+        // Nothing heard at all: a failed scan with the link up (bench e92807d8), an empty one with it down.
+        seen = wfb_scan_seen(due, seen, results);
     }
     // LOST: the rounds start from the network it was on last (`first` outlives a failed run; review M1).
     const int from = wfb_pick(&g_wfb, due, clock_ms(), due == WFB_DUE_LOST ? prov.first : cur, prov.cfg.n_nets,
@@ -2148,7 +2149,8 @@ static void __attribute__((noinline)) wifi_fallback_step(device_client_t *c, upl
     }
     wf_logf(due == WFB_DUE_BETTER ? WF_INFO : WF_WARN, "wifi: trying the saved networks, %s first",
             prov.cfg.net[from].ssid);
-    // A scan that outlived its 8 s must be over before a join starts (review I1): bounded, ticking.
+    // A scan that outlived its 12 s must be over before a join starts (review I1): bounded, ticking.
+    if (net_radio_scan_active()) wf_logf(WF_WARN, "wifi: the scan still runs -- waiting for it to end");
     for (int waited = 0; net_radio_scan_active(); waited += 50) {
         if (waited >= 15000) {
             wf_logf(WF_WARN, "wifi: the scan still runs after 15 s -- joining anyway");
@@ -2162,8 +2164,9 @@ static void __attribute__((noinline)) wifi_fallback_step(device_client_t *c, upl
     int tries = 0;
     const int back_on = wifi_rejoin_run(&prov, from, &ops, &tries);
     g_wifi_owe = true;             // the status tail's "cur" names the network now (or none)
-    if (due == WFB_DUE_BETTER && back_on >= 0 && back_on != from)
+    if (due == WFB_DUE_BETTER && back_on >= 0 && !wfb_returned(&g_wfb, back_on))
         wf_logf(WF_WARN, "wifi: %s did not answer -- the next look later", prov.cfg.net[from].ssid);
+    g_wifi_page_idx = wfb_page_after_run(g_wifi_page_idx, back_on);
     if (back_on >= 0) {
         g_ui_bars = rssi_bars(wifi_rssi());
         wf_logf(WF_INFO, "wifi: now on %s at %s (%d tries)", prov.cfg.net[back_on].ssid, ip_str(), tries);
@@ -2522,7 +2525,7 @@ static void core1_main(void) {
             wf_logf(WF_INFO, "portal: associated, default route %s",
                     default_route_str());
             if (prov_on_verified_submit(&prov, &submitted)) {
-                g_wifi_chosen_on_page = true;
+                g_wifi_page_idx = prov.first;
                 wf_logf(WF_INFO, "portal: network %s verified and saved (%d saved, %s)",
                         submitted.ssid, prov.cfg.n_nets,
                         submitted.code[0] ? "new pairing code" : "pairing kept");

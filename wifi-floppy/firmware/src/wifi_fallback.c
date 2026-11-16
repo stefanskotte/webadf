@@ -71,7 +71,7 @@ wfb_due_t wfb_due(wifi_fb_t *fb, const wfb_in_t *in) {
     if (!in->hold_dead && (uint32_t)(now - fb->quiet_since) >= fb->dead_ms &&
         (uint32_t)(in->fails - fb->fails_base) >= WFB_DEAD_FAILS)
         return WFB_DUE_DEAD;
-    if (in->cur > 0 && in->idle && !in->no_return && (uint32_t)(now - fb->better_since) >= fb->better_ms) return WFB_DUE_BETTER;
+    if (in->cur > 0 && in->idle && in->cur != in->page_idx && (uint32_t)(now - fb->better_since) >= fb->better_ms) return WFB_DUE_BETTER;
     return WFB_DUE_NONE;
 }
 
@@ -146,6 +146,14 @@ void wfb_ran(wifi_fb_t *fb, wfb_due_t due, uint32_t now, int back_on) {
         fb->no_restart = true;
         fb->better_ms = doubled(fb->better_ms, WFB_BETTER_MAX_MS);
     }
+}
+
+int wfb_page_after_run(int page_idx, int back_on) { return back_on >= 0 ? -1 : page_idx; }
+
+int wfb_scan_seen(wfb_due_t due, int seen, int results) {
+    if (seen < 0) return -1;
+    if (results == 0 && due != WFB_DUE_DOWN) return -1;
+    return seen;
 }
 
 bool wfb_may_restart(const wifi_fb_t *fb) { return !fb->no_restart; }

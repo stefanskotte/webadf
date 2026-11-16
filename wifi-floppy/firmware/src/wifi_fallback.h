@@ -39,8 +39,9 @@
 //     Third review: the reset needs home up and answering for a whole period (a marginal home network that answers
 //     once and drops keeps the longer period); a return that did not reach the earlier network (a stale password)
 //     counts as an empty scan; a return never leads to a restart (if its rounds end on nothing, the board keeps
-//     trying every WFB_LOST_RETRY_MS); and no return at all for a boot whose network was chosen on the power-on
-//     setup page (`no_return`) -- the person standing there picked it.
+//     trying every WFB_LOST_RETRY_MS); and no return while the board is on the network chosen on the power-on
+//     setup page (`page_idx`) -- the person standing there picked it. Review of bb89103e: only while on it; a move
+//     the fallback makes clears the choice (wfb_page_after_run), so the way home is open again after it.
 //   * Held (no action; the clocks keep running): the setup page opened on request (its window), an OTA trial
 //     before its deadline (it reverts on its own if the network is dead), an update's reboot owed. The Save check
 //     runs its own rounds and resets this (wfb_reset).
@@ -102,7 +103,7 @@ typedef struct {
     bool     hold_dead;     // DF1 Network: no move for B (the link-up case)
     bool     idle;          // no disk in DF0/DF1, no saves waiting, DF1 not Network: BETTER may run
     int      cur;           // the network the board is on, -1 none
-    bool     no_return;     // this boot's network was chosen on the power-on setup page: no BETTER
+    int      page_idx;      // the network chosen on the power-on setup page, -1 none: no BETTER while on it
     uint32_t fails;         // device_client_t.unanswered
 } wfb_in_t;
 
@@ -127,5 +128,11 @@ bool wfb_no_server(const wifi_fb_t *fb);
 bool wfb_may_restart(const wifi_fb_t *fb);
 // After a BETTER run: did it reach the network it aimed at?
 bool wfb_returned(const wifi_fb_t *fb, int back_on);
+// The setup page's choice after a run: a run that joined a network ends it (-1), one that joined nothing keeps it.
+int wfb_page_after_run(int page_idx, int back_on);
+// What a scan's answer means (bench e92807d8, review of bb89103e): a scan that heard nothing at all, not even the
+// network the board is on, is a failed one (-1) while the link is up (DEAD, BETTER); with the link down (DOWN) an
+// all-quiet scan is an empty one -- a router rebooting with no neighbours around must not run the rounds early.
+int wfb_scan_seen(wfb_due_t due, int seen, int results);
 
 #endif

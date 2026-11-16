@@ -16,7 +16,7 @@
 
 static wfb_in_t in_at(uint32_t now, bool up, uint32_t answers, int n) {
     // A request with no answer every minute: the shape of a dead network (B needs WFB_DEAD_FAILS of them).
-    wfb_in_t in = { now, up, answers, n, false, false, false, 0, false, now / S(60) };
+    wfb_in_t in = { now, up, answers, n, false, false, false, 0, -1, now / S(60) };
     return in;
 }
 
@@ -479,17 +479,51 @@ static void a_return_that_misses_home_backs_off_and_never_restarts(void) {
     CHECK(wfb_may_restart(&fb), "an ordinary episode may restart an idle board");
 }
 
-static void no_return_when_the_network_was_chosen_on_the_setup_page(void) {
+// No return while on the network chosen on the setup page (1); on another later one (2) the return runs; and a move
+// the fallback makes ends the choice, a run that joined nothing keeps it.
+static void no_return_while_on_the_network_chosen_on_the_setup_page(void) {
     wifi_fb_t fb;
     wfb_reset(&fb, 0, 0);
     wfb_in_t in = on_idle(S(1), 1, 1);
-    in.no_return = true;
+    in.page_idx = 1;
     wfb_due(&fb, &in);
     in = on_idle(S(1) + 3 * WFB_BETTER_MS, 2, 1);
-    in.no_return = true;
+    in.page_idx = 1;
     CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);
-    in.no_return = false;
+    in.page_idx = -1;
     CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_BETTER);
+    wfb_reset(&fb, 0, 0);
+    in = on_idle(S(1), 1, 2);                         // a DEAD move took it from 1 to 2
+    in.page_idx = 1;
+    wfb_due(&fb, &in);
+    in = on_idle(S(1) + WFB_BETTER_MS, 2, 2);
+    in.page_idx = 1;
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_BETTER);
+    CHECK_EQ_INT(wfb_page_after_run(1, 2), -1);       // a fallback move ends the choice
+    CHECK_EQ_INT(wfb_page_after_run(1, -1), 1);       // nothing joined: kept
+    CHECK_EQ_INT(wfb_page_after_run(-1, 0), -1);
+}
+
+// A scan that heard nothing at all: failed with the link up, empty with it down (review of bb89103e, I1).
+static void an_all_quiet_scan_is_failed_only_with_the_link_up(void) {
+    CHECK_EQ_INT(wfb_scan_seen(WFB_DUE_DEAD, 0, 0), -1);
+    CHECK_EQ_INT(wfb_scan_seen(WFB_DUE_BETTER, 0, 0), -1);
+    CHECK_EQ_INT(wfb_scan_seen(WFB_DUE_DOWN, 0, 0), 0);
+    CHECK_EQ_INT(wfb_scan_seen(WFB_DUE_DOWN, -1, 0), -1);
+    CHECK_EQ_INT(wfb_scan_seen(WFB_DUE_DEAD, 0x2, 5), 0x2);
+    // A router rebooting for minutes, no neighbours heard: every DOWN scan is empty, so the rounds never run and
+    // an idle board never restarts through it; the scans come at 1, 2, 4, 5 minutes.
+    wifi_fb_t fb;
+    wfb_reset(&fb, 0, 0);
+    wfb_in_t in = in_at(S(1), false, 0, 2);
+    wfb_due(&fb, &in);
+    uint32_t t = S(31);
+    for (int k = 0; k < 6; k++) {
+        in = in_at(t, false, 0, 2);
+        CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_DOWN);
+        CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_DOWN, t, 0, 2, wfb_scan_seen(WFB_DUE_DOWN, 0, 0)), -1);
+        t = fb.rescan_at;
+    }
 }
 
 // The no-answer move wins when it and the return fall due in the same pass.
@@ -624,7 +658,8 @@ int main(void) {
     RUN(returns_slow_down_until_home_answers);
     RUN(a_marginal_home_network_does_not_reset_the_return_period);
     RUN(a_return_that_misses_home_backs_off_and_never_restarts);
-    RUN(no_return_when_the_network_was_chosen_on_the_setup_page);
+    RUN(no_return_while_on_the_network_chosen_on_the_setup_page);
+    RUN(an_all_quiet_scan_is_failed_only_with_the_link_up);
     RUN(the_no_answer_move_wins_over_the_return);
     RUN(failed_scans_are_counted_per_outage);
     RUN(a_ends_on_home_after_one_try_of_the_hotspot);
