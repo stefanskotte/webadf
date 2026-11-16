@@ -91,7 +91,6 @@ pnet_tx_t pnet_sort_tx(pnet_sort_t *s, const uint8_t *f, size_t len, const uint8
 }
 
 void pnet_sort_set_mask(pnet_sort_t *s, uint32_t mask) { s->sh.mask = mask; }
-void pnet_sort_set_clock(pnet_sort_t *s, uint32_t now_ms) { s->sh.now = now_ms; }
 
 /* ARP (Ethernet/IPv4) whose target protocol address is `tpa`, or IPv4 whose destination is `tpa`. */
 static bool addressed_to(const uint8_t *f, size_t len, uint32_t tpa) {

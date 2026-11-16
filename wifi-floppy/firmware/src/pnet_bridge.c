@@ -121,7 +121,6 @@ static const pnet_lease_t *lease_of(struct netif *nif) {
 static volatile uint32_t s_down_done;   // core0 writes (pnet_bridge_down_done), the network context reads
 static void pnet_sort_inputs(struct netif *nif) {
     pnet_sort_set_mask(&s_sort, lwip_ntohl(ip4_addr_get_u32(netif_ip4_netmask(nif))));
-    pnet_sort_set_clock(&s_sort, to_ms_since_boot(get_absolute_time()));   // the former addresses' age
     s_sort.sh.down_done = s_down_done;
     pnet_shared_follow(&s_sort, board_ip_of(nif));
 }
@@ -280,6 +279,7 @@ void pnet_bridge_stats(pnet_bridge_stats_t *o) {
     o->sh_moved = sh->moved;
     o->sh_own = sh->own_n;
     o->sh_held = sh->held;
+    o->sh_stale = sh->stale;
     o->sh_down_req = sh->down_req;
     o->sh_old = sh->old;
     o->sh_offers = sh->offers;

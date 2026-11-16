@@ -42,8 +42,10 @@ typedef enum { PNET_TX_SEND = 0, PNET_TX_LEN, PNET_TX_MAC, PNET_TX_TYPE, PNET_TX
 /* SHARED-IP MODE, the default (pnet_shared.h has the design). */
 #define PNET_SORT_FRAGS 4u
 typedef struct { uint32_t src; uint16_t id; uint8_t proto, to; } pnet_frag_t;   /* a fragmented datagram's owner */
-#define PNET_SHARED_FORMER 2u
-typedef struct { uint32_t ip, t; } pnet_former_t;   /* an address the Amiga was moved off, and when (ms) */
+#define PNET_SHARED_FORMER 8u
+/* An address the Amiga was moved off (pnet_shared.h FORMER ADDRESSES): used = the Amiga was seen on it (preferred
+ * to keep when one must go); gave_up = its re-address tries ran out once, so it is never asked about again. */
+typedef struct { uint32_t ip; bool used, gave_up; } pnet_former_t;
 typedef struct {
     bool     on;         /* shared: Network mode with a board address, and the Amiga not on an address of its own */
     bool     own;        /* two-address mode: the Amiga keeps a (static) address of its own -- the escape */
@@ -63,8 +65,9 @@ typedef struct {
     uint32_t late;       /* the network's DHCP replies to an Amiga xid, dropped */
     uint32_t frag_drops; /* non-first fragments whose first fragment was not seen */
     uint32_t stale;      /* frames from a FORMER address after the Amiga moved on, dropped (review 2026-11-16) */
-    uint32_t now;        /* ms, set by the glue before every call (pnet_sort_set_clock): the formers' age */
+    bool     dhcp;       /* the Amiga sent a BOOTREQUEST since it was last on the shared address: the DOWN was read */
     uint8_t  asks;       /* re-addresses asked in this episode (PNET_READDRESS_TRIES at most) */
+    uint16_t asks_total; /* ...asked for foreign frames since boot (PNET_READDRESS_MAX at most; moves not counted) */
     uint8_t  former_next;
     pnet_former_t former[PNET_SHARED_FORMER];
     uint32_t arp_hidden; /* ARP from the radio claiming the shared address, kept from the Amiga */
@@ -93,8 +96,6 @@ pnet_tx_t pnet_sort_tx(pnet_sort_t *s, const uint8_t *f, size_t len, const uint8
 
 /* The board's netmask, for the static-address escape (pnet_shared.h): the glue sets it with the address. */
 void pnet_sort_set_mask(pnet_sort_t *s, uint32_t mask);
-/* The clock (ms, wrapping) the former addresses age by (pnet_shared.h): the glue sets it with the mask. */
-void pnet_sort_set_clock(pnet_sort_t *s, uint32_t now_ms);
 /* Phase 4 (local reachability): the board and the Amiga share one MAC, so a frame between them never comes back
  * from the radio, and must be handed across here. a2b: a frame from the Amiga (already PNET_TX_SEND) that is ARP
  * whose target address is the board's, or IPv4 to the board's address -> the board's lwIP, not the radio. b2a: a

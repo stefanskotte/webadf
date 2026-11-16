@@ -24,7 +24,7 @@ typedef struct {
     // own (own; neither: the board has had no address yet), and the counters.
     bool     shared, own;
     uint32_t send_ip;             // where the board's Transfer connection goes (pnet_sort_send_ip)
-    uint32_t sh_entered, sh_moved, sh_own, sh_held, sh_down_req, sh_old;
+    uint32_t sh_entered, sh_moved, sh_own, sh_held, sh_stale, sh_down_req, sh_old;
     uint32_t sh_offers, sh_acks, sh_naks, sh_late, sh_frag_drops, sh_arp_hidden;
 } pnet_bridge_stats_t;
 

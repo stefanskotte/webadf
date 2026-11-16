@@ -49,13 +49,15 @@
  *     on it in two-address mode too.
  *   A re-address is tried PNET_READDRESS_TRIES times (one DOWN each) before giving up: nothing confirms the driver
  *   read a DOWN record (review minor 3).
- * FORMER ADDRESSES (review I1, 2026-11-16). AmiTCP_NG's offline only sets ENETDOWN on its pcbs (if_sana.c
+ * FORMER ADDRESSES (reviews 2026-11-16). AmiTCP_NG's offline only sets ENETDOWN on its pcbs (if_sana.c
  * sana_offline_cleanup -> in_ifdown_notify), so connections on the old address keep retransmitting and FINing for
- * minutes after the Amiga took the new lease. Every address the Amiga is moved off -- the board's previous address
- * at a move, and a foreign address it is asked to leave -- is remembered (two, round-robin, with when): once the
- * Amiga is on the shared address, frames from one are dropped and counted (sh.stale), never a new ask, never the
- * escape, for PNET_FORMER_MS. A former address is never "here" either, so it is asked about rather than taken as
- * static. (The clock is sh.now, set by the glue.)
+ * minutes, and a keepalive may first probe after 2 h idle. Every address the Amiga is moved off is remembered
+ * (PNET_SHARED_FORMER slots, never aged): the board's previous address at a move (used = the Amiga was seen on it)
+ * and a foreign address it is asked to leave (used). Frames from one are dropped and counted (sh.stale) -- never a
+ * new ask, never the escape -- while the Amiga is on the shared address (a used one) or in DHCP after a DOWN (any;
+ * a BOOTREQUEST also withdraws a pulse not yet begun). A former address is never "here", so it is asked about
+ * rather than taken as static. When the slots are full, the oldest unused entry goes first. An address whose tries
+ * ran out is never asked about again (gave_up), and foreign asks stop at PNET_READDRESS_MAX per boot.
  *   Two-address mode ends when the Amiga sends a BOOTREQUEST (it is on DHCP again: answered here) or sends from the
  *   board's own address, and at a reboot (RAM only).
  *
@@ -114,9 +116,8 @@
 #define PNET_SHARED_BOARD   0xA9FE4D01u   /* 169.254.77.1: the board, as the Amiga sees it on the bus */
 #define PNET_SHARED_AMIGA   0xA9FE4D02u   /* 169.254.77.2: the Amiga, as the board addresses it */
 #define PNET_SHARED_LEASE_S 300u
-#define PNET_FORMER_MS      (20u * 60u * 1000u)   /* a former address's late frames are dropped this long: past
-                                                     * AmiTCP_NG's TCP give-up and FIN_WAIT timers (minutes) */
 #define PNET_READDRESS_TRIES 3u                   /* DOWN pulses per episode before the Amiga is left on its own */
+#define PNET_READDRESS_MAX   12u                  /* DOWN pulses for foreign frames per boot (board moves aside) */
 #define PNET_DHCP_REPLY_MIN 342u          /* Ethernet 14 + IPv4 20 + UDP 8 + a 300-byte BOOTP message */
 #define PNET_DHCP_REPLY_MAX 590u          /* ...+ 236 + 312 bytes of options (a long echoed client-id: review I1) */
 

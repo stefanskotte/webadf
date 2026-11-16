@@ -11,6 +11,7 @@ static void enter(pnet_sort_t *s, uint32_t board_ip) {
     s->sh.own = false;
     s->sh.amiga = false;
     s->sh.spent = false;
+    s->sh.dhcp = false;
     s->sh.asks = 0;
     s->sh.down_want = false;
     s->sh.ip = board_ip;
@@ -19,27 +20,41 @@ static void enter(pnet_sort_t *s, uint32_t board_ip) {
     s->amiga_ip = board_ip;                 /* what the report and the log say the Amiga uses */
 }
 
-/* Remembers `ip` as an address the Amiga is being moved off (pnet_shared.h FORMER), round-robin over two. */
-static void remember_former(pnet_sort_t *s, uint32_t ip) {
+/* An address the Amiga is being moved off (pnet_shared.h FORMER ADDRESSES), or NULL. */
+static pnet_former_t *find_former(pnet_sort_t *s, uint32_t ip) {
     for (unsigned i = 0; i < PNET_SHARED_FORMER; i++)
-        if (s->sh.former[i].ip == ip) { s->sh.former[i].t = s->sh.now; return; }
-    pnet_former_t *e = &s->sh.former[s->sh.former_next];
-    s->sh.former_next = (uint8_t)((s->sh.former_next + 1u) % PNET_SHARED_FORMER);
-    e->ip = ip;
-    e->t = s->sh.now;
+        if (s->sh.former[i].ip == ip) return &s->sh.former[i];
+    return NULL;
 }
 
-static bool is_former(const pnet_sort_t *s, uint32_t ip) {
-    for (unsigned i = 0; i < PNET_SHARED_FORMER; i++)
-        if (s->sh.former[i].ip == ip && s->sh.now - s->sh.former[i].t < PNET_FORMER_MS) return true;
-    return false;
+/* Remembers `ip` (used: the Amiga was seen on it). Never aged. A free or unused slot is taken first (from the
+ * round-robin cursor); only a USED address may then evict the oldest entry -- an unused one is not remembered at all
+ * when every slot holds a used one (second review I2). NULL only then. */
+static pnet_former_t *remember_former(pnet_sort_t *s, uint32_t ip, bool used) {
+    pnet_former_t *e = find_former(s, ip);
+    if (e) { e->used = e->used || used; return e; }
+    unsigned k = PNET_SHARED_FORMER;
+    for (unsigned i = 0; i < PNET_SHARED_FORMER; i++) {
+        const unsigned j = (s->sh.former_next + i) % PNET_SHARED_FORMER;
+        if (!s->sh.former[j].used) { k = j; break; }
+    }
+    if (k == PNET_SHARED_FORMER) {
+        if (!used) return NULL;
+        k = s->sh.former_next;
+    }
+    s->sh.former_next = (uint8_t)((k + 1u) % PNET_SHARED_FORMER);
+    e = &s->sh.former[k];
+    e->ip = ip;
+    e->used = used;
+    e->gave_up = false;
+    return e;
 }
 
 /* The Amiga must ask for a lease again: core0 tells its driver the link is down once (pnet_down_t). Review minor 2:
  * down_want is stored BEFORE down_req, with a barrier between, so core0 (which reads down_req, a barrier, then
  * down_want) never sees the new request with the old (false) wish and closes it without a pulse. */
 static void ask_readdress(pnet_sort_t *s, uint32_t from) {
-    if (from) remember_former(s, from);
+    if (from) { remember_former(s, from, true); s->sh.asks_total++; }
     s->sh.spent = true;
     s->sh.asks++;
     s->sh.down_want = true;
@@ -51,6 +66,7 @@ static void ask_readdress(pnet_sort_t *s, uint32_t from) {
  * withdrawn. */
 static void known(pnet_sort_t *s) {
     s->sh.amiga = true;
+    s->sh.dhcp = false;
     s->sh.spent = false;
     s->sh.asks = 0;
     s->sh.down_want = false;
@@ -64,7 +80,8 @@ void pnet_shared_follow(pnet_sort_t *s, uint32_t board_ip) {
     // -- so if it holds it, it is made to ask again (pnet_shared.h); its frames from the old one are held meanwhile.
     s->sh.moved++;
     s->sh.old = s->sh.ip;
-    remember_former(s, s->sh.ip);           /* whether or not the Amiga was seen on it */
+    remember_former(s, s->sh.ip, s->sh.amiga);   /* review 2: marked used only if the Amiga was seen on it */
+    s->sh.dhcp = false;
     if (s->sh.amiga) { s->sh.asks = 0; ask_readdress(s, 0u); }
     s->sh.amiga = false;
     s->sh.ip = board_ip;
@@ -284,8 +301,8 @@ pnet_sort_to_t pnet_shared_rx(pnet_sort_t *s, const uint8_t *f, size_t len) {
     const uint16_t id = be16(h + 4);
     const bool more = (frag & 0x2000u) != 0u;
     if (!ip.first) {                                               /* no L4 header: the first fragment's owner */
-        for (unsigned i = 0; i < PNET_SORT_FRAGS; i++) {
-            pnet_frag_t *e = &s->sh.frag[i];
+        for (unsigned i = 1; i <= PNET_SORT_FRAGS; i++) {           /* newest first (second review minor 6) */
+            pnet_frag_t *e = &s->sh.frag[(s->sh.frag_next + PNET_SORT_FRAGS - i) % PNET_SORT_FRAGS];
             if (e->to != 0u && e->src == ip.src && e->id == id && e->proto == ip.proto) {
                 const pnet_sort_to_t to = (pnet_sort_to_t)e->to;
                 // Review minor 4: kept after the last fragment too (it may arrive before a middle one); entries
@@ -316,7 +333,13 @@ pnet_tx_t pnet_shared_tx(pnet_sort_t *s, const uint8_t *f, size_t len) {
     ip4_t ip;
     if (!ip4(f, len, &ip)) return PNET_TX_LEN;
     const size_t b = bootp_at(f, len, &ip, 68u, 67u);
-    if (b != 0u && f[b] == 1u) pnet_sort_learn_xid(s, be32(f + b + 4u));   /* answered locally (the glue) */
+    if (b != 0u && f[b] == 1u) {                       /* answered locally (the glue) */
+        pnet_sort_learn_xid(s, be32(f + b + 4u));
+        // Review minor 3: the Amiga is in DHCP -- any DOWN was read; a pulse not yet begun is withdrawn, and late
+        // frames from an address it is leaving are dropped from now on (pnet_shared_foreign), not a new episode.
+        s->sh.dhcp = true;
+        s->sh.down_want = false;
+    }
     else if (ip.src == s->sh.ip) known(s);
     return PNET_TX_SEND;
 }
@@ -329,20 +352,29 @@ pnet_foreign_t pnet_shared_foreign(pnet_sort_t *s, const uint8_t *f, size_t len)
     if (arp4(f, len, &a)) src = a.spa;
     else if (ip4(f, len, &ip)) src = ip.src;
     if (src == 0u || src == s->sh.ip) return PNET_FOREIGN_NO;
-    const bool former = is_former(s, src);
-    // Review I1: a LATE frame from an address the Amiga was moved off, once it is on the shared address (AmiTCP_NG's
-    // old pcbs retransmit and FIN for minutes after the offline): dropped, counted -- never a new ask, never the
-    // escape -- until PNET_FORMER_MS has passed.
-    if (former && s->sh.amiga) { s->sh.stale++; return PNET_FOREIGN_HOLD; }
-    const bool here = !former && s->sh.mask != 0u && ((src ^ s->sh.ip) & s->sh.mask) == 0u &&
-                      (src >> 16) != 0xA9FEu;
+    pnet_former_t *fm = find_former(s, src);
+    // Review I1: a LATE frame from an address the Amiga has left -- while it is on the shared address (an address
+    // it used), or once it is in DHCP for the new one (any former address): dropped and counted, never a new ask,
+    // never the escape. Not aged: AmiTCP_NG's keepalive may first probe after 2 h idle (second review I1).
+    if (fm && ((fm->used && s->sh.amiga) || s->sh.dhcp)) { s->sh.stale++; return PNET_FOREIGN_HOLD; }
+    const bool here = !fm && s->sh.mask != 0u && ((src ^ s->sh.ip) & s->sh.mask) == 0u && (src >> 16) != 0xA9FEu;
     if (!(here && !s->sh.spent)) {
         // Not an address that works here (or one the Amiga is being moved off): hold, and ask it to come back
         // through DHCP -- again once a pulse is over, PNET_READDRESS_TRIES pulses in all (review minor 3: nothing
-        // confirms the driver read the DOWN). If it still sends from there after that, it is its own (below).
-        if (!s->sh.spent) { s->sh.asks = 0; ask_readdress(s, src); }
-        if (s->sh.down_done != s->sh.down_req) { s->sh.held++; return PNET_FOREIGN_HOLD; }
-        if (s->sh.asks < PNET_READDRESS_TRIES) { ask_readdress(s, src); s->sh.held++; return PNET_FOREIGN_HOLD; }
+        // confirms the driver read the DOWN). If it still sends from there after that, it is its own (below), and
+        // that address is never asked about again (gave_up); foreign asks are capped at PNET_READDRESS_MAX per boot
+        // (second review minor 4: an Amiga sending from two addresses cannot loop the DOWNs).
+        const bool may_ask = !(fm && fm->gave_up) && s->sh.asks_total < PNET_READDRESS_MAX;
+        if (!s->sh.spent && may_ask) { s->sh.asks = 0; ask_readdress(s, src); }
+        if (s->sh.spent) {
+            if (s->sh.down_done != s->sh.down_req) { s->sh.held++; return PNET_FOREIGN_HOLD; }
+            if (s->sh.asks < PNET_READDRESS_TRIES && may_ask) {
+                ask_readdress(s, src);
+                s->sh.held++;
+                return PNET_FOREIGN_HOLD;
+            }
+        }
+        remember_former(s, src, true)->gave_up = true;
     }
     s->sh.on = false;                       /* two-address mode: the escape */
     s->sh.own = true;
