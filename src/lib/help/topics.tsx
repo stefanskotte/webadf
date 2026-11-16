@@ -590,13 +590,13 @@ export const HELP_TOPICS = {
           card&apos;s checklist shows each part: the driver disk, the driver, and the Amiga&apos;s address.
         </p>
         <GoodToKnow items={[
-          'The Amiga shares the board’s IP address. When the board changes Wi-Fi network, the Amiga is offline a few seconds. A fixed Amiga address is kept.',
+          'The Amiga shares the board’s IP address; a Wi-Fi network change takes it offline briefly. A fixed address on the board’s network is kept.',
           'Expect about 45 KB/s, about half that during a DF0 copy, and pings of about 250 ms.',
           'The mouse may feel slower while the driver runs.',
-          'DF0 can be empty, for an Amiga that starts from a hard drive, and changing the disk in DF0 does not interrupt the network.',
+          'DF0 can be empty (an Amiga starting from a hard drive), and changing its disk does not interrupt the network.',
           'Needs board firmware 1.11.0 or newer.',
           <>For a real floppy or an emulator, <a className="underline" href="/api/paulanet-disk">download the PaulaNET driver disk</a>.</>,
-          'With board firmware 1.16.0, the driver compresses with LZ4: what the Amiga receives on every Amiga, and what it sends on a 68020 or faster. If you installed PaulaNET before, run Install again from the driver disk in DF1 to get it.',
+          'With board firmware 1.16.0, the driver compresses with LZ4: what the Amiga receives on every Amiga, and what it sends on a 68020 or faster. Already-compressed files travel as before. If you installed PaulaNET before, run Install again from the driver disk in DF1 to get it.',
           'PaulaNET is by Rob Smith (RobSmithDev), used with his permission. The driver disk carries WebFloppy’s LZ4 build of his driver.',
         ]} />
       </>
