@@ -1817,6 +1817,9 @@ static uint32_t   g_wifi_retry_at;     // a failed instruction fetch waits until
 static bool       g_wifi_synced;
 // The Wi-Fi fallback's clocks (wifi_fallback.h, wifi_fallback_step below). started = false restarts them.
 static wifi_fb_t  g_wfb;
+// This boot's network was chosen on the power-on setup page (prov_on_verified_submit): the fallback never returns
+// from it to an earlier saved network (third review, Important 2) -- the person standing there picked it.
+static bool       g_wifi_chosen_on_page;
 
 // The names and where the board is, for the page opened on request. Keeps the note (err and its fields).
 static void online_view_names(portal_view_t *v) {
@@ -2086,7 +2089,7 @@ static void __attribute__((noinline)) wifi_online_step(device_client_t *c, uploa
 
 _Static_assert(NET_RADIO_SCAN_MAX >= CONFIG_NETS_MAX, "the scan copies every saved name");
 
-static void __attribute__((noinline)) wifi_fallback_step(device_client_t *c, uploader_t *up) {
+static void __attribute__((noinline)) wifi_fallback_step(device_client_t *c, uploader_t *up, bool fw_busy) {
     if (!prov.have_config || prov.cfg.n_nets <= 0) return;
     const uint32_t now = clock_ms();
     const bool trial = fw_rom_trial_boot() && now < FW_TRIAL_DEADLINE_MS;   // it reverts by itself if dead
@@ -2095,7 +2098,8 @@ static void __attribute__((noinline)) wifi_fallback_step(device_client_t *c, upl
     const wfb_in_t in = { now, net_radio_sta_up(), c->answers, prov.cfg.n_nets,
                           portal_is_open() || g_wifi_win.open || trial || g_fwu_reboot_owed,
                           hold == PORTAL_HOLD_NETWORK,   // DF1 Network: no move for "no answer" (review I2)
-                          hold == PORTAL_HOLD_NONE, cur };
+                          hold == PORTAL_HOLD_NONE && !fw_busy,   // an update under way is not idle
+                          cur, g_wifi_chosen_on_page };
     const wfb_due_t due = wfb_due(&g_wfb, &in);
     if (due == WFB_DUE_NONE) return;
     const char *cur_name = cur >= 0 ? prov.cfg.net[cur].ssid : "no network";
@@ -2115,26 +2119,32 @@ static void __attribute__((noinline)) wifi_fallback_step(device_client_t *c, upl
         const int n = prov.cfg.n_nets < CONFIG_NETS_MAX ? prov.cfg.n_nets : CONFIG_NETS_MAX;
         for (int i = 0; i < n; i++) names[i] = prov.cfg.net[i].ssid;
         bt_hw_tick(1);
-        seen = net_radio_scan_names(names, n, 8000);
+        int results = 0;
+        seen = net_radio_scan_names(names, n, 12000, &results);
         bt_hw_tick(1);
+        if (seen >= 0) wf_logf(WF_INFO, "wifi: scan: %d results, saved in range 0x%x (this one %d)", results,
+                               (unsigned)seen, cur);
+        // Nothing heard at all, not even the network the board is on: the scan did not work (bench e92807d8).
+        if (seen >= 0 && results == 0) seen = -1;
     }
     // LOST: the rounds start from the network it was on last (`first` outlives a failed run; review M1).
     const int from = wfb_pick(&g_wfb, due, clock_ms(), due == WFB_DUE_LOST ? prov.first : cur, prov.cfg.n_nets,
                               seen);
-    if (due != WFB_DUE_LOST) {
-        if (seen < 0) wf_logf(WF_WARN, "wifi: the scan could not run");
-        else wf_logf(WF_INFO, "wifi: scan: saved networks in range 0x%x (this one %d)", (unsigned)seen, cur);
-    }
+    if (due != WFB_DUE_LOST && seen < 0) wf_logf(WF_WARN, "wifi: the scan could not run or heard nothing");
     if (from < 0) {
         wf_logf(WF_INFO, "wifi: no %s saved network in range -- staying on %s",
                 due == WFB_DUE_BETTER ? "earlier" : "other", cur_name);
-        wf_logf(WF_INFO, "wifi: (a hidden network, or a hotspot not advertising, is not seen)");
+        wf_logf(WF_INFO, "wifi: (a hidden network, or a hotspot not advertising, may not be seen)");
         return;
     }
     wf_logf(due == WFB_DUE_BETTER ? WF_INFO : WF_WARN, "wifi: trying the saved networks, %s first",
             prov.cfg.net[from].ssid);
     // A scan that outlived its 8 s must be over before a join starts (review I1): bounded, ticking.
-    for (int waited = 0; net_radio_scan_active() && waited < 15000; waited += 50) {
+    for (int waited = 0; net_radio_scan_active(); waited += 50) {
+        if (waited >= 15000) {
+            wf_logf(WF_WARN, "wifi: the scan still runs after 15 s -- joining anyway");
+            break;
+        }
         if (waited % 1000 == 0) bt_hw_tick(1);
         sleep_ms(50);
     }
@@ -2143,21 +2153,24 @@ static void __attribute__((noinline)) wifi_fallback_step(device_client_t *c, upl
     int tries = 0;
     const int back_on = wifi_rejoin_run(&prov, from, &ops, &tries);
     g_wifi_owe = true;             // the status tail's "cur" names the network now (or none)
+    if (due == WFB_DUE_BETTER && back_on >= 0 && back_on != from)
+        wf_logf(WF_WARN, "wifi: %s did not answer -- the next look later", prov.cfg.net[from].ssid);
     if (back_on >= 0) {
         g_ui_bars = rssi_bars(wifi_rssi());
         wf_logf(WF_INFO, "wifi: now on %s at %s (%d tries)", prov.cfg.net[back_on].ssid, ip_str(), tries);
         // Online at once (review M3): the old network's backoff and kept socket go; the next pass polls.
         dc_network_changed(c);
         up_network_changed(up);
-    } else if (wifi_hold(up) == PORTAL_HOLD_NONE) {
-        // Idle: the normal start takes over -- its rounds, then the setup page at power-on.
+    } else if (wifi_hold(up) == PORTAL_HOLD_NONE && due != WFB_DUE_BETTER && wfb_may_restart(&g_wfb)) {
+        // Idle: the normal start takes over (never because of a return: the board was online before it) -- its rounds, then the setup page at power-on.
         wf_logf(WF_ERR, "wifi: no saved network answers (%d tries) -- restarting into the normal start", tries);
         bt_hw_mark(1, BT1_WIFI);   // not the poll loop any more: core1 supervision stands down
         leave_before_reboot("no saved network answers");
         fw_rom_request_reboot(0);
         for (;;) sleep_ms(1000);
     } else {
-        // A disk in a drive, saves waiting or DF1 Network: a restart would cost them. Again in 30 s.
+        // A disk in a drive, saves waiting or DF1 Network: a restart would cost them; or it began with a return.
+        // Again in 30 s.
         wf_logf(WF_WARN, "wifi: no saved network answers (%d tries), board busy -- trying again", tries);
     }
     wfb_ran(&g_wfb, due, clock_ms(), back_on);
@@ -2499,6 +2512,7 @@ static void core1_main(void) {
             wf_logf(WF_INFO, "portal: associated, default route %s",
                     default_route_str());
             if (prov_on_verified_submit(&prov, &submitted)) {
+                g_wifi_chosen_on_page = true;
                 wf_logf(WF_INFO, "portal: network %s verified and saved (%d saved, %s)",
                         submitted.ssid, prov.cfg.n_nets,
                         submitted.code[0] ? "new pairing code" : "pairing kept");
@@ -2990,7 +3004,7 @@ static void core1_main(void) {
             // The setup page opened on request, before any request of this pass (wifi_portal_step).
             wifi_portal_step(&up);
             // No connection for a while: another saved network (wifi_fallback_step).
-            wifi_fallback_step(&c, &up);
+            wifi_fallback_step(&c, &up, fwu.phase != FWU_IDLE && fwu.phase != FWU_FAILED);
             {
                 const int r = g_nfc_reader;
                 if (r != nfc_reader_seen) {

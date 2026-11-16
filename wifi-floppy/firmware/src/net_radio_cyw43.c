@@ -213,10 +213,12 @@ static struct {
     char              names[NET_RADIO_SCAN_MAX][33];
     volatile int      n;
     volatile uint32_t seen;
+    volatile int      results;   // every result, any name: 0 means the scan heard nothing at all
 } s_scan;
 static int scan_result(void *env, const cyw43_ev_scan_result_t *r) {
     (void)env;
     const int n = s_scan.n;
+    if (n > 0) s_scan.results++;
     for (int i = 0; i < n; i++) {
         const size_t len = strlen(s_scan.names[i]);
         if (len != 0 && len == r->ssid_len && memcmp(r->ssid, s_scan.names[i], len) == 0) s_scan.seen |= 1u << i;
@@ -224,7 +226,34 @@ static int scan_result(void *env, const cyw43_ev_scan_result_t *r) {
     return 0;
 }
 
-int net_radio_scan_names(const char *const *names, int n, uint32_t timeout_ms) {
+// One escan: broadcast (ssid NULL) or directed at one name, active (0) or passive (1). Waits for its end or the
+// deadline. -1: it could not start; 0: still running at the deadline; 1: done.
+static int scan_once(const char *ssid, int8_t type, absolute_time_t until) {
+    cyw43_wifi_scan_options_t opts;
+    memset(&opts, 0, sizeof opts);
+    if (ssid) {
+        opts.ssid_len = (uint32_t)strlen(ssid);
+        memcpy(opts.ssid, ssid, opts.ssid_len);
+    }
+    opts.scan_type = type;
+    cyw43_arch_lwip_begin();
+    const int err = cyw43_wifi_scan(&cyw43_state, &opts, NULL, scan_result);
+    cyw43_arch_lwip_end();
+    if (err) return -1;
+    while (cyw43_wifi_scan_active(&cyw43_state) && !time_reached(until)) {
+        cyw43_arch_poll();
+        sleep_ms(10);
+    }
+    return cyw43_wifi_scan_active(&cyw43_state) ? 0 : 1;
+}
+
+// Bench 2026-11-16 (e92807d8, UniFi Block): one broadcast active scan beside the association ended in ~0.6 s and
+// matched nothing, not even the network the board was on -- a blocked MAC gets no probe responses, and a 20-40 ms
+// active dwell per channel can miss every beacon. So: a broadcast active scan, then (names still unseen) a passive
+// one, which listens for beacons, then an active scan directed at each name still unseen (a hotspot or a hidden
+// network may answer a probe for its own name only). All within timeout_ms.
+int net_radio_scan_names(const char *const *names, int n, uint32_t timeout_ms, int *results) {
+    if (results) *results = 0;
     if (n <= 0 || n > NET_RADIO_SCAN_MAX || cyw43_wifi_scan_active(&cyw43_state)) return -1;
     cyw43_arch_lwip_begin();   // no callback can be running while the names change
     for (int i = 0; i < n; i++) {
@@ -233,22 +262,23 @@ int net_radio_scan_names(const char *const *names, int n, uint32_t timeout_ms) {
     }
     s_scan.n = n;
     s_scan.seen = 0;
-    cyw43_wifi_scan_options_t opts;
-    memset(&opts, 0, sizeof opts);
-    const int err = cyw43_wifi_scan(&cyw43_state, &opts, NULL, scan_result);
-    if (err) s_scan.n = 0;
+    s_scan.results = 0;
     cyw43_arch_lwip_end();
-    if (err) return -1;
+    const uint32_t all = (1u << n) - 1u;
     const absolute_time_t until = make_timeout_time_ms(timeout_ms);
-    while (cyw43_wifi_scan_active(&cyw43_state) && !time_reached(until)) {
-        cyw43_arch_poll();
-        sleep_ms(10);
-    }
+    const int first = scan_once(NULL, 0, until);
+    bool more = first == 1;
+    if (more && (s_scan.seen & all) != all) more = scan_once(NULL, 1, until) == 1;
+    for (int i = 0; more && i < n; i++)
+        if (!(s_scan.seen & (1u << i)) && s_scan.names[i][0]) more = scan_once(s_scan.names[i], 0, until) == 1;
     cyw43_arch_lwip_begin();
     s_scan.n = 0;              // a scan still running: its later results count for nothing
     const uint32_t seen = s_scan.seen;
+    const int got = s_scan.results;
     cyw43_arch_lwip_end();
-    return (int)seen;          // still running at the deadline: what it saw so far
+    if (first < 0) return -1;
+    if (results) *results = got;
+    return (int)seen;          // a scan still running at the deadline: what was seen so far
 }
 
 bool net_radio_scan_active(void) { return cyw43_wifi_scan_active(&cyw43_state); }
