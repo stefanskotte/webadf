@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import { requireOrg } from '@/lib/session';
+import { amigaNameProblem } from '@/lib/files/path';
 import { MAX_VOLUME_NAME } from '@/lib/adffs/format';
 import { createBlankDisk } from '@/lib/blank-disk';
 
 export const maxDuration = 60;
 
 const body = z.object({
-  volumeName: z.string().trim().min(1).max(MAX_VOLUME_NAME).optional(),
+  volumeName: z.string().trim().min(1).max(MAX_VOLUME_NAME).refine((n) => amigaNameProblem(n) === null, 'not an AmigaDOS volume name').optional(),
   filesystem: z.enum(['OFS', 'FFS']).optional(),
   /** 'dd' (880 KB) unless asked for 'hd' (1.76 MB) -- HD writes spec §6.3. */
   density: z.enum(['dd', 'hd']).optional(),

@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks, entitlements } from '@/db/schema/catalog';
 import { findHolder, mountedReason, repointLateMounts } from '@/lib/disk-holder';
 import { requireOrg } from '@/lib/session';
+import { amigaNameProblem } from '@/lib/files/path';
 import { diskStore } from '@/lib/storage';
 import { setVolumeName, MAX_VOLUME_NAME } from '@/lib/adffs/format';
 import { readVolume } from '@/lib/adffs';
@@ -14,7 +15,7 @@ import { refuseHidden } from '@/lib/remote-hidden';
 
 export const maxDuration = 60;
 
-const body = z.object({ volumeName: z.string().trim().min(1).max(MAX_VOLUME_NAME) });
+const body = z.object({ volumeName: z.string().trim().min(1).max(MAX_VOLUME_NAME).refine((n) => amigaNameProblem(n) === null, 'not an AmigaDOS volume name') });
 
 /**
  * Rename a disk's VOLUME -- the name an Amiga shows when it mounts it.
@@ -126,6 +127,12 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   await db.update(disks)
     .set({ tosecName: `${volumeName}.adf` })
     .where(and(eq(disks.id, id), eq(disks.orgId, orgId)));
+  // The disk's label follows its volume name while it is that name (a made disk is labelled with it, 2026-11-16) or
+  // has none; a label somebody chose, or one extract wrote, stays.
+  await db.update(disks)
+    .set({ label: volumeName })
+    .where(and(eq(disks.id, id), eq(disks.orgId, orgId),
+      or(isNull(disks.label), sql`btrim(${disks.label}) = ${''}`, eq(disks.label, volume.volume.name))));
 
   // The catalog title follows the volume name for a disk somebody made: the
   // two are the same thing to the person who typed it. sortTitle comes along
