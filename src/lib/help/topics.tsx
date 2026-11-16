@@ -213,7 +213,8 @@ export const HELP_TOPICS = {
   // 2-minute open TTL, WIFI_SETUP_MINUTES), api/devices/[id]/wifi. Firmware: wifi_ctl.h (ten minutes, two more after a
   // check), main.c wifi_online_* (the AP beside the station; Save joins to check, saves, goes back; a disk in the
   // drive refuses open and remove; no Remove for the network in use), wifi_fallback.h (moving: 30 s link down,
-  // 5 min no answer, only with another saved network a scan sees), config_store.h CONFIG_NETS_MAX 4,
+  // 5 min no answer, only with another saved network a scan sees; back to an earlier one every 10 min when idle),
+  // config_store.h CONFIG_NETS_MAX 4,
   // pairing-guide.ts (setup network name, password, address).
   'wifi-networks': {
     title: 'Wi-Fi networks',
@@ -238,7 +239,8 @@ export const HELP_TOPICS = {
         <p>
           <strong>Moving between them.</strong> If the network in use goes away for 30 seconds, or stays up but
           the board can&apos;t reach this app for 5 minutes, the board moves to another saved network in range by
-          itself. With nothing else in range it stays and keeps trying.
+          itself. With nothing else in range it stays and keeps trying. When it is idle (no disk in, DF1 not on Network), it goes
+          back to a network higher in its list once that one is in range again.
         </p>
         <p>
           Add a phone hotspot at home, before you need it: switch on its 2.4 GHz or compatibility mode first.
