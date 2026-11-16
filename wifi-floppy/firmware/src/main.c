@@ -2911,23 +2911,17 @@ static void core1_main(void) {
                 static pnet_bridge_stats_t st;      // static: core1's stack is measured tight
                 const uint32_t seen = g_pnet_status_last_ms;
                 pnet_bridge_stats(&st);
-                // HANDOFF 3bu product gap: after a reboot the sorter knows no Amiga until it transmits, so a file for
-                // an idle Amiga waited. The server remembers the last address (xfer.ip, plan 2026-10-17 R17).
-                // Review minor 3: once per address the server names, not a lock round trip every poll.
-                static uint32_t seed_tried;
-                if (st.amiga_ip == 0u && c.send_ip_hint != 0u && c.send_ip_hint != seed_tried) {
-                    if (pnet_bridge_seed_amiga_ip(c.send_ip_hint)) seed_tried = c.send_ip_hint;
-                    pnet_bridge_stats(&st);
-                }
+                // One IP by default (pnet_shared.h, 2026-11-16): the server's last-known Amiga address (xfer.ip,
+                // c.send_ip_hint) no longer seeds the sorter -- in shared mode the Amiga's address is the board's.
                 net.on = true;
                 net.driver_seen = seen != 0;
                 net.driver_s = seen ? dc_net_driver_age_s(clock_ms(), seen) : 0;
                 net.amiga_ip = st.amiga_ip;
-                net.shared = st.shared;             // shared-IP mode: amiga_ip is the board's own (pnet_shared.h)
+                net.shared = st.shared;             // shared-IP mode (the default): amiga_ip is the board's own
                 net.frames_in = g_pnet_frames_from;
                 net.frames_out = g_pnet_frames_to;
                 dc_set_net(&c, &net);
-                // send_ip: the learned amiga_ip, or in shared mode the Amiga's bus address (PNET_SHARED_AMIGA).
+                // send_ip: in shared mode the Amiga's bus address (PNET_SHARED_AMIGA), else its own learned amiga_ip.
                 as_set_inputs(&g_send, true, st.send_ip, c.send_version);
             } else {
                 dc_set_net(&c, NULL);
@@ -3766,6 +3760,7 @@ static pnet_loop_t g_pnet;                       // core0 only
 static pnet_link_t g_link;
 // Phase 2: cylinder-76 status loops streamed, and reads of it before core1 had the MAC (ruling 10).
 static uint32_t g_pnet_status_serves, g_pnet_status_early;
+static pnet_down_t g_pnet_down;          // core0: the one-DOWN re-address (pnet_status.h), at status arrivals
 // The heap low-water, sampled every loop pass (the 5 s heap: line can miss a dip; ruling 13).
 static uint32_t    g_pnet_heap_low = UINT32_MAX;
 // PaulaNET LZ4 (spec 2026-10-18 §5). All of it is PSRAM: SRAM has no room left (the heap low-water already sits at
@@ -4146,7 +4141,16 @@ static void pnet_serve_status(void) {
     memset(&st, 0, sizeof st);
     memcpy(st.mac, g_pnet_mac, sizeof st.mac);
     st.rssi = g_pnet_rssi;
-    st.link = pnet_link_for(net_radio_sta_joined());
+    // One IP by default (pnet_shared.h): one DOWN when the Amiga must ask for a lease again, else NOIP/JOIN.
+    bool down_want;
+    const uint32_t down_req = pnet_bridge_down_req(&down_want);
+    const uint32_t pulses = g_pnet_down.pulses;
+    const bool down = pnet_down_serve(&g_pnet_down, down_req, down_want, clock_ms());
+    pnet_bridge_down_done(g_pnet_down.done);
+    if (g_pnet_down.pulses != pulses)
+        wf_logf(WF_INFO, "pnet: link DOWN to the driver once (%lu): the Amiga asks for a lease again",
+                (unsigned long)g_pnet_down.pulses);
+    st.link = down ? PNET_LINK_DOWN : pnet_link_for(net_radio_sta_joined());
     pnet_version_bytes(WF_FIRMWARE_VERSION, &st.ver_major, &st.ver_minor);
     st.lz4 = pnet_lz4_on() ? (uint8_t)(PNET_ST_LZ4_TO_AMIGA | PNET_ST_LZ4_FROM_AMIGA) : 0u;   // spec 2026-10-18 §3
     if (pnet_build_status((uint8_t *)g_pnet_status_words, sizeof g_pnet_status_words,
@@ -4268,8 +4272,9 @@ static void pnet_l2_log(void) {
                          g_link.acked + st.clash + st.hooks + g_pnet_status_serves + g_pnet_status_early +
                          st.a2b + st.b2a + st.local_drops + g_link.lz4_in + g_link.lz4_bad +
                          (lz4b ? g_lz4.out_lz4 + g_lz4.out_mfm : 0u) +
-                         st.sh_entered + st.sh_left + st.sh_offers + st.sh_acks + st.sh_naks + st.sh_late +
-                         st.sh_frag_drops + st.sh_arp_hidden;
+                         st.sh_entered + st.sh_moved + st.sh_own + st.sh_held + st.sh_down_req + st.sh_offers +
+                         st.sh_acks + st.sh_naks + st.sh_late + st.sh_frag_drops + st.sh_arp_hidden + st.own +
+                         st.shared + g_pnet_down.done;
     if (sum == last_sum) return;
     last_sum = sum;
 #define PNET_SAT(v, m) ((unsigned long)((v) > (m) ? (m) : (v)))
@@ -4283,9 +4288,9 @@ static void pnet_l2_log(void) {
     // Phase 4: frames between the board and the Amiga, which never touch the radio.
     wf_logf(st.local_drops ? WF_WARN : WF_INFO, "pnet: l2 local a2b %lu b2a %lu drop %lu",
             S7(st.a2b), S7(st.b2a), S7(st.local_drops));
-    wf_logf(no ? WF_WARN : WF_INFO, "pnet: l2 tx no len %lu mac %lu type %lu clash %lu ack %lu",
+    wf_logf(no ? WF_WARN : WF_INFO, "pnet: l2 tx no len %lu mac %lu type %lu hold %lu ack %lu",
             S7(st.tx_no[PNET_TX_LEN]), S7(st.tx_no[PNET_TX_MAC]),
-            S7(st.tx_no[PNET_TX_TYPE]), S7(st.tx_no[PNET_TX_CLASH]), S7(g_link.acked));
+            S7(st.tx_no[PNET_TX_TYPE]), S7(st.tx_no[PNET_TX_HOLD]), S7(g_link.acked));
     // Phase 2: the Amiga's batches -- taken, resent; their frames queued, dropped on a full ring, and
     // dropped as malformed (spec §3.2: every drop counted).
     wf_logf(g_link.over || g_link.malformed ? WF_WARN : WF_INFO,
@@ -4308,22 +4313,30 @@ static void pnet_l2_log(void) {
         g_lz4.us_max = g_lz4.us_sum = g_lz4.us_n = 0;
         g_lz4.dus_max = g_lz4.dus_sum = g_lz4.dus_n = 0;
     }
-    const bool same = st.amiga_ip != 0u && st.amiga_ip == st.board_ip;
-    // Shared-IP mode (pnet_shared.h): the same address is the design there, not a fault; the clash that began it
-    // stays counted.
-    wf_logf((st.clash && !st.shared) || (same && !st.shared) ? WF_WARN : WF_INFO,
+    // One IP by default (pnet_shared.h, 2026-11-16). The mode word: SHARED (the Amiga uses the board's address --
+    // the normal state), OWN (the Amiga kept a static address of its own: two addresses, the escape), NOIP (the
+    // board has had no address yet). SAME outside shared mode is a fault (the board's lease is the Amiga's).
+    const bool same = !st.shared && st.amiga_ip != 0u && st.amiga_ip == st.board_ip;
+    wf_logf(same || (st.clash && st.own) ? WF_WARN : WF_INFO,
             "pnet: l2 amiga %s board %s %s clash %lu heap %lu", a, b,
-            st.shared ? "SHARED" : same ? "SAME" : "distinct", PNET_SAT(st.clash, 999999u),
+            st.shared ? "SHARED" : same ? "SAME" : st.own ? "OWN" : "NOIP", PNET_SAT(st.clash, 999999u),
             PNET_SAT(g_pnet_heap_low, 999999u));
-    // Entered/left, why (1 offer, 2 ack, 3 src), the replies built (offer/ack/nak), the network's DHCP
-    // replies dropped, fragments dropped, ARP kept from the Amiga. 81 characters at most.
-    if (st.sh_entered)
-        wf_logf(st.sh_frag_drops || st.sh_naks ? WF_WARN : WF_INFO,
-                "pnet: l2 shared %s why %u in %lu out %lu dhcp %lu/%lu/%lu late %lu frag %lu arp %lu",
-                st.shared ? "on" : "off", (unsigned)st.shared_why, PNET_SAT(st.sh_entered, 99u),
-                PNET_SAT(st.sh_left, 99u), PNET_SAT(st.sh_offers, 999u), PNET_SAT(st.sh_acks, 999u),
-                PNET_SAT(st.sh_naks, 999u), PNET_SAT(st.sh_late, 999u), PNET_SAT(st.sh_frag_drops, 999u),
-                PNET_SAT(st.sh_arp_hidden, 999u));
+    // Shared mode: entered, the board's moves, the Amiga left on its own address, frames held, re-addresses asked /
+    // finished (the link DOWN once each), the replies built (offer/ack/nak), the network's DHCP replies dropped,
+    // fragments dropped, ARP kept from the Amiga. 87 characters at most each (WF_LOG_MSG).
+    wf_logf(st.sh_naks || st.sh_own ? WF_WARN : WF_INFO,
+            "pnet: l2 shared in %lu mv %lu own %lu hold %lu down %lu/%lu dhcp %lu/%lu/%lu",
+            PNET_SAT(st.sh_entered, 99u), PNET_SAT(st.sh_moved, 99u), PNET_SAT(st.sh_own, 99u),
+            PNET_SAT(st.sh_held, 999u), PNET_SAT(st.sh_down_req, 99u), PNET_SAT(g_pnet_down.done, 99u),
+            PNET_SAT(st.sh_offers, 999u), PNET_SAT(st.sh_acks, 999u), PNET_SAT(st.sh_naks, 999u));
+    if (st.sh_late || st.sh_frag_drops || st.sh_arp_hidden)
+        wf_logf(st.sh_frag_drops ? WF_WARN : WF_INFO, "pnet: l2 shared late %lu frag %lu arp %lu",
+                PNET_SAT(st.sh_late, 999u), PNET_SAT(st.sh_frag_drops, 999u), PNET_SAT(st.sh_arp_hidden, 999u));
+    if (st.sh_old) {                         // the board moved: the address the Amiga was asked to leave
+        char o[16];
+        pnet_ip_text(st.sh_old, o);
+        wf_logf(WF_INFO, "pnet: l2 shared board moved from %s", o);
+    }
     // Phase 2: cylinder 76 -- loops streamed, reads before the MAC was known, and what it tells the driver.
     wf_logf(WF_INFO, "pnet: l2 status %lu early %lu link %s rssi %d",
             S7(g_pnet_status_serves), S7(g_pnet_status_early),

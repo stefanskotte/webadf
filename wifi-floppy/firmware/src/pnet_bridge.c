@@ -23,10 +23,10 @@
 // producer context. lwIP may call linkoutput from inside the input
 // (an ARP or ICMP answer): pnet_input commits its own copy before calling lwIP, so the ring is never mid-write.
 //
-// SHARED-IP MODE (pnet_shared.h; operator ruling 2026-11-15). Every decision is pnet_shared.c's; this file only
-// hands it lwIP's pcb lists (pnet_owns), the board's lease (lease_of), and the RX ring slots its DHCP replies are
-// built in. The replies are committed from this same context (the input hook or the worker), so the ring keeps one
-// producer context.
+// SHARED-IP MODE, the default (pnet_shared.h; operator rulings 2026-11-15 and 2026-11-16). Every decision is
+// pnet_shared.c's; this file only hands it lwIP's pcb lists (pnet_owns), the board's lease (lease_of) and mask, the
+// RX ring slots its DHCP replies are built in, and core0's re-address cursor (pnet_bridge_down). The replies are
+// committed from this same context (the worker), so the ring keeps one producer context.
 #include "pnet_bridge.h"
 #include "pnet_shared.h"
 #include "pnet_frame.h"        // PNET_MAX_FRAMES
@@ -114,26 +114,21 @@ static const pnet_lease_t *lease_of(struct netif *nif) {
     return &s_lease;
 }
 
-// Shared mode: the OFFER owed for the network OFFER that turned it on, into the Amiga's RX ring.
-static void pnet_owed_offer(struct netif *nif) {
-    if (!s_sort.sh.owe) return;
-    // Review M4: a full ring is counted ONCE per owed OFFER (pnet_ring_claim would count every 2 ms tick), and the
-    // OFFER stays owed until a slot frees.
-    if (pnet_ring_space(&g_pnet_rx) == 0u) {
-        if (pnet_shared_owe_full(&s_sort)) g_pnet_rx.drops = g_pnet_rx.drops + 1u;   // this context is the producer
-        return;
-    }
-    uint8_t *d = pnet_ring_claim(&g_pnet_rx);
-    if (!d) return;
-    const size_t n = pnet_shared_owed(&s_sort, lease_of(nif), d, PNET_RING_MTU);
-    if (n) pnet_ring_commit(&g_pnet_rx, (uint16_t)n);
+// Before every sorter call: the board's mask (the static-address escape), core0's finished re-address, and the
+// board's address itself -- so shared mode begins (and follows a move) with no frame needed, and lwIP's own frames
+// (pnet_linkoutput) and the Transfer address (pnet_bridge_stats) see it at once.
+static volatile uint32_t s_down_done;   // core0 writes (pnet_bridge_down_done), the network context reads
+static void pnet_sort_inputs(struct netif *nif) {
+    pnet_sort_set_mask(&s_sort, lwip_ntohl(ip4_addr_get_u32(netif_ip4_netmask(nif))));
+    s_sort.sh.down_done = s_down_done;
+    pnet_shared_follow(&s_sort, board_ip_of(nif));
 }
 
 static err_t pnet_input(struct pbuf *p, struct netif *nif) {
     if (!s_on) return s_next(p, nif);   // not Network: lwIP's own input, as before
     if (p->len != p->tot_len) s_chained++;            // sorted on the first pbuf's bytes
+    pnet_sort_inputs(nif);
     const pnet_sort_to_t to = pnet_sort_rx(&s_sort, (const uint8_t *)p->payload, p->len, board_ip_of(nif));
-    pnet_owed_offer(nif);                             // shared mode just began on a network OFFER (else nothing)
     if (to & PNET_SORT_AMIGA) {
         // pnet_ring_commit does not check the length: 14..PNET_RING_MTU is enforced here. (The
         // sorter never says AMIGA below 14 bytes; the lower bound states the contract, not a case.)
@@ -206,7 +201,7 @@ static void pnet_tx_tick(void) {
     struct netif *nif = net_radio_sta_netif();
     const uint32_t board_ip = board_ip_of(nif);
     s_board_ip = board_ip;
-    pnet_owed_offer(nif);                                // a shared-mode OFFER that found the RX ring full
+    pnet_sort_inputs(nif);
     for (unsigned k = 0; k < PNET_TX_PER_TICK; k++) {
         uint16_t len;
         const uint8_t *f = pnet_ring_peek(&g_pnet_tx, 0, &len);
@@ -276,10 +271,14 @@ void pnet_bridge_stats(pnet_bridge_stats_t *o) {
     // Shared mode (pnet_shared.h): written in the network context; a log and report reading, field by field.
     const volatile pnet_shared_t *sh = &s_sort.sh;
     o->shared = sh->on;
-    o->shared_why = sh->why;
-    o->send_ip = sh->on ? (sh->amiga ? PNET_SHARED_AMIGA : 0u) : o->amiga_ip;   // pnet_sort_send_ip, read once
+    o->own = sh->own;
+    o->send_ip = sh->on ? PNET_SHARED_AMIGA : o->amiga_ip;   // pnet_sort_send_ip, read once
     o->sh_entered = sh->entered;
-    o->sh_left = sh->left;
+    o->sh_moved = sh->moved;
+    o->sh_own = sh->own_n;
+    o->sh_held = sh->held;
+    o->sh_down_req = sh->down_req;
+    o->sh_old = sh->old;
     o->sh_offers = sh->offers;
     o->sh_acks = sh->acks;
     o->sh_naks = sh->naks;
@@ -288,19 +287,11 @@ void pnet_bridge_stats(pnet_bridge_stats_t *o) {
     o->sh_arp_hidden = sh->arp_hidden;
 }
 
-// Plan 2026-10-17 R17: s_sort lives in the network context, so the seed is taken under the lwIP lock. Seeded once:
-// the next frame from the Amiga, or the board's own connect (ARP over the local path), confirms or replaces it.
-bool pnet_bridge_seed_amiga_ip(uint32_t ip) {
-    net_radio_lock();
-    const uint32_t board = s_board_ip;
-    const bool seeded = pnet_sort_seed(&s_sort, ip, board);
-    net_radio_unlock();
-    if (board == 0u) return false;                     // not decidable yet: the caller tries again
-    char a[16];
-    pnet_ip_text(ip, a);
-    // The board's own address: shared mode at once (PNET_SHARED_SEED); a stale record ends at the Amiga's first
-    // frame from a lease of its own (pnet_shared_amiga_left).
-    if (seeded && ip == board) wf_logf(WF_INFO, "pnet: Amiga address %s from the server is the board's: shared IP", a);
-    else if (seeded) wf_logf(WF_INFO, "pnet: Amiga address %s from the server (not seen since boot)", a);
-    return true;
+// core0 (pnet_serve_status): the sorter's re-address cursor and whether it is still wanted, then what core0 finished.
+// Single words across cores: a stale read only delays a pulse by one arrival.
+uint32_t pnet_bridge_down_req(bool *want) {
+    const volatile pnet_shared_t *sh = &s_sort.sh;
+    *want = sh->down_want;
+    return sh->down_req;
 }
+void pnet_bridge_down_done(uint32_t done) { s_down_done = done; }

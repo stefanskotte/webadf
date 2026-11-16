@@ -310,7 +310,8 @@ typedef struct {
     bool     driver_seen;   /* the driver read cylinder 76 since Network mode began */
     uint32_t driver_s;      /* seconds since that read */
     uint32_t amiga_ip;      /* the Amiga's address as the sorter learned it, host order; 0 = not learned */
-    bool     shared;        /* shared-IP mode (pnet_shared.h): amiga_ip is the board's own; "shared":true */
+    bool     shared;        /* shared-IP mode, the default since 2026-11-16 (pnet_shared.h): amiga_ip is the board's
+                             * own; "shared":true. false: a static Amiga address of its own, or no board address yet */
     uint32_t frames_in;     /* the Amiga's frames taken */
     uint32_t frames_out;    /* frames the Amiga acknowledged */
 } dc_net_t;
