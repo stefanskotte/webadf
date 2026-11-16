@@ -20141,7 +20141,7 @@
 		(uuid "3353f800-9037-4bd5-9383-5808bd240edf")
 	)
 	(segment
-		(start 150.52 114.95)
+		(start 150.52 115)
 		(end 151.1 115)
 		(width 0.2)
 		(layer "F.Cu")

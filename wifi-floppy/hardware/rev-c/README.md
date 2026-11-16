@@ -15,8 +15,8 @@ Rev B with the PIM726 module replaced by its parts on our PCB: RP2350B, 16 MB fl
 | `verify_pins.py rev-c.kicad_pcb` | 209 of 209 against the RP2350 datasheet, firmware `board.c`, the pico-sdk header, the RM2 datasheet, and rev B's connected pads |
 | `verify_reg.py` | the regulator matches Raspberry Pi's pattern: 62 differences before, 0 now |
 | `pnpm hw:verify rev-c` | passes: ERC, DRC, firmware pins, J1 lines, 1k pull-ups, the regulator |
-| `check45.py rev-c.kicad_pcb` | passes: every track at a multiple of 45 degrees, every bend 45 or 90 degrees, no short leg between two bends. It lets through, and lists on every run, the regulator's own tracks (12 flags) and two 0.1 mm steps at U1 pins 71 and 73; see "Routing rule" |
-| Gerbers | regenerated 2026-11-16 after the routing-rule pass below, same 14 files and export settings (they reproduce the 2026-11-11 set from its board); 233 holes for 168 vias and 65 drilled pads. The four copper layers, the drill file and the drill map differ from the last set; masks, paste, silkscreen, outline and job file do not. The 2026-11-08 set was analysed with kicad-happy, this one was not. Not yet through JLC's own check |
+| `check45.py rev-c.kicad_pcb` | passes: every track at a multiple of 45 degrees, every bend 45 or 90 degrees, no short leg between two bends. It lets through, and lists on every run, the regulator's own tracks (10 flags) and two 0.1 mm steps at U1 pins 71 and 73; see "Routing rule" |
+| Gerbers | regenerated 2026-11-16 after the routing-rule pass and C23's ground track below, same 14 files and export settings (they reproduce the 2026-11-11 set from its board); 233 holes for 168 vias and 65 drilled pads. The four copper layers, the drill file and the drill map differ from the last set; masks, paste, silkscreen, outline and job file do not. The 2026-11-08 set was analysed with kicad-happy, this one was not. Not yet through JLC's own check |
 | Tracks | 0.15 mm, necked to 0.11 mm at the QFN, vias 0.45/0.2 mm, spacing 0.127 mm: within JLC's published 4-layer limits, not confirmed by JLC |
 
 ## Copper review, 2026-11-11
@@ -69,7 +69,7 @@ Where the 203 came from, and what was done:
 
 | | 2026-11-11 | Now |
 |---|---|---|
-| `check45.py --no-exempt` (counts everything) | 203: 91 angles, 76 odd bends, 35 short legs, 1 sharp corner | 14: the regulator's 12 and the 2 steps below |
+| `check45.py --no-exempt` (counts everything) | 203: 91 angles, 76 odd bends, 35 short legs, 1 sharp corner | 12: the regulator's 10 and the 2 steps below |
 | Segments, vias | 855, 168 | 819, 168 |
 | Vias moved | | 22: 19 plane stubs' vias, and WGATE's, STEP's and SWDIO's by under 0.1 mm each |
 | Vias inside an SMD pad | 9 | 9, the same ones |
@@ -77,7 +77,7 @@ Where the 203 came from, and what was done:
 | Track necked to 0.11 mm | 73 segments, 50.5 mm | 39 segments, 34.2 mm |
 | Segments under 0.05 mm, joints under 45 degrees | 0, 0 | 0, 0 |
 | QFN pins whose track leaves through the side of the pad | 5 (pins 1, 9, 21, 61, 80) | the same 5 |
-| Track ends inside a pad, off its centre | 15 | the same 15 |
+| Track ends inside a pad, off its centre | 15 | the same 15, and C23's ground track (below) |
 | QSPI lengths, C15 to pin 32, XIN | | unchanged |
 | USB pair, gap between the two, median | 0.15 mm | 0.15 mm |
 | USB D-, J6 to R26 | 4.55 mm | 3.76 mm |
@@ -87,7 +87,9 @@ Where the 203 came from, and what was done:
 
 **Two steps are left, and `check45-exceptions.json` names them:** QSD2 at U1 pin 73 (0.10 mm sideways, a 0.14 mm leg) and QSCLK at pin 71 (0.12 mm, a 0.17 mm leg). The five QSPI lines leave pins 74 to 70, 0.4 mm apart, and run north side by side at 0.277 mm (0.15 mm track, 0.127 mm clearance). QSD1 can be no further west than x = 145.75 (C20's ground pad and its via), QSD3 no further east than x = 146.96 (the USB D+ via): 1.23 mm for four gaps of 0.277 mm, so 0.12 mm to spare. A step whose leg is 0.25 mm or longer moves a line at least 0.18 mm sideways, so each line must stand either on its pin or at least 0.18 mm off it. QSD1 must be at least 0.18 mm east of pin 74; QSD2 then cannot stand on pin 73 (0.22 mm from QSD1) and would have to be 0.18 mm east as well, then QSD0, then QSCLK, which puts QSD3 0.29 mm past its limit. Counting from QSD3 westwards fails the same way at QSD1. So at least two of the five steps are short. Moving C20, its via or the USB pair's vias would free them; those are the 2026-11-11 placement and its hand fixes, and were not touched.
 
-**The regulator's tracks were not touched** (Raspberry Pi's pattern). Six of its legs are off 45 degrees and one is a 0.17 mm step; they lie inside the pattern's copper zones. One of the six is ours, not Raspberry Pi's: `centre.py` moved the start of C23's ground track 0.05 mm onto the pad centre, which tilted it 5 degrees. It was left, because nothing in the regulator's area was to change.
+**The regulator's tracks are Raspberry Pi's pattern and were not redrawn.** Five of its legs are off 45 degrees and one is a 0.17 mm step, as `reg_pattern.py` has them; they lie inside the pattern's copper zones. A sixth leg was ours, not Raspberry Pi's: `centre.py` had moved the start of C23's ground track to its via 0.05 mm onto the pad centre, which tilted it 5 degrees. On the operator's ruling it is back as `reg_pattern.TRACKS` has it, level from (150.52, 115.0) to the via at (151.1, 115.0): it starts 0.05 mm below the pad's centre, on the ground track that runs through the pad, inside the pad and the pattern's ground zone, so the copper is the same. `reg_pattern.py` already held the straight version and was not changed; `verify_reg.py` does not compare tracks, and reads 0 differences before and after.
+
+**Operator's rulings, 2026-11-16:** the two QSPI steps are accepted as `check45-exceptions.json` records them; the regulator's exemption in `check45.py` is accepted; C23's ground track is to be straight, as above.
 
 For whoever reads the copper next:
 
