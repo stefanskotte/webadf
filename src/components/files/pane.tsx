@@ -12,7 +12,7 @@ import { paneRows, paneFoot, viewCounts, type PaneView } from '@/lib/files/view'
 import type { HelpTopicId } from '@/lib/help/topics';
 import { HelpTip } from '@/components/help/help-tip';
 import { Switch } from '@/components/ui/switch';
-import { acceptsCopies, addToLibraryReason, holdsFiles, isDiskCrumb, netBoardOf } from '@/lib/files/pane-rules';
+import { acceptsCopies, addToLibraryReason, holdsFiles, isDiskCrumb, netBoardOf, upCrumb } from '@/lib/files/pane-rules';
 import { DiskCrumbGlyph } from './disk-crumb-glyph';
 import { listsDisks, shelfOf } from '@/lib/files/shelf-rules';
 import { isNetVolume, netTitle, readAgo } from '@/lib/files/net-rules';
@@ -145,7 +145,8 @@ export function Pane({ filterRef, ...p }: PaneProps) {
   const tid = (s: string) => `pane-${side}-${s}`;
   const device = listing ? listing.path.slice(0, listing.path.indexOf(':') + 1) : 'LIBRARY:';
   const crumbs = listing?.crumbs ?? p.fallbackCrumbs ?? [];
-  const parent = crumbs.length > 1 ? crumbs[crumbs.length - 2] : null;
+  // Past a title that opens straight into its one disk (upCrumb, ruling 2026-11-16).
+  const parent = upCrumb(crumbs);
 
   const picked = [...selection.picked].filter((i) => i < rows.length).sort((a, b) => a - b);
   const allState = headerCheck(picked.length, rows.length);

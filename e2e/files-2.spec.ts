@@ -190,9 +190,8 @@ test('the grid: All, None, Parent, Root, Swap, Show .info', async ({ page }) => 
   await expect(crumb(page, 'right', 0)).toHaveText('LIBRARY:');
   await expect(page.getByTestId('files-root')).toHaveAttribute('aria-disabled', 'true');
 
-  // Back into the disk for Show .info
+  // Back into the disk for Show .info: the title has one disk, so it opens straight into it (ruling 2026-11-16).
   await row(page, 'right', `Grid-${tag}`).dblclick();
-  await page.getByTestId('pane-right').getByTestId('pane-row').filter({ hasText: 'Disk 1' }).dblclick();
   await expect(row(page, 'right', 'Disk.info')).toHaveCount(1);
   const showInfo = page.getByTestId('files-showinfo');
   await expect(showInfo).toHaveAttribute('aria-pressed', 'true');
@@ -238,10 +237,13 @@ test('LIBRARY: lists collections as folders before the titles; a title in two co
   await row(page, 'left', 'Games').dblclick();
   await expect(crumb(page, 'left', 1)).toHaveText('Games');
   await expect.poll(() => rowNames(page, 'left')).toEqual([`Alpha-${tag}`]);
-  // Through the collection, the title opens to its disks.
+  // Through the collection, the title opens straight into its one disk (ruling 2026-11-16), the collection kept.
   await row(page, 'left', `Alpha-${tag}`).dblclick();
   await expect(crumb(page, 'left', 2)).toHaveText(`Alpha-${tag}`);
-  await expect.poll(() => new URL(page.url()).searchParams.get('left')).toBe(`LIBRARY:/${gamesC}/${t1.gameId}`);
+  await expect.poll(() => new URL(page.url()).searchParams.get('left')).toBe(`LIBRARY:/${gamesC}/${t1.gameId}/${t1.diskId}`);
+  // Up goes past the one-disk title, back to the collection.
+  await page.getByTestId('files-parent').click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('left')).toBe(`LIBRARY:/${gamesC}`);
 });
 
 test('Move a title between collections and back to the root', async ({ page }) => {
@@ -543,12 +545,9 @@ test('Files… on a filed title\'s disk opens it inside its first collection; an
   await expect(crumb(page, 'right', 2)).toHaveText(`Alpha-${tag}`);
   await expect(crumb(page, 'right', 3)).toHaveText(/Disk 1/);   // the seeded disk's label names its title too
 
-  // The old, unfiled address still opens the disk; Parent twice goes up through the title to LIBRARY:.
+  // The old, unfiled address still opens the disk; Parent goes past its one-disk title to LIBRARY: (ruling 2026-11-16).
   await openFiles(page, 'STASH:', t1.path, 'right');
   await expect(crumb(page, 'right', 2)).toHaveText(/Disk 1/);
-  await page.getByTestId('files-parent').click();
-  await expect(crumb(page, 'right', 1)).toHaveText(`Alpha-${tag}`);
-  await expect(crumb(page, 'right', 2)).toHaveCount(0);
   await page.getByTestId('files-parent').click();
   await expect(crumb(page, 'right', 1)).toHaveCount(0);
   await expect(crumb(page, 'right', 0)).toHaveText('LIBRARY:');

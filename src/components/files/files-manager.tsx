@@ -19,7 +19,7 @@ import type { OpItem, OpRequest } from '@/lib/files/ops';
 import type { Added } from '@/lib/files/driver';
 import {
   acceptsCopies, addToLibraryReason, copyOutReason, deleteWhere as deleteWhereOf, failedReason, holdsFiles, netBoardOf, netReadOnly, netVolumeReason, OTHER_PANE_OPENING, PANE_OPENING, unsettled,
-  offersUndo, exactPlaceOf, placeOf, insideDiskPlace,
+  offersUndo, exactPlaceOf, placeOf, insideDiskPlace, landedPath,
 } from '@/lib/files/pane-rules';
 import { askUntilAnswered } from '@/lib/files/ask-listing';
 import {
@@ -270,7 +270,8 @@ function firstState(path: string, listing: Listing | null, error: string | undef
   // A pending place is neither gone nor failed: the pane says the label until it is answered (Task 7 asks again).
   const waits = !listing && !error && pending !== undefined;
   return {
-    path, listing, loading: false, error: listing || waits ? null : error ?? GONE, gone: !listing && !error && !waits,
+    // An address at a title with one disk is at that disk (landedPath, ruling 2026-11-16); the address follows on mount.
+    path: listing ? landedPath(path, listing) : path, listing, loading: false, error: listing || waits ? null : error ?? GONE, gone: !listing && !error && !waits,
     errorDisk: listing ? null : errorDisk ?? null, pending: waits ? pending : null, selection: EMPTY_SELECTION, filter: '',
   };
 }
@@ -453,10 +454,17 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
       const view: PaneView = { filter: p.filter, hideInfo: latest.current.hideInfo };
       return remapSelection(paneRows(p.listing.entries, sort, view), paneRows(l.entries, sort, view), p.selection);
     };
+    // A title with one disk answers with that disk's root (ruling 2026-11-16): the pane is at the disk, and so is the
+    // address -- the entry the navigation pushed for the title is rewritten, so Back goes where the title was opened from.
+    const at = 'listing' in r ? landedPath(path, r.listing) : path;
+    if (at !== path) {
+      const { panes: cur, active: on } = latest.current;
+      window.history.replaceState(null, '', urlOf(side === 'left' ? at : cur.left.path, side === 'right' ? at : cur.right.path, on));
+    }
     setPanes((ps) => ({
       ...ps,
       [side]: 'listing' in r
-        ? { path, listing: r.listing, loading: false, error: null, gone: false, errorDisk: null, pending: null, selection: picksKept(ps[side], r.listing),
+        ? { path: at, listing: r.listing, loading: false, error: null, gone: false, errorDisk: null, pending: null, selection: picksKept(ps[side], r.listing),
             filter: !opts.select && ps[side].listing?.path === r.listing.path ? ps[side].filter : '' }
         : { path, listing: null, loading: false, error: 'gone' in r ? GONE : r.error, gone: 'gone' in r,
             errorDisk: 'gone' in r ? null : errorDiskOf(r), pending: null, selection: EMPTY_SELECTION, filter: '' },
@@ -509,6 +517,14 @@ export function FilesManager({ initial, prefs, send }: FilesManagerProps) {
     setActive(side);
     window.history.replaceState(null, '', urlOf(panes.left.path, panes.right.path, side));
   }
+
+  // An address that named a title with one disk opened at that disk (firstState): the address says so too.
+  useEffect(() => {
+    const { panes: cur, active: on } = latest.current;
+    if (cur.left.path !== initial.leftPath || cur.right.path !== initial.rightPath) {
+      window.history.replaceState(null, '', urlOf(cur.left.path, cur.right.path, on));
+    }
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps -- the first listings only
 
   useEffect(() => {
     function onPop() {

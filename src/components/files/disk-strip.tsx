@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
+import { volumeNameWords } from '@/lib/files/words';
 import type { DiskInfo, StripData } from '@/lib/files/types';
 import { holderText, type MountChoice } from '@/lib/mount-choice';
 import { mountFailureText, mountRequest } from '@/lib/mount-request';
@@ -129,6 +130,9 @@ export function DiskStrip({ side, disk, data, onChanged }: DiskStripProps) {
     const trimmed = name.trim();
     setEditing(false);
     if (trimmed === '' || trimmed === disk.volumeName) { setName(disk.volumeName ?? ''); return; }
+    // Checked before sending, with the reason said (review 2026-11-16): the server refuses it as well.
+    const problem = volumeNameWords(trimmed);
+    if (problem) { toast.error('Could not rename the disk', { description: problem }); setName(disk.volumeName ?? ''); return; }
     setBusy(true);
     try {
       const res = await fetch(`/api/disks/${disk.diskId}/volume-name`, {

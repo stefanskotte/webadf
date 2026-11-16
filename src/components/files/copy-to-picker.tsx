@@ -5,7 +5,7 @@ import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
 import type { FsEntry, Listing } from '@/lib/files/types';
 import { refusalWords } from '@/lib/files/words';
-import { acceptsCopies, isDiskCrumb, netBoardOf } from '@/lib/files/pane-rules';
+import { acceptsCopies, isDiskCrumb, landedPath, netBoardOf } from '@/lib/files/pane-rules';
 import { DiskCrumbGlyph } from './disk-crumb-glyph';
 import { isNetVolume, NET_MOVE_IN, NET_PICK_BOARD, NET_READ_ONLY } from '@/lib/files/net-rules';
 import { PANE_DEVICES } from '@/lib/files/path';
@@ -99,7 +99,8 @@ export function CopyToPicker({ op, count, start, busy, list, onPick, onCancel, f
     return () => { live = false; };
   }, [list, path]);
 
-  const shown = listing && listing.path === path ? listing : null;
+  // A title with one disk answers with that disk's root (landedPath, ruling 2026-11-16): that is the place shown.
+  const shown = listing && landedPath(path, listing) === listing.path ? listing : null;
   const reason = pickReason(op, shown, filing);
   const what = count === 1 ? '1 item' : `${count} items`;
   const crumbs = listing?.crumbs ?? [];

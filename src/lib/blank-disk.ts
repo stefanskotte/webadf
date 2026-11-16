@@ -91,6 +91,9 @@ export async function createBlankDisk(orgId: string, o: {
 
   await db.insert(disks).values({
     id: diskId, gameId, orgId, diskNo: 1, sha256,
+    // Named after its title, which is its volume name (tester report and operator ruling 2026-11-16): a made disk said
+    // "Disk 1" in Files, a name nobody gave it. It keeps this label if it later joins a set as disk 2 or later.
+    label: volumeName,
     tosecName: `${volumeName}.adf`, isBoot: true, sizeBytes: bytes.length,
   }).onConflictDoNothing();
 

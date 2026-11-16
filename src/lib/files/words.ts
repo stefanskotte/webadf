@@ -1,5 +1,6 @@
 // The words for a refused Files operation. Client-safe: types only.
 import { isMountedReason } from '../mount-wording';
+import { amigaNameProblem } from './path';
 import type { RefusalCode } from './types';
 import { isNetWords, NET_COPY_OUT, NET_DROP_TO_STASH, NET_MOVE_IN, NET_OPEN_VOLUME, NET_PICK_BOARD, NET_READ_ONLY } from './net-rules';
 import { isKeptWords } from '../remote-browse';
@@ -70,4 +71,13 @@ export function refusalWords(code: RefusalCode, detail?: string): string {
     case 'not_a_disk_image': return detail
       ? `Not a disk image the library takes — ${detail}.` : 'Only disk images (ADF, ADZ, DMS, DMZ, HFE) go into the library.';
   }
+}
+
+/**
+ * Why `name` (trimmed, as the server trims it) cannot be an AmigaDOS volume name, in words, or null: what a rename or a
+ * Create ADF says before it sends anything (review 2026-11-16), as the Create ADF dialog does.
+ */
+export function volumeNameWords(name: string): string | null {
+  const problem = amigaNameProblem(name.trim());
+  return problem ? refusalWords('bad_name', problem) : null;
 }

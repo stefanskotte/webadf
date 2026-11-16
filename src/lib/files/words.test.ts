@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RefusalCode } from './types';
-import { refusalWords } from './words';
+import { refusalWords, volumeNameWords } from './words';
 import { netEmpty } from './net-rules';
 import { queueFullWords } from '../send-limits';
 import { DAMAGED_DISK, DISKS_STAY_IN_LIBRARY, UNREADABLE_DISK } from './shelf-rules';
@@ -114,5 +114,18 @@ describe('refusalWords for writes to the Amiga', () => {
     expect(refusalWords('unsupported', 'Move needs Transfer 2.6 — use Copy')).toBe('Move needs Transfer 2.6 — use Copy.');
     expect(refusalWords('conflict', 'Kept STASH:/Pack: something new is in it')).toBe('Kept STASH:/Pack: something new is in it.');
     expect(refusalWords('unsupported', 'Rename a volume on the Amiga')).toBe('Rename a volume on the Amiga.');
+  });
+});
+
+describe('volumeNameWords (a rename or Create ADF says why before sending, review 2026-11-16)', () => {
+  it('names what is wrong, trimmed as the server trims', () => {
+    expect(volumeNameWords('Café€')).toBe(refusalWords('bad_name', 'bad-char'));   // é is Latin-1, € is not
+    expect(volumeNameWords('Work:Stuff')).toBe(refusalWords('bad_name', 'bad-char'));
+    expect(volumeNameWords('x'.repeat(31))).toBe(refusalWords('bad_name', 'too-long'));
+    expect(volumeNameWords('   ')).toBe(refusalWords('bad_name', 'empty'));
+  });
+  it('is null for a name AmigaDOS takes', () => {
+    expect(volumeNameWords(' Café ')).toBeNull();
+    expect(volumeNameWords('Mouseski Keyboard')).toBeNull();
   });
 });

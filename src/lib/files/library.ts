@@ -150,13 +150,18 @@ export async function listLibrary(ctx: FsCtx, p: FsPath): Promise<Listing | null
   const [game] = await db.select({ title: games.title }).from(games)
     .where(and(eq(games.id, gameId), eq(games.orgId, ctx.orgId), isLocal(games))).limit(1);
   if (!game) return null;
-  const titleCrumb = { label: game.title, path: lib(...pre, gameId) };
+  const titleCrumb: Crumb = { label: game.title, path: lib(...pre, gameId) };
+  const diskRows = () => db.select({ id: disks.id, diskNo: disks.diskNo, label: disks.label, sizeBytes: disks.sizeBytes, sha256: disks.sha256,
+    imageFormat: disks.imageFormat })
+    .from(disks)
+    .innerJoin(entitlements, and(eq(entitlements.orgId, disks.orgId), eq(entitlements.sha256, disks.sha256)))
+    .where(and(eq(disks.gameId, gameId), eq(disks.orgId, ctx.orgId), isLocal(disks))).orderBy(asc(disks.diskNo));
+  // A title with one disk opens straight into it (tester report and operator ruling 2026-11-16: "Disk 1" was a level
+  // to click through for nothing). The title's own path lists that disk's root, and the title's crumb is passed over
+  // by Up one level (`through`), so going up from the disk lands on the collection or LIBRARY:, never on a one-row list.
   if (at.level === 'title') {
-    const rows = await db.select({ id: disks.id, diskNo: disks.diskNo, label: disks.label, sizeBytes: disks.sizeBytes, sha256: disks.sha256,
-      imageFormat: disks.imageFormat })
-      .from(disks)
-      .innerJoin(entitlements, and(eq(entitlements.orgId, disks.orgId), eq(entitlements.sha256, disks.sha256)))
-      .where(and(eq(disks.gameId, gameId), eq(disks.orgId, ctx.orgId), isLocal(disks))).orderBy(asc(disks.diskNo));
+    const rows = await diskRows();
+    if (rows.length === 1) return listDisk(ctx, { head, titleCrumb: { ...titleCrumb, through: true }, pre, gameId, collectionId }, rows[0].id, []);
     const entries: FsEntry[] = [];
     for (const d of rows) {
       const holder = await findHolder(db, ctx.orgId, d.sha256);
@@ -166,7 +171,14 @@ export async function listLibrary(ctx: FsCtx, p: FsPath): Promise<Listing | null
     return { path: lib(...pre, gameId), crumbs: [...head, titleCrumb], entries, writable: false, readOnlyReason: null, disk: null,
       meta: count(rows.length, 'disk'), library: { level: 'title', collectionId } };
   }
-  const { diskId, names } = at;
+  const only = (await diskRows()).length === 1;
+  return listDisk(ctx, { head, titleCrumb: only ? { ...titleCrumb, through: true } : titleCrumb, pre, gameId, collectionId }, at.diskId, at.names, p);
+}
+
+/** A folder on a disk (`names` from its root). `asked`: the path as asked, when it was a disk's own; a title's is its disk's root. */
+async function listDisk(ctx: FsCtx, t: { head: Crumb[]; titleCrumb: Crumb; pre: string[]; gameId: string; collectionId: string | null },
+  diskId: string, names: string[], asked?: FsPath): Promise<Listing | null> {
+  const { head, titleCrumb, pre, gameId, collectionId } = t;
   const d = await loadDisk(ctx, gameId, diskId);
   if (!d) return null;
   const hit = resolveInDisk(d, names);
@@ -177,7 +189,7 @@ export async function listLibrary(ctx: FsCtx, p: FsPath): Promise<Listing | null
   const dirs = children.filter((c) => c.kind === 'dir').length;
   const crumbs: Crumb[] = [...head, titleCrumb, { label: d.info.label, path: lib(...pre, gameId, diskId) }];
   names.forEach((_, i) => crumbs.push({ label: resolveInDisk(d, names.slice(0, i + 1))!.entry!.name, path: lib(...pre, gameId, diskId, ...names.slice(0, i + 1)) }));
-  return { path: formatPath(p), crumbs, entries: children.map((c) => toEntry(base, c)), writable: readOnlyReason === null,
+  return { path: asked ? formatPath(asked) : lib(...base), crumbs, entries: children.map((c) => toEntry(base, c)), writable: readOnlyReason === null,
     readOnlyReason, disk: d.info, meta: `${count(dirs, 'folder')} · ${count(children.length - dirs, 'file')}`,
     library: { level: 'disk', collectionId }, diskBase: lib(...pre, gameId, diskId) };
 }
