@@ -212,7 +212,8 @@ export const HELP_TOPICS = {
   // Wi-Fi networks (2026-11-15): board-settings.tsx > wifi-networks-setting.tsx, lib/wifi-networks.ts (texts, the
   // 2-minute open TTL, WIFI_SETUP_MINUTES), api/devices/[id]/wifi. Firmware: wifi_ctl.h (ten minutes, two more after a
   // check), main.c wifi_online_* (the AP beside the station; Save joins to check, saves, goes back; a disk in the
-  // drive refuses open and remove; no Remove for the network in use), config_store.h CONFIG_NETS_MAX 4,
+  // drive refuses open and remove; no Remove for the network in use), wifi_fallback.h (moving: 30 s link down,
+  // 5 min no answer, only with another saved network a scan sees), config_store.h CONFIG_NETS_MAX 4,
   // pairing-guide.ts (setup network name, password, address).
   'wifi-networks': {
     title: 'Wi-Fi networks',
@@ -233,6 +234,11 @@ export const HELP_TOPICS = {
           about 3 minutes if no saved network answers, then the board restarts); it then saves it and goes back.
           Press <em>Done</em> there, or <em>Close setup page</em> here, when finished. Changing a saved
           network&apos;s password works the same way.
+        </p>
+        <p>
+          <strong>Moving between them.</strong> If the network in use goes away for 30 seconds, or stays up but
+          the board can&apos;t reach this app for 5 minutes, the board moves to another saved network in range by
+          itself. With nothing else in range it stays and keeps trying.
         </p>
         <p>
           Add a phone hotspot at home, before you need it: switch on its 2.4 GHz or compatibility mode first.
