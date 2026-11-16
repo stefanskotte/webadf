@@ -35,6 +35,11 @@
 //     still in them, so a failed return ends where it was). Without this a move for a server outage left the board
 //     on a hotspot for good. The period doubles after each return (10, 20, 40, 60 min at most) and is reset by an
 //     answer on the first network -- a long server outage cannot bounce the board between home and hotspot faster.
+//     Third review: the reset needs home up and answering for a whole period (a marginal home network that answers
+//     once and drops keeps the longer period); a return that did not reach the earlier network (a stale password)
+//     counts as an empty scan; a return never leads to a restart (if its rounds end on nothing, the board keeps
+//     trying every WFB_LOST_RETRY_MS); and no return at all for a boot whose network was chosen on the power-on
+//     setup page (`no_return`) -- the person standing there picked it.
 //   * Held (no action; the clocks keep running): the setup page opened on request (its window), an OTA trial
 //     before its deadline (it reverts on its own if the network is dead), an update's reboot owed. The Save check
 //     runs its own rounds and resets this (wfb_reset).
@@ -77,6 +82,9 @@ typedef struct {
     uint32_t better_since;  // BETTER: the period runs from here (reset when the network changes)
     uint32_t better_ms;     // BETTER's period now (doubles after a return, reset by an answer on network 0)
     int      better_cur;    // the network `better_since` was set for
+    int      better_from;   // the network the last BETTER pick aimed at
+    uint32_t home_since;    // network 0 up without a break since then (better_ms resets after a period of it)
+    bool     no_restart;    // the lost episode began with a return: no restart (wfb_may_restart)
 } wifi_fb_t;
 
 typedef struct {
@@ -88,6 +96,7 @@ typedef struct {
     bool     hold_dead;     // DF1 Network: no move for B (the link-up case)
     bool     idle;          // no disk in DF0/DF1, no saves waiting, DF1 not Network: BETTER may run
     int      cur;           // the network the board is on, -1 none
+    bool     no_return;     // this boot's network was chosen on the power-on setup page: no BETTER
 } wfb_in_t;
 
 // The clocks start now (also after the Save check's own rounds, and after any run here).
@@ -104,5 +113,9 @@ int wfb_pick(wifi_fb_t *fb, wfb_due_t due, uint32_t now, int cur, int n_nets, in
 // After the rounds: `back_on` is the network joined, -1 none (the caller restarts an idle board, or this makes the
 // rounds run again in WFB_LOST_RETRY_MS).
 void wfb_ran(wifi_fb_t *fb, wfb_due_t due, uint32_t now, int back_on);
+// After a run that joined nothing: may an idle board restart? Not when the episode began with a return.
+bool wfb_may_restart(const wifi_fb_t *fb);
+// After a BETTER run: did it reach the network it aimed at?
+bool wfb_returned(const wifi_fb_t *fb, int back_on);
 
 #endif

@@ -15,7 +15,7 @@
 #define S(x) ((uint32_t)(x) * 1000u)
 
 static wfb_in_t in_at(uint32_t now, bool up, uint32_t answers, int n) {
-    wfb_in_t in = { now, up, answers, n, false, false, false, 0 };
+    wfb_in_t in = { now, up, answers, n, false, false, false, 0, false };
     return in;
 }
 
@@ -362,9 +362,112 @@ static void returns_slow_down_until_home_answers(void) {
         t += 2;
     }
     CHECK_EQ_INT(fb.better_ms, WFB_BETTER_MAX_MS);
-    in = on_idle(t + 3, 100, 0);                      // home answers
+    // Home comes back for good: the period resets once home has been up and answering for a whole period.
+    uint32_t a = 100;
+    in = on_idle(t + 3, a++, 0);
+    wfb_due(&fb, &in);
+    CHECK_EQ_INT(fb.better_ms, WFB_BETTER_MAX_MS);    // one answer is not enough (third review, Important 1)
+    for (uint32_t u = t + 3; u < t + 3 + WFB_BETTER_MAX_MS; u += S(25)) {
+        in = on_idle(u, a++, 0);
+        wfb_due(&fb, &in);
+    }
+    CHECK_EQ_INT(fb.better_ms, WFB_BETTER_MAX_MS);
+    in = on_idle(t + 3 + WFB_BETTER_MAX_MS, a++, 0);
     wfb_due(&fb, &in);
     CHECK_EQ_INT(fb.better_ms, WFB_BETTER_MS);
+}
+
+// Third review, Important 1: a marginal home network -- the return lands, it answers once, the link drops and A
+// takes the board back to the hotspot. The return period keeps growing instead of resetting to 10 min.
+static void a_marginal_home_network_does_not_reset_the_return_period(void) {
+    wifi_fb_t fb;
+    wfb_reset(&fb, 0, 0);
+    uint32_t a = 1, t = S(1);
+    wfb_in_t in = on_idle(t, a++, 1);
+    wfb_due(&fb, &in);
+    for (int k = 0; k < 4; k++) {
+        const uint32_t period = fb.better_ms;
+        t += period;
+        in = on_idle(t, a++, 1);
+        CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_BETTER);
+        CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_BETTER, t, 1, 2, 0x3), 0);
+        wfb_ran(&fb, WFB_DUE_BETTER, t, 0);
+        CHECK(wfb_returned(&fb, 0), "reached home");
+        in = on_idle(t + S(5), a++, 0);               // home answers once
+        wfb_due(&fb, &in);
+        in = in_at(t + S(10), false, a, 2);           // and drops
+        wfb_due(&fb, &in);
+        wfb_ran(&fb, WFB_DUE_DOWN, t + S(60), 1);     // A: back on the hotspot
+        t += S(60);
+        in = on_idle(t, a++, 1);
+        wfb_due(&fb, &in);
+    }
+    CHECK_EQ_INT(fb.better_ms, WFB_BETTER_MAX_MS);
+}
+
+// Third review, Important 2: home's saved password is stale. The return ends back on the hotspot -- an empty scan,
+// the period doubles; and a return whose rounds end on nothing never restarts the board.
+static void a_return_that_misses_home_backs_off_and_never_restarts(void) {
+    wifi_fb_t fb;
+    wfb_reset(&fb, 0, 0);
+    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_BETTER, WFB_BETTER_MS, 1, 2, 0x3), 0);
+    wfb_ran(&fb, WFB_DUE_BETTER, WFB_BETTER_MS + S(30), 1);   // home refused; rounds ended on the hotspot
+    CHECK(!wfb_returned(&fb, 1), "not reached");
+    CHECK_EQ_INT(fb.better_ms, 2 * WFB_BETTER_MS);
+    CHECK(wfb_may_restart(&fb), "on a network: nothing to restart for");
+    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_BETTER, 3 * WFB_BETTER_MS, 1, 2, 0x3), 0);
+    wfb_ran(&fb, WFB_DUE_BETTER, 3 * WFB_BETTER_MS, -1);     // both refused
+    CHECK(fb.lost, "keeps trying");
+    CHECK(!wfb_may_restart(&fb), "a return never restarts the board");
+    wfb_ran(&fb, WFB_DUE_LOST, 3 * WFB_BETTER_MS + S(30), -1);
+    CHECK(!wfb_may_restart(&fb), "for the whole episode");
+    wfb_ran(&fb, WFB_DUE_LOST, 3 * WFB_BETTER_MS + S(60), 1);
+    CHECK(!fb.lost && wfb_may_restart(&fb), "over once a run joins");
+    wfb_ran(&fb, WFB_DUE_DOWN, 3 * WFB_BETTER_MS + S(90), -1);
+    CHECK(wfb_may_restart(&fb), "an ordinary episode may restart an idle board");
+}
+
+static void no_return_when_the_network_was_chosen_on_the_setup_page(void) {
+    wifi_fb_t fb;
+    wfb_reset(&fb, 0, 0);
+    wfb_in_t in = on_idle(S(1), 1, 1);
+    in.no_return = true;
+    wfb_due(&fb, &in);
+    in = on_idle(S(1) + 3 * WFB_BETTER_MS, 2, 1);
+    in.no_return = true;
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);
+    in.no_return = false;
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_BETTER);
+}
+
+// The no-answer move wins when it and the return fall due in the same pass.
+static void the_no_answer_move_wins_over_the_return(void) {
+    wifi_fb_t fb;
+    wfb_reset(&fb, 0, 0);
+    wfb_in_t in = on_idle(S(1), 0, 2);
+    wfb_due(&fb, &in);
+    in = on_idle(S(1) + WFB_BETTER_MS, 0, 2);        // 10 min, and no answer for all of it
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_DEAD);
+}
+
+// M2's count belongs to one outage (third review): a failed scan in the first does not make the second's first
+// failed scan run the rounds -- whether the link came back by itself or a run joined.
+static void failed_scans_are_counted_per_outage(void) {
+    wifi_fb_t fb;
+    wfb_reset(&fb, 0, 0);
+    wfb_in_t in = in_at(S(1), false, 0, 2);
+    wfb_due(&fb, &in);
+    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_DOWN, S(31), 0, 2, -1), -1);
+    in = in_at(S(50), true, 0, 2);                    // back by itself
+    wfb_due(&fb, &in);
+    in = in_at(S(100), false, 0, 2);
+    wfb_due(&fb, &in);
+    in = in_at(S(130), false, 0, 2);
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_DOWN);
+    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_DOWN, S(130), 0, 2, -1), -1);   // a first failure again
+    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_DOWN, S(190), 0, 2, -1), 0);    // the second: rounds
+    wfb_ran(&fb, WFB_DUE_DOWN, S(220), 0);
+    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_DOWN, S(400), 0, 2, -1), -1);   // after a run: a first failure again
 }
 
 // --- the rounds the picks start ----------------------------------------------------------------------------------
@@ -465,6 +568,11 @@ int main(void) {
     RUN(an_idle_board_goes_back_to_an_earlier_network_every_ten_minutes);
     RUN(the_return_waits_for_an_idle_board_and_no_holds);
     RUN(returns_slow_down_until_home_answers);
+    RUN(a_marginal_home_network_does_not_reset_the_return_period);
+    RUN(a_return_that_misses_home_backs_off_and_never_restarts);
+    RUN(no_return_when_the_network_was_chosen_on_the_setup_page);
+    RUN(the_no_answer_move_wins_over_the_return);
+    RUN(failed_scans_are_counted_per_outage);
     RUN(a_ends_on_home_after_one_try_of_the_hotspot);
     RUN(b_tries_the_hotspot_first_and_comes_back_when_it_does_not_answer);
     RUN(nothing_answers_three_rounds_then_lost);
