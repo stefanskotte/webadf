@@ -2,6 +2,8 @@
 // validator (wifi-floppy/firmware/wasm/display_wasm.c), so the editor's preview
 // is the firmware's pixels. Rebuild with `pnpm display:wasm`.
 
+import { DISPLAY_WASM_VERSION } from './display-wasm-version';
+
 export type PanelId = 0 | 1;
 export interface PreviewState {
   status: 'boot' | 'portal' | 'wifi' | 'ready' | 'download' | 'verify' | 'loaded' | 'error';
@@ -64,7 +66,9 @@ let browserLoad: Promise<DisplayWasm> | null = null;
  */
 export function loadDisplayWasm(bytes?: ArrayBuffer): Promise<DisplayWasm> {
   if (bytes) return instantiate(bytes);
-  browserLoad ??= fetch('/display.wasm')
+  // The sources hash as a query: a browser or CDN copy of an older module is never paired with this loader's
+  // offset table (review of bb89103e: the loader checks state_off(13)).
+  browserLoad ??= fetch(`/display.wasm?v=${DISPLAY_WASM_VERSION}`)
     .then((res) => {
       if (!res.ok) throw new Error(`could not load /display.wasm: HTTP ${res.status}`);
       return res.arrayBuffer();

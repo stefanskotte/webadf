@@ -180,6 +180,16 @@ describe('display wasm in the browser', () => {
     await expect(load()).rejects.toThrow(/\/display\.wasm.*404/);
   });
 
+  it('fetches the module under its sources hash, the same one the staleness check reads', async () => {
+    const bytes = await wasmBytes();
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => new Response(bytes.slice(0), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadDisplayWasm: load } = await import('./display-wasm');
+    await load();
+    const hash = (await readFile('src/lib/display-wasm.version', 'utf8')).trim();
+    expect(fetchMock.mock.calls[0][0]).toBe(`/display.wasm?v=${hash}`);
+  });
+
   it('memoises the no-argument load: one fetch for two callers', async () => {
     const bytes = await wasmBytes();
     const fetchMock = vi.fn(async () => new Response(bytes.slice(0), { status: 200 }));

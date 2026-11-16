@@ -203,6 +203,11 @@ if [ "$want" != "$have" ]; then
   echo "FAIL: public/display.wasm is stale -- run pnpm display:wasm"
   fail=1
 fi
+# The loader's cache-busting query (src/lib/display-wasm-version.ts) is written by the same script.
+if ! grep -q "'$want'" ../../../src/lib/display-wasm-version.ts 2>/dev/null; then
+  echo "FAIL: src/lib/display-wasm-version.ts is stale -- run pnpm display:wasm"
+  fail=1
+fi
 
 # pio2's CTRL holds the enable bit of every state machine on the block, the radio's included, and
 # the radio's SDK driver read-modify-writes it from core1 with no lock (cyw43_bus_pio_spi.c). Any
