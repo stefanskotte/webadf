@@ -12,6 +12,9 @@ void wfb_reset(wifi_fb_t *fb, uint32_t now, uint32_t answers) {
     fb->dead_ms = WFB_DEAD_MS;
     fb->rescan_at = now;
     fb->rescan_ms = WFB_RESCAN_MS;
+    fb->better_since = now;
+    fb->better_ms = WFB_BETTER_MS;
+    fb->better_cur = -1;
 }
 
 wfb_due_t wfb_due(wifi_fb_t *fb, const wfb_in_t *in) {
@@ -21,6 +24,11 @@ wfb_due_t wfb_due(wifi_fb_t *fb, const wfb_in_t *in) {
         fb->answers = in->answers;
         fb->quiet_since = now;
         fb->dead_ms = WFB_DEAD_MS;
+        if (in->cur == 0) fb->better_ms = WFB_BETTER_MS;   // home answers: the return period starts over
+    }
+    if (in->cur != fb->better_cur) {    // a new network: BETTER's period runs from now
+        fb->better_cur = in->cur;
+        fb->better_since = now;
     }
     if (in->link_up) {
         if (fb->down) {                 // back by itself (or by a run): A starts afresh
@@ -42,7 +50,9 @@ wfb_due_t wfb_due(wifi_fb_t *fb, const wfb_in_t *in) {
     if (fb->down)
         return (uint32_t)(now - fb->down_since) >= WFB_LINK_GRACE_MS && (int32_t)(now - fb->rescan_at) >= 0
                    ? WFB_DUE_DOWN : WFB_DUE_NONE;
-    return (uint32_t)(now - fb->quiet_since) >= fb->dead_ms ? WFB_DUE_DEAD : WFB_DUE_NONE;
+    if (!in->hold_dead && (uint32_t)(now - fb->quiet_since) >= fb->dead_ms) return WFB_DUE_DEAD;
+    if (in->cur > 0 && in->idle && (uint32_t)(now - fb->better_since) >= fb->better_ms) return WFB_DUE_BETTER;
+    return WFB_DUE_NONE;
 }
 
 int wfb_pick(wifi_fb_t *fb, wfb_due_t due, uint32_t now, int cur, int n_nets, int seen) {
@@ -57,7 +67,12 @@ int wfb_pick(wifi_fb_t *fb, wfb_due_t due, uint32_t now, int cur, int n_nets, in
         others = (unsigned)seen & all & (on ? ~(1u << cur) : ~0u);
     }
     if (due == WFB_DUE_DOWN) {
-        if (seen < 0 || others) return from_cur;   // the current one first, then the others
+        if (seen < 0 && ++fb->scan_fails >= 2) {   // the second failed scan in a row: the rounds anyway
+            fb->scan_fails = 0;
+            return from_cur;
+        }
+        if (seen >= 0) fb->scan_fails = 0;
+        if (others) return from_cur;               // the current one first, then the others
         fb->rescan_at = now + fb->rescan_ms;       // nothing else there: the driver keeps trying the current one
         fb->rescan_ms = doubled(fb->rescan_ms, WFB_RESCAN_MAX_MS);
         return -1;
@@ -69,6 +84,15 @@ int wfb_pick(wifi_fb_t *fb, wfb_due_t due, uint32_t now, int cur, int n_nets, in
         }
         fb->quiet_since = now;                       // nowhere to go (or no scan): look again later, less often
         fb->dead_ms = doubled(fb->dead_ms, WFB_DEAD_MAX_MS);
+        return -1;
+    }
+    if (due == WFB_DUE_BETTER) {
+        if (on && seen >= 0) {
+            const unsigned earlier = (unsigned)seen & ((1u << cur) - 1u);
+            for (int i = 0; i < cur; i++)
+                if (earlier & (1u << i)) return i;   // the earliest saved network in range
+        }
+        fb->better_since = now;                      // none in range: look again in a period
         return -1;
     }
     return -1;
@@ -83,6 +107,10 @@ void wfb_ran(wifi_fb_t *fb, wfb_due_t due, uint32_t now, int back_on) {
         fb->rescan_ms = WFB_RESCAN_MS;
         // A move for an unreachable server proves nothing until the server answers: the next one waits longer.
         if (due == WFB_DUE_DEAD) fb->dead_ms = doubled(fb->dead_ms, WFB_DEAD_MAX_MS);
+        // A return may be followed by the outage that caused the move: the next one waits longer.
+        if (due == WFB_DUE_BETTER) fb->better_ms = doubled(fb->better_ms, WFB_BETTER_MAX_MS);
+        fb->better_cur = back_on;
+        fb->better_since = now;
         return;
     }
     fb->lost = true;

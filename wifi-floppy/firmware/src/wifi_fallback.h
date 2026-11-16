@@ -18,21 +18,30 @@
 //     saved network in range -> rounds starting with the CURRENT one (it may have come back this second, and an
 //     explicit leave + join also clears a stuck association), then the others in saved order. Nothing else in
 //     range -> stay and let the driver keep trying; scan again after 1, 2, 4, then every 5 minutes. A scan that
-//     could not run: the rounds anyway (the link is down, there is nothing to lose).
+//     could not run counts as an empty one the first time (review M2: an idle board must not restart through a
+//     router's reboot because of one failed scan); the second failure in a row runs the rounds anyway.
 //   * B, link up and no answer from the server for WFB_DEAD_MS (5 min; the worst single request is ~105 s, a
 //     normal pass answers every ~25 s): scan. Another saved network in range -> rounds starting with THAT one (the
 //     first in saved order); the current one is still in the round, so a fruitless move ends back where it was.
 //     The flapping guard: B never moves without another saved network in range (a server outage on a single home
 //     network leaves the board alone), and the dead period doubles after every move or empty scan that did not
 //     bring an answer (5, 10, 20, 30 min at most), reset by the first answer. A server outage with a hotspot in
-//     range therefore costs at most a few moves an hour, each ~15-30 s off line.
+//     range therefore costs at most a few moves an hour, each ~15-30 s off line. Never while DF1 is Network
+//     (review I2, `hold_dead`): the Amiga's own traffic may be fine while only the web server is down, and a move
+//     changes the board's address under it. A link down may still move (nothing gets through anyway).
+//   * BETTER (review I3, coordinator ruling 2026-11-16): on a saved network other than the first (index > 0), the
+//     board IDLE (`idle`: no disk in DF0/DF1, no saves waiting, DF1 not Network) and nothing held: every
+//     WFB_BETTER_MS it scans, and a saved network earlier in the list in range -> rounds from it (the current one
+//     still in them, so a failed return ends where it was). Without this a move for a server outage left the board
+//     on a hotspot for good. The period doubles after each return (10, 20, 40, 60 min at most) and is reset by an
+//     answer on the first network -- a long server outage cannot bounce the board between home and hotspot faster.
 //   * Held (no action; the clocks keep running): the setup page opened on request (its window), an OTA trial
 //     before its deadline (it reverts on its own if the network is dead), an update's reboot owed. The Save check
 //     runs its own rounds and resets this (wfb_reset).
 //   * A run that found no network leaves the station holding nothing, so nobody else would try again: an idle
 //     board restarts into its normal start (main.c, the Save check's rule: never with a disk in a drive, saves
 //     waiting or DF1 Network on); otherwise the rounds run again every WFB_LOST_RETRY_MS, from the network it was
-//     on, with no scan.
+//     on last (provisioning's `first`, review M1), with no scan.
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -42,12 +51,15 @@
 #define WFB_DEAD_MS        300000u
 #define WFB_DEAD_MAX_MS    1800000u
 #define WFB_LOST_RETRY_MS  30000u
+#define WFB_BETTER_MS      600000u
+#define WFB_BETTER_MAX_MS  3600000u
 
 typedef enum {
     WFB_DUE_NONE = 0,
     WFB_DUE_DOWN,    // A: scan, then maybe rounds from the current network
     WFB_DUE_DEAD,    // B: scan, then maybe rounds from another network in range
     WFB_DUE_LOST,    // the last run found nothing: rounds again, no scan
+    WFB_DUE_BETTER,  // on a later saved network, idle: scan, then maybe rounds from an earlier one
 } wfb_due_t;
 
 typedef struct {
@@ -61,6 +73,10 @@ typedef struct {
     uint32_t rescan_ms;     // A's next wait after an empty scan
     bool     lost;          // the last run joined nothing
     uint32_t lost_at;       // the next run's time
+    int      scan_fails;    // A: scans in a row that could not run
+    uint32_t better_since;  // BETTER: the period runs from here (reset when the network changes)
+    uint32_t better_ms;     // BETTER's period now (doubles after a return, reset by an answer on network 0)
+    int      better_cur;    // the network `better_since` was set for
 } wifi_fb_t;
 
 typedef struct {
@@ -69,6 +85,9 @@ typedef struct {
     uint32_t answers;       // device_client_t.answers
     int      n_nets;        // saved networks
     bool     hold;          // the setup page on request, an OTA trial, an update reboot owed
+    bool     hold_dead;     // DF1 Network: no move for B (the link-up case)
+    bool     idle;          // no disk in DF0/DF1, no saves waiting, DF1 not Network: BETTER may run
+    int      cur;           // the network the board is on, -1 none
 } wfb_in_t;
 
 // The clocks start now (also after the Save check's own rounds, and after any run here).
@@ -79,7 +98,7 @@ wfb_due_t wfb_due(wifi_fb_t *fb, const wfb_in_t *in);
 
 // After the scan a DOWN or DEAD asked for (`seen`: bit i = saved network i is in range; -1: the scan could not run),
 // or for LOST (seen ignored): the network the rounds start from, or -1 to stay (the next look is scheduled).
-// `cur`: the network the board is on (or was on last), -1 if none.
+// `cur`: the network the board is on, -1 if none; for LOST the network it was on last (provisioning's `first`).
 int wfb_pick(wifi_fb_t *fb, wfb_due_t due, uint32_t now, int cur, int n_nets, int seen);
 
 // After the rounds: `back_on` is the network joined, -1 none (the caller restarts an idle board, or this makes the

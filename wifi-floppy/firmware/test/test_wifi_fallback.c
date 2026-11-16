@@ -15,7 +15,7 @@
 #define S(x) ((uint32_t)(x) * 1000u)
 
 static wfb_in_t in_at(uint32_t now, bool up, uint32_t answers, int n) {
-    wfb_in_t in = { now, up, answers, n, false };
+    wfb_in_t in = { now, up, answers, n, false, false, false, 0 };
     return in;
 }
 
@@ -81,10 +81,17 @@ static void a_drop_with_nothing_else_in_range_stays_and_looks_again_less_often(v
     CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_DOWN);
 }
 
-static void a_scan_that_could_not_run_still_runs_the_rounds_when_the_link_is_down(void) {
+// Review M2: one failed scan is an empty one (an idle board must not restart through a router's reboot for it);
+// the second in a row runs the rounds anyway; a scan that ran in between starts the count over.
+static void a_scan_that_could_not_run_twice_in_a_row_runs_the_rounds(void) {
     wifi_fb_t fb;
     wfb_reset(&fb, 0, 0);
-    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_DOWN, S(40), 1, 2, -1), 1);
+    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_DOWN, S(40), 1, 2, -1), -1);
+    CHECK_EQ_INT(fb.rescan_at, S(40) + WFB_RESCAN_MS);
+    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_DOWN, S(100), 1, 2, -1), 1);
+    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_DOWN, S(200), 1, 2, -1), -1);   // the count started over
+    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_DOWN, S(400), 1, 2, 0x2), -1);  // a scan that ran
+    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_DOWN, S(800), 1, 2, -1), -1);   // so this is a first failure again
 }
 
 // --- B: the link is up, nothing answers --------------------------------------------------------------------------
@@ -235,7 +242,7 @@ static void a_run_that_joined_nothing_runs_again_until_one_joins(void) {
     in = in_at(S(130), false, 0, 2);
     CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_LOST);
     CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_LOST, S(130), 1, 2, 0), 1);
-    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_LOST, S(130), -1, 2, 0), 0);
+    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_LOST, S(130), -1, 2, 0), 0);   // main.c passes prov.first: never -1 there
     in.hold = true;
     CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);
     wfb_ran(&fb, WFB_DUE_LOST, S(200), -1);
@@ -255,6 +262,109 @@ static void the_clock_may_wrap(void) {
     wfb_due(&fb, &in);
     in = in_at(t0 + 10 + WFB_LINK_GRACE_MS, false, 0, 2);   // past zero
     CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_DOWN);
+}
+
+
+// Review I2: DF1 Network holds B (the Amiga's traffic may be fine), not A; B is due at once when it ends.
+static void df1_network_holds_the_no_answer_move_only(void) {
+    wifi_fb_t fb;
+    wfb_reset(&fb, 0, 0);
+    wfb_in_t in = in_at(WFB_DEAD_MS * 3, true, 0, 2);
+    in.hold_dead = true;
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);
+    in.hold_dead = false;
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_DEAD);
+    wfb_reset(&fb, 0, 0);
+    in = in_at(S(1), false, 0, 2);
+    in.hold_dead = true;
+    wfb_due(&fb, &in);
+    in = in_at(S(31), false, 0, 2);
+    in.hold_dead = true;
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_DOWN);
+}
+
+static wfb_in_t on_idle(uint32_t now, uint32_t answers, int cur) {
+    wfb_in_t in = in_at(now, true, answers, 2);
+    in.cur = cur;
+    in.idle = true;
+    return in;
+}
+
+// Review I3: moved to the hotspot (1) for an outage; the server answers there. Idle, every 10 min it looks for
+// home (0); home in range -> rounds from home.
+static void an_idle_board_goes_back_to_an_earlier_network_every_ten_minutes(void) {
+    wifi_fb_t fb;
+    wfb_reset(&fb, 0, 0);
+    uint32_t a = 1;
+    wfb_in_t in = on_idle(S(1), a++, 1);              // on the hotspot from here
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);
+    for (uint32_t t = S(25); t < S(1) + WFB_BETTER_MS; t += S(25)) {
+        in = on_idle(t, a++, 1);
+        CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);
+    }
+    in = on_idle(S(1) + WFB_BETTER_MS, a, 1);
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_BETTER);
+    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_BETTER, in.now, 1, 2, 0x2), -1);   // home not in range
+    in = on_idle(S(2) + WFB_BETTER_MS, a++, 1);
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);                         // the next look in 10 min
+    for (uint32_t t = S(2) + WFB_BETTER_MS; t < S(1) + 2 * WFB_BETTER_MS; t += S(25)) {
+        in = on_idle(t, a++, 1);
+        CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);
+    }
+    in = on_idle(S(1) + 2 * WFB_BETTER_MS, a, 1);
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_BETTER);
+    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_BETTER, in.now, 1, 2, 0x3), 0);
+    wfb_ran(&fb, WFB_DUE_BETTER, in.now, 0);
+    in = on_idle(in.now + 1, a, 0);
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);                         // on home: nothing earlier
+}
+
+static void the_return_waits_for_an_idle_board_and_no_holds(void) {
+    wifi_fb_t fb;
+    wfb_reset(&fb, 0, 0);
+    wfb_in_t in = on_idle(S(1), 0, 2);
+    wfb_due(&fb, &in);
+    in = on_idle(S(1) + WFB_BETTER_MS, 0, 2);
+    in.idle = false;                                   // a disk in a drive, saves waiting or DF1 Network
+    in.answers = 1;
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);
+    in.idle = true;
+    in.hold = true;                                    // the setup page, a trial
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);
+    in.hold = false;
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_BETTER);
+    CHECK_EQ_INT(wfb_pick(&fb, WFB_DUE_BETTER, in.now, 2, 3, 0x6), 1);   // the earliest in range before it
+}
+
+// A long outage: the return lands on home, which has no server either; B moves again. The returns come 10, 20,
+// 40, then 60 min apart, until home answers.
+static void returns_slow_down_until_home_answers(void) {
+    wifi_fb_t fb;
+    wfb_reset(&fb, 0, 0);
+    uint32_t t = 0;
+    wfb_in_t in = on_idle(t, 0, 1);
+    wfb_due(&fb, &in);
+    const uint32_t periods[] = { WFB_BETTER_MS, 2 * WFB_BETTER_MS, 4 * WFB_BETTER_MS, WFB_BETTER_MAX_MS,
+                                 WFB_BETTER_MAX_MS };
+    for (int k = 0; k < 5; k++) {
+        in = on_idle(t + periods[k] - 1, k + 1, 1);   // the hotspot answers
+        CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);
+        t += periods[k];
+        in = on_idle(t, k + 1, 1);
+        CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_BETTER);
+        wfb_pick(&fb, WFB_DUE_BETTER, t, 1, 2, 0x3);
+        wfb_ran(&fb, WFB_DUE_BETTER, t, 0);           // back home ...
+        in = on_idle(t + 1, k + 1, 0);
+        wfb_due(&fb, &in);
+        wfb_ran(&fb, WFB_DUE_DEAD, t + 2, 1);         // ... no answer there: moved again (time squeezed)
+        in = on_idle(t + 2, k + 1, 1);
+        wfb_due(&fb, &in);
+        t += 2;
+    }
+    CHECK_EQ_INT(fb.better_ms, WFB_BETTER_MAX_MS);
+    in = on_idle(t + 3, 100, 0);                      // home answers
+    wfb_due(&fb, &in);
+    CHECK_EQ_INT(fb.better_ms, WFB_BETTER_MS);
 }
 
 // --- the rounds the picks start ----------------------------------------------------------------------------------
@@ -339,7 +449,7 @@ int main(void) {
     RUN(a_short_drop_is_left_to_recover_on_its_own);
     RUN(a_hotspot_switched_off_with_home_in_range_runs_the_rounds_from_it);
     RUN(a_drop_with_nothing_else_in_range_stays_and_looks_again_less_often);
-    RUN(a_scan_that_could_not_run_still_runs_the_rounds_when_the_link_is_down);
+    RUN(a_scan_that_could_not_run_twice_in_a_row_runs_the_rounds);
     RUN(a_blocked_network_moves_to_another_in_range_after_five_minutes);
     RUN(answers_keep_the_board_where_it_is);
     RUN(time_down_does_not_count_towards_dead);
@@ -351,6 +461,10 @@ int main(void) {
     RUN(holds_postpone_and_the_clocks_keep_running);
     RUN(a_run_that_joined_nothing_runs_again_until_one_joins);
     RUN(the_clock_may_wrap);
+    RUN(df1_network_holds_the_no_answer_move_only);
+    RUN(an_idle_board_goes_back_to_an_earlier_network_every_ten_minutes);
+    RUN(the_return_waits_for_an_idle_board_and_no_holds);
+    RUN(returns_slow_down_until_home_answers);
     RUN(a_ends_on_home_after_one_try_of_the_hotspot);
     RUN(b_tries_the_hotspot_first_and_comes_back_when_it_does_not_answer);
     RUN(nothing_answers_three_rounds_then_lost);
