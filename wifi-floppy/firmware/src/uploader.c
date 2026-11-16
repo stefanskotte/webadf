@@ -572,3 +572,8 @@ up_step_t up_step(uploader_t *u) {
 
     return up_send_track(u, slot, t);
 }
+
+void up_network_changed(uploader_t *u) {
+    u->waiting = false;
+    u->backoff_ms = 0;
+}

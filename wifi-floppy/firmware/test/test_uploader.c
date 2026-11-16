@@ -233,6 +233,20 @@ static void offline_keeps_the_write_and_backs_off(void) {
     CHECK_EQ_INT(up_sync(&u), UP_PENDING);            // online again, close still to come
 }
 
+// The Wi-Fi fallback moved the board (review M3): the wait ends, the write goes out at once.
+static void a_network_change_ends_the_wait(void) {
+    mounted();
+    amiga_writes(40, 0x5a);
+    fake_push_connect_failure();
+    up_step(&u);
+    CHECK_EQ_INT(up_step(&u), UP_WAITING);
+    up_network_changed(&u);
+    CHECK_EQ_INT(u.backoff_ms, 0);
+    push_json("HTTP/1.1 200 OK", "{\"staged\":40}");
+    CHECK_EQ_INT(up_step(&u), UP_DID_REQUEST);
+    CHECK_EQ_INT(psram_image_state(0, 40), TRK_PRESENT);
+}
+
 static void a_5xx_is_retried(void) {
     mounted();
     amiga_writes(40, 0x5a);
@@ -817,6 +831,7 @@ int main(void) {
     RUN(tracks_go_in_order_with_rising_seq);
     RUN(the_mount_is_fixed_for_the_session);
     RUN(offline_keeps_the_write_and_backs_off);
+    RUN(a_network_change_ends_the_wait);
     RUN(a_5xx_is_retried);
     RUN(a_torn_read_is_never_sent);
     RUN(not_mounted_parks_until_the_mount_changes);

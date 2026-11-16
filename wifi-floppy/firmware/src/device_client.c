@@ -1477,6 +1477,11 @@ void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
     c->display_layouts = true;
 }
 
+void dc_network_changed(device_client_t *c) {
+    dc_abandon(c);
+    dc_backoff_reset(c);
+}
+
 void dc_set_boot(device_client_t *c, uint32_t id, bool ota) {
     c->_boot_id = id;
     c->_boot_ota = ota;

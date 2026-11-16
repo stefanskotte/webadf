@@ -84,6 +84,16 @@ static void test_answers_count_only_exchanges_the_server_answered(void) {
     CHECK_EQ_INT(c.answers, 2);   // nothing came back
 }
 
+// The Wi-Fi fallback moved the board (review M3): the backoff grown on the old network is gone.
+static void test_a_network_change_resets_the_backoff(void) {
+    boot();
+    fake_push_connect_failure();
+    CHECK_EQ_INT(dc_step(&c), DC_BACKOFF);
+    CHECK(c.backoff_ms > 0, "backed off");
+    dc_network_changed(&c);
+    CHECK_EQ_INT(c.backoff_ms, 0);
+}
+
 // Task 5's binding ruling: transport_t.write() may accept fewer bytes than
 // offered, exactly as a real socket can under backpressure. A client that
 // assumes one write() call sends a whole request would pass every other
@@ -4284,6 +4294,7 @@ int main(void) {
 
     RUN(test_cold_boot_polls_since_zero);
     RUN(test_answers_count_only_exchanges_the_server_answered);
+    RUN(test_a_network_change_resets_the_backoff);
     RUN(test_request_survives_single_byte_writes);
     RUN(test_since_does_not_advance_on_a_failed_fetch);
     RUN(test_current_disk_survives_a_failed_replacement_fetch);

@@ -580,6 +580,10 @@ void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
 // copied (main.c passes a static buffer).
 void dc_set_server(device_client_t *c, int port, const char *host_header);
 
+// The board just changed networks (main.c's Wi-Fi fallback, review M3): the kept connection belonged to the old
+// one, and the backoff grown while nothing got through must not delay the first request on the new one.
+void dc_network_changed(device_client_t *c);
+
 // Server override (1.13.0). Call after dc_init: every status report from now
 // on carries ,"server":{"custom":<bool>,"tls":"verify"|"noverify"} -- both
 // values, so the default is said, not implied by an absent key. Before it is
