@@ -36,6 +36,7 @@
 #include "serial_cmd.h"        //   and the "wf server" console that changes it
 #include "portal_net.h"
 #include "wifi_ctl.h"          // Wi-Fi networks from the web app (2026-11-15)
+#include "wifi_fallback.h"     // moving to another saved network while running (2026-11-16)
 #include "lwip/netif.h"   // default_route_str(): netif_default, see portal_stop()
 #include <stdio.h>
 #include "wf_log.h"
@@ -1814,6 +1815,8 @@ static uint32_t   g_wifi_retry_at;     // a failed instruction fetch waits until
 // board's ack is 0 until it has heard the cursor, and a report saying "ack 0, nothing done" -- the OTA trial's
 // reports come before any poll -- must not reach the server as news.
 static bool       g_wifi_synced;
+// The Wi-Fi fallback's clocks (wifi_fallback.h, wifi_fallback_step below). started = false restarts them.
+static wifi_fb_t  g_wfb;
 
 // The names and where the board is, for the page opened on request. Keeps the note (err and its fields).
 static void online_view_names(portal_view_t *v) {
@@ -1932,6 +1935,7 @@ static void __attribute__((noinline)) wifi_online_check(setup_form_t *f, uploade
     g_wifi_owe = true;
     wf_logf(WF_INFO, "wifi: %s: join %d save %d back %d (%d tries)", name, (int)out.join,
             out.tried_save ? (int)out.saved : -1, out.back_on, out.attempts);
+    g_wfb.started = false;         // the fallback's clocks start again from here (wifi_fallback_step)
     while (out.back_on < 0) {
         // Never restart with a disk in a drive or saves waiting (I3): the Amiga is reading it, and the saves would
         // be lost. Only an idle board restarts.
@@ -2067,6 +2071,76 @@ static void __attribute__((noinline)) wifi_online_step(device_client_t *c, uploa
         dc_set_wifi(c, g_wifi_ack, wifi_tail_write, NULL);
         dc_wifi_owe(c);
     }
+}
+
+// ---------------------------------------------------------------- moving to another saved network (2026-11-16)
+//
+// Bench 2026-11-16: the board walked its saved networks only at start-up. A hotspot switched off left it with the
+// link down for minutes, and a UniFi block left the link up with nothing getting through -- both with another saved
+// network in range. wifi_fallback.h has the rules (when, where the rounds start, the back-offs, the holds); this
+// does the radio work: a scan for the saved names, then the start-up's own rounds (wifi_rejoin_run, with the Save
+// check's join: net_join.c leaves what the station holds before every attempt, the 99a87b57 hygiene). A move goes
+// through the station netif's ordinary address change (a new DHCP lease); PaulaNET follows it the way it follows a
+// rejoin. Never a restart unless the board is idle (wifi_hold: no disk in DF0/DF1, no saves waiting, DF1 not
+// Network) -- the Save check's rule; otherwise it keeps trying. g_wfb is declared with the other Wi-Fi state above.
+
+static void __attribute__((noinline)) wifi_fallback_step(device_client_t *c, uploader_t *up) {
+    if (!prov.have_config || prov.cfg.n_nets <= 0) return;
+    const uint32_t now = clock_ms();
+    const bool trial = fw_rom_trial_boot() && now < FW_TRIAL_DEADLINE_MS;   // it reverts by itself if dead
+    const wfb_in_t in = { now, net_radio_sta_up(), c->answers, prov.cfg.n_nets,
+                          portal_is_open() || g_wifi_win.open || trial || g_fwu_reboot_owed };
+    const wfb_due_t due = wfb_due(&g_wfb, &in);
+    if (due == WFB_DUE_NONE) return;
+    const int cur = prov.joined ? prov.first : -1;
+    const char *cur_name = cur >= 0 ? prov.cfg.net[cur].ssid : "no network";
+    int seen = 0;
+    if (due == WFB_DUE_LOST) {
+        wf_logf(WF_WARN, "wifi: on no network -- trying the saved networks again");
+    } else {
+        if (due == WFB_DUE_DOWN)
+            wf_logf(WF_WARN, "wifi: no link for %lu s on %s", (unsigned long)((now - g_wfb.down_since) / 1000u),
+                    cur_name);
+        else
+            wf_logf(WF_WARN, "wifi: no answer from the server for %lu s on %s",
+                    (unsigned long)((now - g_wfb.quiet_since) / 1000u), cur_name);
+        const char *names[CONFIG_NETS_MAX];
+        const int n = prov.cfg.n_nets < CONFIG_NETS_MAX ? prov.cfg.n_nets : CONFIG_NETS_MAX;
+        for (int i = 0; i < n; i++) names[i] = prov.cfg.net[i].ssid;
+        bt_hw_tick(1);
+        seen = net_radio_scan_names(names, n, 8000);
+        bt_hw_tick(1);
+    }
+    const int from = wfb_pick(&g_wfb, due, clock_ms(), cur, prov.cfg.n_nets, seen);
+    if (due != WFB_DUE_LOST) {
+        if (seen < 0) wf_logf(WF_WARN, "wifi: the scan could not run");
+        else wf_logf(WF_INFO, "wifi: scan: saved networks in range 0x%x (this one %d)", (unsigned)seen, cur);
+    }
+    if (from < 0) {
+        wf_logf(WF_INFO, "wifi: no other saved network in range -- staying on %s", cur_name);
+        return;
+    }
+    wf_logf(WF_WARN, "wifi: trying the saved networks, %s first", prov.cfg.net[from].ssid);
+    release_kept_connection();     // its socket belongs to the network being left
+    const wifi_check_ops_t ops = { online_join, NULL };
+    int tries = 0;
+    const int back_on = wifi_rejoin_run(&prov, from, &ops, &tries);
+    g_wifi_owe = true;             // the status tail's "cur" names the network now (or none)
+    if (back_on >= 0) {
+        g_ui_bars = rssi_bars(wifi_rssi());
+        wf_logf(WF_INFO, "wifi: now on %s at %s (%d tries)", prov.cfg.net[back_on].ssid, ip_str(), tries);
+    } else if (wifi_hold(up) == PORTAL_HOLD_NONE) {
+        // Idle: the normal start takes over -- its rounds, then the setup page at power-on.
+        wf_logf(WF_ERR, "wifi: no saved network answers (%d tries) -- restarting into the normal start", tries);
+        bt_hw_mark(1, BT1_WIFI);   // not the poll loop any more: core1 supervision stands down
+        leave_before_reboot("no saved network answers");
+        fw_rom_request_reboot(0);
+        for (;;) sleep_ms(1000);
+    } else {
+        // A disk in a drive, saves waiting or DF1 Network: a restart would cost them. Again in 30 s.
+        wf_logf(WF_WARN, "wifi: no saved network answers (%d tries), board busy -- trying again", tries);
+    }
+    wfb_ran(&g_wfb, due, clock_ms(), back_on);
 }
 
 // ---------------------------------------------------------------- firmware update (2b)
@@ -2871,6 +2945,7 @@ static void core1_main(void) {
 
         bt_hw_mark(1, BT1_LOOP);
         bool trail_contact = false;
+        g_wfb.started = false;   // the fallback's clocks start with the loop
         while (true) {
             bt_hw_tick(1);
             // The first heard status report (it carried lastBoot): running. Ends the flash trail of a confirm restart.
@@ -2894,6 +2969,8 @@ static void core1_main(void) {
             nfc_core1_event(&c, &up);
             // The setup page opened on request, before any request of this pass (wifi_portal_step).
             wifi_portal_step(&up);
+            // No connection for a while: another saved network (wifi_fallback_step).
+            wifi_fallback_step(&c, &up);
             {
                 const int r = g_nfc_reader;
                 if (r != nfc_reader_seen) {
