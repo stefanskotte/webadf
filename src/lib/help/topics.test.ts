@@ -46,7 +46,8 @@ describe('help topics', () => {
       // ... and how files from the computer or a phone get onto a disk (tester report 2026-11-14): 565.
       // ... and the disk sign in the path and the review's Add more files on a phone (2026-11-15): 585.
       // ... and that a title's rows are disk images, whose files land in the root (ruling 2026-11-15): 605.
-      expect(words).toBeLessThanOrEqual(id === 'files' ? 605 : 280);
+      // ... and that a title with one disk opens straight into it, a made disk named like its title (ruling 2026-11-16): 620.
+      expect(words).toBeLessThanOrEqual(id === 'files' ? 620 : 280);
       expect(text).not.toMatch(BANNED);
     });
   }

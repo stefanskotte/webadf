@@ -90,8 +90,8 @@ export const HELP_TOPICS = {
         <p>
           <strong>Three places.</strong> <em>STASH:</em> holds loose files you drop here or your Amiga sends.{' '}
           <em>NET:</em> lists your boards; copying into one sends to its Amiga. <em>LIBRARY:</em> shows your collections as
-          folders, then the titles in none. A title lists its disk images (Disk 1 · ADF, 880 KB): files copied into one
-          land in its root.
+          folders, then the titles in none. A title with one disk opens straight into it; one with more lists its disk
+          images (Disk 1 · ADF, 880 KB). Files copied into a disk land in its root.
         </p>
         <p>
           <strong>Source and destination.</strong> The pane you last clicked is the source, with the dark title bar. <em>Copy</em> and <em>Move</em> go to the other pane; the device column takes it to
@@ -101,7 +101,7 @@ export const HELP_TOPICS = {
         <p>
           <strong>Filing.</strong> Move a title onto a collection to file it there and out of the one it was in (one already there is
           skipped); Copy files it in both. Move to LIBRARY: takes it out of its collection. Makedir on LIBRARY: makes a collection. Disk
-          images copied from STASH: join the library. <em>Create ADF…</em> makes a blank disk; <em>Create SysConf…</em> makes a boot disk&apos;s settings file.
+          images copied from STASH: join the library. <em>Create ADF…</em> makes a blank disk named like its title; <em>Create SysConf…</em> makes a boot disk&apos;s settings file.
         </p>
         <p>
           <strong>Disks onto the Amiga.</strong> Copy a disk, or a title (all its disks), onto a volume: each disk arrives
