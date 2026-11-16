@@ -31,6 +31,7 @@ const loaded: LiveStateRow = {
   df1Sha256: null, netDriverSeenAt: null, netAmigaIp: null, netFramesIn: null, netFramesOut: null,
   secondDriveCapable: null, sel1Wired: null, df1Seen: null,
   serverCustom: null, serverTls: null,
+  wifiNets: null, wifiCurrent: null, wifiSetupUntil: null, wifiSeq: 0, wifiAck: null, wifiResult: null,
 };
 
 const empty: LiveStateRow = {

@@ -85,7 +85,15 @@ test('a blank ADF made on the phone: Add files to it puts the picked files on th
   await expect(page.getByTestId('pane-left-add-files')).toHaveCount(0);
   await page.getByTestId('files-side-right').tap();
   await page.getByTestId('pane-right-crumb-1').tap();
-  await expect(page.getByTestId('pane-right').getByTestId('pane-row').filter({ hasText: 'Disk 1' })).toBeVisible(LIVE);
+  const diskRow = page.getByTestId('pane-right').getByTestId('pane-row').filter({ hasText: 'Disk 1' });
+  await expect(diskRow).toBeVisible(LIVE);
+  // The title's row is the disk image itself, not a folder WebADF made (tester report and ruling 2026-11-15): on a
+  // phone it reads "Disk 1 · ADF, 880 KB" with the disk sign, and a screen reader hears it as a disk image.
+  await expect(diskRow).toHaveAttribute('data-name', 'Disk 1');
+  await expect(diskRow.getByTestId('pane-disk-image')).toHaveText('· ADF, 880 KB', { useInnerText: true });
+  await expect(diskRow.getByTestId('pane-disk-spoken')).toHaveText('disk image Disk 1, ADF, 880 KB');
+  await expect(diskRow.locator('svg')).toBeVisible();
+  await expect(diskRow).not.toContainText('DSK');
   await expect(page.getByTestId('pane-right-add-files')).toHaveCount(0);
 });
 
@@ -106,14 +114,39 @@ test('inside a folder of a disk, Add files names the folder and writes into it',
   // A seeded disk's label already names its title ("<title> (Disk 1)"): said once.
   await expect(add).toHaveText(`Add files to ${name} (Disk 1)/Docs`);
 
+  // The disk crumb reads as a disk, not a folder (tester report 2026-11-15: "I have to upload them to disk1/"): a disk
+  // glyph and "disk" in its name; the folder crumb after it is not marked.
+  const diskCrumb = page.getByTestId('pane-right-crumb-2');
+  await expect(diskCrumb).toHaveAttribute('data-kind', 'disk');
+  await expect(diskCrumb).toHaveAccessibleName(`disk ${name} (Disk 1)`);
+  await expect(page.getByTestId('pane-right-crumb-2-disk')).toBeVisible();
+  await expect(page.getByTestId('pane-right-crumb-3')).toHaveText('Docs');
+  await expect(page.getByTestId('pane-right-crumb-3')).not.toHaveAttribute('data-kind', 'disk');
+
   await page.getByTestId('pane-right-add-files-input').setInputFiles([{ name: 'Inside', mimeType: 'text/plain', buffer: Buffer.from('in Docs') }]);
   const review = page.getByTestId('files-drop-review');
   await expect(review).toBeVisible();
+  // The destination as the button says it, not "/Docs"; on a phone no "drop more", but Add more files, which opens the
+  // phone's picker again and adds to the same batch.
+  const dest = review.getByTestId('drop-destination-select');
+  await expect(dest.locator('option:checked')).toHaveText(`${name} (Disk 1)/Docs`);
+  await expect(dest.locator('option').first()).toHaveText(`${name} (Disk 1)`);
+  const staged = review.getByTestId('drop-staged-line');
+  await expect(staged).toBeVisible();
+  expect(await staged.innerText()).toBe('1 item staged below — tap Add more files to add to the same batch.');
+  const more = review.getByTestId('drop-pick-more');
+  await expect(more).toHaveText('Add more files');
+  expect((await more.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  const chooser = page.waitForEvent('filechooser');
+  await more.tap();
+  await (await chooser).setFiles([{ name: 'Second', mimeType: 'text/plain', buffer: Buffer.from('also in Docs') }]);
+  await expect(staged).toContainText('2 items staged below');
+  await expect(dest.locator('option:checked')).toHaveText(`${name} (Disk 1)/Docs`);
   await review.getByTestId('drop-commit').tap();
-  await expect(page.locator('[data-sonner-toast]').filter({ hasText: /Added 1 item to Docs — saved as version 1\./ })).toBeVisible(LIVE);
+  await expect(page.locator('[data-sonner-toast]').filter({ hasText: /Added 2 items to Docs — saved as version 1\./ })).toBeVisible(LIVE);
   await expect(page.getByTestId('pane-right').getByTestId('pane-row').filter({ hasText: 'Inside' })).toBeVisible(LIVE);
   const docs = (await storedRoot(seeded.diskId)).find((e) => e.name === 'Docs')!;
-  expect(docs.children.map((e) => e.name)).toEqual(['Inside']);
+  expect(docs.children.map((e) => e.name).sort()).toEqual(['Inside', 'Second']);
 });
 
 test('a disk in a drive: Add files is there but dimmed, and a tap says why instead of opening the picker', async ({ page, request }) => {

@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks } from '@/db/schema/catalog';
@@ -90,6 +90,23 @@ function at(list: AdfEntry[], path: string): AdfEntry | null {
   return e && rest.length ? at(e.children, rest.join('/')) : e;
 }
 
+test('a title\'s disk rows say the image: an HD ADF is 1.76 MB, an HFE says HFE (ruling 2026-11-15)', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const tag = runTag();
+  const hd = await seedTitle(orgId, `RowsHD-${tag}`, STANDARD, 'hd');
+  const hfe = await seedDisk(orgId, { title: `RowsHFE-${tag}`, diskNo: 1, sha256: createHash('sha256').update(`hfe-${tag}-${randomUUID()}`).digest('hex'),
+    sizeBytes: 2_097_664, imageFormat: 'hfe' });
+  await openFiles(page, `LIBRARY:/${hd.gameId}`, `LIBRARY:/${hfe.gameId}`, 'left');
+  const only = (side: 'left' | 'right') => page.getByTestId(`pane-${side}`).getByTestId('pane-row');
+  await expect(only('left')).toHaveCount(1);
+  await expect(only('left').getByTestId('pane-disk-image')).toHaveText('· ADF', { useInnerText: true });
+  await expect(only('left').locator('td').nth(2)).toHaveText('1.76 MB');
+  await expect(only('left').getByTestId('pane-disk-spoken')).toHaveText(/^disk image .+, ADF, 1\.76 MB$/);
+  await expect(only('right').getByTestId('pane-disk-image')).toHaveText('· HFE', { useInnerText: true });
+  await expect(only('right').locator('td').nth(2)).toHaveText('2.0 MB');
+  await expect(only('right').getByTestId('pane-disk-spoken')).toHaveText(/^disk image .+, HFE, 2\.0 MB$/);
+});
+
 test('copy a file between disks makes one version', async ({ page }) => {
   const { orgId } = await signUpFresh(page);
   const tag = runTag();
@@ -100,9 +117,24 @@ test('copy a file between disks makes one version', async ({ page }) => {
   // The left pane walks from LIBRARY: into disk B by double-clicks: the title, then its disk.
   await row(page, 'left', `CopyB-${tag}`).dblclick();
   await expect(page.getByTestId('pane-left-crumb-1')).toHaveText(`CopyB-${tag}`);
-  await page.getByTestId('pane-left').getByTestId('pane-row').filter({ hasText: 'Disk 1' }).dblclick();
+  // The title's row is the disk image (ruling 2026-11-15): the disk sign and "· ADF" after the label, the size in the
+  // Size column from lg, and heard as "disk image <label>, ADF, 880 KB".
+  const diskRow = page.getByTestId('pane-left').getByTestId('pane-row').filter({ hasText: 'Disk 1' });
+  const label = (await diskRow.getAttribute('data-name'))!;
+  await expect(diskRow.getByTestId('pane-disk-image')).toHaveText('· ADF', { useInnerText: true });
+  await expect(diskRow.locator('td').nth(2)).toHaveText('880 KB');
+  await expect(diskRow.getByTestId('pane-disk-spoken')).toHaveText(`disk image ${label}, ADF, 880 KB`);
+  await expect(diskRow).not.toContainText('DSK');
+  await diskRow.dblclick();
   await expect(page.getByTestId('disk-strip-left')).toBeVisible();
   await expect.poll(() => new URL(page.url()).searchParams.get('left')).toBe(b.path);
+  // The crumb that is the disk image reads as a disk, not a folder (tester report 2026-11-15): a disk glyph, and its
+  // name says "disk"; the title crumb above it is not marked.
+  const diskCrumb = page.getByTestId('pane-left-crumb-2');
+  await expect(diskCrumb).toHaveAttribute('data-kind', 'disk');
+  await expect(diskCrumb).toHaveAccessibleName(/^disk .*Disk 1/);
+  await expect(page.getByTestId('pane-left-crumb-2-disk')).toBeVisible();
+  await expect(page.getByTestId('pane-left-crumb-1')).not.toHaveAttribute('data-kind', 'disk');
   // The phone's Add files to <disk> is not drawn from lg: here a drop from the computer adds files, as before.
   for (const s of ['left', 'right']) await expect(page.getByTestId(`pane-${s}-add-files`)).toBeHidden();
 

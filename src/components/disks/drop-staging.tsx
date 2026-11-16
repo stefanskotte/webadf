@@ -51,7 +51,7 @@ interface LiveRow {
 }
 
 export function DropStaging({
-  filesystem, intl, existingNamesByDir, freeBlocks, entries, freeBytes, volumeName, incoming,
+  filesystem, intl, existingNamesByDir, freeBlocks, entries, freeBytes, volumeName, incoming, placeOf, pickOnPhone = false,
 }: {
   filesystem: Filesystem;
   intl: boolean;
@@ -83,6 +83,18 @@ export function DropStaging({
    * the pane shows or the folder row they landed on.
    */
   incoming?: { items: Promise<DroppedItem[]>; destinationBlock: number };
+  /**
+   * How the destination selector and its refusal name a folder (Files' review, 2026-11-15): from the disk's root
+   * ('' for the root, names joined by '/') to the place a person reads, "Empty · Disk 1/Docs". Without it, the Browse
+   * page's own "/" and "/Docs".
+   */
+  placeOf?: (folder: string) => string;
+  /**
+   * Below lg, an "Add more files" button opens the phone's own picker and adds what is picked to this batch (Files'
+   * review, opened from the phone's Add files, 2026-11-15): a phone has no drag from the OS, so "drop more" is not said
+   * there. From lg the strip and its words are as before.
+   */
+  pickOnPhone?: boolean;
 }) {
   const { diskId, disabled, busy, runEdit, rootBlock } = useFileEdit();
 
@@ -150,6 +162,10 @@ export function DropStaging({
     const label = directoryOptions.find((d) => d.block === destinationBlock)?.label ?? '/';
     return label === '/' ? '' : label.slice(1);
   }, [directoryOptions, destinationBlock]);
+  /** A destination as shown: the Browse page's "/Docs", or the caller's place ("Empty · Disk 1/Docs"). */
+  const shownPlace = (label: string) => (placeOf ? placeOf(label === '/' ? '' : label.slice(1)) : label);
+  /** The phone's own picker (pickOnPhone): what it picks is added to this batch, aimed at the batch's destination. */
+  const phonePicker = useRef<HTMLInputElement>(null);
   // The one-shot verdict from Task 3's own module -- the default name and
   // shortened flag for every row come from here and never change; only the
   // COLLISION verdict is re-derived below, live, because a typed rename or a
@@ -299,7 +315,7 @@ export function DropStaging({
     // means "the batch's destination"), adds as before.
     if (destination !== null && dropped.length > 0 && destination !== destinationBlock) {
       const label = directoryOptions.find((d) => d.block === destinationBlock)?.label ?? '/';
-      const message = `This batch goes to ${label}. Write or clear it first, or change the destination above.`;
+      const message = `This batch goes to ${shownPlace(label)}. Write or clear it first, or change the destination above.`;
       setRefusedDrop(message);
       toast.error('Not added to this batch', { description: message });
       return;
@@ -483,17 +499,44 @@ export function DropStaging({
             </p>
           ) : rows.length === 0 ? (
             <>
-              <span className="text-[14px] font-semibold [overflow-wrap:anywhere]" style={{ color: 'var(--ink)' }}>
+              <span className={`text-[14px] font-semibold [overflow-wrap:anywhere] ${pickOnPhone ? 'max-lg:hidden' : ''}`} style={{ color: 'var(--ink)' }}>
                 Drop files, folders or an .lha / .lzh / .zip here or on a folder to add them to{' '}
                 <span className="font-mono">{volumeName}</span>
               </span>
+              {pickOnPhone && (
+                <span data-testid="drop-phone-empty" className="text-[14px] font-semibold [overflow-wrap:anywhere] lg:hidden" style={{ color: 'var(--ink)' }}>
+                  Pick files on this phone to add them to <span className="font-mono">{volumeName}</span>
+                </span>
+              )}
               <span className="text-[12px]" style={{ color: 'var(--muted-2)' }}>
                 {freeBytes === null ? 'Free space unknown' : `${formatKb(freeBytes)} free on this disk`} · every change is saved as a new version
               </span>
             </>
           ) : (
-            <span className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>
-              {rows.length} item{rows.length === 1 ? '' : 's'} staged below — drop more to add to the same batch.
+            <span data-testid="drop-staged-line" className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>
+              {rows.length} item{rows.length === 1 ? '' : 's'} staged below
+              {pickOnPhone ? (
+                <>
+                  <span className="max-lg:hidden"> — drop more to add to the same batch.</span>
+                  <span className="lg:hidden"> — tap Add more files to add to the same batch.</span>
+                </>
+              ) : ' — drop more to add to the same batch.'}
+            </span>
+          )}
+          {pickOnPhone && !disabled && (
+            <span className="mt-1.5 lg:hidden">
+              <button type="button" data-testid="drop-pick-more" disabled={busy}
+                      onClick={() => phonePicker.current?.click()}
+                      className="min-h-11 rounded-[10px] border px-4 text-[13px] font-semibold disabled:opacity-50"
+                      style={{ borderColor: 'var(--line)', color: 'var(--ink)', background: 'var(--surface)' }}>
+                {rows.length === 0 ? 'Add files' : 'Add more files'}
+              </button>
+              <input ref={phonePicker} type="file" multiple hidden tabIndex={-1} data-testid="drop-pick-more-input"
+                     onChange={(e) => {
+                       const picked = [...(e.target.files ?? [])];
+                       e.target.value = '';
+                       if (picked.length) stage(Promise.resolve(picked.map((file) => ({ path: file.name, kind: 'file' as const, file, sizeBytes: file.size }))), null);
+                     }} />
             </span>
           )}
         </div>
@@ -514,17 +557,17 @@ export function DropStaging({
               directory on the disk IS a usable destination, chosen HERE
               rather than by dropping directly onto its row.
             */}
-            <label className="flex items-center gap-1.5">
+            <label className="flex min-w-0 max-w-full items-center gap-1.5">
               Destination:
               <select
                 data-testid="drop-destination-select"
                 value={destinationBlock}
                 onChange={(e) => changeDestination(Number(e.target.value))}
-                className="h-[30px] rounded-[8px] border bg-transparent px-1.5 text-[11px]"
+                className="h-[30px] min-w-0 max-w-full rounded-[8px] border bg-transparent px-1.5 text-[11px]"
                 style={{ borderColor: 'var(--line)', color: 'var(--ink)' }}
               >
                 {directoryOptions.map((opt) => (
-                  <option key={opt.block} value={opt.block}>{opt.label}</option>
+                  <option key={opt.block} value={opt.block}>{shownPlace(opt.label)}</option>
                 ))}
               </select>
             </label>

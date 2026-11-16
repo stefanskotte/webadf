@@ -5,10 +5,12 @@ import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
 import type { FsEntry, Listing } from '@/lib/files/types';
 import { refusalWords } from '@/lib/files/words';
-import { acceptsCopies, netBoardOf } from '@/lib/files/pane-rules';
+import { acceptsCopies, isDiskCrumb, netBoardOf } from '@/lib/files/pane-rules';
+import { DiskCrumbGlyph } from './disk-crumb-glyph';
 import { isNetVolume, NET_MOVE_IN, NET_PICK_BOARD, NET_READ_ONLY } from '@/lib/files/net-rules';
 import { PANE_DEVICES } from '@/lib/files/path';
 import { managerReturnsFocus } from './dialogs';
+import { diskRowWords } from '@/lib/files/disk-row';
 
 /**
  * Copy to… / Move to… on a phone (Files increment 1, Task 10): where the desktop copies into the other pane, a phone
@@ -64,7 +66,22 @@ export function placesIn(l: Listing): FsEntry[] {
   return [...places.filter((e) => e.kind === 'collection'), ...rest];
 }
 
-const PLACE_GLYPH: Record<string, string> = { title: 'TTL', disk: 'DSK', dir: 'DIR', board: 'BRD', collection: 'DIR', volume: 'DIR' };
+/** A disk is drawn with the disk sign and its image's words (DiskPlace), not a chip. */
+const PLACE_GLYPH: Record<string, string> = { title: 'TTL', dir: 'DIR', board: 'BRD', collection: 'DIR', volume: 'DIR' };
+
+/** A title's disk as a place (ruling 2026-11-15): the disk sign, "Disk 1 · ADF, 880 KB", heard as "disk image Disk 1, ADF, 880 KB". */
+function DiskPlace({ e }: { e: FsEntry }) {
+  const w = diskRowWords(e);
+  return (
+    <>
+      <span aria-hidden className="flex w-[30px] shrink-0 justify-center"><DiskCrumbGlyph size={14} className="" /></span>
+      <span className="sr-only">{w.spoken}</span>
+      <span aria-hidden className="min-w-0 truncate font-semibold">{e.name}</span>
+      <span aria-hidden data-testid="files-copy-to-disk-image" className="mr-auto shrink-0 whitespace-nowrap text-[13px]"
+            style={{ color: 'var(--muted)' }}>· {w.detail}</span>
+    </>
+  );
+}
 
 export function CopyToPicker({ op, count, start, busy, list, onPick, onCancel, filing }: CopyToPickerProps) {
   const [path, setPath] = useState(start);
@@ -120,7 +137,10 @@ export function CopyToPicker({ op, count, start, busy, list, onPick, onCancel, f
               {i > 0 && !crumbs[i - 1].label.endsWith(':') && <span aria-hidden style={{ color: 'var(--muted-2)' }}>/</span>}
               <button type="button" data-testid={`files-copy-to-crumb-${i}`} onClick={() => setPath(c.path)}
                       aria-current={i === crumbs.length - 1 ? 'location' : undefined}
-                      className={`rounded-[4px] px-1 font-medium [overflow-wrap:anywhere] ${tap}`}>{c.label}</button>
+                      {...(isDiskCrumb(listing, c.path) ? { 'data-kind': 'disk', 'aria-label': `disk ${c.label}` } : {})}
+                      className={`rounded-[4px] px-1 font-medium [overflow-wrap:anywhere] ${tap}`}>
+                {isDiskCrumb(listing, c.path) && <DiskCrumbGlyph />}{c.label}
+              </button>
             </span>
           ))}
         </nav>
@@ -132,9 +152,13 @@ export function CopyToPicker({ op, count, start, busy, list, onPick, onCancel, f
               <li key={e.path} className="border-b last:border-b-0" style={{ borderColor: 'var(--hairline)' }}>
                 <button type="button" data-testid="files-copy-to-folder" data-name={e.name} onClick={() => setPath(e.path)}
                         className={`flex min-h-11 w-full min-w-0 items-center gap-2 px-3 text-left hover:bg-[var(--surface-2)] ${tap}`}>
-                  <span aria-hidden className="shrink-0 rounded-[4px] px-[5px] py-px font-mono text-[10px] font-semibold"
-                        style={{ background: 'var(--dir-bg)', color: 'var(--accent-blue)' }}>{PLACE_GLYPH[e.kind]}</span>
-                  <span className="min-w-0 flex-1 truncate font-semibold">{e.name}</span>
+                  {e.kind === 'disk' ? <DiskPlace e={e} /> : (
+                    <>
+                      <span aria-hidden className="shrink-0 rounded-[4px] px-[5px] py-px font-mono text-[10px] font-semibold"
+                            style={{ background: 'var(--dir-bg)', color: 'var(--accent-blue)' }}>{PLACE_GLYPH[e.kind]}</span>
+                      <span className="min-w-0 flex-1 truncate font-semibold">{e.name}</span>
+                    </>
+                  )}
                   <span aria-hidden style={{ color: 'var(--muted-2)' }}>›</span>
                 </button>
               </li>

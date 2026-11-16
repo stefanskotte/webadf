@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { unsettled, holdsFiles, addToLibraryReason, offersUndo, placeOf, exactPlaceOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly, failedReason, FAILED_ROW, deleteText, deleteWhere, netVolumeReason, insideDiskPlace } from './pane-rules';
+import { unsettled, holdsFiles, addToLibraryReason, offersUndo, placeOf, exactPlaceOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly, failedReason, FAILED_ROW, deleteText, deleteWhere, netVolumeReason, insideDiskPlace, diskPlace, isDiskCrumb } from './pane-rules';
 import { NET_OPEN_VOLUME, NET_READ_ONLY } from './net-rules';
 import type { FsEntry, Listing } from './types';
 
@@ -230,5 +230,25 @@ describe('unsettled: a pane on its way to another place', () => {
     expect(unsettled({ loading: false, listing, path: 'NET:/b/Work/Monkey' })).toBe(false);   // clears itself
     expect(unsettled({ loading: true, listing, path: 'NET:/b/Work' })).toBe(false);           // a refresh of the same place
     expect(unsettled({ loading: true, listing: null, path: 'NET:/b/Work' })).toBe(false);     // nothing to aim at
+  });
+});
+
+describe('diskPlace: a disk, and a folder in it, as the drop review names its destination', () => {
+  it('the title and the label, then the folder; a label that names its title alone', () => {
+    expect(diskPlace({ title: 'Empty', label: 'Disk 1' })).toBe('Empty · Disk 1');
+    expect(diskPlace({ title: 'Empty', label: 'Disk 1' }, 'Docs/Sub')).toBe('Empty · Disk 1/Docs/Sub');
+    expect(diskPlace({ title: 'Turrican', label: 'Turrican (Disk 1)' }, 'C')).toBe('Turrican (Disk 1)/C');
+    expect(diskPlace({ title: '', label: 'Disk 1' })).toBe('Disk 1');
+  });
+});
+
+describe('isDiskCrumb: the crumb that is the disk image itself', () => {
+  it("is the crumb at the listing's diskBase, and no other", () => {
+    const l = L('LIBRARY:/g1/d1/Docs', { disk, diskBase: 'LIBRARY:/g1/d1' });
+    expect(isDiskCrumb(l, 'LIBRARY:/g1/d1')).toBe(true);
+    expect(isDiskCrumb(l, 'LIBRARY:/g1/d1/Docs')).toBe(false);
+    expect(isDiskCrumb(l, 'LIBRARY:/g1')).toBe(false);
+    expect(isDiskCrumb(L('LIBRARY:/g1'), 'LIBRARY:/g1')).toBe(false);
+    expect(isDiskCrumb(null, 'LIBRARY:/g1/d1')).toBe(false);
   });
 });

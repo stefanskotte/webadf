@@ -441,3 +441,36 @@ describe('NET: volumes in the pane (spec 2026-10-30 §5)', () => {
     expect(render({ listing: volume })).not.toContain('net-cut');
   });
 });
+
+describe('a title\'s disk rows read as disk images (ruling 2026-11-15)', () => {
+  const titleListing: Listing = {
+    path: 'LIBRARY:/g', crumbs: [{ label: 'LIBRARY:', path: 'LIBRARY:' }, { label: 'Mouseski Keyboard', path: 'LIBRARY:/g' }],
+    entries: [
+      entry('Disk 1', 'disk', { path: 'LIBRARY:/g/d1', size: 901_120, date: null, protection: null, imageFormat: 'adf' }),
+      entry('Disk 2', 'disk', { path: 'LIBRARY:/g/d2', size: 2_097_664, date: null, protection: null, imageFormat: 'hfe' }),
+    ],
+    writable: false, readOnlyReason: null, disk: null, meta: '2 disks', library: { level: 'title', collectionId: null },
+  };
+  it('the disk sign, not a DSK chip; the label, then the format, and below lg the size: "Disk 1 · ADF, 880 KB"', () => {
+    const html = render({ listing: titleListing });
+    expect(html).not.toContain('>DSK<');
+    expect(html).toMatch(/data-name="Disk 1"[^]*<svg[^]*>Disk 1<\/span><span[^>]*data-testid="pane-disk-image"[^>]*>· ADF<span class="lg:hidden">, 880 KB<\/span>/);
+    expect(html).toMatch(/data-name="Disk 2"[^]*>· HFE<span class="lg:hidden">, 2.0 MB<\/span>/);
+  });
+  it('a screen reader hears "disk image Disk 1, ADF, 880 KB" once: the drawn words are hidden from it', () => {
+    const html = render({ listing: titleListing });
+    expect(html).toContain('<span data-testid="pane-disk-spoken" class="sr-only">disk image Disk 1, ADF, 880 KB</span>');
+    expect(html).toMatch(/<span aria-hidden="true" class="truncate font-semibold"[^>]*>Disk 1<\/span>/);
+  });
+  it('from lg the Size column says the size the name leaves out: 880 KB, 2.0 MB', () => {
+    const html = render({ listing: titleListing });
+    expect(html).toMatch(/data-name="Disk 1"[^]*?max-lg:hidden"[^>]*>880 KB<\/td>/);
+    expect(html).toMatch(/data-name="Disk 2"[^]*?max-lg:hidden"[^>]*>2.0 MB<\/td>/);
+  });
+  it('the label, the row\'s name and its checkbox stay the disk\'s own', () => {
+    const html = render({ listing: titleListing });
+    expect(html).toContain('aria-label="Select Disk 1"');
+    expect(rows(html).map((r) => attr(r, 'data-name'))).toEqual(['Disk 1', 'Disk 2']);
+    expect(rows(html).map((r) => attr(r, 'data-kind'))).toEqual(['disk', 'disk']);
+  });
+});

@@ -135,6 +135,40 @@
 // referenced here. The budget: TCP 1, IP reassembly 1, ARP 1, DHCP 2, DNS 1,
 // SNTP 1 = 7 concurrent, plus headroom. Each slot is a few tens of bytes.
 #define MEMP_NUM_SYS_TIMEOUT        12
+// (The setup portal adds no sys_timeout user: its DHCP and DNS servers are raw udp_recv callbacks and its HTTP
+// connections use tcp_poll, which runs on the TCP timer already counted. So the AP beside the station needs none.)
+
+// --- PCB pools for the setup page opened beside the station (bench 2026-11-15, fw 1.25.0 TEST) --------------------
+// lwIP's defaults are MEMP_NUM_UDP_PCB 4 and MEMP_NUM_TCP_PCB 5, sized for the station alone. With the Wi-Fi
+// networks setup page open beside it (the AP and its servers up while the board stays online) the UDP pool ran dry:
+// every DNS lookup then failed -- dns_gethostbyname() ERR_MEM, "tls: DNS call refused (code -101)" -- and the board
+// was offline to the server for the whole ten minutes. LWIP_DNS_SECURE (lwIP's default) includes RAND_SRC_PORT, so
+// each lookup in flight takes a pcb of its own (dns.c dns_alloc_random_port, up to DNS_MAX_SOURCE_PORTS =
+// DNS_TABLE_SIZE), and lwIP gives up with ERR_MEM only when the DNS client holds none at all -- which is exactly
+// what a full pool leaves it.
+//
+// The budget, counted from the code (test/test_lwip_budget.c checks it; portal_net.c asserts its own share):
+//   UDP: the DHCP client 1 (dhcp.c, one shared pcb) + SNTP 1 (sntp.c) + DNS lookups in flight DNS_TABLE_SIZE
+//        + the portal's DHCP and DNS servers 2                                              = 8
+//   TCP: the HTTPS connection 2 (one being abandoned or in TIME_WAIT while the next connects) + the Amiga's Transfer
+//        connection 1 (amiga_tcp.c) + the portal's HTTP connections 3 (MAX_HTTP_CONNS)       = 6, plus 2 spare
+//        (an exhausted TCP pool makes lwIP kill a live connection by priority, tcp_alloc)    = 8
+// Listening pcbs (MEMP_NUM_TCP_PCB_LISTEN, default 8): the portal's one, and a TEST build's a2b_discard: no change.
+// Cost, measured in the map (memp_memory_*_base): UDP +128 B (4 x 32), TCP +468 B (3 x 156), and the ALTCP pool,
+// which follows MEMP_NUM_TCP_PCB, +132 B: +732 B of .bss against master -- 16 B below the build before the Wi-Fi
+// networks work, which freed 748 B for it (HANDOFF, ruling F2).
+#define DNS_TABLE_SIZE              4
+#define WF_UDP_PCB_DHCP_CLIENT      1
+#define WF_UDP_PCB_SNTP             1
+#define WF_UDP_PCB_PORTAL           2
+#define WF_UDP_PCB_BUDGET           (WF_UDP_PCB_DHCP_CLIENT + WF_UDP_PCB_SNTP + DNS_TABLE_SIZE + WF_UDP_PCB_PORTAL)
+#define WF_TCP_PCB_TLS              2
+#define WF_TCP_PCB_AMIGA            1
+#define WF_TCP_PCB_PORTAL_HTTP      3
+#define WF_TCP_PCB_SPARE            2
+#define WF_TCP_PCB_BUDGET           (WF_TCP_PCB_TLS + WF_TCP_PCB_AMIGA + WF_TCP_PCB_PORTAL_HTTP + WF_TCP_PCB_SPARE)
+#define MEMP_NUM_UDP_PCB            WF_UDP_PCB_BUDGET
+#define MEMP_NUM_TCP_PCB            WF_TCP_PCB_BUDGET
 
 // --- SNTP (task 9): wall clock for certificate expiry checking ----------
 // A fixed pool hostname, not DHCP option 42 (LWIP_DHCP_MAX_NTP_SERVERS):

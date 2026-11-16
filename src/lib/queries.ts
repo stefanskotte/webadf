@@ -510,6 +510,17 @@ export interface DeviceListItem {
   /** Inside the Amiga (DF0) or in an external case (DF1): names the drive only (src/lib/drive-numbers.ts). */
   driveBase: DriveBase;
   bootDiskCapable: boolean;
+  /** Wi-Fi networks (2026-11-15, src/lib/wifi-networks.ts): the saved names in hex (null = firmware does not report
+   *  them), the one the board is on, the setup page's close time, and the request cursor with the board's answer. */
+  wifiNets: string[] | null;
+  wifiCurrent: number | null;
+  wifiSetupUntil: Date | null;
+  wifiSeq: number;
+  wifiOp: string;
+  wifiOpSsid: string | null;
+  wifiCancelled: string | null;
+  wifiAck: number | null;
+  wifiResult: string | null;
   /** The disk DF0 last held before a web eject (A4): offered as "Re-insert last disk" while the drive is empty. */
   lastDiskId: string | null;
   lastDiskTitle: string | null;
@@ -607,6 +618,15 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       displayLayout: devices.displayLayout,
       bootDisk: devices.bootDisk,
       driveBase: devices.driveBase,
+      wifiNets: devices.wifiNets,
+      wifiCurrent: devices.wifiCurrent,
+      wifiSetupUntil: devices.wifiSetupUntil,
+      wifiSeq: devices.wifiSeq,
+      wifiOp: devices.wifiOp,
+      wifiOpSsid: devices.wifiOpSsid,
+      wifiCancelled: devices.wifiCancelled,
+      wifiAck: devices.wifiAck,
+      wifiResult: devices.wifiResult,
       lastDiskId: lastDisk.id,
       lastDiskTitle: deviceTitle(lastGame),
       lastDiskNo: lastDisk.diskNo,

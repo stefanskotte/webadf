@@ -98,19 +98,27 @@ describe('the firmware bounds the server respects', () => {
     const xfer = `,"xfer":${JSON.stringify(buildXfer(4294967295, '255.255.255.255'))}`;
     // NET: volumes: `req` rides every body to a board that sends reqAck (the requests themselves travel in GET /api/device/req).
     const req = `,"req":${JSON.stringify(buildReq(4294967295))}`;
-    const worst = Buffer.byteLength(disk + next + display + drive + df1 + xfer + req + update + nfcWrite + nfcKind, 'utf8');
+    // Wi-Fi networks (2026-11-15): `wifi` rides every body to a board that sends wifiAck -- the cursor only; the
+    // instruction, which can carry a 32-octet name, travels in GET /api/device/wifi.
+    const wifi = ',"wifi":{"v":4294967295}';
+    const worst = Buffer.byteLength(disk + next + display + drive + df1 + xfer + req + wifi + update + nfcWrite + nfcKind, 'utf8');
     const budget = define('DC_POLL_BODY_BYTES');
     // Reported rather than just asserted, so a future reader sees the margin
     // instead of rediscovering it.
     expect(worst, `worst-case body ${worst} bytes against a ${budget}-byte buffer`)
       .toBeLessThan(budget);
     // A board before 1.12.0 sends no df1Ack and is never sent `df1`: its worst case must still fit ITS buffer.
-    expect(worst - Buffer.byteLength(df1 + xfer + req, 'utf8'), 'a 1.11 board keeps its 1,536-byte buffer').toBeLessThan(1536);
+    expect(worst - Buffer.byteLength(df1 + xfer + req + wifi, 'utf8'), 'a 1.11 board keeps its 1,536-byte buffer').toBeLessThan(1536);
   });
 
   // Review Focus 4: 1.14.0 and 1.15.0 copy `xfer` into a 48-byte buffer (dc_take_xfer's `static char obj[48]`), and
   // json_object refuses an object that does not fit -- those boards would then drop xfer whole and never send again.
   // Measured on the product helper's output, not a typed string (pre-flight F8).
+  // Wi-Fi networks (2026-11-15): dc_take_wifi copies `wifi` into a 32-byte buffer.
+  it('keeps the wifi cursor object inside the board\'s 32-byte buffer', () => {
+    expect(Buffer.byteLength(JSON.stringify({ v: 4294967295 }), 'utf8') + 1).toBeLessThanOrEqual(32);
+  });
+
   it('keeps the worst xfer object inside the 48-byte buffer every sending board has', () => {
     const obj = JSON.stringify(buildXfer(4294967295, '255.255.255.255'));
     expect(Buffer.byteLength(obj, 'utf8') + 1).toBeLessThanOrEqual(48);

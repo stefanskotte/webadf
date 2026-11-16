@@ -10,7 +10,8 @@ import { collectDirectories } from '@/components/disks/file-tree';
 import type { DroppedItem } from '@/lib/drop-reader';
 import type { DiskInfo, DropReviewData } from '@/lib/files/types';
 import { refusalWords } from '@/lib/files/words';
-import { managerReturnsFocus, placeName } from './dialogs';
+import { diskPlace } from '@/lib/files/pane-rules';
+import { managerReturnsFocus } from './dialogs';
 
 /**
  * Files from the computer dropped on a pane inside a writable disk (Files increment 1, Task 9b): the Browse page's
@@ -20,6 +21,10 @@ import { managerReturnsFocus, placeName } from './dialogs';
  *
  * The TOSEC confirm has already been asked by the manager, so the review's own FileEditProvider gets no tosecName;
  * `onWritten` hands the saved version back for the manager's versioned toast with Undo.
+ *
+ * Also opened by the phone's Add files (add-files-button.tsx). Follow-up 2026-11-15: the destination names the place
+ * as the pane's button does ("Empty · Disk 1/Docs", diskPlace), not "/", on every width; below lg the review says
+ * "Add more files" (the phone's picker, added to the same batch) instead of "drop more".
  */
 export function DropReview({ disk, folder, items, onClose, onWritten }: {
   disk: DiskInfo; folder: string; items: Promise<DroppedItem[]>;
@@ -55,7 +60,7 @@ export function DropReview({ disk, folder, items, onClose, onWritten }: {
 
   return (
     <Modal open finalFocus={managerReturnsFocus} onOpenChange={(o) => { if (!o) onClose(); }} width={620} testId="files-drop-review"
-           closeTestId="files-drop-review-close" title={`Add files to ${placeName(disk)}`} dismissible
+           closeTestId="files-drop-review-close" title={`Add files to ${diskPlace(disk)}`} dismissible
            subtitle="Check the names before they are written. Every change is saved as a new version."
            footer={(
              <div className="flex w-full items-center justify-end">
@@ -69,7 +74,8 @@ export function DropReview({ disk, folder, items, onClose, onWritten }: {
                             disabled={data.disabled ? { reason: 'bitmap-untrusted', message: data.disabled } : null}>
             <DropStaging filesystem={data.filesystem} intl={data.intl} existingNamesByDir={data.existingNamesByDir}
                          freeBlocks={data.freeBlocks} entries={data.entries} freeBytes={data.freeBytes}
-                         volumeName={data.volumeName} incoming={incoming} />
+                         volumeName={data.volumeName} incoming={incoming}
+                         placeOf={(f) => diskPlace(disk, f)} pickOnPhone />
           </FileEditProvider>
         ) : (
           <p data-testid="files-drop-review-loading" className="text-[13px]" style={{ color: 'var(--muted)' }}>Reading the disk…</p>

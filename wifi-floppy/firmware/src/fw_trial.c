@@ -85,3 +85,14 @@ bool fw_boot_after_ota(uint32_t s0, uint32_t s1) {
     // Any proven mark counts, stale or not: only an update reboot ever writes PRVN.
     return s0 == FW_PROVEN_MAGIC || (s0 == FW_OTA_REBOOT_MAGIC && s1 == ~FW_OTA_REBOOT_MAGIC);
 }
+
+uint32_t fw_trial_leave_budget_ms(uint32_t now_ms) {
+    if (now_ms >= FW_TRIAL_DEADLINE_MS) return 1000u;   // past it: nothing to protect
+    if (now_ms >= FW_TRIAL_DEADLINE_MS - FW_TRIAL_LEAVE_MARGIN_MS) return 0;
+    const uint32_t left = FW_TRIAL_DEADLINE_MS - FW_TRIAL_LEAVE_MARGIN_MS - now_ms;
+    return left < 1000u ? left : 1000u;
+}
+
+bool fw_trial_keeps_joining(bool trial, bool revertible, uint32_t now_ms) {
+    return trial && revertible && now_ms < FW_TRIAL_DEADLINE_MS;
+}

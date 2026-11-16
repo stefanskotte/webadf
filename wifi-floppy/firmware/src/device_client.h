@@ -552,6 +552,19 @@ typedef struct {
     bool     _req_browse;
     bool     _req_write;      // fw 1.23.0: Transfer 2.5's write switch (READY 4)
 
+    // --- Wi-Fi networks from the web app (2026-11-15, wifi_ctl.h) ---
+    // The poll's wifi.v (the server's instruction cursor), 0 until a body carries it; wifi_seen once one has.
+    uint32_t wifi_version;
+    bool     wifi_seen;
+    // dc_set_wifi: &wifiAck= on every poll, and the status report's "wifi" tail, written by `_wifi_write` straight
+    // into the body (no buffer of its own: .bss), only while owed (dc_wifi_owe) -- and left out, still owed, when
+    // the body is too full for it (the lastBoot rule).
+    bool     _wifi_on;
+    uint32_t _wifi_ack;
+    bool     _wifi_owed;
+    int    (*_wifi_write)(void *ctx, char *buf, int cap);
+    void    *_wifi_ctx;
+
     // How the most recent exchange (any request) ended -- see dc_xfer_t.
     dc_xfer_t last_xfer;
 } device_client_t;
@@ -984,6 +997,18 @@ int dc_upload_close(device_client_t *c, const char *id, const char *json, char *
 // FIRST request of a boot exactly once (src/lib/boot-disk-store.ts). 0 = not set: nothing is sent, as before.
 // Set after dc_init (which zeroes it), on every entry of main.c's poll branch, with the same id.
 void dc_set_boot(device_client_t *c, uint32_t id, bool ota);
+
+// --- Wi-Fi networks from the web app (2026-11-15, wifi_ctl.h) ---
+// Turns the feature on for this client: every poll then carries &wifiAck= (`ack` until a body carried wifi.v, then
+// the latest wifi.v seen: the server wakes the poll only for a cursor the board has not seen) and every status report the
+// "wifi" tail while it is owed. `write(ctx, buf, cap)` renders the tail (wifi_report_json) and returns its length,
+// or -1 when it does not fit `cap`. Call after dc_init (which zeroes it); set the ack on every change of it.
+void dc_set_wifi(device_client_t *c, uint32_t ack, int (*write)(void *ctx, char *buf, int cap), void *ctx);
+// What changed since the server last heard it: the tail is owed until a report carrying it is accepted.
+void dc_wifi_owe(device_client_t *c);
+bool dc_wifi_owed(const device_client_t *c);
+// GET /api/device/wifi: the instruction behind wifi.v (wifi_cmd_parse). Body length, or -1.
+int dc_fetch_wifi(device_client_t *c, char *buf, int cap);
 
 // A strict dotted quad ("192.168.1.57" -> 0xC0A80139). False for anything else, and for 0.0.0.0; *out untouched then.
 bool dc_parse_ipv4(const char *s, uint32_t *out);

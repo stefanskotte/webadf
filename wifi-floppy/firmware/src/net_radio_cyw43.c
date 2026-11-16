@@ -1,23 +1,268 @@
 // The CYW43439 (RM2 on the PIM726) behind net_radio.h. Each function is the
-// call it replaces, unchanged: P1 must not change behaviour. Device-only.
+// call it replaced in P1, unchanged -- except net_radio_sta_connect, which
+// since 2026-11-15 runs net_join.c's loop over the driver. Device-only.
 #include "net_radio.h"
 #include "pico/cyw43_arch.h"
+#include "pico/time.h"
 #include "lwip/netif.h"
+#include "lwip/dhcp.h"
+#include "net_join.h"
 #include <string.h>
 
 int  net_radio_init(void)       { return cyw43_arch_init(); }
 void net_radio_sta_enable(void) { cyw43_arch_enable_sta_mode(); }
 
-int net_radio_sta_connect(const char *ssid, const char *pass, uint32_t timeout_ms) {
-    return cyw43_arch_wifi_connect_timeout_ms(ssid, pass, CYW43_AUTH_WPA2_AES_PSK, timeout_ms);
+// The join itself (field report 2026-11-14; review I1, 2026-11-15). The
+// decisions are net_join.c's, host-tested against a fake of these states; this
+// file only maps the driver's link status onto them and supplies the steps:
+//
+//   CYW43_LINK_UP       -> NET_LINK_UP      (accepted only after this attempt saw JOIN/NOIP)
+//   CYW43_LINK_BADAUTH  -> NET_LINK_BADAUTH (an auth or PSK-supplicant failure event)
+//   CYW43_LINK_FAIL     -> NET_LINK_FAIL    (SET_SSID failed, but not with "no networks")
+//   CYW43_LINK_NONET    -> NET_LINK_NONET   (SET_SSID "no networks": no BSS matched)
+//   CYW43_LINK_NOIP / JOIN / DOWN -> the same
+//
+// Whether a WPA3-only network shows as NONET or FAIL against a WPA2 join is the
+// chip firmware's choice and has not been measured on this board, so the setup
+// page names WPA3-only under both. A wrong WPA2 password often ends as a
+// timeout, not BADAUTH: the driver treats PSK-supplicant status 4/8/10 reason
+// 15 (no key message) as edge-of-cell and rejoins (cyw43_ctrl.c).
+typedef struct {
+    const char     *ssid, *pass;
+    absolute_time_t until;
+    absolute_time_t start;
+} join_ctx_t;
+
+// The driver's join-state bits (cyw43_ctrl.c, cyw43-driver in pico-sdk 2.3.0,
+// WIFI_JOIN_STATE_*): AUTH 0x0200, LINK 0x0400, KEYED 0x0800 are set by the
+// association's own events; the low nibble is the kind (ACTIVE 1, FAIL 2,
+// NONET 3, BADAUTH 4). Read directly: cyw43_wifi_link_status() folds them away.
+#define JOIN_BITS_ASSOC 0x0E00u
+
+// ---------------------------------------------------------------- join trace
+//
+// Bench 2026-11-15: 1.25.0 failed its first join after power-on, three rounds,
+// and the log said only TIMEOUT / NO_ADDRESS. With WF_JOIN_TRACE (a CMake
+// option, OFF by default -- a TEST-build aid, never in a release) every change
+// of the station's state during a join is logged with its time into the
+// attempt: the driver's raw join state, both link statuses, the netif's flags
+// and address, and lwIP's DHCP client state; and each drop step.
+#ifndef WF_JOIN_TRACE
+#define WF_JOIN_TRACE 0
+#endif
+#if WF_JOIN_TRACE
+#include "wf_log.h"
+typedef struct { uint32_t js; int wls, tls; uint8_t flags, dhcp; uint32_t ip; } jsnap_t;
+static jsnap_t g_jlast;
+static bool    g_jlast_ok;
+
+static jsnap_t jsnap(void) {
+    jsnap_t s;
+    struct netif *n = &cyw43_state.netif[CYW43_ITF_STA];
+    cyw43_arch_lwip_begin();
+    s.js = cyw43_state.wifi_join_state;
+    s.wls = cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA);
+    s.tls = cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA);
+    s.flags = n->flags;
+    s.ip = ip4_addr_get_u32(netif_ip4_addr(n));
+    const struct dhcp *d = netif_dhcp_data(n);
+    s.dhcp = d ? d->state : 0xFF;
+    cyw43_arch_lwip_end();
+    return s;
 }
 
+static void jtrace(const join_ctx_t *c, const char *what) {
+    jsnap_t s = jsnap();
+    if (!what && g_jlast_ok && memcmp(&s, &g_jlast, sizeof s) == 0) return;   // only changes
+    g_jlast = s;
+    g_jlast_ok = true;
+    unsigned long ms = c ? (unsigned long)(absolute_time_diff_us(c->start, get_absolute_time()) / 1000) : 0;
+    wf_logf(WF_INFO, "jtrace +%lu %s js %04lx wls %d tls %d nf %02x ip %lu.%lu.%lu.%lu dhcp %u",
+            ms, what ? what : "chg", (unsigned long)s.js, s.wls, s.tls, s.flags,
+            (unsigned long)(s.ip & 0xFF), (unsigned long)((s.ip >> 8) & 0xFF),
+            (unsigned long)((s.ip >> 16) & 0xFF), (unsigned long)(s.ip >> 24), s.dhcp);
+}
+#define JTRACE(c, what) jtrace((c), (what))
+#else
+#define JTRACE(c, what) ((void)0)
+#endif
+
+static net_link_t j_status(void *vc) {
+    JTRACE((join_ctx_t *)vc, NULL);
+    switch (cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA)) {
+    case CYW43_LINK_UP:      return NET_LINK_UP;
+    case CYW43_LINK_NOIP:    return NET_LINK_NOIP;
+    case CYW43_LINK_JOIN:    return NET_LINK_JOIN;
+    case CYW43_LINK_FAIL:    return NET_LINK_FAIL;
+    case CYW43_LINK_NONET:   return NET_LINK_NONET;
+    case CYW43_LINK_BADAUTH: return NET_LINK_BADAUTH;
+    default:                 return NET_LINK_DOWN;
+    }
+}
+
+static int j_join(void *vc) {
+    join_ctx_t *c = vc;
+    JTRACE(c, "join");
+    return cyw43_arch_wifi_connect_async(c->ssid, c->pass, CYW43_AUTH_WPA2_AES_PSK);
+}
+
+// Is anything held that a new join must not inherit? Associated at the 802.11
+// level (the driver's AUTH/LINK/KEYED join bits), the netif's link up, or an
+// address on it. A join merely under way -- a scan for an absent network, or a
+// first join after power-on -- holds nothing: leaving it is not needed (the
+// SDK's own loop re-joins on no-network without leaving) and, the bench showed,
+// is harmful (j_drop).
+static bool j_held(void *vc) {
+    (void)vc;
+    struct netif *n = &cyw43_state.netif[CYW43_ITF_STA];
+    cyw43_arch_lwip_begin();
+    bool held = (cyw43_state.wifi_join_state & JOIN_BITS_ASSOC) != 0 || netif_is_link_up(n) ||
+                !ip4_addr_isany_val(*netif_ip4_addr(n));
+    cyw43_arch_lwip_end();
+    return held;
+}
+
+// Drop what the station holds; called only when j_held() said so.
+//
+// Why only then (bench 2026-11-15, 1.25.0 TEST seq 134: "join wayfart failed
+// (5)", (4), (5), portal; 1.24.2 joins in seconds). 1.25.0 dropped before
+// EVERY attempt, including the first after power-on, when the station held
+// nothing. The mechanism believed to have failed (to be confirmed by
+// WF_JOIN_TRACE on the bench):
+//   1. cyw43_wifi_leave() (cyw43_ctrl.c) issues SET_DISASSOC; the chip answers
+//      with a CYW43_EV_DISASSOC event, processed on a LATER poll.
+//   2. The join starts right after: cyw43_wifi_join() sets wifi_join_state =
+//      WIFI_JOIN_STATE_ACTIVE (cyw43_ctrl.c, ~line 253).
+//   3. The late DISASSOC is then processed: cyw43_ctrl.c ~353-355 sets
+//      wifi_join_state = 0x0000 and marks the link down.
+//   4. The association's own events then OR in AUTH|LINK|KEYED (0x0E00), but
+//      the "joined" test is wifi_join_state == WIFI_JOIN_STATE_ALL (0x0E01,
+//      cyw43_ctrl.c ~434): with the ACTIVE bit gone it is never true, so
+//      cyw43_cb_tcpip_set_link_up() (cyw43_lwip.c) never runs, the netif
+//      never gets its link, lwIP's DHCP never leaves INIT (dhcp.c
+//      dhcp_network_changed_link_up is never called) -- and the status reads
+//      DOWN (kind 0) until the timeout: TIMEOUT (5), as rounds 1 and 3 did.
+//      A round that saw the link come up but no lease, NO_ADDRESS (4), fits
+//      the same event landing later still (after the link went up), or DHCP
+//      restarted under the link; the trace will say which.
+// The M-2 wait added last round never ran there: it waited only while the
+// status read JOIN, and a never-joined station reads DOWN.
+//
+// So: leave only a station that holds something, and then wait (bounded) for
+// the leave's own DISASSOC to land -- it zeroes the join state -- before the
+// next join can start. Then the netif side (I1, M-1): link down, address
+// zeroed, DHCP restarted, so the next association gets a fresh DISCOVER and
+// a stale "up" cannot be read. Residual: a DISASSOC later than DROP_WAIT_MS
+// would still cost the next attempt; the trace shows it ("drop: no disassoc").
+#define DROP_WAIT_MS 1000
+static void j_drop(void *vc) {
+    join_ctx_t *c = vc;
+    (void)c;
+    JTRACE(c, "drop: leave");
+    cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA);
+    int waited = 0;
+    while (waited < DROP_WAIT_MS && cyw43_state.wifi_join_state != 0) {
+        cyw43_arch_poll();
+        sleep_ms(10);
+        waited += 10;
+    }
+    JTRACE(c, cyw43_state.wifi_join_state == 0 ? "drop: disassoc seen" : "drop: no disassoc");
+    cyw43_arch_lwip_begin();
+    struct netif *n = &cyw43_state.netif[CYW43_ITF_STA];
+    netif_set_link_down(n);
+    dhcp_release_and_stop(n);
+    netif_set_addr(n, IP4_ADDR_ANY4, IP4_ADDR_ANY4, IP4_ADDR_ANY4);
+    dhcp_start(n);
+    cyw43_arch_lwip_end();
+    JTRACE(c, "drop: netif reset");
+}
+
+// A disassociation on its way with nothing held (review of 3bf330b2, I2): a wrong password's deauth (reason 2)
+// sets pend_disassoc, which the driver's next poll turns into SET_DISASSOC, whose EV_DISASSOC zeroes the join state
+// -- after the join that follows, if nothing waits for it. Also a BADAUTH join state: the same event may follow.
+static void j_settle(void *vc) {
+    join_ctx_t *c = vc;
+    (void)c;
+    if (!cyw43_state.pend_disassoc && (cyw43_state.wifi_join_state & 0x000Fu) != 4u /* WIFI_JOIN_STATE_BADAUTH */) return;
+    JTRACE(c, "settle: wait");
+    int waited = 0;
+    while (waited < DROP_WAIT_MS && (cyw43_state.pend_disassoc || cyw43_state.wifi_join_state != 0)) {
+        cyw43_arch_poll();
+        sleep_ms(10);
+        waited += 10;
+    }
+    JTRACE(c, cyw43_state.wifi_join_state == 0 ? "settle: disassoc seen" : "settle: none came");
+}
+
+bool net_radio_sta_leave(uint32_t wait_ms) {
+    if (!j_held(NULL)) return false;
+    cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA);
+    uint32_t waited = 0;
+    while (waited < wait_ms && cyw43_state.wifi_join_state != 0) {
+        cyw43_arch_poll();
+        sleep_ms(10);
+        waited += 10;
+    }
+    return true;
+}
+
+static bool j_time_up(void *vc) {
+    return time_reached(((join_ctx_t *)vc)->until);
+}
+
+static void j_wait(void *vc) {
+    cyw43_arch_poll();
+    cyw43_arch_wait_for_work_until(((join_ctx_t *)vc)->until);
+}
+
+net_join_t net_radio_sta_connect(const char *ssid, const char *pass, uint32_t timeout_ms) {
+    join_ctx_t c = { ssid, pass, make_timeout_time_ms(timeout_ms), get_absolute_time() };
+    const net_join_ops_t ops = { &c, j_status, j_join, j_held, j_drop, j_time_up, j_wait, j_settle };
+    JTRACE(&c, "start");
+    net_join_t r = net_join_run(&ops);
+#if WF_JOIN_TRACE
+    jtrace(&c, r == NET_JOIN_OK ? "end ok" : "end fail");
+    wf_logf(WF_INFO, "jtrace result %d", (int)r);
+#endif
+    return r;
+}
+
+// The AP beside an associated station (2026-11-15, the setup page opened on
+// request): the chip has one radio, so the AP must sit on the station's
+// channel. cyw43_ll_wifi_ap_init sets the AP's channel with WLC_SET_CHANNEL on
+// the STATION's interface (cyw43_ll.c), so a different channel there would
+// pull the station off its network. Read the station's channel first
+// (WLC_GET_CHANNEL: channel_info_t, hw_channel first) and give the AP that.
+// Not associated (the setup page at power-on): the driver's default, as before.
 void net_radio_ap_start(const char *ssid, const char *pass) {
+    if (net_radio_sta_up()) {
+        uint8_t buf[12] = {0};
+        if (cyw43_ioctl(&cyw43_state, CYW43_IOCTL_GET_CHANNEL, sizeof buf, buf, CYW43_ITF_STA) == 0) {
+            const uint32_t ch = (uint32_t)buf[0] | (uint32_t)buf[1] << 8;
+            if (ch >= 1 && ch <= 14) cyw43_wifi_ap_set_channel(&cyw43_state, ch);
+        }
+    }
     cyw43_arch_enable_ap_mode(ssid, pass, CYW43_AUTH_WPA2_AES_PSK);
 }
 void net_radio_ap_stop(void) { cyw43_arch_disable_ap_mode(); }
 
 struct netif *net_radio_sta_netif(void) { return &cyw43_state.netif[CYW43_ITF_STA]; }
+struct netif *net_radio_ap_netif(void)  { return &cyw43_state.netif[CYW43_ITF_AP]; }
+
+bool net_radio_sta_up(void) {
+    return cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA) == CYW43_LINK_UP;
+}
+
+// With the station's own netmask (review of 3bf330b2, M7): a home network of 192.168.0.0/16 contains the AP's /24
+// as surely as 192.168.4.0/24 is it. The two overlap when either contains the other's base address.
+bool net_radio_sta_in_ap_subnet(void) {
+    cyw43_arch_lwip_begin();
+    const struct netif *n = &cyw43_state.netif[CYW43_ITF_STA];
+    const uint32_t ip = lwip_ntohl(ip4_addr_get_u32(netif_ip4_addr(n)));
+    const uint32_t mask = lwip_ntohl(ip4_addr_get_u32(netif_ip4_netmask(n)));
+    cyw43_arch_lwip_end();
+    return net_subnets_overlap(ip, mask, CYW43_DEFAULT_IP_AP_ADDRESS, 0xFFFFFF00u);
+}
 
 void net_radio_mac(uint8_t mac[6]) { cyw43_wifi_get_mac(&cyw43_state, CYW43_ITF_STA, mac); }
 
