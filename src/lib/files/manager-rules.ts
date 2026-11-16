@@ -6,6 +6,7 @@ import type { Listing } from './types';
 import type { OpItem } from './driver';
 import { formatPath, parentOf, parsePath } from './path';
 import { keptWords } from '@/lib/remote-browse';
+import { upCrumb } from './pane-rules';
 
 /**
  * The disk whose strip a pane shows: the disk its listing is inside, else -- when the listing failed because the image
@@ -127,10 +128,11 @@ export function oneAtATime(): (go: () => Promise<unknown>) => boolean {
  * through a collection); a pane showing an error has no listing, so then from its path -- Root must still work from a
  * deep place that is gone (Task 8 review).
  */
-export function navTargets(listing: { crumbs: { path: string }[] } | null, path: string): { parent: string | null; root: string | null } {
+export function navTargets(listing: { crumbs: { path: string; through?: boolean }[] } | null, path: string): { parent: string | null; root: string | null } {
   if (listing) {
     const c = listing.crumbs;
-    return c.length > 1 ? { parent: c[c.length - 2].path, root: c[0].path } : { parent: null, root: null };
+    // Past a title that opens straight into its one disk (upCrumb, ruling 2026-11-16).
+    return c.length > 1 ? { parent: upCrumb(c)?.path ?? null, root: c[0].path } : { parent: null, root: null };
   }
   const p = parsePath(path);
   const up = p && parentOf(p);

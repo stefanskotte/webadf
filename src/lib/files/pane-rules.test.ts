@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { unsettled, holdsFiles, addToLibraryReason, offersUndo, placeOf, exactPlaceOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly, failedReason, FAILED_ROW, deleteText, deleteWhere, netVolumeReason, insideDiskPlace, diskPlace, isDiskCrumb } from './pane-rules';
+import { unsettled, holdsFiles, addToLibraryReason, offersUndo, placeOf, exactPlaceOf, acceptsCopies, netBoardOf, copyOutReason, deleteWords, netReadOnly, failedReason, FAILED_ROW, deleteText, deleteWhere, netVolumeReason, insideDiskPlace, diskPlace, isDiskCrumb, upCrumb, landedPath } from './pane-rules';
 import { NET_OPEN_VOLUME, NET_READ_ONLY } from './net-rules';
 import type { FsEntry, Listing } from './types';
 
@@ -250,5 +250,32 @@ describe('isDiskCrumb: the crumb that is the disk image itself', () => {
     expect(isDiskCrumb(l, 'LIBRARY:/g1')).toBe(false);
     expect(isDiskCrumb(L('LIBRARY:/g1'), 'LIBRARY:/g1')).toBe(false);
     expect(isDiskCrumb(null, 'LIBRARY:/g1/d1')).toBe(false);
+  });
+});
+
+describe('a title with one disk opens straight into it (ruling 2026-11-16)', () => {
+  const root = { label: 'LIBRARY:', path: 'LIBRARY:' };
+  const title = { label: 'Mouseski Keyboard', path: 'LIBRARY:/g', through: true };
+  const diskCrumb = { label: 'Mouseski Keyboard', path: 'LIBRARY:/g/d' };
+  const atDisk = L('LIBRARY:/g/d', { crumbs: [root, title, diskCrumb] });
+  it('upCrumb passes over the title: up from the disk is LIBRARY: or the collection', () => {
+    expect(upCrumb(atDisk.crumbs)).toEqual(root);
+    expect(upCrumb([root, { label: 'C', path: 'LIBRARY:/c' }, { ...title, path: 'LIBRARY:/c/g' }, { ...diskCrumb, path: 'LIBRARY:/c/g/d' }])?.path).toBe('LIBRARY:/c');
+    expect(upCrumb([...atDisk.crumbs, { label: 'Docs', path: 'LIBRARY:/g/d/Docs' }])).toEqual(diskCrumb);
+  });
+  it('upCrumb keeps a multi-disk title, and is null at a root', () => {
+    expect(upCrumb([root, { label: 'Gods', path: 'LIBRARY:/g' }, { label: 'Disk 2', path: 'LIBRARY:/g/d2' }])?.path).toBe('LIBRARY:/g');
+    expect(upCrumb([root])).toBeNull();
+    expect(upCrumb([])).toBeNull();
+  });
+  it('landedPath: asked for the title, the pane is at its disk', () => {
+    expect(landedPath('LIBRARY:/g', atDisk)).toBe('LIBRARY:/g/d');
+    expect(landedPath('LIBRARY:/g/', atDisk)).toBe('LIBRARY:/g/d');
+    expect(landedPath('LIBRARY:/g/d', atDisk)).toBe('LIBRARY:/g/d');
+  });
+  it('landedPath: any other answer is where it asked', () => {
+    expect(landedPath('LIBRARY:/x', atDisk)).toBe('LIBRARY:/x');
+    const multi = L('LIBRARY:/g/d', { crumbs: [root, { label: 'Gods', path: 'LIBRARY:/g' }, diskCrumb] });
+    expect(landedPath('LIBRARY:/g', multi)).toBe('LIBRARY:/g');
   });
 });

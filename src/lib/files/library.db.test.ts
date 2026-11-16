@@ -20,6 +20,7 @@ const { formatVolume } = await import('@/lib/adffs/format');
 const { addFile, makeDirectory } = await import('@/lib/adffs/write');
 const { ROOT_BLOCK } = await import('@/lib/adffs/constants');
 const { readVolume } = await import('@/lib/adffs');
+const { eq } = await import('drizzle-orm');
 const { parsePath } = await import('./path');
 const { listLibrary, readLibraryFile } = await import('./library');
 
@@ -61,10 +62,35 @@ describe('LIBRARY: listing', () => {
       ['title', 'SysInfo', 'LIBRARY:/g1'], ['title', 'Turrican', 'LIBRARY:/g2']]);
     expect(l.writable).toBe(false);
   });
-  it("lists a title's disks with a Disk N name", async () => {
+  it('opens a title with one disk straight into that disk, its title crumb passed over by Up (ruling 2026-11-16)', async () => {
     const l = (await listLibrary(ctx, P('LIBRARY:/g1')))!;
-    expect(l.entries.map((e) => [e.kind, e.name, e.path])).toEqual([['disk', 'Disk 1', 'LIBRARY:/g1/d1']]);
-    expect(l.crumbs.map((c) => c.label)).toEqual(['LIBRARY:', 'SysInfo']);
+    expect(l.path).toBe('LIBRARY:/g1/d1');
+    expect(l.library).toEqual({ level: 'disk', collectionId: null });
+    expect(l.disk).toMatchObject({ diskId: 'd1', label: 'Disk 1' });
+    expect(l.entries.map((e) => e.name)).toEqual(expect.arrayContaining(['C', 'ReadMe']));
+    expect(l.crumbs).toEqual([{ label: 'LIBRARY:', path: 'LIBRARY:' }, { label: 'SysInfo', path: 'LIBRARY:/g1', through: true },
+      { label: 'Disk 1', path: 'LIBRARY:/g1/d1' }]);
+    // The disk's own path says the same, so Up from it passes over the title too.
+    const direct = (await listLibrary(ctx, P('LIBRARY:/g1/d1')))!;
+    expect(direct.path).toBe('LIBRARY:/g1/d1');
+    expect(direct.crumbs[1]).toEqual({ label: 'SysInfo', path: 'LIBRARY:/g1', through: true });
+    const deep = (await listLibrary(ctx, P('LIBRARY:/g1/d1/C')))!;
+    expect(deep.crumbs.map((c) => [c.label, !!c.through])).toEqual([['LIBRARY:', false], ['SysInfo', true], ['Disk 1', false], ['C', false]]);
+  });
+  it("lists a multi-disk title's disks with a Disk N name, its crumbs as they were", async () => {
+    await seedDisk('g3', 'Gods', 'd31', 1, formatVolume({ filesystem: 'OFS', volumeName: 'G1' }));
+    await seedDisk('g3', 'Gods', 'd32', 2, formatVolume({ filesystem: 'OFS', volumeName: 'G2' }));
+    try {
+      const l = (await listLibrary(ctx, P('LIBRARY:/g3')))!;
+      expect(l.path).toBe('LIBRARY:/g3');
+      expect(l.entries.map((e) => [e.kind, e.name, e.path])).toEqual([['disk', 'Disk 1', 'LIBRARY:/g3/d31'], ['disk', 'Disk 2', 'LIBRARY:/g3/d32']]);
+      expect(l.crumbs).toEqual([{ label: 'LIBRARY:', path: 'LIBRARY:' }, { label: 'Gods', path: 'LIBRARY:/g3' }]);
+      const d = (await listLibrary(ctx, P('LIBRARY:/g3/d32')))!;
+      expect(d.crumbs.some((c) => c.through)).toBe(false);
+    } finally {
+      await getDb().delete(disks).where(eq(disks.gameId, 'g3'));
+      await getDb().delete(games).where(eq(games.id, 'g3'));
+    }
   });
   it("lists a disk's root and a folder, with protection, comment and the disk info", async () => {
     const root = (await listLibrary(ctx, P('LIBRARY:/g1/d1')))!;
@@ -101,8 +127,9 @@ describe('LIBRARY: listing', () => {
     const db = getDb();
     await db.insert(blobs).values({ sha256: sha, sizeBytes: adf.length, storageKey: `adf/${sha}` }).onConflictDoNothing();
     await db.insert(disks).values({ id: 'd9', gameId: 'g1', orgId: 'o1', diskNo: 2, sha256: sha, sizeBytes: adf.length });
+    // The unentitled disk does not count: the title still has one disk and opens into it.
     const l = (await listLibrary(ctx, P('LIBRARY:/g1')))!;
-    expect(l.entries.map((e) => e.path)).toEqual(['LIBRARY:/g1/d1']);
+    expect(l.path).toBe('LIBRARY:/g1/d1');
     expect(await listLibrary(ctx, P('LIBRARY:/g1/d9'))).toBeNull();
   });
   it('is not found for another org, an unknown id, or a file path', async () => {

@@ -99,7 +99,8 @@ describe('LIBRARY: as the Library (Files 2 §3.1)', () => {
     ]);
     expect(l.diskBase).toBe('LIBRARY:/c1/g1/d1');
     expect(l.library).toEqual({ level: 'disk', collectionId: 'c1' });
-    expect((await listLibrary(ctx, P('LIBRARY:/c1/g1')))!.entries.map((e) => e.path)).toEqual(['LIBRARY:/c1/g1/d1']);
+    // g1 has one disk, so the title opens straight into it (ruling 2026-11-16), prefix and all.
+    expect((await listLibrary(ctx, P('LIBRARY:/c1/g1')))!.path).toBe('LIBRARY:/c1/g1/d1');
     expect((await readLibraryFile(ctx, P('LIBRARY:/c1/g1/d1/C/Assign')))!.name).toBe('Assign');
   });
   it('the unfiled form still works for a filed title, and Parent from it is LIBRARY:', async () => {

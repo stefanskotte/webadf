@@ -37,7 +37,11 @@ export type DiskInfo = {
    */
   tosecName: string | null;
 };
-export type Crumb = { label: string; path: string };
+/**
+ * `through`: a title with one disk, which opens straight into that disk (ruling 2026-11-16). Its crumb still names the
+ * title, but Up one level and Parent pass over it: from the disk they go to the collection or LIBRARY:.
+ */
+export type Crumb = { label: string; path: string; through?: boolean };
 export type Listing = {
   path: string; crumbs: Crumb[]; entries: FsEntry[];
   writable: boolean; readOnlyReason: string | null; disk: DiskInfo | null; meta: string;

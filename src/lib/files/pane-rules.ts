@@ -2,7 +2,7 @@
 // increment 3, Task 2). CLIENT-SAFE: no database import.
 import { libraryEligible } from '@/lib/from-amiga-ui';
 import { isActiveTransferText } from '@/lib/send-ui';
-import { parsePath } from './path';
+import { formatPath, parsePath } from './path';
 import { isNetVolume, netBoardRoot, NET_COPY_OUT, NET_OPEN_VOLUME, NET_READ_ONLY } from './net-rules';
 import { QUEUE_FOLDER } from '@/lib/remote-limits';
 import type { FsEntry, Listing } from './types';
@@ -129,6 +129,26 @@ export function exactPlaceOf(l: Listing | null): string {
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/**
+ * Where Up one level goes from a place: the crumb before the last, passing over a title that opens straight into its
+ * one disk (`through`, ruling 2026-11-16) -- going up from that disk is going up from the title. Null at a root.
+ */
+export function upCrumb<C extends { path: string; through?: boolean }>(crumbs: C[]): C | null {
+  for (let i = crumbs.length - 2; i >= 0; i--) if (!crumbs[i].through) return crumbs[i];
+  return null;
+}
+
+/**
+ * Where a pane is once `listing` lands for the path it asked: a title with one disk answers with that disk's root
+ * (ruling 2026-11-16), and the pane, its address and its Up are then the disk's. Any other answer is where it asked.
+ */
+export function landedPath(asked: string, listing: Pick<Listing, 'path' | 'crumbs'>): string {
+  if (listing.path === asked) return asked;
+  const p = parsePath(asked);
+  const want = p ? formatPath(p) : asked;
+  return listing.crumbs.some((c) => c.through && c.path === want) ? listing.path : asked;
+}
 
 /** "Disk 1" or "SysInfo · Disk 1": the place a disk-side dialog names. */
 export function placeName(where: { title: string; label: string } | null): string {

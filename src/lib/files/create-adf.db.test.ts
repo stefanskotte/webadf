@@ -21,6 +21,7 @@ const { insertStash, listStash } = await import('@/lib/stash');
 const { parsePath } = await import('./path');
 const { stashDriver } = await import('./stash-driver');
 const { runOp } = await import('./ops');
+const { listLibrary } = await import('./library');
 
 const ctx = { orgId: 'o1', userId: null };
 const P = (s: string) => parsePath(s)!;
@@ -104,6 +105,17 @@ describe('Create ADF in LIBRARY:', () => {
     const [d] = await getDb().select().from(disks).where(eq(disks.id, added[0].diskId));
     expect(d.sizeBytes).toBe(1802240);
     expect(await getDb().select().from(collectionGames).where(eq(collectionGames.gameId, g.id))).toEqual([]);
+  });
+  it('names the disk after its title, not "Disk 1", and the title opens straight into it (ruling 2026-11-16)', async () => {
+    const r = await make('LIBRARY:/c1', 'Mouseski Keyboard');
+    const { added } = r as { added: { gameId: string; diskId: string }[] };
+    const [d] = await getDb().select().from(disks).where(eq(disks.id, added[0].diskId));
+    expect(d.label).toBe('Mouseski Keyboard');
+    const l = (await listLibrary(ctx, P(`LIBRARY:/c1/${added[0].gameId}`)))!;
+    expect(l.path).toBe(`LIBRARY:/c1/${added[0].gameId}/${added[0].diskId}`);
+    expect(l.disk).toMatchObject({ label: 'Mouseski Keyboard', volumeName: 'Mouseski Keyboard' });
+    expect(l.crumbs.map((c) => [c.label, !!c.through])).toEqual([['LIBRARY:', false], ['Demos', false],
+      ['Mouseski Keyboard', true], ['Mouseski Keyboard', false]]);
   });
   it('inside a collection: the same, filed there, its path under the collection', async () => {
     const r = await make('LIBRARY:/c1', 'Filed');

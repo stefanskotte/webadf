@@ -152,6 +152,13 @@ describe('navTargets (Parent and Root; Task 8 review: from the path when an erro
     expect(navTargets(l, 'LIBRARY:/c/g')).toEqual({ parent: 'LIBRARY:/c', root: 'LIBRARY:' });
     expect(navTargets({ crumbs: crumbs('STASH:') }, 'STASH:')).toEqual({ parent: null, root: null });
   });
+  it('passes over a title that opens straight into its one disk (ruling 2026-11-16)', () => {
+    const l = { crumbs: [{ label: 'LIBRARY:', path: 'LIBRARY:' }, { label: 'C', path: 'LIBRARY:/c' },
+      { label: 'Mouseski', path: 'LIBRARY:/c/g', through: true }, { label: 'Mouseski', path: 'LIBRARY:/c/g/d' }] };
+    expect(navTargets(l, 'LIBRARY:/c/g/d')).toEqual({ parent: 'LIBRARY:/c', root: 'LIBRARY:' });
+    const deeper = { crumbs: [...l.crumbs, { label: 'Docs', path: 'LIBRARY:/c/g/d/Docs' }] };
+    expect(navTargets(deeper, 'LIBRARY:/c/g/d/Docs')).toEqual({ parent: 'LIBRARY:/c/g/d', root: 'LIBRARY:' });
+  });
   it('an errored pane (no listing) goes up from its path: Root works from a deep place', () => {
     expect(navTargets(null, 'STASH:/a/b/c')).toEqual({ parent: 'STASH:/a/b', root: 'STASH:' });
     expect(navTargets(null, 'LIBRARY:/g')).toEqual({ parent: 'LIBRARY:', root: 'LIBRARY:' });
