@@ -1,0 +1,6 @@
+[
+ {"kind": "KINK", "net": "QSD2", "layer": "F.Cu", "at": [146.0, 116.64],
+  "why": "U1 pin 73: a 0.10 mm sideways step, so a 0.14 mm leg. The five QSPI lines leave pins 70-74 (0.4 mm pitch) and must pass between C20's ground pad and via on the west (QSD1 no further west than x 145.75) and the USB D+ via on the east (QSD3 no further east than x 146.96): 1.23 mm for four gaps of 0.277 mm (0.15 track + 0.127 clearance), 0.12 mm to spare. A step with a leg of 0.25 mm or more moves a line 0.18 mm or more sideways; no set of steps of 0 or >= 0.18 mm fits (worked through in the README), so two of the five steps are shorter. Moving C20, its via or the USB pair would free it; those are the 2026-11-11/12 hand fixes."},
+ {"kind": "KINK", "net": "QSCLK", "layer": "F.Cu", "at": [146.8, 116.64],
+  "why": "U1 pin 71: a 0.12 mm sideways step, so a 0.17 mm leg. Same squeeze as QSD2 at pin 73."}
+]
