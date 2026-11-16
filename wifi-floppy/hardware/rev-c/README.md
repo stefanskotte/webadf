@@ -4,7 +4,7 @@ Rev B with the PIM726 module replaced by its parts on our PCB: RP2350B, 16 MB fl
 
 **The schematic and the routed board agree, and nothing else about the board differs from using a PIM726 on rev B. It is still not a board to order:** see "Owed before a fab order".
 
-## Result (2026-11-05, copper revised 2026-11-11)
+## Result (2026-11-05, copper revised 2026-11-11 and 2026-11-16)
 
 | Check | Result |
 |---|---|
@@ -15,7 +15,8 @@ Rev B with the PIM726 module replaced by its parts on our PCB: RP2350B, 16 MB fl
 | `verify_pins.py rev-c.kicad_pcb` | 209 of 209 against the RP2350 datasheet, firmware `board.c`, the pico-sdk header, the RM2 datasheet, and rev B's connected pads |
 | `verify_reg.py` | the regulator matches Raspberry Pi's pattern: 62 differences before, 0 now |
 | `pnpm hw:verify rev-c` | passes: ERC, DRC, firmware pins, J1 lines, 1k pull-ups, the regulator |
-| Gerbers | regenerated 2026-11-11 after the placement changes below, same 14 files and export settings (they reproduce the earlier sets from their boards); 233 holes for 168 vias and 65 drilled pads. The 2026-11-08 set was analysed with kicad-happy, this one was not. Not yet through JLC's own check |
+| `check45.py rev-c.kicad_pcb` | passes: every track at a multiple of 45 degrees, every bend 45 or 90 degrees, no short leg between two bends. It lets through, and lists on every run, the regulator's own tracks (12 flags) and two 0.1 mm steps at U1 pins 71 and 73; see "Routing rule" |
+| Gerbers | regenerated 2026-11-16 after the routing-rule pass below, same 14 files and export settings (they reproduce the 2026-11-11 set from its board); 233 holes for 168 vias and 65 drilled pads. The four copper layers, the drill file and the drill map differ from the last set; masks, paste, silkscreen, outline and job file do not. The 2026-11-08 set was analysed with kicad-happy, this one was not. Not yet through JLC's own check |
 | Tracks | 0.15 mm, necked to 0.11 mm at the QFN, vias 0.45/0.2 mm, spacing 0.127 mm: within JLC's published 4-layer limits, not confirmed by JLC |
 
 ## Copper review, 2026-11-11
@@ -55,6 +56,48 @@ What was not done, and why:
 - The link between J6's two VBUS pin pairs is still 0.2 mm: the connector's locating holes leave no room for more.
 
 XIN now runs under the crystal's body, between its two ground pads. That is short and has ground on both sides, but it is under the can: say if you would rather have it go round.
+
+## Routing rule, 2026-11-16
+
+The operator's rule (2026-11-15): every track runs at a multiple of 45 degrees, and each bend turns by exactly 45 or 90 degrees: no sharp corners, and no turn built from several small kinks. `check45.py` is the rule as a check; it read 203 flags on the 2026-11-11 board. The copper was fixed where it lay, not routed again, so the copper review's fixes above are kept. Each change was kept only if nothing came closer than its clearance, and the whole board was then put through DRC (with parity), `verify_reg.py`, `verify_pins.py` and `hw:verify rev-c`.
+
+Where the 203 came from, and what was done:
+
+- **Plane stubs.** `stitch.py` tried its vias every 15 degrees round a pad, so most stubs stood at 15, 30, 60 or 75 degrees. 19 vias moved round their pad onto a 45 degree direction (under 0.4 mm); the other stubs keep their via and bend once. The nine vias inside a pad stay inside it.
+- **Joins at pads.** `centre.py` (LIV2's off-centre joins, 2026-11-08) pulled track ends onto pad centres and left the last leg at whatever angle that gave: most of the 1 to 20 degree legs at U1's pins and the 0402 pads. Each such stretch was drawn again between its fixed points as straight legs and 45 degree diagonals that end exactly on them.
+- **Steps, teeth and points** the autorouter left where it changed track width: the neighbouring legs were slid until the short one was gone.
+
+| | 2026-11-11 | Now |
+|---|---|---|
+| `check45.py --no-exempt` (counts everything) | 203: 91 angles, 76 odd bends, 35 short legs, 1 sharp corner | 14: the regulator's 12 and the 2 steps below |
+| Segments, vias | 855, 168 | 819, 168 |
+| Vias moved | | 22: 19 plane stubs' vias, and WGATE's, STEP's and SWDIO's by under 0.1 mm each |
+| Vias inside an SMD pad | 9 | 9, the same ones |
+| Track, both layers | 1646.1 mm | 1643.3 mm |
+| Track necked to 0.11 mm | 73 segments, 50.5 mm | 39 segments, 34.2 mm |
+| Segments under 0.05 mm, joints under 45 degrees | 0, 0 | 0, 0 |
+| QFN pins whose track leaves through the side of the pad | 5 (pins 1, 9, 21, 61, 80) | the same 5 |
+| Track ends inside a pad, off its centre | 15 | the same 15 |
+| QSPI lengths, C15 to pin 32, XIN | | unchanged |
+| USB pair, gap between the two, median | 0.15 mm | 0.15 mm |
+| USB D-, J6 to R26 | 4.55 mm | 3.76 mm |
+| DRC | 0 errors, 0 unconnected, 0 parity, 25 warnings | the same |
+
+**The check itself was wrong in two ways, and is stricter now.** A step (two 45 degree bends turning opposite ways) passed or failed by the order its segments stand in the file, and a short leg cut into two collinear segments was never seen as short. By the check as first written the old board had 191 flags; by the corrected one, 203.
+
+**Two steps are left, and `check45-exceptions.json` names them:** QSD2 at U1 pin 73 (0.10 mm sideways, a 0.14 mm leg) and QSCLK at pin 71 (0.12 mm, a 0.17 mm leg). The five QSPI lines leave pins 74 to 70, 0.4 mm apart, and run north side by side at 0.277 mm (0.15 mm track, 0.127 mm clearance). QSD1 can be no further west than x = 145.75 (C20's ground pad and its via), QSD3 no further east than x = 146.96 (the USB D+ via): 1.23 mm for four gaps of 0.277 mm, so 0.12 mm to spare. A step whose leg is 0.25 mm or longer moves a line at least 0.18 mm sideways, so each line must stand either on its pin or at least 0.18 mm off it. QSD1 must be at least 0.18 mm east of pin 74; QSD2 then cannot stand on pin 73 (0.22 mm from QSD1) and would have to be 0.18 mm east as well, then QSD0, then QSCLK, which puts QSD3 0.29 mm past its limit. Counting from QSD3 westwards fails the same way at QSD1. So at least two of the five steps are short. Moving C20, its via or the USB pair's vias would free them; those are the 2026-11-11 placement and its hand fixes, and were not touched.
+
+**The regulator's tracks were not touched** (Raspberry Pi's pattern). Six of its legs are off 45 degrees and one is a 0.17 mm step; they lie inside the pattern's copper zones. One of the six is ours, not Raspberry Pi's: `centre.py` moved the start of C23's ground track 0.05 mm onto the pad centre, which tilted it 5 degrees. It was left, because nothing in the regulator's area was to change.
+
+For whoever reads the copper next:
+
+- Where a pad's centre does not lie on a 45 degree line from its track, the track now ends in a short diagonal inside the pad or via copper instead of a slightly tilted last leg: 27 end legs under 0.2 mm, 21 before. Nine of them reach outside the pad or via they end in, as nine did before (not all the same nine: WGATE's on the back and USB D-'s at R26 are new, STEP's and WPROT's are gone).
+- WGATE's via under U1's west side moved 0.075 mm down, not up onto pin 6's line: ACT_LED and then SWDIO lie above it on the back at their clearance, with nothing over. Pin 6's track ends in it by a 0.14 mm diagonal, inside the via's ring.
+- BOOT_R on the back now crosses under U4 at y = 105.2 instead of going round by the top edge: 2.2 mm shorter, 0.18 mm clear of the QSD1 and QSD2 vias below U4's pads and 0.14 mm from the QCS via where it turns, behind both planes from the QSPI lines on top.
+- TRK0_B, RDATA_B, INDEX_B, the end of MTR_B, and the buzzer's and D2's tracks on the left were drawn again whole; they are slow lines with room round them.
+- Several tracks keep their clearance to a neighbour and no more (0.127 mm, as the autorouter packed them): CHNG along SEL0 into pins 78 and 79, RDY at RDATA's corner near x = 126, y = 148, SWCLK between RDATA and the BUZZER via (0.01 mm over).
+
+Freerouting has a 45 degree mode: `(snap_angle fortyfive_degree)` in the DSN file's `structure` section (its `Structure` and `AngleRestriction` classes read it). It was not used here, because routing again would have lost the hand fixes; a rebuild from `variants.sh` should set it, and will still need `check45.py`, since `stitch.py` and `centre.py` make their own off-angle legs.
 
 ## Parts
 
@@ -127,6 +170,6 @@ From the ISSI datasheet and `hardware_psram/psram.c`: same pinout and commands a
 
 In order, with KiCad's Python and Freerouting 2.5.0: `variants.sh` runs `build_board.py` (places), `regulator.py` (the regulator's copper), `stitch.py` (joins power pins to the planes), Freerouting on the outer layers, and `route.py` (adds the planes and pours), into `v1/`. Then by hand: `clean.py v1/rev-c.kicad_pcb v1/drc1.json` removes the router's stray vias and widens any neck below 0.09 mm, `finish.py` adds fiducials and sets the silkscreen, `centre.py v1/rev-c.kicad_pcb` brings tracks onto their pads' centres, `verify_pins.py` checks. The fiducials landed at free spots, not in the corners: place them properly in KiCad. Part references on the new parts are hidden until someone places them.
 
-**Since 2026-11-11 the board file is the source for the copper.** The review's fixes were made on `rev-c.kicad_pcb` itself; the steps above would rebuild the board without them. `rules.py` still holds the net classes.
+**Since 2026-11-11 the board file is the source for the copper.** The review's fixes and the 2026-11-16 routing-rule pass were made on `rev-c.kicad_pcb` itself; the steps above would rebuild the board without them, and with `stitch.py`'s and `centre.py`'s off-angle legs. `rules.py` still holds the net classes. `check45.py rev-c.kicad_pcb` belongs with DRC after any change to the copper.
 
 `package.sh` builds `rev-c-kicad-project.zip`: the project with `wifi-floppy-lib` copied in and the library tables pointed at the copies, so it opens anywhere with KiCad 10. Rebuild it after any change.
