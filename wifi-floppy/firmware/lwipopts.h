@@ -195,5 +195,20 @@ void sntp_time_apply(uint32_t unix_sec);
 // board's own DHCP client-id. See the hook file.
 #if WF_PNET_L2
 #define LWIP_HOOK_FILENAME "pnet_lwip_hooks.h"
+// Shared-IP mode (pnet_shared.h, ruling 2026-11-15): lwIP and the Amiga's AmiTCP_NG may use ONE address, so their
+// outgoing tuples must never collide. AmiTCP_NG picks ephemeral ports in 49152-65535 (IPPORT_ANONMIN, random) --
+// lwIP's own default range -- so lwIP's move to 0x8000-0xBFFF (32768-49151). These three are each #ifndef-guarded
+// in pico-sdk 2.3.0's lwIP 2.2.1 (core/tcp.c, core/udp.c); ENSURE maps any 16-bit value into the range (the default
+// form, `& ~START + START`, only works for a range starting on its own size). DNS picks a random source port per
+// query (LWIP_DNS_SECURE_RAND_SRC_PORT, core/dns.c dns_alloc_random_port: retries until DNS_PORT_ALLOWED), so it is
+// held to the same range. Every mode, not only shared: the range is a property of the build, and 32768+ is
+// what Linux hands out anyway.
+#define TCP_LOCAL_PORT_RANGE_START        0x8000
+#define TCP_LOCAL_PORT_RANGE_END          0xBFFF
+#define TCP_ENSURE_LOCAL_PORT_RANGE(port) ((u16_t)(((port) & 0x3FFFu) + TCP_LOCAL_PORT_RANGE_START))
+#define UDP_LOCAL_PORT_RANGE_START        0x8000
+#define UDP_LOCAL_PORT_RANGE_END          0xBFFF
+#define UDP_ENSURE_LOCAL_PORT_RANGE(port) ((u16_t)(((port) & 0x3FFFu) + UDP_LOCAL_PORT_RANGE_START))
+#define DNS_PORT_ALLOWED(port)            ((port) >= 0x8000u && (port) <= 0xBFFFu)
 #endif
 #endif

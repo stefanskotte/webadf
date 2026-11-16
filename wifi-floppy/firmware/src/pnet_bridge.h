@@ -20,12 +20,21 @@ typedef struct {
     uint32_t amiga_ip, board_ip;  // as last seen by core1 (host order; 0 = unknown)
     uint32_t a2b, b2a;            // Phase 4: frames handed across locally, Amiga -> board / board -> Amiga
     uint32_t local_drops;         // ...lost on the way (over PNET_LOCAL_A2B_MAX or no heap; a full RX ring is rx_drops)
+    // Shared-IP mode, the default (pnet_shared.h, rulings 2026-11-15/16): shared, or the Amiga on an address of its
+    // own (own; neither: the board has had no address yet), and the counters.
+    bool     shared, own;
+    uint32_t send_ip;             // where the board's Transfer connection goes (pnet_sort_send_ip)
+    uint32_t sh_entered, sh_moved, sh_own, sh_held, sh_stale, sh_down_req, sh_old;
+    uint32_t sh_offers, sh_acks, sh_naks, sh_late, sh_frag_drops, sh_arp_hidden;
 } pnet_bridge_stats_t;
 
 void pnet_bridge_init(void);      // core0, before core1 launches: the rings over PSRAM
 void pnet_bridge_start(void);     // core1, after net_radio_sta_enable(): the hook and the send worker
 void pnet_bridge_set_on(bool on); // core0: DF1 is in Network mode (main.c pnet_set_mode); off = pass-through
 void pnet_bridge_check(void);     // core1, every loop pass: re-install the hook if the netif was re-added
-void pnet_bridge_seed_amiga_ip(uint32_t ip); // core1: the server's last-known Amiga address when the sorter has none (1.16.0)
+// core0, at each status arrival: the sorter's re-address cursor (and *want: still wanted), and the last one finished
+// (pnet_down_t, pnet_status.h). One IP by default replaced the server seed (pnet_shared.h).
+uint32_t pnet_bridge_down_req(bool *want);
+void pnet_bridge_down_done(uint32_t done);
 void pnet_bridge_stats(pnet_bridge_stats_t *out);
 #endif

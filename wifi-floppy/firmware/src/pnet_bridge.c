@@ -22,15 +22,28 @@
 // held -- the worker, and lwIP's own output from core1's code (the poll's TLS, timers) -- so the RX ring keeps one
 // producer context. lwIP may call linkoutput from inside the input
 // (an ARP or ICMP answer): pnet_input commits its own copy before calling lwIP, so the ring is never mid-write.
+//
+// SHARED-IP MODE, the default (pnet_shared.h; operator rulings 2026-11-15 and 2026-11-16). Every decision is
+// pnet_shared.c's; this file only hands it lwIP's pcb lists (pnet_owns), the board's lease (lease_of) and mask, the
+// RX ring slots its DHCP replies are built in, and core0's re-address cursor (pnet_bridge_down). The replies are
+// committed from this same context (the worker), so the ring keeps one producer context.
 #include "pnet_bridge.h"
+#include "pnet_shared.h"
 #include "pnet_frame.h"        // PNET_MAX_FRAMES
 #include "net_radio.h"
 #include "wf_log.h"
 #include "lwip/netif.h"
 #include "lwip/pbuf.h"
 #include "lwip/def.h"          // lwip_ntohl
+#include "lwip/tcp.h"
+#include "lwip/priv/tcp_priv.h"   // tcp_active_pcbs, tcp_listen_pcbs, tcp_tw_pcbs (shared mode's demux)
+#include "lwip/udp.h"             // udp_pcbs
+#include "lwip/dns.h"             // dns_getserver
+#include "lwip/dhcp.h"            // netif_dhcp_data: the network's DHCP server id
+#include <string.h>
 #include "hardware/psram.h"    // psram_check_address
 #include "pico/stdlib.h"
+#include "hardware/sync.h"       // __dmb (pnet_bridge_down_req)
 
 #define PNET_RX_SLOTS    64u
 #define PNET_TX_SLOTS    32u
@@ -63,10 +76,59 @@ void pnet_bridge_init(void) {
 }
 
 static uint32_t board_ip_of(struct netif *nif) { return lwip_ntohl(ip4_addr_get_u32(netif_ip4_addr(nif))); }
+static uint32_t host_ip(const ip_addr_t *a) { return a ? lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(a))) : 0u; }
+
+// Shared mode's demux (pnet_shared.h IN): does lwIP hold a live pcb for this tuple? The network context, lock held.
+static bool pnet_owns(void *ctx, uint8_t proto, uint16_t lport, uint32_t rip, uint16_t rport) {
+    (void)ctx;
+    if (proto == 6u) {
+        for (struct tcp_pcb *p = tcp_active_pcbs; p; p = p->next)
+            if (p->local_port == lport && p->remote_port == rport && host_ip(&p->remote_ip) == rip) return true;
+        for (struct tcp_pcb *p = tcp_tw_pcbs; p; p = p->next)
+            if (p->local_port == lport && p->remote_port == rport && host_ip(&p->remote_ip) == rip) return true;
+        for (struct tcp_pcb_listen *l = tcp_listen_pcbs.listen_pcbs; l; l = l->next)
+            if (l->local_port == lport) return true;
+        return false;
+    }
+    if (proto == 17u) {
+        for (struct udp_pcb *u = udp_pcbs; u; u = u->next) {
+            if (u->local_port != lport) continue;
+            if (!(u->flags & UDP_FLAGS_CONNECTED)) return true;          // DNS, SNTP: bound, unconnected
+            // udp_input's own rule: a connected pcb's remote address may be ANY (the DHCP client: ANY:67).
+            const uint32_t r = host_ip(&u->remote_ip);
+            if (u->remote_port == rport && (r == 0u || r == rip)) return true;
+        }
+    }
+    return false;
+}
+
+// The board's own lease, which shared mode hands the Amiga. Static: core1's stack is measured tight.
+static pnet_lease_t s_lease;
+static const pnet_lease_t *lease_of(struct netif *nif) {
+    s_lease.ip = board_ip_of(nif);
+    s_lease.mask = lwip_ntohl(ip4_addr_get_u32(netif_ip4_netmask(nif)));
+    s_lease.gw = lwip_ntohl(ip4_addr_get_u32(netif_ip4_gw(nif)));
+    for (u8_t i = 0; i < 2u; i++) s_lease.dns[i] = host_ip(dns_getserver(i));
+    const struct dhcp *d = netif_dhcp_data(nif);
+    s_lease.server = d ? host_ip(&d->server_ip_addr) : 0u;
+    memcpy(s_lease.mac, nif->hwaddr, 6);
+    return &s_lease;
+}
+
+// Before every sorter call: the board's mask (the static-address escape), core0's finished re-address, and the
+// board's address itself -- so shared mode begins (and follows a move) with no frame needed, and lwIP's own frames
+// (pnet_linkoutput) and the Transfer address (pnet_bridge_stats) see it at once.
+static volatile uint32_t s_down_done;   // core0 writes (pnet_bridge_down_done), the network context reads
+static void pnet_sort_inputs(struct netif *nif) {
+    pnet_sort_set_mask(&s_sort, lwip_ntohl(ip4_addr_get_u32(netif_ip4_netmask(nif))));
+    s_sort.sh.down_done = s_down_done;
+    pnet_shared_follow(&s_sort, board_ip_of(nif));
+}
 
 static err_t pnet_input(struct pbuf *p, struct netif *nif) {
     if (!s_on) return s_next(p, nif);   // not Network: lwIP's own input, as before
     if (p->len != p->tot_len) s_chained++;            // sorted on the first pbuf's bytes
+    pnet_sort_inputs(nif);
     const pnet_sort_to_t to = pnet_sort_rx(&s_sort, (const uint8_t *)p->payload, p->len, board_ip_of(nif));
     if (to & PNET_SORT_AMIGA) {
         // pnet_ring_commit does not check the length: 14..PNET_RING_MTU is enforced here. (The
@@ -101,7 +163,8 @@ static void pnet_to_board(struct netif *nif, const uint8_t *f, uint16_t len) {
     struct pbuf *p = s_next && len <= PNET_LOCAL_A2B_MAX ? pbuf_alloc(PBUF_RAW, len, PBUF_RAM) : NULL;
     if (!p) { s_local_drops++; return; }
     pbuf_take(p, f, len);
-    pnet_local_to_board((uint8_t *)p->payload, len, nif->hwaddr);   // PBUF_RAM: one contiguous buffer
+    if (s_sort.sh.on) pnet_shared_to_board((uint8_t *)p->payload, len, s_sort.sh.ip, nif->hwaddr);
+    else pnet_local_to_board((uint8_t *)p->payload, len, nif->hwaddr);   // PBUF_RAM: one contiguous buffer
     if (s_next(p, nif) != ERR_OK) { pbuf_free(p); s_local_drops++; return; }
     s_a2b++;
 }
@@ -112,12 +175,15 @@ static err_t pnet_linkoutput(struct netif *nif, struct pbuf *p) {
     if (s_on && p->tot_len >= PNET_ETH_HDR) {
         uint8_t head[64];                                // ARP (42) and an IPv4 header (34+) fit
         const uint16_t n = pbuf_copy_partial(p, head, sizeof head, 0);
-        if (pnet_sort_b2a_local(&s_sort, head, n, board_ip_of(nif))) {
+        pnet_sort_inputs(nif);                           // review minor 5: sh.on and sh.ip current for this frame
+        const bool shared = s_sort.sh.on;                // shared mode: the Amiga is PNET_SHARED_AMIGA on the bus
+        if (shared ? pnet_shared_b2a(&s_sort, head, n) : pnet_sort_b2a_local(&s_sort, head, n, board_ip_of(nif))) {
             if (p->tot_len > PNET_RING_MTU) { s_local_drops++; return ERR_OK; }
             uint8_t *d = pnet_ring_claim(&g_pnet_rx);
             if (!d) return ERR_OK;                       // ring full: lost, counted by the ring (rx drops)
             pbuf_copy_partial(p, d, p->tot_len, 0);
-            pnet_local_to_amiga(d, p->tot_len, nif->hwaddr);   // the Amiga ignores ARP from its own MAC
+            if (shared) pnet_shared_to_amiga(d, p->tot_len, s_sort.sh.ip, nif->hwaddr);
+            else pnet_local_to_amiga(d, p->tot_len, nif->hwaddr);   // the Amiga ignores ARP from its own MAC
             pnet_ring_commit(&g_pnet_rx, p->tot_len);
             s_b2a++;
             return ERR_OK;
@@ -137,12 +203,23 @@ static void pnet_tx_tick(void) {
     struct netif *nif = net_radio_sta_netif();
     const uint32_t board_ip = board_ip_of(nif);
     s_board_ip = board_ip;
+    pnet_sort_inputs(nif);
     for (unsigned k = 0; k < PNET_TX_PER_TICK; k++) {
         uint16_t len;
         const uint8_t *f = pnet_ring_peek(&g_pnet_tx, 0, &len);
         if (!f) break;
         const pnet_tx_t v = pnet_sort_tx(&s_sort, f, len, nif->hwaddr, board_ip);
         if (v != PNET_TX_SEND) s_tx_no[v]++;
+        else if (pnet_shared_is_dhcp(&s_sort, f, len)) {     // shared mode: the board is the Amiga's DHCP server
+            uint8_t *d = pnet_ring_claim(&g_pnet_rx);        // NULL when full: counted; the Amiga resends
+            const size_t n = d ? pnet_shared_dhcp_reply(&s_sort, f, len, lease_of(nif), d, PNET_RING_MTU) : 0u;
+            if (n) pnet_ring_commit(&g_pnet_rx, (uint16_t)n);
+        }
+        else if (s_sort.sh.on) {
+            if (pnet_shared_a2b(&s_sort, f, len)) pnet_to_board(nif, f, len);
+            else if (net_radio_send_ethernet(f, len) == 0) s_tx_sent++;
+            else s_tx_err++;
+        }
         else if (pnet_sort_a2b_local(f, len, board_ip)) pnet_to_board(nif, f, len);
         else if (net_radio_send_ethernet(f, len) == 0) s_tx_sent++;
         else s_tx_err++;
@@ -168,6 +245,7 @@ void pnet_bridge_check(void) {
 
 void pnet_bridge_start(void) {
     pnet_sort_init(&s_sort);                           // before the hook can run
+    s_sort.owns = pnet_owns;                           // shared mode's inbound demux (pnet_shared.h)
     pnet_bridge_check();
     if (!net_radio_every_ms(PNET_TX_TICK_MS, pnet_tx_tick))
         wf_logf(WF_ERR, "pnet: no send worker -- the Amiga's frames will not go out");
@@ -192,17 +270,34 @@ void pnet_bridge_stats(pnet_bridge_stats_t *o) {
     o->a2b = s_a2b;
     o->b2a = s_b2a;
     o->local_drops = s_local_drops;
+    // Shared mode (pnet_shared.h): written in the network context; a log and report reading, field by field.
+    const volatile pnet_shared_t *sh = &s_sort.sh;
+    o->shared = sh->on;
+    o->own = sh->own;
+    o->send_ip = sh->on ? PNET_SHARED_AMIGA : o->amiga_ip;   // pnet_sort_send_ip, read once
+    o->sh_entered = sh->entered;
+    o->sh_moved = sh->moved;
+    o->sh_own = sh->own_n;
+    o->sh_held = sh->held;
+    o->sh_stale = sh->stale;
+    o->sh_down_req = sh->down_req;
+    o->sh_old = sh->old;
+    o->sh_offers = sh->offers;
+    o->sh_acks = sh->acks;
+    o->sh_naks = sh->naks;
+    o->sh_late = sh->late;
+    o->sh_frag_drops = sh->frag_drops;
+    o->sh_arp_hidden = sh->arp_hidden;
 }
 
-// Plan 2026-10-17 R17: s_sort lives in the network context, so the seed is taken under the lwIP lock. Seeded once:
-// the next frame from the Amiga, or the board's own connect (ARP over the local path), confirms or replaces it.
-void pnet_bridge_seed_amiga_ip(uint32_t ip) {
-    net_radio_lock();
-    const bool seeded = pnet_sort_seed(&s_sort, ip, s_board_ip);
-    net_radio_unlock();
-    if (seeded) {
-        char a[16];
-        pnet_ip_text(ip, a);
-        wf_logf(WF_INFO, "pnet: Amiga address %s from the server (not seen since boot)", a);
-    }
+// core0 (pnet_serve_status): the sorter's re-address cursor and whether it is still wanted, then what core0 finished.
+// Single words across cores. Review minor 2: down_req FIRST, a barrier, then down_want -- the writer (ask_readdress)
+// stores down_want, a barrier, then down_req, so a new request is never seen with the old (false) wish.
+uint32_t pnet_bridge_down_req(bool *want) {
+    const volatile pnet_shared_t *sh = &s_sort.sh;
+    const uint32_t req = sh->down_req;
+    __dmb();
+    *want = sh->down_want;
+    return req;
 }
+void pnet_bridge_down_done(uint32_t done) { s_down_done = done; }

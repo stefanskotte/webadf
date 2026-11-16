@@ -85,7 +85,9 @@ for t in "${tests[@]}"; do
   # test_pnet_pack.c too: the board encodes its batch's blocks into PSRAM buffers of exactly PNET_LZ4_WINDOW bytes.
   # test_nfc_pn532.c too: the PN532 frame parser is fed every prefix of a frame, and noise, in heap blocks of
   # exactly their length, so a read past the I2C read's end is an ASan report.
-  if [ "$t" = test_pnet_link.c ] || [ "$t" = test_pnet_pack.c ] || [ "$t" = test_nfc_pn532.c ]; then
+  # test_pnet_shared.c too: shared-IP mode reads and rewrites frames in place, short ones included.
+  if [ "$t" = test_pnet_link.c ] || [ "$t" = test_pnet_pack.c ] || [ "$t" = test_nfc_pn532.c ] ||
+     [ "$t" = test_pnet_shared.c ]; then
     extra="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
   fi
   # -D_DEFAULT_SOURCE: strnlen (config_store.c) is POSIX.1-2008, not C11, and

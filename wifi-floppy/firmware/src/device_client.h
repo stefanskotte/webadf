@@ -179,8 +179,10 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // (6 spare). The request: measured 1840 <= 2048. A key that would not fit is left out, never the report. Both ride only until a report is heard (once per boot / failure).
 // upKey (1.19.0) adds ,"upKey":"abcd" -- 15 bytes -- that does not fit beside every other tail at its maximum, so it
 // rides like lastBoot: until heard, left out (still owed) when the body is full. The budget is not raised.
+// Shared-IP mode (2026-11-15, pnet_shared.h) adds "shared":true, to the net tail -- 14 bytes: the body goes to 1728
+// (+16 B of .bss), so every tail still fits at its maximum and upKey still waits. The request: ~1854 <= 2048.
 // test_status_body_fits_at_maximum prints the measured sizes.
-#define DC_STATUS_BODY_BYTES  1712
+#define DC_STATUS_BODY_BYTES  1728
 #define DC_STATUS_REQ_BYTES   2048
 // `err` is firmware-authored (a short static string or errno-derived text,
 // never network input), but it still has to survive being embedded in a
@@ -308,6 +310,8 @@ typedef struct {
     bool     driver_seen;   /* the driver read cylinder 76 since Network mode began */
     uint32_t driver_s;      /* seconds since that read */
     uint32_t amiga_ip;      /* the Amiga's address as the sorter learned it, host order; 0 = not learned */
+    bool     shared;        /* shared-IP mode, the default since 2026-11-16 (pnet_shared.h): amiga_ip is the board's
+                             * own; "shared":true. false: a static Amiga address of its own, or no board address yet */
     uint32_t frames_in;     /* the Amiga's frames taken */
     uint32_t frames_out;    /* frames the Amiga acknowledged */
 } dc_net_t;
@@ -369,7 +373,7 @@ typedef struct {
     bool       drive_owed;
     // Phase 3: the `net` tail (dc_set_net) and what the server last accepted of it (dc_net_owed).
     dc_net_t _net;
-    bool     _net_sent_valid, _net_sent_on, _net_sent_seen;
+    bool     _net_sent_valid, _net_sent_on, _net_sent_seen, _net_sent_shared;
     uint32_t _net_sent_ip;
     bool       _drive_sent_valid;  // a report carrying secondDrive was accepted
     uint8_t    _drive_sent_mode;
@@ -847,8 +851,8 @@ void dc_set_sel1(device_client_t *c, bool wired, bool df1_seen);
 bool dc_sel1_owed(const device_client_t *c);
 
 // Phase 3 (plan 2026-10-12 ruling 13): Network mode's readings for the status report; NULL = not Network (no
-// key). dc_net_owed: Network mode began or ended, the driver was first heard, or the Amiga's address changed
-// since the last report the server accepted -- counters and ages ride the 60 s heartbeat.
+// key). dc_net_owed: Network mode began or ended, the driver was first heard, the Amiga's address changed, or
+// shared-IP mode began or ended since the last report the server accepted -- counters and ages ride the 60 s heartbeat.
 void dc_set_net(device_client_t *c, const dc_net_t *n);
 bool dc_net_owed(const device_client_t *c);
 // Whole seconds from `seen` to `now` (ms clocks). core0 stamps seen as clock_ms() | 1, which can be 1 ms ahead of

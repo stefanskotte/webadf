@@ -72,3 +72,27 @@ void pnet_version_bytes(const char *v, uint8_t *major, uint8_t *minor) {
 }
 
 uint8_t pnet_link_for(bool sta_joined) { return sta_joined ? PNET_LINK_NOIP : PNET_LINK_JOIN; }
+
+bool pnet_down_serve(pnet_down_t *d, uint32_t req, bool want, uint32_t now_ms) {
+    switch (d->phase) {
+    case 0:
+        if (req == d->done) return false;
+        if (!want) { d->done = req; return false; }         /* withdrawn before it began: nothing owed */
+        d->req = req;
+        d->t = now_ms;
+        d->phase = 1;
+        d->pulses++;
+        return true;
+    case 1:
+        if (now_ms - d->t < PNET_DOWN_HOLD_MS) return true;  /* the same check read again */
+        d->t = now_ms;
+        d->phase = 2;
+        return false;                                       /* UP: the driver's S2EVENT_ONLINE */
+    default:
+        if (now_ms - d->t >= PNET_DOWN_GRACE_MS) {
+            d->done = d->req;
+            d->phase = 0;
+        }
+        return false;
+    }
+}

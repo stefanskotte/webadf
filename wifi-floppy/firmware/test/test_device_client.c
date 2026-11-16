@@ -500,7 +500,7 @@ static void test_status_body_fits_at_maximum(void) {
 
     // Phase 3: the longest `net` tail -- every key, each number at its saturation, the longest address.
     dc_net_t worst_net = { .on = true, .driver_seen = true, .driver_s = 999999u, .amiga_ip = 0xFFFFFFFFu,
-                           .frames_in = 999999999u, .frames_out = 999999999u };
+                           .shared = true, .frames_in = 999999999u, .frames_out = 999999999u };
     dc_set_net(&c, &worst_net);
     // Server override (1.13.0): the longer form of the server key.
     dc_set_server_report(&c, true, true);
@@ -532,6 +532,7 @@ static void test_status_body_fits_at_maximum(void) {
     CHECK(strstr(r, "\"displayVersion\":4294967295") != NULL, "the display ack survives");
     CHECK(strstr(r, "\"secondDrive\":\"df1\",\"driveVersion\":4294967295") != NULL, "the drive ack survives");
     CHECK(strstr(r, "\"framesOut\":999999999}") != NULL, "the net tail survives a maximal body");
+    CHECK(strstr(r, "\"amigaIp\":\"255.255.255.255\",\"shared\":true,") != NULL, "shared mode's flag too");
     CHECK(strstr(r, ",\"server\":{\"custom\":true,\"tls\":\"noverify\"}") != NULL,
           "the server key survives a maximal body");
     CHECK(strstr(r, ",\"i2c\":[112,113,114,115,116,117,118,119]") != NULL,
@@ -2144,6 +2145,34 @@ static void test_a_net_change_owes_a_report(void) {
     dc_report_status(&c, 0, -50, NULL, "1.11.0");
     dc_set_net(&c, NULL);
     CHECK(dc_net_owed(&c), "Network mode ended");
+}
+
+// Shared-IP mode (pnet_shared.h, ruling 2026-11-15): the report says so, after the address; normal mode unchanged.
+static void test_shared_ip_mode_rides_the_net_tail(void) {
+    boot();
+    dc_net_t n = { .on = true, .amiga_ip = 0xC0A82B05u, .shared = true, .frames_in = 1, .frames_out = 2 };
+    dc_set_net(&c, &n);
+    CHECK(dc_net_owed(&c), "Network mode began");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.25.0");
+    CHECK(strstr(fake_last_request(),
+          ",\"net\":{\"amigaIp\":\"192.168.43.5\",\"shared\":true,\"framesIn\":1,\"framesOut\":2}") != NULL,
+          "the shared address and the flag");
+    CHECK(!dc_net_owed(&c), "accepted");
+    n.shared = false;
+    dc_set_net(&c, &n);
+    CHECK(dc_net_owed(&c), "shared mode ended: owed at once");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.25.0");
+    CHECK(strstr(fake_last_request(), "\"shared\"") == NULL, "normal mode: no key, the tail as before");
+    CHECK(strstr(fake_last_request(), ",\"net\":{\"amigaIp\":\"192.168.43.5\",\"framesIn\":1,\"framesOut\":2}") != NULL,
+          "normal mode's tail is byte for byte the old one");
+    n.amiga_ip = 0; n.shared = true;                  // shared, the Amiga not yet seen on it: the flag alone
+    dc_set_net(&c, &n);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.25.0");
+    CHECK(strstr(fake_last_request(), ",\"net\":{\"shared\":true,\"framesIn\":1,\"framesOut\":2}") != NULL,
+          "no address: the flag alone");
 }
 
 // --- Multi-disk "Next disk" (spec 2026-09-28 §4): next, preload, swap ------
@@ -4302,6 +4331,7 @@ int main(void) {
     RUN(test_net_leaves_out_what_is_not_known_and_saturates);
     RUN(test_driver_age_never_wraps);
     RUN(test_a_net_change_owes_a_report);
+    RUN(test_shared_ip_mode_rides_the_net_tail);
     RUN(test_sel1_change_owes_a_report_once);
     RUN(test_status_carries_the_firmware_fields);
     RUN(test_status_without_a_fw_report_omits_the_fields);
