@@ -120,6 +120,7 @@ static const pnet_lease_t *lease_of(struct netif *nif) {
 static volatile uint32_t s_down_done;   // core0 writes (pnet_bridge_down_done), the network context reads
 static void pnet_sort_inputs(struct netif *nif) {
     pnet_sort_set_mask(&s_sort, lwip_ntohl(ip4_addr_get_u32(netif_ip4_netmask(nif))));
+    pnet_sort_set_clock(&s_sort, to_ms_since_boot(get_absolute_time()));   // the former addresses' age
     s_sort.sh.down_done = s_down_done;
     pnet_shared_follow(&s_sort, board_ip_of(nif));
 }
@@ -174,6 +175,7 @@ static err_t pnet_linkoutput(struct netif *nif, struct pbuf *p) {
     if (s_on && p->tot_len >= PNET_ETH_HDR) {
         uint8_t head[64];                                // ARP (42) and an IPv4 header (34+) fit
         const uint16_t n = pbuf_copy_partial(p, head, sizeof head, 0);
+        pnet_sort_inputs(nif);                           // review minor 5: sh.on and sh.ip current for this frame
         const bool shared = s_sort.sh.on;                // shared mode: the Amiga is PNET_SHARED_AMIGA on the bus
         if (shared ? pnet_shared_b2a(&s_sort, head, n) : pnet_sort_b2a_local(&s_sort, head, n, board_ip_of(nif))) {
             if (p->tot_len > PNET_RING_MTU) { s_local_drops++; return ERR_OK; }
@@ -288,10 +290,13 @@ void pnet_bridge_stats(pnet_bridge_stats_t *o) {
 }
 
 // core0 (pnet_serve_status): the sorter's re-address cursor and whether it is still wanted, then what core0 finished.
-// Single words across cores: a stale read only delays a pulse by one arrival.
+// Single words across cores. Review minor 2: down_req FIRST, a barrier, then down_want -- the writer (ask_readdress)
+// stores down_want, a barrier, then down_req, so a new request is never seen with the old (false) wish.
 uint32_t pnet_bridge_down_req(bool *want) {
     const volatile pnet_shared_t *sh = &s_sort.sh;
+    const uint32_t req = sh->down_req;
+    __dmb();
     *want = sh->down_want;
-    return sh->down_req;
+    return req;
 }
 void pnet_bridge_down_done(uint32_t done) { s_down_done = done; }
