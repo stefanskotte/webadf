@@ -537,11 +537,30 @@ static bool dc_attempt(device_client_t *c, const char *req, int req_len,
 // to be: an interrupt usually lands on a reused connection with nothing read
 // yet -- exactly the shape of a dead socket -- so the retry would otherwise
 // re-send the poll the caller just asked to stop, and wait the full hold again.
+static bool dc_exchange_core(device_client_t *c, const char *req, int req_len,
+                             const uint8_t *body, int body_len,
+                             void (*sink)(void *ctx, const uint8_t *b, int n),
+                             void *sink_ctx, http_resp_t *r, bool retryable,
+                             bool *interrupted_out);
+// Every request, counted once whatever its retry did (c->unanswered: the Wi-Fi fallback and the panel's no-server
+// mark). An interrupted poll is neither an answer nor a failure.
 static bool dc_exchange_i(device_client_t *c, const char *req, int req_len,
                           const uint8_t *body, int body_len,
                           void (*sink)(void *ctx, const uint8_t *b, int n),
                           void *sink_ctx, http_resp_t *r, bool retryable,
                           bool *interrupted_out) {
+    bool intr = false;
+    const bool ok = dc_exchange_core(c, req, req_len, body, body_len, sink, sink_ctx, r, retryable, &intr);
+    if (interrupted_out) *interrupted_out = intr;
+    if (!intr && r->status == 0) c->unanswered++;
+    return ok;
+}
+
+static bool dc_exchange_core(device_client_t *c, const char *req, int req_len,
+                             const uint8_t *body, int body_len,
+                             void (*sink)(void *ctx, const uint8_t *b, int n),
+                             void *sink_ctx, http_resp_t *r, bool retryable,
+                             bool *interrupted_out) {
     bool reused = false;
     int got = 0;
     bool intr = false;

@@ -568,6 +568,10 @@ typedef struct {
     // request. Only ever counts up (wraps). main.c's Wi-Fi fallback reads it: no answer for minutes on an up link
     // means nothing gets through on this network (wifi_fallback.h, B).
     uint32_t answers;
+    // Requests that ended with no answer at all (no status line), each counted once after its retry; an
+    // interrupted poll is not one. Only ever counts up (wraps). The fallback needs two of them as well as the
+    // time before it moves (one slow request alone must not), and the panel marks "no server" after one.
+    uint32_t unanswered;
 } device_client_t;
 
 void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,

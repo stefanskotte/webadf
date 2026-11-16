@@ -82,6 +82,7 @@ static void test_answers_count_only_exchanges_the_server_answered(void) {
     fake_push_connect_failure();
     dc_step(&c);
     CHECK_EQ_INT(c.answers, 2);   // nothing came back
+    CHECK_EQ_INT(c.unanswered, 1);   // and it counts as a request with no answer, once
 }
 
 // The Wi-Fi fallback moved the board (review M3): the backoff grown on the old network is gone.
