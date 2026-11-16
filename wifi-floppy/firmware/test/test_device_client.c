@@ -67,6 +67,59 @@ static void test_cold_boot_polls_since_zero(void) {
           "cold boot MUST poll since=0 or the device boots diskless forever");
 }
 
+// The Wi-Fi fallback's signal (wifi_fallback.h, B): an exchange the server answered counts, any status; one that
+// never reached a status line does not.
+static void test_answers_count_only_exchanges_the_server_answered(void) {
+    boot();
+    CHECK_EQ_INT(c.answers, 0);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK_EQ_INT(c.answers, 1);
+    push_status_json("HTTP/1.1 503 Service Unavailable", "{}");
+    dc_step(&c);
+    CHECK_EQ_INT(c.answers, 2);   // a 5xx: the network works
+    fake_set_clock(100000);
+    fake_push_connect_failure();
+    dc_step(&c);
+    CHECK_EQ_INT(c.answers, 2);   // nothing came back
+    CHECK_EQ_INT(c.unanswered, 1);   // and it counts as a request with no answer, once
+}
+
+// The unanswered count is per request: a dead kept socket and its retry on a fresh one count once; an HTTP error
+// status is an answer, not a failure.
+static void test_unanswered_counts_a_retried_request_once_and_never_an_http_error(void) {
+    boot();
+    fake_set_reused(true);
+    fake_kill_kept_connection();
+    fake_push_connect_failure();                  // the retry's fresh connection fails too
+    dc_step(&c);
+    CHECK_EQ_INT(fake_request_count(), 2);        // the attempt on the dead socket, then the retry
+    CHECK_EQ_INT(c.unanswered, 1);
+    boot();
+    push_status_json("HTTP/1.1 500 Internal Server Error", "{}");
+    dc_step(&c);
+    CHECK_EQ_INT(c.unanswered, 0);
+    CHECK_EQ_INT(c.answers, 1);
+    // A dead kept socket whose retry is answered: no failure at all.
+    boot();
+    fake_set_reused(true);
+    fake_kill_kept_connection();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK_EQ_INT(c.unanswered, 0);
+    CHECK_EQ_INT(c.answers, 1);
+}
+
+// The Wi-Fi fallback moved the board (review M3): the backoff grown on the old network is gone.
+static void test_a_network_change_resets_the_backoff(void) {
+    boot();
+    fake_push_connect_failure();
+    CHECK_EQ_INT(dc_step(&c), DC_BACKOFF);
+    CHECK(c.backoff_ms > 0, "backed off");
+    dc_network_changed(&c);
+    CHECK_EQ_INT(c.backoff_ms, 0);
+}
+
 // Task 5's binding ruling: transport_t.write() may accept fewer bytes than
 // offered, exactly as a real socket can under backpressure. A client that
 // assumes one write() call sends a whole request would pass every other
@@ -1749,6 +1802,7 @@ static void poll_interrupted_returns_without_backoff(void) {
     CHECK_EQ_INT(st, DC_IDLE_POLL);
     CHECK_EQ_INT(c.state, DC_IDLE_POLL);
     CHECK_EQ_INT(c.backoff_ms, 2000);          // nothing failed: no backoff
+    CHECK_EQ_INT(c.unanswered, 0);             // an interrupted poll is not a request with no answer
     CHECK_EQ_INT(c.since, 3);
     CHECK_EQ_INT(fake_request_count(), 1);     // an interrupt is not a dead socket
     CHECK(fake_abandon_count() >= 1, "the connection is abandoned");
@@ -4295,6 +4349,9 @@ int main(void) {
     psram_image_init();     // pre-flight I1: SLOT_NET's storage is set up here
 
     RUN(test_cold_boot_polls_since_zero);
+    RUN(test_answers_count_only_exchanges_the_server_answered);
+    RUN(test_a_network_change_resets_the_backoff);
+    RUN(test_unanswered_counts_a_retried_request_once_and_never_an_http_error);
     RUN(test_request_survives_single_byte_writes);
     RUN(test_since_does_not_advance_on_a_failed_fetch);
     RUN(test_current_disk_survives_a_failed_replacement_fetch);

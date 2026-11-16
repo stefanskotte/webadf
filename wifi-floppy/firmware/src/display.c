@@ -344,7 +344,7 @@ static void draw_status_icon(uint8_t *fb, int x, int y, disp_status_t st, int ti
     }
 }
 
-static void draw_wifi(uint8_t *fb, int x, int y, int bars) {
+static void draw_wifi(uint8_t *fb, int x, int y, int bars, bool no_server) {
     draw_bitmap(fb, x, y, WIFI_DOT);
     if (bars >= 1) draw_bitmap(fb, x, y, WIFI_ARC1);
     if (bars >= 2) draw_bitmap(fb, x, y, WIFI_ARC2);
@@ -352,8 +352,20 @@ static void draw_wifi(uint8_t *fb, int x, int y, int bars) {
     // No radio at all: strike the glyph through, which is distinguishable
     // from "associated but weak" (a bare dot) at a glance. Those two states
     // want different actions from whoever is looking at it.
-    if (bars < 0)
+    // The server not answering (operator ruling 2026-11-16, bench: one strike was hard to see): a bold X, both
+    // diagonals two pixels wide across the whole 11x8 glyph, over whatever arcs the signal gives. It wins over the
+    // single strike, which stays "no radio" (a bare dot, one thin diagonal).
+    if (no_server) {
+        for (int r = 0; r < 8; r++) {
+            const int c = (r * (WIFI_W - 2) + 3) / 7;   // 0..9 down the rows
+            px(fb, x + c, y + r);
+            px(fb, x + c + 1, y + r);
+            px(fb, x + WIFI_W - 1 - c, y + r);
+            px(fb, x + WIFI_W - 2 - c, y + r);
+        }
+    } else if (bars < 0) {
         for (int i = 0; i < 8; i++) px(fb, x + 1 + i, y + i);
+    }
 }
 
 const char *disp_status_word(disp_status_t s) {
@@ -499,7 +511,7 @@ void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP
         const int x = AT(e->x), y = AT(e->y);
         int bw, bh; layout_el_size(e, &bw, &bh);
         switch (e->id) {
-            case EL_WIFI:    draw_wifi(fb, x, y, s->bars); break;
+            case EL_WIFI:    draw_wifi(fb, x, y, s->bars, s->no_server != 0); break;
             case EL_LEMMING: draw_lemming(fb, x, y, s->tick); break;
             case EL_WRITE:   draw_write_state(fb, x, y, s->writable, s->sync); break;
             case EL_NFC:     draw_nfc(fb, x, y, s->nfc); break;

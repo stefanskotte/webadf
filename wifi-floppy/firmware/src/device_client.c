@@ -308,6 +308,7 @@ static void dc_xfer_end(device_client_t *c, const http_resp_t *r, dc_xfer_stage_
     x->body_complete = r->body_complete;
     x->bytes_read = read_bytes;
     x->ms = c->now() - t0;
+    if (r->status != 0) c->answers++;
 }
 
 const char *dc_transport_rc_text(int rc) {
@@ -536,11 +537,30 @@ static bool dc_attempt(device_client_t *c, const char *req, int req_len,
 // to be: an interrupt usually lands on a reused connection with nothing read
 // yet -- exactly the shape of a dead socket -- so the retry would otherwise
 // re-send the poll the caller just asked to stop, and wait the full hold again.
+static bool dc_exchange_core(device_client_t *c, const char *req, int req_len,
+                             const uint8_t *body, int body_len,
+                             void (*sink)(void *ctx, const uint8_t *b, int n),
+                             void *sink_ctx, http_resp_t *r, bool retryable,
+                             bool *interrupted_out);
+// Every request, counted once whatever its retry did (c->unanswered: the Wi-Fi fallback and the panel's no-server
+// mark). An interrupted poll is neither an answer nor a failure.
 static bool dc_exchange_i(device_client_t *c, const char *req, int req_len,
                           const uint8_t *body, int body_len,
                           void (*sink)(void *ctx, const uint8_t *b, int n),
                           void *sink_ctx, http_resp_t *r, bool retryable,
                           bool *interrupted_out) {
+    bool intr = false;
+    const bool ok = dc_exchange_core(c, req, req_len, body, body_len, sink, sink_ctx, r, retryable, &intr);
+    if (interrupted_out) *interrupted_out = intr;
+    if (!intr && r->status == 0) c->unanswered++;
+    return ok;
+}
+
+static bool dc_exchange_core(device_client_t *c, const char *req, int req_len,
+                             const uint8_t *body, int body_len,
+                             void (*sink)(void *ctx, const uint8_t *b, int n),
+                             void *sink_ctx, http_resp_t *r, bool retryable,
+                             bool *interrupted_out) {
     bool reused = false;
     int got = 0;
     bool intr = false;
@@ -1474,6 +1494,11 @@ void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
     c->preload.slot = SLOT_NONE;   // 0 is a real slot; memset's zero is not "none"
     // Every build from 1.7.0 can take a layout (spec 2026-10-04 §6).
     c->display_layouts = true;
+}
+
+void dc_network_changed(device_client_t *c) {
+    dc_abandon(c);
+    dc_backoff_reset(c);
 }
 
 void dc_set_boot(device_client_t *c, uint32_t id, bool ota) {

@@ -568,6 +568,14 @@ typedef struct {
 
     // How the most recent exchange (any request) ended -- see dc_xfer_t.
     dc_xfer_t last_xfer;
+    // Exchanges the server answered (a status line was read: any status, a 5xx too -- the network works), any
+    // request. Only ever counts up (wraps). main.c's Wi-Fi fallback reads it: no answer for minutes on an up link
+    // means nothing gets through on this network (wifi_fallback.h, B).
+    uint32_t answers;
+    // Requests that ended with no answer at all (no status line), each counted once after its retry; an
+    // interrupted poll is not one. Only ever counts up (wraps). The fallback needs two of them as well as the
+    // time before it moves (one slow request alone must not), and the panel marks "no server" after one.
+    uint32_t unanswered;
 } device_client_t;
 
 void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
@@ -579,6 +587,10 @@ void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
 // port is not 443). `host_header` must outlive the client -- it is kept, not
 // copied (main.c passes a static buffer).
 void dc_set_server(device_client_t *c, int port, const char *host_header);
+
+// The board just changed networks (main.c's Wi-Fi fallback, review M3): the kept connection belonged to the old
+// one, and the backoff grown while nothing got through must not delay the first request on the new one.
+void dc_network_changed(device_client_t *c);
 
 // Server override (1.13.0). Call after dc_init: every status report from now
 // on carries ,"server":{"custom":<bool>,"tls":"verify"|"noverify"} -- both

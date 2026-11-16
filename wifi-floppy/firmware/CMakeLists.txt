@@ -69,7 +69,7 @@ set(WFMF_FIRMWARE_SOURCES
   src/image_loader.c src/device_client.c src/http.c src/json_scan.c
   src/token_store.c src/config_store.c src/override_store.c src/serial_cmd.c src/fw_state.c src/fw_trial.c src/fw_apply.c src/fw_update.c src/fw_rom.c src/provisioning.c
   src/mfm.c src/adf_mfm.c src/write_back.c src/reinsert.c src/swap_gate.c src/swap_phase.c src/bus_power.c src/dns_server.c src/dhcp_server.c src/portal_http.c
-  src/portal_net.c src/net_radio_cyw43.c src/net_join.c src/wifi_ctl.c
+  src/portal_net.c src/net_radio_cyw43.c src/net_join.c src/wifi_ctl.c src/wifi_fallback.c
   src/transport_tls.c src/sntp_time.c src/tls_mem.c
   ${WFMF_PSA_CRYPTO_RANDOM_SRC}
   src/wf_log.c

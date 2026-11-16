@@ -102,4 +102,8 @@ up_step_t up_step(uploader_t *u);             // at most one request
 up_sync_t up_sync(const uploader_t *u);
 bool      up_forces_wprot(uploader_t *u);   // 409 write_protected, or parked
 
+// The board just changed networks (main.c's Wi-Fi fallback, review M3): a wait grown while nothing got through
+// ends now, so writes waiting go out on the new network at once.
+void up_network_changed(uploader_t *u);
+
 #endif

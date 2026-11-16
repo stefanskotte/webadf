@@ -212,7 +212,9 @@ export const HELP_TOPICS = {
   // Wi-Fi networks (2026-11-15): board-settings.tsx > wifi-networks-setting.tsx, lib/wifi-networks.ts (texts, the
   // 2-minute open TTL, WIFI_SETUP_MINUTES), api/devices/[id]/wifi. Firmware: wifi_ctl.h (ten minutes, two more after a
   // check), main.c wifi_online_* (the AP beside the station; Save joins to check, saves, goes back; a disk in the
-  // drive refuses open and remove; no Remove for the network in use), config_store.h CONFIG_NETS_MAX 4,
+  // drive refuses open and remove; no Remove for the network in use), wifi_fallback.h (moving: 30 s link
+  // down, or 2 min and 2 unanswered requests; only with another saved network a scan sees; back to an earlier one every 10 min when idle),
+  // config_store.h CONFIG_NETS_MAX 4,
   // pairing-guide.ts (setup network name, password, address).
   'wifi-networks': {
     title: 'Wi-Fi networks',
@@ -233,6 +235,12 @@ export const HELP_TOPICS = {
           about 3 minutes if no saved network answers, then the board restarts); it then saves it and goes back.
           Press <em>Done</em> there, or <em>Close setup page</em> here, when finished. Changing a saved
           network&apos;s password works the same way.
+        </p>
+        <p>
+          <strong>Moving between them.</strong> If the network in use goes away for 30 seconds, or stays up but
+          the board can&apos;t reach this app for 2 minutes, the board moves to another saved network in range by
+          itself. With nothing else in range it stays and keeps trying. When it is idle (no disk in, DF1 not on Network), it goes
+          back to a network higher in its list once that one is in range again.
         </p>
         <p>
           Add a phone hotspot at home, before you need it: switch on its 2.4 GHz or compatibility mode first.
@@ -459,6 +467,8 @@ export const HELP_TOPICS = {
   // display_layout_for (built-in screens take the icon), display-layout.ts STATUS_ICON_FIRMWARE 1.15.0.
   // Rotation (1.17.0): oled_cmds.c (A0/C0 in the controller, every screen turns), display_layout.h
   // REC_ROTATION, display-editor.tsx (Rotation select, reset keeps the turn), drive-glass.tsx (stripRotation), route.ts tooOldReason.
+  // Wi-Fi marks: display.c draw_wifi (bars < 0: bare dot, one thin strike; no_server: bold X over the arcs), main.c
+  // g_ui_no_server from wifi_fallback.h wfb_no_server (first unanswered request or a link drop, until an answer).
   // Track counter side arrow (1.18.0): display.c track_text ("42" arrow "79", down = side 0, up = side 1).
   // The 1.17.0 head element (id 10) was withdrawn; stored layouts that name it lose it silently.
   display: {
@@ -478,7 +488,8 @@ export const HELP_TOPICS = {
         <p>
           The <em>Track</em> counter reads cylinder, a side arrow, then the last cylinder, as{' '}
           <em>42↑79</em> or <em>42↓79</em>: up is side 1, down side 0. The <em>NFC</em> element, hidden until you tick it, shows
-          the NFC reader (struck through when none is found, inverted while a tag write waits).
+          the NFC reader (struck through when none is found, inverted while a tag write waits). The <em>Wi-Fi</em>{' '}
+          signal shows a bold X while the board can&apos;t reach this app.
         </p>
         <p>
           The <em>Status</em> shows <em>as</em> a word or an icon: an empty or filled floppy, filling while

@@ -51,6 +51,17 @@ int  net_radio_ap_authorized(uint8_t (*macs)[6], int max);
  *  the TBYB buy reboot and after a revert. Waits, bounded by `wait_ms`, for the leave's own DISASSOC. A no-op when
  *  nothing is held. Core1 only, foreground; never on a crash path. Returns true if it left something. */
 bool net_radio_sta_leave(uint32_t wait_ms);
+/** The Wi-Fi fallback (wifi_fallback.h): which of `names` (n <= NET_RADIO_SCAN_MAX, NUL-terminated SSIDs of up to
+ *  32 octets, copied) the scans see (a broadcast active scan, a passive one, then one directed at each name
+ *  still unseen) -- bit i for names[i] -- waiting at most timeout_ms. Runs beside an associated
+ *  station (the chip leaves its channel briefly). A network that hides its name, or a phone hotspot not
+ *  advertising, may still not be seen. -1: the scan could not start. A scan can outlive the deadline: its later results are
+ *  ignored, and net_radio_scan_active says when the chip has finished (a join must not start before). Core1 only,
+ *  foreground. */
+#define NET_RADIO_SCAN_MAX 4
+// `results` (may be NULL): how many scan results arrived in all, any name -- 0 means the radio heard nothing.
+int  net_radio_scan_names(const char *const *names, int n, uint32_t timeout_ms, int *results);
+bool net_radio_scan_active(void);
 /** The station interface, to restore it as lwIP's default route after the AP. */
 struct netif *net_radio_sta_netif(void);
 /** The AP interface (valid between net_radio_ap_start and net_radio_ap_stop): the portal binds its sockets to it. */

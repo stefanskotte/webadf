@@ -2,6 +2,8 @@
 // validator (wifi-floppy/firmware/wasm/display_wasm.c), so the editor's preview
 // is the firmware's pixels. Rebuild with `pnpm display:wasm`.
 
+import { DISPLAY_WASM_VERSION } from './display-wasm-version';
+
 export type PanelId = 0 | 1;
 export interface PreviewState {
   status: 'boot' | 'portal' | 'wifi' | 'ready' | 'download' | 'verify' | 'loaded' | 'error';
@@ -12,6 +14,9 @@ export interface PreviewState {
   pct: number; tick: number; writable: boolean; sync: 'synced' | 'pending' | 'offline';
   /** The tag reader, for the 'nfc' element (display.h disp_nfc_t). */
   nfc: 'absent' | 'present' | 'armed';
+  /** Wi-Fi up, the server not answering: the Wi-Fi glyph struck through over its arcs
+   *  (display.h display_state_t.no_server, operator ruling 2026-11-16). Absent: answering. */
+  noServer?: boolean;
 }
 export interface DisplayWasm {
   /** null when valid, else the C validator's reason. */
@@ -29,12 +34,12 @@ const NFC = ['absent', 'present', 'armed'] as const;
 // display_state_t on wasm32 (int/enum 4 bytes, bool 1): title[43], detail[22].
 // The C side reports its own offsets (state_off); the loader refuses to run if
 // they disagree with this table.
-// `side` (1.17.0) is a byte in what was padding after show_track: no other offset moved.
+// `side` (1.17.0) and `noServer` (2026-11-16) are bytes in what was padding after show_track: no other offset moved.
 const OFF = {
   status: 0, bars: 4, title: 8, detail: 51, showTrack: 73, cyl: 76, maxCyl: 80,
-  pct: 84, tick: 88, writable: 92, sync: 96, nfc: 100, side: 74,
+  pct: 84, tick: 88, writable: 92, sync: 96, nfc: 100, side: 74, noServer: 75,
 } as const;
-const FIELD_ORDER = ['status', 'bars', 'title', 'detail', 'showTrack', 'cyl', 'maxCyl', 'pct', 'tick', 'writable', 'sync', 'nfc', 'side'] as const;
+const FIELD_ORDER = ['status', 'bars', 'title', 'detail', 'showTrack', 'cyl', 'maxCyl', 'pct', 'tick', 'writable', 'sync', 'nfc', 'side', 'noServer'] as const;
 export const STATE_SIZE = 104;
 const TITLE_CAP = 43;
 const DETAIL_CAP = 22;
@@ -61,7 +66,9 @@ let browserLoad: Promise<DisplayWasm> | null = null;
  */
 export function loadDisplayWasm(bytes?: ArrayBuffer): Promise<DisplayWasm> {
   if (bytes) return instantiate(bytes);
-  browserLoad ??= fetch('/display.wasm')
+  // The sources hash as a query: a browser or CDN copy of an older module is never paired with this loader's
+  // offset table (review of bb89103e: the loader checks state_off(13)).
+  browserLoad ??= fetch(`/display.wasm?v=${DISPLAY_WASM_VERSION}`)
     .then((res) => {
       if (!res.ok) throw new Error(`could not load /display.wasm: HTTP ${res.status}`);
       return res.arrayBuffer();
@@ -120,6 +127,7 @@ async function instantiate(buf: ArrayBuffer): Promise<DisplayWasm> {
       putStr(base + OFF.detail, DETAIL_CAP, state.detail);
       dv.setUint8(base + OFF.showTrack, state.showTrack ? 1 : 0);
       dv.setUint8(base + OFF.side, state.side ? 1 : 0);
+      dv.setUint8(base + OFF.noServer, state.noServer ? 1 : 0);
       dv.setInt32(base + OFF.cyl, state.cyl, true);
       dv.setInt32(base + OFF.maxCyl, state.maxCyl, true);
       dv.setInt32(base + OFF.pct, state.pct, true);
