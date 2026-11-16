@@ -569,7 +569,9 @@ export const HELP_TOPICS = {
   // numbers: HANDOFF 3bi (47.5 KB/s alone, 24.4 KB/s during a DF0 copy, router pings 204-545 ms, avg ~250);
   // the steps: tools/paulanet-disk/Install and ReadMe; download: api/paulanet-disk/route.ts; Rob's permission:
   // third-party/paulanet/PERMISSION.md. Mouse: the driver busy-polls at priority 1 (HANDOFF 3bi, not yet measured).
-  // LZ4: spec 2026-10-18 (fw 1.16.0, the variant on the driver disk).
+  // LZ4: spec 2026-10-18 (fw 1.16.0, the variant on the driver disk). One IP (the Amiga shares the board's address;
+  // a network switch takes the Amiga offline for a few seconds; a static address is kept): firmware pnet_shared.h,
+  // operator ruling 2026-11-16.
   network: {
     title: 'Amiga networking (PaulaNET)',
     short:
@@ -585,15 +587,16 @@ export const HELP_TOPICS = {
         <p>
           <strong>Three steps.</strong> Open DF1 and double-click <em>Install</em>. Then, in a Shell, type{' '}
           <code>AddNetInterface eth0</code>. To go online at every start, add that line to S:User-Startup. The
-          card&apos;s checklist shows each part: the driver disk, the driver, and the Amiga&apos;s own address.
+          card&apos;s checklist shows each part: the driver disk, the driver, and the Amiga&apos;s address.
         </p>
         <GoodToKnow items={[
+          'The Amiga shares the board’s IP address. When the board changes Wi-Fi network, the Amiga is offline a few seconds. A fixed Amiga address is kept.',
           'Expect about 45 KB/s, about half that during a DF0 copy, and pings of about 250 ms.',
           'The mouse may feel slower while the driver runs.',
           'DF0 can be empty, for an Amiga that starts from a hard drive, and changing the disk in DF0 does not interrupt the network.',
           'Needs board firmware 1.11.0 or newer.',
           <>For a real floppy or an emulator, <a className="underline" href="/api/paulanet-disk">download the PaulaNET driver disk</a>.</>,
-          'With board firmware 1.16.0, the driver compresses with LZ4: what the Amiga receives on every Amiga, and what it sends on a 68020 or faster. Already-compressed files travel as before. If you installed PaulaNET before, run Install again from the driver disk in DF1 to get it.',
+          'With board firmware 1.16.0, the driver compresses with LZ4: what the Amiga receives on every Amiga, and what it sends on a 68020 or faster. If you installed PaulaNET before, run Install again from the driver disk in DF1 to get it.',
           'PaulaNET is by Rob Smith (RobSmithDev), used with his permission. The driver disk carries WebFloppy’s LZ4 build of his driver.',
         ]} />
       </>
