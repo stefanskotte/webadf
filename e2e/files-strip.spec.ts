@@ -75,19 +75,20 @@ test('a disk whose image cannot be read keeps its strip, with History, on load a
   const tag = runTag();
   // A disk row whose image was never stored: listing it is blob_unavailable.
   const sha256 = createHash('sha256').update(`never-stored-${tag}`).digest('hex');
-  const { gameId } = await seedDisk(orgId, { title: `Lost-${tag}`, diskNo: 1, sha256, writeProtected: false });
+  await seedDisk(orgId, { title: `Lost-${tag}`, diskNo: 1, sha256, writeProtected: false });
 
   const unreadable = 'The disk image could not be read. Try again in a moment.';
-  // Arriving on the client: the left pane opens the disk from its title (the strip is fetched after the move).
-  await page.goto(`/files?${new URLSearchParams({ left: `LIBRARY:/${gameId}`, right: 'LIBRARY:', active: 'left' })}`);
+  // Arriving on the client: the left pane opens the title from LIBRARY:, and a title with one disk opens straight into
+  // it (ruling 2026-11-16) -- here into the error (the strip is fetched after the move).
+  await page.goto(`/files?${new URLSearchParams({ left: 'LIBRARY:', right: 'LIBRARY:', active: 'left' })}`);
   await managerReady(page);
-  await page.getByTestId('pane-left').locator('[data-testid="pane-row"][data-kind="disk"]').dblclick();
+  await page.getByTestId('pane-left').locator('[data-testid="pane-row"][data-kind="title"]').filter({ hasText: `Lost-${tag}` }).dblclick();
   await expect(page.getByTestId('pane-left-error')).toHaveText(unreadable);
   const strip = page.getByTestId('disk-strip-left');
   await expect(strip).toContainText(`Lost-${tag}`);
   await expect(strip.getByTestId('disk-strip-history-toggle')).toBeVisible();
 
-  // On load: the URL now names the disk, and the server page builds the strip itself.
+  // On load: the URL names the title still (nothing listed to land on), and the server page builds the strip itself.
   await page.reload();
   await expect(page.getByTestId('pane-left-error')).toHaveText(unreadable);
   await expect(page.getByTestId('disk-strip-left').getByTestId('disk-strip-history-toggle')).toBeVisible();
@@ -197,9 +198,9 @@ test('a filed title: Files… opens its disk inside its first collection, and th
     await page.goto(`/files?${new URLSearchParams({ left: `LIBRARY:/${first}/${lost.gameId}/${lost.diskId}`, right: 'LIBRARY:', active: 'left' })}`);
     await expect(page.getByTestId('pane-left-error')).toHaveText('The disk image could not be read. Try again in a moment.');
     await expect(page.getByTestId('disk-strip-left')).toContainText(`Lost-${tag}`);
+    // Its one-disk title opens straight into it (ruling 2026-11-16): the same error and strip.
     await page.goto(`/files?${new URLSearchParams({ left: `LIBRARY:/${first}/${lost.gameId}`, right: 'LIBRARY:', active: 'left' })}`);
     await managerReady(page);
-    await page.getByTestId('pane-left').locator('[data-testid="pane-row"][data-kind="disk"]').dblclick();
     await expect(page.getByTestId('pane-left-error')).toBeVisible();
     await expect(page.getByTestId('disk-strip-left').getByTestId('disk-strip-history-toggle')).toBeVisible();
   } finally {

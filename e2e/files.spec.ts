@@ -9,7 +9,7 @@ import { applyBatch, type BatchOp } from '@/lib/adffs/write';
 import { readVolume, type AdfEntry } from '@/lib/adffs';
 import { diskStore } from '@/lib/storage';
 import { signUpFresh, runTag } from './helpers';
-import { cleanupSeeded, pairDevice, seedDisk } from './device-helpers';
+import { addDisk, cleanupSeeded, pairDevice, seedDisk } from './device-helpers';
 
 /**
  * Files increment 1, Task 11: the two-pane manager end to end at the desktop width -- copy, clash, move by drag,
@@ -96,8 +96,14 @@ test('a title\'s disk rows say the image: an HD ADF is 1.76 MB, an HFE says HFE 
   const hd = await seedTitle(orgId, `RowsHD-${tag}`, STANDARD, 'hd');
   const hfe = await seedDisk(orgId, { title: `RowsHFE-${tag}`, diskNo: 1, sha256: createHash('sha256').update(`hfe-${tag}-${randomUUID()}`).digest('hex'),
     sizeBytes: 2_097_664, imageFormat: 'hfe' });
+  // A second disk each: a title with one disk opens straight into it (ruling 2026-11-16), so only a set lists its rows.
+  for (const g of [hd.gameId, hfe.gameId]) {
+    await addDisk(orgId, g, { diskNo: 2, sha256: createHash('sha256').update(`two-${tag}-${randomUUID()}`).digest('hex'), label: 'Disk 2' });
+  }
   await openFiles(page, `LIBRARY:/${hd.gameId}`, `LIBRARY:/${hfe.gameId}`, 'left');
-  const only = (side: 'left' | 'right') => page.getByTestId(`pane-${side}`).getByTestId('pane-row');
+  await expect(page.getByTestId('pane-left').getByTestId('pane-row')).toHaveCount(2);
+  // The first disk (seedDisk labels it "<title> (Disk 1)"), not the added "Disk 2".
+  const only = (side: 'left' | 'right') => page.getByTestId(`pane-${side}`).locator('[data-testid="pane-row"][data-kind="disk"]:not([data-name="Disk 2"])');
   await expect(only('left')).toHaveCount(1);
   await expect(only('left').getByTestId('pane-disk-image')).toHaveText('· ADF', { useInnerText: true });
   await expect(only('left').locator('td').nth(2)).toHaveText('1.76 MB');
@@ -107,6 +113,46 @@ test('a title\'s disk rows say the image: an HD ADF is 1.76 MB, an HFE says HFE 
   await expect(only('right').getByTestId('pane-disk-spoken')).toHaveText(/^disk image .+, HFE, 2\.0 MB$/);
 });
 
+test('a title with one disk opens straight into its files; Up and Back pass over it; a set still lists its disks (ruling 2026-11-16)', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const tag = runTag();
+  const one = await seedTitle(orgId, `One-${tag}`);
+  const set = await seedTitle(orgId, `Set-${tag}`);
+  await addDisk(orgId, set.gameId, { diskNo: 2, sha256: createHash('sha256').update(`set2-${tag}-${randomUUID()}`).digest('hex'), label: 'Disk 2' });
+  await openFiles(page, 'LIBRARY:', 'STASH:', 'left');
+
+  // One double-click on the title: the disk's files, the crumbs still Title / Disk, the address the disk's.
+  await row(page, 'left', `One-${tag}`).dblclick();
+  await expect(row(page, 'left', 'ReadMe')).toHaveCount(1);
+  await expect.poll(() => placeOf(page, 'left')).toBe(one.path);
+  await expect(page.getByTestId('pane-left-crumb-1')).toHaveText(`One-${tag}`);
+  await expect(page.getByTestId('pane-left-crumb-2')).toHaveAttribute('data-kind', 'disk');
+  await expect(page.getByTestId('disk-strip-left')).toBeVisible();
+  // Back returns to where the title was opened from, not to a one-row title.
+  await page.goBack();
+  await expect.poll(() => placeOf(page, 'left')).toBe('LIBRARY:');
+  await expect(row(page, 'left', `One-${tag}`)).toHaveCount(1);
+  await page.goForward();
+  await expect(row(page, 'left', 'ReadMe')).toHaveCount(1);
+  // Up one level and Parent from the disk's root go to LIBRARY:.
+  await upButton(page, 'left').click();
+  await expect.poll(() => placeOf(page, 'left')).toBe('LIBRARY:');
+  await row(page, 'left', `One-${tag}`).dblclick();
+  await expect(row(page, 'left', 'ReadMe')).toHaveCount(1);
+  await page.getByTestId('files-parent').click();
+  await expect.poll(() => placeOf(page, 'left')).toBe('LIBRARY:');
+
+  // A title with two disks still lists them.
+  await row(page, 'left', `Set-${tag}`).dblclick();
+  await expect(page.getByTestId('pane-left').locator('[data-testid="pane-row"][data-kind="disk"]')).toHaveCount(2);
+  await expect.poll(() => placeOf(page, 'left')).toBe(`LIBRARY:/${set.gameId}`);
+
+  // An address naming the one-disk title opens at its disk, and says so.
+  await openFiles(page, `LIBRARY:/${one.gameId}`, 'STASH:', 'left');
+  await expect(row(page, 'left', 'ReadMe')).toHaveCount(1);
+  await expect.poll(() => placeOf(page, 'left')).toBe(one.path);
+});
+
 test('copy a file between disks makes one version', async ({ page }) => {
   const { orgId } = await signUpFresh(page);
   const tag = runTag();
@@ -114,20 +160,12 @@ test('copy a file between disks makes one version', async ({ page }) => {
   const b = await seedTitle(orgId, `CopyB-${tag}`, []);
   await openFiles(page, 'LIBRARY:', a.path, 'right');
 
-  // The left pane walks from LIBRARY: into disk B by double-clicks: the title, then its disk.
+  // The left pane walks from LIBRARY: into disk B by one double-click: B has one disk, so its title opens straight into
+  // it (ruling 2026-11-16), the address naming the disk.
   await row(page, 'left', `CopyB-${tag}`).dblclick();
-  await expect(page.getByTestId('pane-left-crumb-1')).toHaveText(`CopyB-${tag}`);
-  // The title's row is the disk image (ruling 2026-11-15): the disk sign and "· ADF" after the label, the size in the
-  // Size column from lg, and heard as "disk image <label>, ADF, 880 KB".
-  const diskRow = page.getByTestId('pane-left').getByTestId('pane-row').filter({ hasText: 'Disk 1' });
-  const label = (await diskRow.getAttribute('data-name'))!;
-  await expect(diskRow.getByTestId('pane-disk-image')).toHaveText('· ADF', { useInnerText: true });
-  await expect(diskRow.locator('td').nth(2)).toHaveText('880 KB');
-  await expect(diskRow.getByTestId('pane-disk-spoken')).toHaveText(`disk image ${label}, ADF, 880 KB`);
-  await expect(diskRow).not.toContainText('DSK');
-  await diskRow.dblclick();
   await expect(page.getByTestId('disk-strip-left')).toBeVisible();
   await expect.poll(() => new URL(page.url()).searchParams.get('left')).toBe(b.path);
+  await expect(page.getByTestId('pane-left-crumb-1')).toHaveText(`CopyB-${tag}`);
   // The crumb that is the disk image reads as a disk, not a folder (tester report 2026-11-15): a disk glyph, and its
   // name says "disk"; the title crumb above it is not marked.
   const diskCrumb = page.getByTestId('pane-left-crumb-2');
@@ -369,11 +407,7 @@ test("a pane's left edge goes up one level, as in Directory Opus; at the root it
   await edge.click({ position: { x: 3, y: 10 } });
   await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe(a.path);
   await expect(row(page, 'right', 'ReadMe')).toHaveCount(1);
-  await edge.click({ position: { x: 3, y: 10 } });                 // the disk -> its title
-  await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe(`LIBRARY:/${a.gameId}`);
-  // The address moves at once and the listing follows: up is counted from the listing shown, so wait for it.
-  await expect(page.getByTestId('pane-right').locator('[data-testid="pane-row"][data-kind="disk"]')).toHaveCount(1);
-  await edge.click({ position: { x: 3, y: 10 } });                 // the title -> LIBRARY:
+  await edge.click({ position: { x: 3, y: 10 } });                 // the disk -> LIBRARY:, past its one-disk title (2026-11-16)
   await expect.poll(() => new URL(page.url()).searchParams.get('right')).toBe('LIBRARY:');
   await expect(edge).toHaveAttribute('data-up', 'false');
   await edge.click({ position: { x: 3, y: 10 } });                 // the root: nowhere further
@@ -436,7 +470,6 @@ test('Up one level heads the listing: a click goes up one level, on every device
 test('a double-click on Up one level goes up one level only, whenever the second click lands (spec 2026-11-02, Part 2b)', async ({ page }) => {
   const { orgId } = await signUpFresh(page);
   const a = await seedTitle(orgId, `UpDbl-${runTag()}`, DEEP);
-  const title = `LIBRARY:/${a.gameId}`;
 
   // A real double-click from two levels down.
   await openFiles(page, 'STASH:', `${a.path}/C/Sub`, 'right');
@@ -471,10 +504,9 @@ test('a double-click on Up one level goes up one level only, whenever the second
   }
   // The row stays under the pointer: the same element takes the second click.
   expect(await slowDouble(`${a.path}/C/Sub`, `${a.path}/C`, row(page, 'right', 'Sub'))).toBe('pane-right-up-row');
-  // Out of the disk: the strip goes, so the listing jumps under the pointer.
-  await slowDouble(a.path, title, page.getByTestId('pane-right').locator('[data-testid="pane-row"][data-kind="disk"]'));
-  // To the root: the row itself goes, and a real row takes its place. It neither opens nor gets picked.
-  expect(await slowDouble(title, 'LIBRARY:', page.getByTestId('pane-right').locator('[data-testid="pane-row"][data-kind="title"]'))).toBe('pane-row');
+  // Out of the disk, past its one-disk title (ruling 2026-11-16) to the root: the strip and the row itself go, and a real
+  // row takes its place. It neither opens nor gets picked.
+  await slowDouble(a.path, 'LIBRARY:', page.getByTestId('pane-right').locator('[data-testid="pane-row"][data-kind="title"]').first());
 });
 
 test('Up one level is not a row of the selection: Select all, the counts and the arrow keys leave it out (spec 2026-11-02, Part 2b)', async ({ page }) => {
@@ -535,10 +567,7 @@ test('Up one level by keyboard: Tab reaches it, Enter walks up, and at the root 
   await page.keyboard.press('Enter');
   await expect.poll(() => placeOf(page, 'right')).toBe(a.path);
   await expect(row(page, 'right', 'ReadMe')).toHaveCount(1);
-  await page.keyboard.press('Enter');
-  await expect.poll(() => placeOf(page, 'right')).toBe(`LIBRARY:/${a.gameId}`);
-  await expect(page.getByTestId('pane-right').locator('[data-testid="pane-row"][data-kind="disk"]')).toHaveCount(1);
-  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');                              // past the one-disk title (ruling 2026-11-16)
   await expect.poll(() => placeOf(page, 'right')).toBe('LIBRARY:');
 
   // The row has gone from under the focus: the focus goes back to the manager, not to nowhere.

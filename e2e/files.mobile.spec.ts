@@ -133,17 +133,14 @@ test('at 390: one pane, the side switch, the bottom bar; Copy to… copies a fil
   await expect(picker.getByTestId('files-copy-to-reason')).toHaveText('Only titles, and disk images from STASH:, go into the library here');
   await noSideways(page);
 
-  // Drill into the other title, then its disk; "Copy here".
+  // Into the other title: it has one disk, so the picker opens straight into it (ruling 2026-11-16), the crumbs still
+  // Title / Disk, the disk's crumb marked as the disk image; "Copy here".
   const folder = (name: string) => picker.getByTestId('files-copy-to-folder').filter({ hasText: name });
+  expect((await folder(`PhoneB-${tag}`).boundingBox())!.height).toBeGreaterThanOrEqual(44);
   await folder(`PhoneB-${tag}`).tap();
   await expect(picker.getByTestId('files-copy-to-crumb-1')).toHaveText(`PhoneB-${tag}`);
-  expect((await folder('Disk 1').boundingBox())!.height).toBeGreaterThanOrEqual(44);
-  // A disk is a disk image here too (ruling 2026-11-15): its format and size after the label, and so it is heard.
-  const label = (await folder('Disk 1').getAttribute('data-name'))!;
-  await expect(folder('Disk 1').getByTestId('files-copy-to-disk-image')).toHaveText('· ADF, 880 KB');
-  await expect(folder('Disk 1')).toHaveAccessibleName(`disk image ${label}, ADF, 880 KB`);
-  await folder('Disk 1').tap();
   await expect(picker.getByTestId('files-copy-to-crumb-2')).toHaveText(/Disk 1/);   // the seeded disk's label names its title too
+  await expect(picker.getByTestId('files-copy-to-crumb-2')).toHaveAttribute('data-kind', 'disk');
   await expect(picker.getByTestId('files-copy-to-here')).toHaveText('Copy here');
   await picker.getByTestId('files-copy-to-here').tap();
   await expect(picker).toBeHidden({ timeout: 15_000 });
