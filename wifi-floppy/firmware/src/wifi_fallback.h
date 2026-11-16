@@ -128,8 +128,12 @@ bool wfb_no_server(const wifi_fb_t *fb);
 bool wfb_may_restart(const wifi_fb_t *fb);
 // After a BETTER run: did it reach the network it aimed at?
 bool wfb_returned(const wifi_fb_t *fb, int back_on);
-// The setup page's choice after a run: a run that joined a network ends it (-1), one that joined nothing keeps it.
+// The setup page's choice after a run: a run that joined ANOTHER network ends it (-1); one that rejoined the chosen
+// network (a DOWN run starts with the current one) or joined nothing keeps it (review of 16039538).
 int wfb_page_after_run(int page_idx, int back_on);
+// The setup page's choice after a Remove of saved network `removed` (prov_forget_network shifts the indices the way
+// it shifts `first`): the chosen network removed -> -1; one before it -> one down; after it -> unchanged.
+int wfb_page_after_remove(int page_idx, int removed);
 // What a scan's answer means (bench e92807d8, review of bb89103e): a scan that heard nothing at all, not even the
 // network the board is on, is a failed one (-1) while the link is up (DEAD, BETTER); with the link down (DOWN) an
 // all-quiet scan is an empty one -- a router rebooting with no neighbours around must not run the rounds early.

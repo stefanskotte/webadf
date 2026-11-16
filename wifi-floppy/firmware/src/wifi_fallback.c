@@ -148,7 +148,13 @@ void wfb_ran(wifi_fb_t *fb, wfb_due_t due, uint32_t now, int back_on) {
     }
 }
 
-int wfb_page_after_run(int page_idx, int back_on) { return back_on >= 0 ? -1 : page_idx; }
+int wfb_page_after_run(int page_idx, int back_on) { return back_on >= 0 && back_on != page_idx ? -1 : page_idx; }
+
+int wfb_page_after_remove(int page_idx, int removed) {
+    if (page_idx < 0 || removed < 0) return page_idx;
+    if (removed == page_idx) return -1;
+    return removed < page_idx ? page_idx - 1 : page_idx;
+}
 
 int wfb_scan_seen(wfb_due_t due, int seen, int results) {
     if (seen < 0) return -1;

@@ -1733,11 +1733,19 @@ static void portal_view_fill(portal_view_t *v, const provisioning_t *prov, const
     v->disk_mounted = note->disk_mounted;
 }
 
+// The network chosen on the power-on setup page this boot (prov_on_verified_submit), -1 none: the fallback never
+// returns from it to an earlier saved network while the board is on it (third review, Important 2) -- the person
+// standing there picked it. A move the fallback makes to another network ends the choice (wfb_page_after_run); a Remove
+// shifts it with the indices (wfb_page_after_remove).
+static int g_wifi_page_idx = -1;
+
 // portal_run()'s Remove button, called from its foreground loop with the
 // network lock held (portal_net.h).
 static bool portal_forget(void *vctx, const char *ssid, portal_view_t *view) {
     portal_ctx_t *c = vctx;
+    const int idx = c->prov->have_config ? config_find_net(&c->prov->cfg, ssid) : -1;
     prov_forget_t why = prov_forget_network(c->prov, ssid);
+    if (why == PROV_FORGOT) g_wifi_page_idx = wfb_page_after_remove(g_wifi_page_idx, idx);   // indices shifted
     c->note->err = PORTAL_ERR_NONE;   // an old join failure may name the network just removed
     portal_view_fill(view, c->prov, c->note);
     if (why != PROV_FORGOT) {
@@ -1822,10 +1830,6 @@ static uint32_t   g_wifi_retry_at;     // a failed instruction fetch waits until
 static bool       g_wifi_synced;
 // The Wi-Fi fallback's clocks (wifi_fallback.h, wifi_fallback_step below). started = false restarts them.
 static wifi_fb_t  g_wfb;
-// The network chosen on the power-on setup page this boot (prov_on_verified_submit), -1 none: the fallback never
-// returns from it to an earlier saved network while the board is on it (third review, Important 2) -- the person
-// standing there picked it. A move the fallback makes ends the choice (review of bb89103e, wfb_page_after_run).
-static int        g_wifi_page_idx = -1;
 
 // The names and where the board is, for the page opened on request. Keeps the note (err and its fields).
 static void online_view_names(portal_view_t *v) {
@@ -1847,7 +1851,9 @@ static void online_view_minutes_cb(portal_view_t *v, void *ctx) { v->left_min = 
 // The online page's Remove: the network in use stays (prov_forget_other_network). From portal_service.
 static bool online_forget(void *ctx, const char *ssid, portal_view_t *view) {
     (void)ctx;
+    const int idx = prov.have_config ? config_find_net(&prov.cfg, ssid) : -1;
     prov_forget_t why = prov_forget_other_network(&prov, ssid);
+    if (why == PROV_FORGOT) g_wifi_page_idx = wfb_page_after_remove(g_wifi_page_idx, idx);   // indices shifted
     online_view_reset(view);
     if (why != PROV_FORGOT) {
         view->err = PORTAL_ERR_FORGET;
@@ -2006,7 +2012,9 @@ static void wifi_handle(const wifi_cmd_t *cmd, uploader_t *up) {
         wifi_online_close("closed from the web app");
         break;
     case WIFI_OP_REMOVE: {
+        const int idx = prov.have_config ? config_find_net(&prov.cfg, cmd->ssid) : -1;
         const prov_forget_t why = prov_forget_other_network(&prov, cmd->ssid);
+        if (why == PROV_FORGOT) g_wifi_page_idx = wfb_page_after_remove(g_wifi_page_idx, idx);   // indices shifted
         res = wifi_res_from_forget(why);
         if (why == PROV_FORGOT && portal_is_open()) g_wifi_names_owed = true;
         break;

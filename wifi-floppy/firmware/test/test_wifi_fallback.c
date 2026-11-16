@@ -500,6 +500,13 @@ static void no_return_while_on_the_network_chosen_on_the_setup_page(void) {
     in.page_idx = 1;
     CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_BETTER);
     CHECK_EQ_INT(wfb_page_after_run(1, 2), -1);       // a fallback move ends the choice
+    CHECK_EQ_INT(wfb_page_after_run(1, 1), 1);        // a rejoin of the chosen network keeps it
+    // A Remove shifts it as prov_forget_network shifts `first`.
+    CHECK_EQ_INT(wfb_page_after_remove(2, 0), 1);
+    CHECK_EQ_INT(wfb_page_after_remove(2, 2), -1);
+    CHECK_EQ_INT(wfb_page_after_remove(2, 3), 2);
+    CHECK_EQ_INT(wfb_page_after_remove(-1, 0), -1);
+    CHECK_EQ_INT(wfb_page_after_remove(2, -1), 2);    // not saved: nothing removed
     CHECK_EQ_INT(wfb_page_after_run(1, -1), 1);       // nothing joined: kept
     CHECK_EQ_INT(wfb_page_after_run(-1, 0), -1);
 }
