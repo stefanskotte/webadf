@@ -15,7 +15,8 @@
 #define S(x) ((uint32_t)(x) * 1000u)
 
 static wfb_in_t in_at(uint32_t now, bool up, uint32_t answers, int n) {
-    wfb_in_t in = { now, up, answers, n, false, false, false, 0, false };
+    // A request with no answer every minute: the shape of a dead network (B needs WFB_DEAD_FAILS of them).
+    wfb_in_t in = { now, up, answers, n, false, false, false, 0, false, now / S(60) };
     return in;
 }
 
@@ -96,8 +97,8 @@ static void a_scan_that_could_not_run_twice_in_a_row_runs_the_rounds(void) {
 
 // --- B: the link is up, nothing answers --------------------------------------------------------------------------
 
-// The bench: blocked on wayfart (0), Skottens (1) in range. Five minutes of no answer, then the rounds from Skottens.
-static void a_blocked_network_moves_to_another_in_range_after_five_minutes(void) {
+// The bench: blocked on wayfart (0), Skottens (1) in range. Two minutes of no answer, then the rounds from Skottens.
+static void a_blocked_network_moves_to_another_in_range_after_two_minutes(void) {
     wifi_fb_t fb;
     wfb_reset(&fb, 0, 7);
     wfb_in_t in = in_at(S(100), true, 8, 2);          // the last answer
@@ -118,7 +119,7 @@ static void answers_keep_the_board_where_it_is(void) {
     }
 }
 
-// Time with the link down is A's, not B's: a link back after 4 min has its full 5 to reach the server.
+// Time with the link down is A's, not B's: a link back after 4 min has its full 2 to reach the server.
 static void time_down_does_not_count_towards_dead(void) {
     wifi_fb_t fb;
     wfb_reset(&fb, 0, 0);
@@ -136,12 +137,12 @@ static void time_down_does_not_count_towards_dead(void) {
 }
 
 // The flapping guard, 1: the server is down, the home network is fine, nothing else in range -- no move, ever;
-// the scans come at 5, 10, 20, then every 30 minutes.
+// the scans come at 2, 4, 8, then every 15 minutes.
 static void a_server_outage_with_nothing_else_in_range_never_moves(void) {
     wifi_fb_t fb;
     wfb_reset(&fb, 0, 0);
     uint32_t t = 0;
-    const uint32_t waits[] = { S(300), S(600), S(1200), S(1800), S(1800) };
+    const uint32_t waits[] = { S(120), S(240), S(480), S(900), S(900) };
     for (int k = 0; k < 5; k++) {
         wfb_in_t in = in_at(t + waits[k] - 1, true, 0, 2);
         CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);
@@ -157,13 +158,13 @@ static void a_server_outage_with_nothing_else_in_range_never_moves(void) {
     CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_DEAD);
 }
 
-// The flapping guard, 2: the server is down and a hotspot is in range -- moves at 5, then 10, 20, 30 minutes apart.
+// The flapping guard, 2: the server is down and a hotspot is in range -- moves 2, then 4, 8, 15 minutes apart.
 static void a_server_outage_with_another_network_in_range_moves_ever_less_often(void) {
     wifi_fb_t fb;
     wfb_reset(&fb, 0, 0);
     uint32_t t = 0;
     int cur = 0;
-    const uint32_t waits[] = { S(300), S(600), S(1200), S(1800), S(1800) };
+    const uint32_t waits[] = { S(120), S(240), S(480), S(900), S(900) };
     for (int k = 0; k < 5; k++) {
         wfb_in_t in = in_at(t + waits[k] - 1, true, 0, 2);
         CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);
@@ -175,6 +176,57 @@ static void a_server_outage_with_another_network_in_range_moves_ever_less_often(
         wfb_ran(&fb, WFB_DUE_DEAD, t, from);   // joined it in no time (the clock is the run's end)
         cur = from;
     }
+}
+
+// Operator ruling 2026-11-16: 2 minutes AND two requests with no answer. One slow request (up to ~105 s) alone is
+// never enough, however long the clock runs past 2 minutes.
+static void one_slow_request_alone_never_moves_the_board(void) {
+    wifi_fb_t fb;
+    wfb_reset(&fb, 0, 0);
+    wfb_in_t in = in_at(S(10), true, 1, 2);
+    in.fails = 0;
+    wfb_due(&fb, &in);                                 // the last answer
+    in = in_at(S(10) + WFB_DEAD_MS + S(60), true, 1, 2);
+    in.fails = 1;                                      // one request, timed out after ~105 s
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);
+    in.now += S(30);
+    in.fails = 2;                                      // the next one failed too
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_DEAD);
+    // Two failures early, but not yet 2 minutes: not yet.
+    wfb_reset(&fb, 0, 0);
+    in = in_at(S(10), true, 0, 2);
+    in.fails = 2;
+    CHECK_EQ_INT(wfb_due(&fb, &in), WFB_DUE_NONE);
+}
+
+// The panel's no-server mark: on with the first request that got no answer (or the link down), off with the first
+// answer.
+static void the_no_server_mark_follows_failures_and_answers(void) {
+    wifi_fb_t fb;
+    wfb_reset(&fb, 0, 0);
+    wfb_in_t in = in_at(S(1), true, 1, 1);
+    in.fails = 0;
+    wfb_due(&fb, &in);
+    CHECK(!wfb_no_server(&fb), "answering");
+    in.now = S(30);
+    in.fails = 1;
+    wfb_due(&fb, &in);
+    CHECK(wfb_no_server(&fb), "a request with no answer");
+    in.now = S(40);
+    in.answers = 2;
+    wfb_due(&fb, &in);
+    CHECK(!wfb_no_server(&fb), "answered again");
+    in.now = S(50);
+    in.link_up = false;
+    wfb_due(&fb, &in);
+    CHECK(wfb_no_server(&fb), "link down");
+    in.now = S(60);
+    in.link_up = true;
+    wfb_due(&fb, &in);
+    CHECK(wfb_no_server(&fb), "link back, no answer yet... ");
+    in.answers = 3;
+    wfb_due(&fb, &in);
+    CHECK(wfb_no_server(&fb) == false, "... until the first answer");
 }
 
 static void b_does_not_move_when_the_scan_could_not_run(void) {
@@ -553,11 +605,13 @@ int main(void) {
     RUN(a_hotspot_switched_off_with_home_in_range_runs_the_rounds_from_it);
     RUN(a_drop_with_nothing_else_in_range_stays_and_looks_again_less_often);
     RUN(a_scan_that_could_not_run_twice_in_a_row_runs_the_rounds);
-    RUN(a_blocked_network_moves_to_another_in_range_after_five_minutes);
+    RUN(a_blocked_network_moves_to_another_in_range_after_two_minutes);
     RUN(answers_keep_the_board_where_it_is);
     RUN(time_down_does_not_count_towards_dead);
     RUN(a_server_outage_with_nothing_else_in_range_never_moves);
     RUN(a_server_outage_with_another_network_in_range_moves_ever_less_often);
+    RUN(one_slow_request_alone_never_moves_the_board);
+    RUN(the_no_server_mark_follows_failures_and_answers);
     RUN(b_does_not_move_when_the_scan_could_not_run);
     RUN(b_picks_the_first_other_network_in_saved_order);
     RUN(one_saved_network_behaves_as_before);

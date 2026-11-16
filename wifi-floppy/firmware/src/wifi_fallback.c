@@ -19,11 +19,19 @@ void wfb_reset(wifi_fb_t *fb, uint32_t now, uint32_t answers) {
     fb->home_since = now;
 }
 
+bool wfb_no_server(const wifi_fb_t *fb) { return fb->down || fb->unheard || fb->fails_seen != fb->fails_answer; }
+
 wfb_due_t wfb_due(wifi_fb_t *fb, const wfb_in_t *in) {
     const uint32_t now = in->now;
-    if (!fb->started) wfb_reset(fb, now, in->answers);
+    if (!fb->started) {
+        wfb_reset(fb, now, in->answers);
+        fb->fails_seen = fb->fails_base = fb->fails_answer = in->fails;
+    }
+    fb->fails_seen = in->fails;
     if (in->answers != fb->answers) {   // the server answered: the network works
         fb->answers = in->answers;
+        fb->fails_base = fb->fails_answer = in->fails;
+        fb->unheard = false;
         fb->quiet_since = now;
         fb->dead_ms = WFB_DEAD_MS;
         // The return period starts over only once home has stayed up AND answering for a whole period (third
@@ -40,16 +48,19 @@ wfb_due_t wfb_due(wifi_fb_t *fb, const wfb_in_t *in) {
         if (fb->down) {                 // back by itself (or by a run): A starts afresh
             fb->down = false;
             fb->scan_fails = 0;         // a new outage counts its own failed scans (third review)
+            fb->fails_base = in->fails; // and B its own failed requests
             fb->quiet_since = now;
             fb->rescan_at = now;
             fb->rescan_ms = WFB_RESCAN_MS;
         }
     } else {
+        fb->unheard = true;             // the panel stays marked until the first answer after it
         if (!fb->down) {
             fb->down = true;
             fb->down_since = now;
         }
         fb->quiet_since = now;          // B counts only time on an up link
+        fb->fails_base = in->fails;
     }
     if (in->hold) return WFB_DUE_NONE;
     if (fb->lost) return (int32_t)(now - fb->lost_at) >= 0 ? WFB_DUE_LOST : WFB_DUE_NONE;
@@ -57,7 +68,9 @@ wfb_due_t wfb_due(wifi_fb_t *fb, const wfb_in_t *in) {
     if (fb->down)
         return (uint32_t)(now - fb->down_since) >= WFB_LINK_GRACE_MS && (int32_t)(now - fb->rescan_at) >= 0
                    ? WFB_DUE_DOWN : WFB_DUE_NONE;
-    if (!in->hold_dead && (uint32_t)(now - fb->quiet_since) >= fb->dead_ms) return WFB_DUE_DEAD;
+    if (!in->hold_dead && (uint32_t)(now - fb->quiet_since) >= fb->dead_ms &&
+        (uint32_t)(in->fails - fb->fails_base) >= WFB_DEAD_FAILS)
+        return WFB_DUE_DEAD;
     if (in->cur > 0 && in->idle && !in->no_return && (uint32_t)(now - fb->better_since) >= fb->better_ms) return WFB_DUE_BETTER;
     return WFB_DUE_NONE;
 }
@@ -90,6 +103,7 @@ int wfb_pick(wifi_fb_t *fb, wfb_due_t due, uint32_t now, int cur, int n_nets, in
                 if (others & (1u << i)) return i;   // the first in saved order
         }
         fb->quiet_since = now;                       // nowhere to go (or no scan): look again later, less often
+        fb->fails_base = fb->fails_seen;
         fb->dead_ms = doubled(fb->dead_ms, WFB_DEAD_MAX_MS);
         return -1;
     }
@@ -112,6 +126,7 @@ void wfb_ran(wifi_fb_t *fb, wfb_due_t due, uint32_t now, int back_on) {
         fb->no_restart = false;
         fb->down = false;
         fb->quiet_since = now;
+        fb->fails_base = fb->fails_seen;
         fb->rescan_at = now;
         fb->rescan_ms = WFB_RESCAN_MS;
         // A move for an unreachable server proves nothing until the server answers: the next one waits longer.

@@ -20,12 +20,13 @@
 //     range -> stay and let the driver keep trying; scan again after 1, 2, 4, then every 5 minutes. A scan that
 //     could not run counts as an empty one the first time (review M2: an idle board must not restart through a
 //     router's reboot because of one failed scan); the second failure in a row runs the rounds anyway.
-//   * B, link up and no answer from the server for WFB_DEAD_MS (5 min; the worst single request is ~105 s, a
-//     normal pass answers every ~25 s): scan. Another saved network in range -> rounds starting with THAT one (the
+//   * B, link up and no answer from the server for WFB_DEAD_MS (2 min, operator ruling 2026-11-16: 5 min was a
+//     poor experience) AND at least WFB_DEAD_FAILS requests with no answer since (the worst single request is
+//     ~105 s, so one slow request alone can never make it; a normal pass answers every ~25 s): scan. Another saved network in range -> rounds starting with THAT one (the
 //     first in saved order); the current one is still in the round, so a fruitless move ends back where it was.
 //     The flapping guard: B never moves without another saved network in range (a server outage on a single home
 //     network leaves the board alone), and the dead period doubles after every move or empty scan that did not
-//     bring an answer (5, 10, 20, 30 min at most), reset by the first answer. A server outage with a hotspot in
+//     bring an answer (2, 4, 8, 15 min at most), reset by the first answer. A server outage with a hotspot in
 //     range therefore costs at most a few moves an hour, each ~15-30 s off line. Never while DF1 is Network
 //     (review I2, `hold_dead`): the Amiga's own traffic may be fine while only the web server is down, and a move
 //     changes the board's address under it. A link down may still move (nothing gets through anyway).
@@ -53,8 +54,9 @@
 #define WFB_LINK_GRACE_MS  30000u
 #define WFB_RESCAN_MS      60000u
 #define WFB_RESCAN_MAX_MS  300000u
-#define WFB_DEAD_MS        300000u
-#define WFB_DEAD_MAX_MS    1800000u
+#define WFB_DEAD_MS        120000u
+#define WFB_DEAD_MAX_MS    900000u
+#define WFB_DEAD_FAILS     2u
 #define WFB_LOST_RETRY_MS  30000u
 #define WFB_BETTER_MS      600000u
 #define WFB_BETTER_MAX_MS  3600000u
@@ -85,6 +87,10 @@ typedef struct {
     int      better_from;   // the network the last BETTER pick aimed at
     uint32_t home_since;    // network 0 up without a break since then (better_ms resets after a period of it)
     bool     no_restart;    // the lost episode began with a return: no restart (wfb_may_restart)
+    uint32_t fails_seen;    // the client's no-answer count last seen (device_client_t.unanswered)
+    uint32_t fails_base;    // ... when B's count of failed requests last started (an answer, the link up, a look)
+    uint32_t fails_answer;  // ... at the last answer: more since -> the panel's no-server mark
+    bool     unheard;       // the link went down since the last answer (the mark stays until one)
 } wifi_fb_t;
 
 typedef struct {
@@ -97,6 +103,7 @@ typedef struct {
     bool     idle;          // no disk in DF0/DF1, no saves waiting, DF1 not Network: BETTER may run
     int      cur;           // the network the board is on, -1 none
     bool     no_return;     // this boot's network was chosen on the power-on setup page: no BETTER
+    uint32_t fails;         // device_client_t.unanswered
 } wfb_in_t;
 
 // The clocks start now (also after the Save check's own rounds, and after any run here).
@@ -113,6 +120,9 @@ int wfb_pick(wifi_fb_t *fb, wfb_due_t due, uint32_t now, int cur, int n_nets, in
 // After the rounds: `back_on` is the network joined, -1 none (the caller restarts an idle board, or this makes the
 // rounds run again in WFB_LOST_RETRY_MS).
 void wfb_ran(wifi_fb_t *fb, wfb_due_t due, uint32_t now, int back_on);
+// The panel's honest state (operator ruling 2026-11-16): a request has gone unanswered since the last answer, or
+// the link is down. Back to normal on the first answer. Valid after wfb_due.
+bool wfb_no_server(const wifi_fb_t *fb);
 // After a run that joined nothing: may an idle board restart? Not when the episode began with a return.
 bool wfb_may_restart(const wifi_fb_t *fb);
 // After a BETTER run: did it reach the network it aimed at?
