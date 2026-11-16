@@ -1,41 +1,71 @@
 #ifndef PNET_SHARED_H
 #define PNET_SHARED_H
 /*
- * PaulaNET SHARED-IP MODE (operator ruling 2026-11-15: "hybrid, with one IP"). Pure: board (core1's network
- * context, the lwIP lock held) and host. The state lives in pnet_sort_t.sh (pnet_sort.h).
+ * PaulaNET SHARED-IP MODE -- THE DEFAULT. Pure: board (core1's network context, the lwIP lock held) and host. The
+ * state lives in pnet_sort_t.sh (pnet_sort.h).
  *
- * WHY. The board and the Amiga share one MAC. A network that leases by chaddr alone (a phone hotspot, field report
- * 2026-11-15) ignores the two client-ids and offers the Amiga the board's own address. Before this mode the sorter
- * dropped that ACK, AmiTCP_NG retried REQUEST every ~4 s and fell back to 169.254 after ~30 s.
+ * WHY. Operator ruling 2026-11-16: "make one-ip the default, so board only ever requires one DHCP address -- it's a
+ * non standard set up to require two ip's". The board and the Amiga share one MAC; the board takes the only lease
+ * and the Amiga always shares it. (2026-11-15 this mode was entered only on a trigger -- a network OFFER/ACK of the
+ * board's address to the Amiga, the Amiga sending from it, or the server's seed -- and otherwise the Amiga got a
+ * lease of its own. On an iPhone hotspot 2026-11-16 none fired and the Amiga took a second lease, .3 beside the
+ * board's .2. The triggers, the owed OFFER and the seed are gone: nothing is left for them to decide.)
  *
- * ENTERED (pnet_sort.c; pnet_shared_why_t), never before one of:
- *   OFFER  the network OFFERs an Amiga xid the board's address -- the earliest signal. That OFFER is dropped and
- *          the board's own OFFER goes to the Amiga at once (pnet_shared_owed), so the Amiga does not wait 4 s.
- *   ACK    ...or ACKs it (the OFFER was missed). Dropped; the Amiga's next REQUEST is answered locally.
- *   SRC    the Amiga transmits from the board's address: it holds it from before a board reboot (AmiTCP_NG never
- *          renews), and the network still leases that address to the shared MAC.
- *   SEED   the server's last-known Amiga address (xfer.ip) is the board's own: an idle sharing Amiga after a board
- *          reboot, reachable at once (sh.amiga; Transfer goes to PNET_SHARED_AMIGA, inbound for its ports is its).
- *          The record can be stale -- a router gave the board the Amiga's old address while the Amiga runs on a
- *          lease of its own (review I2) -- and then the Amiga's first frame from that lease ends shared mode
- *          (below). Until it transmits, frames for its own lease reach the board only.
- * ENDS at a reboot (RAM only); when the board's address changes to another non-zero one (pnet_shared_follow): the
- * board is on another lease, maybe another network, and the Amiga keeps the old address (AmiTCP_NG has no T1/T2),
- * which from then on is simply its own in normal mode; or when the Amiga transmits from a non-zero address that is
- * neither the shared one nor 169.254/16 (pnet_shared_amiga_left, review I2): it holds a lease of its own, which
- * that frame teaches in normal mode. Its next DHCP re-enters shared mode if the clash recurs.
- * KNOWN (review minor 4, left as is): a board connection open to PNET_SHARED_AMIGA when shared mode ends (Transfer)
- * is not reset; its frames for 169.254.77.2 go to the radio, so it times out (lwIP's retransmits, then amiga_send's
- * own PONG/idle limits) and the next connect goes to the Amiga's new address. Likewise 169.254/16 senders never end
- * shared mode (review minor 2): an Amiga on link-local fallback is not on a lease of its own.
- * A board address of 0 (the link down) leaves it on. Network mode off/on does not end it (the Amiga keeps its address).
+ * ON whenever DF1 is in Network mode and the board has a non-zero address (pnet_shared_follow, from both sorter
+ * entry points), from the first frame. An address of 0 (the link down) leaves it as it is. Before the board's first
+ * address the Amiga's BOOTREQUESTs are HELD (pnet_sort.h), so the network never leases it a second address; AmiTCP_NG
+ * retries every ~4 s.
+ *
+ * THE BOARD'S ADDRESS CHANGES (a switch of network -- wayfart to a hotspot -- or a new lease). AmiTCP_NG never
+ * renews (no T1/T2), so the Amiga keeps the old address, and with it the old network's mask, gateway and DNS.
+ * Decision 2026-11-16: the board makes the Amiga ask again, by telling its driver once that the link is DOWN
+ * (pnet_status.h pnet_down_t; the request is the cursor sh.down_req, so a repeat and a withdrawal are both
+ * expressible). Rob's PaulaNET.device (device.c:735-750) reads the status cylinder every 5 s; DOWN makes it reject
+ * its pending reads (S2ERR_OUTOFSERVICE) and send S2EVENT_OFFLINE, the next UP sends S2EVENT_ONLINE. AmiTCP_NG
+ * (net/if_sana.c S2ERR_OUTOFSERVICE -> sana_offline_cleanup; sana_online -> sana_back_online ->
+ * ng_reconfigure_interface) then reads DEVS:NetInterfaces/eth0 again and, configure=dhcp, sends a DISCOVER -- which
+ * this board answers with its NEW address, mask, gateway and DNS. Until the pulse is over (pnet_down_t: one DOWN
+ * record, then UP, then PNET_DOWN_GRACE_MS) the Amiga's frames from the old address are held, never sent: they would
+ * carry another network's address onto this one. A REQUEST for the old address is NAKed (as any other).
+ *   REJECTED, translation (rewrite the old address to the new one both ways with the RFC 1624 helpers below): it is
+ *   right only while the new address is on the same subnet behind the same gateway. A move between networks -- the
+ *   case that happens -- leaves the Amiga's gateway, its ARP entry for that gateway's MAC, its mask and its DNS
+ *   server all on the old network; translating that means rewriting next-hop MACs and DNAT-ing DNS, i.e. a router.
+ *   A fresh lease from the board fixes every field at once, in the Amiga's own stack.
+ *   COST: the DOWN drops the Amiga's connections (they are dead on a new network anyway, and the board's own link
+ *   to Transfer reconnects as after a board reboot). A Wi-Fi drop that comes back on the SAME address changes
+ *   nothing (fw 1.21.1: never DOWN for a rejoin).
+ *
+ * THE ESCAPE: an Amiga with a STATIC address of its own (pnet_shared_foreign). A frame from the Amiga whose source
+ * is non-zero and not the shared address:
+ *   - inside the board's subnet (sh.mask), with no re-address pending: a static address that can work here. Shared
+ *     mode ends at once and the Amiga keeps that address in normal two-address mode (sh.own; the frame teaches it,
+ *     exactly as before shared mode existed). This is also what an Amiga that held the board's previous address
+ *     across a board REBOOT looks like when the network gave the board another one on the same subnet: it keeps that
+ *     address as its own (rare: the board's client-id keeps its lease).
+ *   - outside it (another network's address, 169.254/16 link-local fallback, or a mask not known): it cannot work
+ *     here. Held, and one re-address asked; if the Amiga still sends from it once the pulse is over (its stack did not
+ *     ask again: a static setup, or a stack that does not reconfigure when its device comes back online), it is left
+ *     on it in two-address mode too.
+ *   Two-address mode ends when the Amiga sends a BOOTREQUEST (it is on DHCP again: answered here) or sends from the
+ *   board's own address, and at a reboot (RAM only).
+ *
+ * THE SEED (the server's last-known Amiga address, xfer.ip, plan 2026-10-17 R17) no longer decides anything: in
+ * shared mode the Amiga's address on the network is the board's by definition, and Transfer goes to
+ * PNET_SHARED_AMIGA (pnet_sort_send_ip). A seed from another network (bench 2026-11-16: 172.16.10.214 from home while
+ * the board was on the hotspot) is ignored. What that gives up: a STATIC Amiga left idle across a board reboot is
+ * not reachable for Transfer until it sends a frame (the escape needs one).
+ *
+ * KNOWN (review minor 4, unchanged): a board connection open to PNET_SHARED_AMIGA when shared mode ends (the escape)
+ * is not reset; it times out (lwIP's retransmits, then amiga_send's own limits) and the next connect goes to the
+ * Amiga's own address.
  *
  * WHILE ON:
  *   DHCP   every BOOTREQUEST from the Amiga is answered here, never sent to the radio: DISCOVER -> OFFER, REQUEST
  *          for the board's address -> ACK, REQUEST for any other -> NAK (the Amiga restarts at DISCOVER), others
  *          dropped. The lease: the board's address, mask, gateway and DNS, PNET_SHARED_LEASE_S, server id = the
  *          network's DHCP server (so a unicast renewal goes out and is still answered here). The network's own
- *          replies to an Amiga xid are dropped (sh.late).
+ *          replies to an Amiga xid are dropped (sh.late): none should exist, the Amiga's DHCP never goes out.
  *   IN     (pnet_shared_rx) a frame from the radio:
  *            ARP claiming the shared address (sender = it)     -> the board only (AmiTCP would log "duplicate IP"
  *                                                                 and defend it: sana2arp.c)       [sh.arp_hidden]
@@ -63,7 +93,7 @@
  *          the gateway). pnet_shared_b2a/a2b pick the frames; pnet_shared_to_amiga/to_board rewrite the addresses
  *          (IPv4 header + TCP/UDP checksums, RFC 1624; ARP; an ICMP error's quoted header with its checksum and
  *          the ICMP checksum, review M2) and the MACs (the local MAC twin, pnet_sort.h). The
- *          board's Transfer connection goes to PNET_SHARED_AMIGA (pnet_sort_send_ip).
+ *          board's Transfer connection goes to PNET_SHARED_AMIGA (pnet_sort_send_ip), always in shared mode.
  *
  * Addresses are host order; 0 is "unknown".
  */
@@ -81,18 +111,19 @@
 /* What the board hands the Amiga: its own lease (glue: lwIP's netif, dns_getserver, the DHCP server id). */
 typedef struct { uint32_t ip, mask, gw, dns[2], server; uint8_t mac[6]; } pnet_lease_t;
 
-void pnet_shared_enter(pnet_sort_t *s, uint32_t board_ip, pnet_shared_why_t why);
-/* Ends shared mode when the board's address is non-zero and no longer the shared one. */
+/* Default-on: enters shared mode when the board's address is non-zero (unless the Amiga is on an address of its own,
+ * sh.own); when that address CHANGES under shared mode, follows it and, if the Amiga was known to hold the old one,
+ * asks for a re-address (sh.down_req). 0 changes nothing. */
 void pnet_shared_follow(pnet_sort_t *s, uint32_t board_ip);
 pnet_sort_to_t pnet_shared_rx(pnet_sort_t *s, const uint8_t *f, size_t len);
-/* A frame from the Amiga with the shared MAC as its source and a sane length (pnet_sort_tx checked both). */
+/* A frame from the Amiga with the shared MAC as its source and a sane length (pnet_sort_tx checked both), and not
+ * foreign (pnet_shared_foreign said NO). */
 pnet_tx_t pnet_shared_tx(pnet_sort_t *s, const uint8_t *f, size_t len);
-/* Review I2: a frame from the Amiga whose ARP sender / IPv4 source is non-zero, not the shared address and not
- * 169.254/16 -- the Amiga holds a lease of its own. Ends shared mode (amiga_ip 0, for the frame to teach) and
- * returns true; false (nothing changed) otherwise or when shared mode is off. */
-bool pnet_shared_amiga_left(pnet_sort_t *s, const uint8_t *f, size_t len);
-/* Review M4: the owed OFFER found the RX ring full. True once per owed OFFER (count the drop then), false after. */
-bool pnet_shared_owe_full(pnet_sort_t *s);
+/* A frame from the Amiga whose ARP sender / IPv4 source is non-zero and not the shared address (the escape, above).
+ * NO: not foreign (or shared mode is off). HOLD: held back (a re-address is pending or was just asked). OWN: shared
+ * mode ended, the Amiga keeps that address in two-address mode (amiga_ip 0, for the frame to teach). */
+typedef enum { PNET_FOREIGN_NO = 0, PNET_FOREIGN_HOLD, PNET_FOREIGN_OWN } pnet_foreign_t;
+pnet_foreign_t pnet_shared_foreign(pnet_sort_t *s, const uint8_t *f, size_t len);
 
 /* In shared mode: a BOOTREQUEST from the Amiga, which never goes to the radio. */
 bool pnet_shared_is_dhcp(const pnet_sort_t *s, const uint8_t *f, size_t len);
@@ -100,8 +131,6 @@ bool pnet_shared_is_dhcp(const pnet_sort_t *s, const uint8_t *f, size_t len);
  * is short of that length, in which case nothing is written. */
 size_t pnet_shared_dhcp_reply(pnet_sort_t *s, const uint8_t *req, size_t len, const pnet_lease_t *L,
                               uint8_t *out, size_t cap);
-/* The OFFER owed for the network OFFER that turned shared mode on: its length, or 0 (none owed). Clears the debt. */
-size_t pnet_shared_owed(pnet_sort_t *s, const pnet_lease_t *L, uint8_t *out, size_t cap);
 
 /* The local path in shared mode. a2b: a frame from the Amiga for PNET_SHARED_BOARD (ARP target or IPv4 dest).
  * b2a: a frame from the board for PNET_SHARED_AMIGA. Both false when shared mode is off. */
@@ -114,7 +143,7 @@ bool pnet_shared_b2a(const pnet_sort_t *s, const uint8_t *f, size_t len);
 void pnet_shared_to_board(uint8_t *f, size_t len, uint32_t ip, const uint8_t mac[6]);
 void pnet_shared_to_amiga(uint8_t *f, size_t len, uint32_t ip, const uint8_t mac[6]);
 
-/* The address the board's Transfer connection goes to: PNET_SHARED_AMIGA in shared mode once the Amiga is known
- * to use the shared address (else 0), the learned amiga_ip otherwise (unchanged). */
+/* The address the board's Transfer connection goes to: PNET_SHARED_AMIGA in shared mode (the Amiga's address on the
+ * network is the board's by definition), the learned amiga_ip in two-address mode. */
 uint32_t pnet_sort_send_ip(const pnet_sort_t *s);
 #endif

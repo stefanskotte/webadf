@@ -6,32 +6,50 @@
 #define DHCP_OPTS_MIN  64u                  /* cookie + options in RFC 1542's 300-byte minimum BOOTP message */
 _Static_assert(PNET_DHCP_REPLY_MAX == ETH_HDR + 20u + 8u + 236u + 312u, "the longest reply: 312 bytes of options");
 
-void pnet_shared_enter(pnet_sort_t *s, uint32_t board_ip, pnet_shared_why_t why) {
-    if (s->sh.on || board_ip == 0u) return;
+static void enter(pnet_sort_t *s, uint32_t board_ip) {
     s->sh.on = true;
+    s->sh.own = false;
     s->sh.amiga = false;
-    s->sh.owe = false;
-    s->sh.owe_full = false;
-    s->sh.why = (uint8_t)why;
+    s->sh.spent = false;
+    s->sh.down_want = false;
     s->sh.ip = board_ip;
     s->sh.entered++;
     memset(s->sh.frag, 0, sizeof s->sh.frag);
     s->amiga_ip = board_ip;                 /* what the report and the log say the Amiga uses */
 }
 
+/* The Amiga must ask for a lease again: core0 tells its driver the link is down once (pnet_down_t). */
+static void ask_readdress(pnet_sort_t *s) {
+    s->sh.spent = true;
+    s->sh.down_want = true;
+    s->sh.down_req++;
+}
+
+/* The Amiga is on the shared address (ACKed, or seen sending from it): nothing more to ask; a pending ask is
+ * withdrawn. */
+static void known(pnet_sort_t *s) {
+    s->sh.amiga = true;
+    s->sh.spent = false;
+    s->sh.down_want = false;
+}
+
 void pnet_shared_follow(pnet_sort_t *s, uint32_t board_ip) {
-    if (!s->sh.on || board_ip == 0u || board_ip == s->sh.ip) return;
-    s->sh.on = false;                       /* another lease: the old address is the Amiga's own from now on */
+    if (board_ip == 0u || s->sh.own) return;
+    if (!s->sh.on) { enter(s, board_ip); return; }
+    if (board_ip == s->sh.ip) return;
+    // The board moved (another network, or a new lease). The Amiga keeps the old address -- AmiTCP_NG never renews
+    // -- so if it holds it, it is made to ask again (pnet_shared.h); its frames from the old one are held meanwhile.
+    s->sh.moved++;
+    s->sh.old = s->sh.ip;
+    if (s->sh.amiga) ask_readdress(s);
     s->sh.amiga = false;
-    s->sh.owe = false;
-    s->sh.owe_full = false;
-    s->sh.left++;
-    /* s->amiga_ip stays the old shared address, which the Amiga still holds (it never renews). */
+    s->sh.ip = board_ip;
+    memset(s->sh.frag, 0, sizeof s->sh.frag);
+    s->amiga_ip = board_ip;
 }
 
 uint32_t pnet_sort_send_ip(const pnet_sort_t *s) {
-    if (s->sh.on) return s->sh.amiga ? PNET_SHARED_AMIGA : 0u;
-    return s->amiga_ip;
+    return s->sh.on ? PNET_SHARED_AMIGA : s->amiga_ip;
 }
 
 /* ---- checksums ---- */
@@ -162,20 +180,13 @@ size_t pnet_shared_dhcp_reply(pnet_sort_t *s, const uint8_t *f, size_t len, cons
         const uint32_t want = r && rl == 4u ? be32(f + r) : be32(f + b + 12u);   /* option 50, else ciaddr */
         const bool ok = want == L->ip;
         const size_t n = build(out, cap, L, xid, flags, ok ? 5u : 6u, cidp, cidlen);
-        if (n && ok) { s->sh.acks++; s->sh.amiga = true; }
+        if (n && ok) { s->sh.acks++; known(s); }
         if (n && !ok) s->sh.naks++;
         return n;
     }
     default:                                                       /* RELEASE, DECLINE, INFORM: no answer */
         return 0;
     }
-}
-
-size_t pnet_shared_owed(pnet_sort_t *s, const pnet_lease_t *L, uint8_t *out, size_t cap) {
-    if (!s->sh.on || !s->sh.owe || L->ip == 0u || L->ip != s->sh.ip) return 0;
-    const size_t n = build(out, cap, L, s->sh.owe_xid, s->sh.owe_flags, 2u, NULL, 0u);
-    if (n) { s->sh.owe = false; s->sh.owe_full = false; s->sh.offers++; }
-    return n;
 }
 
 /* ---- inbound demux ---- */
@@ -273,7 +284,7 @@ pnet_tx_t pnet_shared_tx(pnet_sort_t *s, const uint8_t *f, size_t len) {
     const uint16_t type = be16(f + 12);
     if (type == 0x0806u) {
         if (len < ETH_HDR + 28u) return PNET_TX_LEN;
-        if (be32(f + ETH_HDR + 14u) == s->sh.ip) s->sh.amiga = true;
+        if (be32(f + ETH_HDR + 14u) == s->sh.ip) known(s);
         return PNET_TX_SEND;
     }
     if (type != 0x0800u) return PNET_TX_TYPE;
@@ -281,32 +292,33 @@ pnet_tx_t pnet_shared_tx(pnet_sort_t *s, const uint8_t *f, size_t len) {
     if (!ip4(f, len, &ip)) return PNET_TX_LEN;
     const size_t b = bootp_at(f, len, &ip, 68u, 67u);
     if (b != 0u && f[b] == 1u) pnet_sort_learn_xid(s, be32(f + b + 4u));   /* answered locally (the glue) */
-    else if (ip.src == s->sh.ip) s->sh.amiga = true;
+    else if (ip.src == s->sh.ip) known(s);
     return PNET_TX_SEND;
 }
 
-bool pnet_shared_amiga_left(pnet_sort_t *s, const uint8_t *f, size_t len) {
-    if (!s->sh.on || len < ETH_HDR) return false;
+pnet_foreign_t pnet_shared_foreign(pnet_sort_t *s, const uint8_t *f, size_t len) {
+    if (!s->sh.on || len < ETH_HDR) return PNET_FOREIGN_NO;
     uint32_t src = 0;
     arp4_t a;
     ip4_t ip;
     if (arp4(f, len, &a)) src = a.spa;
     else if (ip4(f, len, &ip)) src = ip.src;
-    if (src == 0u || src == s->sh.ip || (src >> 16) == 0xA9FEu) return false;   /* 0, shared, or 169.254/16 */
-    s->sh.on = false;
+    if (src == 0u || src == s->sh.ip) return PNET_FOREIGN_NO;
+    const bool here = s->sh.mask != 0u && ((src ^ s->sh.ip) & s->sh.mask) == 0u && (src >> 16) != 0xA9FEu;
+    if (!(here && !s->sh.spent)) {
+        // Not an address that works here, or the Amiga is being moved off one: hold, and ask it once to come back
+        // through DHCP. Once that is over and it still sends from there, it is its own (below).
+        if (!s->sh.spent) ask_readdress(s);
+        if (s->sh.down_done != s->sh.down_req) { s->sh.held++; return PNET_FOREIGN_HOLD; }
+    }
+    s->sh.on = false;                       /* two-address mode: the escape */
+    s->sh.own = true;
     s->sh.amiga = false;
-    s->sh.owe = false;
-    s->sh.owe_full = false;
-    s->sh.left++;
-    s->sh.own_src++;
+    s->sh.spent = false;
+    s->sh.down_want = false;
+    s->sh.own_n++;
     s->amiga_ip = 0;                        /* the frame's normal-mode path teaches the Amiga's own address */
-    return true;
-}
-
-bool pnet_shared_owe_full(pnet_sort_t *s) {
-    if (!s->sh.on || !s->sh.owe || s->sh.owe_full) return false;
-    s->sh.owe_full = true;
-    return true;
+    return PNET_FOREIGN_OWN;
 }
 
 /* ---- the local path ---- */

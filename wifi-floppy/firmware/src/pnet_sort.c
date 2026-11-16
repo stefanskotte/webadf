@@ -16,7 +16,7 @@ bool pnet_sort_is_amiga_xid(const pnet_sort_t *s, uint32_t xid) {
 void pnet_sort_init(pnet_sort_t *s) { memset(s, 0, sizeof *s); }
 
 pnet_sort_to_t pnet_sort_rx(pnet_sort_t *s, const uint8_t *f, size_t len, uint32_t board_ip) {
-    pnet_shared_follow(s, board_ip);                                   /* ends shared mode if the address moved */
+    pnet_shared_follow(s, board_ip);                                   /* one IP by default (pnet_shared.h) */
     if (s->sh.on) return pnet_shared_rx(s, f, len);
     if (len < ETH_HDR) return PNET_SORT_BOARD;
     const uint32_t amiga = s->amiga_ip != board_ip ? s->amiga_ip : 0u;   /* never the board's */
@@ -33,21 +33,9 @@ pnet_sort_to_t pnet_sort_rx(pnet_sort_t *s, const uint8_t *f, size_t len, uint32
     const size_t b = bootp_at(f, len, &ip, 67u, 68u);
     if (b != 0u && f[b] == 2u) {                                       /* a BOOTREPLY */
         const uint32_t xid = be32(f + b + 4u), yi = be32(f + b + 16u);
-        const uint8_t type = dhcp_type(f, len, b);
-        if (is_amiga_xid(s, xid)) {
-            if ((type == 5u || type == 2u) && board_ip != 0u && yi == board_ip) {
-                // The network leases by MAC alone and offers the Amiga the board's own address: shared-IP mode. An
-                // OFFER is the earliest signal; the board answers it at once with its own (pnet_shared_owed).
-                s->clash++;
-                pnet_shared_enter(s, board_ip, type == 2u ? PNET_SHARED_OFFER : PNET_SHARED_ACK);
-                if (type == 2u) { s->sh.owe = true; s->sh.owe_xid = xid; s->sh.owe_flags = be16(f + b + 10u); }
-                return PNET_SORT_DROP;
-            }
-            if (type == 5u && yi != 0u) s->amiga_ip = yi;
-            s->to_amiga++;
-            return PNET_SORT_AMIGA;
-        }
-        if (type == 5u && amiga != 0u && yi == amiga) s->clash++;    /* the board's lease, logged */
+        // The Amiga's DHCP never goes to the network (the board answers it), so a reply to one of its xids is late.
+        if (is_amiga_xid(s, xid)) { s->sh.late++; return PNET_SORT_DROP; }
+        if (dhcp_type(f, len, b) == 5u && amiga != 0u && yi == amiga) s->clash++;   /* the board's lease, logged */
         return PNET_SORT_BOARD;
     }
     if (amiga != 0u && ip.dst == amiga) { s->to_amiga++; return PNET_SORT_AMIGA; }
@@ -61,51 +49,48 @@ void pnet_sort_learn_xid(pnet_sort_t *s, uint32_t xid) {
     if (s->nxid < PNET_SORT_XIDS) s->nxid++;
 }
 
+/* Two-address mode ends: the Amiga is on DHCP again, or sends from the board's own address. */
+static pnet_tx_t back_to_shared(pnet_sort_t *s, const uint8_t *f, size_t len, uint32_t board_ip) {
+    s->sh.own = false;
+    pnet_shared_follow(s, board_ip);
+    return pnet_shared_tx(s, f, len);
+}
+
 pnet_tx_t pnet_sort_tx(pnet_sort_t *s, const uint8_t *f, size_t len, const uint8_t mac[6], uint32_t board_ip) {
     if (len < ETH_HDR || len > PNET_SORT_MTU) return PNET_TX_LEN;
     if (memcmp(f + 6, mac, 6) != 0) return PNET_TX_MAC;
     pnet_shared_follow(s, board_ip);
-    // Review I2: an Amiga transmitting from an address of its own ends shared mode; the frame then teaches that
-    // address below, exactly as in normal mode.
-    if (s->sh.on && !pnet_shared_amiga_left(s, f, len)) return pnet_shared_tx(s, f, len);
+    if (s->sh.on) {
+        switch (pnet_shared_foreign(s, f, len)) {
+        case PNET_FOREIGN_NO:   return pnet_shared_tx(s, f, len);
+        case PNET_FOREIGN_HOLD: return PNET_TX_HOLD;
+        case PNET_FOREIGN_OWN:  break;              /* an address of its own: two-address mode, below */
+        }
+    }
     const uint16_t type = be16(f + 12);
     if (type == 0x0806u) {
         if (len < ETH_HDR + 28u) return PNET_TX_LEN;
         const uint32_t spa = be32(f + ETH_HDR + 14u);
-        if (spa != 0u && spa == board_ip) {                   /* the Amiga holds the board's address: shared */
-            s->clash++;
-            pnet_shared_enter(s, board_ip, PNET_SHARED_SRC);
-            return pnet_shared_tx(s, f, len);
-        }
+        if (spa != 0u && spa == board_ip) return back_to_shared(s, f, len, board_ip);
         if (spa != 0u) s->amiga_ip = spa;
         return PNET_TX_SEND;
     }
     if (type != 0x0800u) return PNET_TX_TYPE;
     ip4_t ip;
     if (!ip4(f, len, &ip)) return PNET_TX_LEN;
-    if (ip.src != 0u && ip.src == board_ip) {
-        s->clash++;
-        pnet_shared_enter(s, board_ip, PNET_SHARED_SRC);
-        return pnet_shared_tx(s, f, len);
-    }
     const size_t b = bootp_at(f, len, &ip, 68u, 67u);
-    if (b != 0u && f[b] == 1u) pnet_sort_learn_xid(s, be32(f + b + 4u));
-    else if (ip.src != 0u) s->amiga_ip = ip.src;
+    if (b != 0u && f[b] == 1u) {
+        // A BOOTREQUEST is never the network's to answer: with no board address yet it is held (AmiTCP_NG resends),
+        // else the Amiga is on DHCP and shares the board's address from here.
+        if (board_ip == 0u) { s->sh.held++; return PNET_TX_HOLD; }
+        return back_to_shared(s, f, len, board_ip);
+    }
+    if (ip.src != 0u && ip.src == board_ip) return back_to_shared(s, f, len, board_ip);
+    if (ip.src != 0u) s->amiga_ip = ip.src;
     return PNET_TX_SEND;
 }
 
-bool pnet_sort_seed(pnet_sort_t *s, uint32_t ip, uint32_t board_ip) {
-    // board_ip 0: not decidable yet (is the seed the board's own?) -- refused, the caller retries (pnet_bridge.c).
-    if (s->amiga_ip != 0u || ip == 0u || board_ip == 0u) return false;
-    if (ip == board_ip) {        /* shared before a reboot (or a stale record: pnet_shared_amiga_left corrects it) */
-        s->sh.seed_hint = true;
-        pnet_shared_enter(s, board_ip, PNET_SHARED_SEED);
-        s->sh.amiga = true;
-        return true;
-    }
-    s->amiga_ip = ip;
-    return true;
-}
+void pnet_sort_set_mask(pnet_sort_t *s, uint32_t mask) { s->sh.mask = mask; }
 
 /* ARP (Ethernet/IPv4) whose target protocol address is `tpa`, or IPv4 whose destination is `tpa`. */
 static bool addressed_to(const uint8_t *f, size_t len, uint32_t tpa) {
