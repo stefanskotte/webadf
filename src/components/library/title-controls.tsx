@@ -10,6 +10,7 @@ import { Link } from '@/components/shell/link';
 import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { volumeNameWords } from '@/lib/files/words';
 import { DiskIcon } from '@/components/ui/disk-icon';
 import type { FobContext } from '@/components/nfc/fob-button';
 import type { DriveContext } from './card-mount-button';
@@ -151,6 +152,9 @@ function VolumeNameField({ game: g }: { game: GameListItem }) {
   async function commit() {
     const trimmed = name.trim();
     if (trimmed === '' || trimmed === g.title) { setName(g.title); return; }
+    // Checked before sending, with the reason said (review 2026-11-16): the server refuses it as well.
+    const problem = volumeNameWords(trimmed);
+    if (problem) { toast.error('Could not rename the disk', { description: problem }); setName(g.title); return; }
     setBusy(true);
     try {
       const res = await fetch(`/api/disks/${g.diskId}/volume-name`, {

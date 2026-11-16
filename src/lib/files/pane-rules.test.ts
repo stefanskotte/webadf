@@ -257,7 +257,7 @@ describe('a title with one disk opens straight into it (ruling 2026-11-16)', () 
   const root = { label: 'LIBRARY:', path: 'LIBRARY:' };
   const title = { label: 'Mouseski Keyboard', path: 'LIBRARY:/g', through: true };
   const diskCrumb = { label: 'Mouseski Keyboard', path: 'LIBRARY:/g/d' };
-  const atDisk = L('LIBRARY:/g/d', { crumbs: [root, title, diskCrumb] });
+  const atDisk = L('LIBRARY:/g/d', { crumbs: [root, title, diskCrumb], diskBase: 'LIBRARY:/g/d' });
   it('upCrumb passes over the title: up from the disk is LIBRARY: or the collection', () => {
     expect(upCrumb(atDisk.crumbs)).toEqual(root);
     expect(upCrumb([root, { label: 'C', path: 'LIBRARY:/c' }, { ...title, path: 'LIBRARY:/c/g' }, { ...diskCrumb, path: 'LIBRARY:/c/g/d' }])?.path).toBe('LIBRARY:/c');
@@ -272,6 +272,12 @@ describe('a title with one disk opens straight into it (ruling 2026-11-16)', () 
     expect(landedPath('LIBRARY:/g', atDisk)).toBe('LIBRARY:/g/d');
     expect(landedPath('LIBRARY:/g/', atDisk)).toBe('LIBRARY:/g/d');
     expect(landedPath('LIBRARY:/g/d', atDisk)).toBe('LIBRARY:/g/d');
+  });
+  it('landedPath: a folder inside the disk is not the title\'s place, though its crumbs pass the title (review 2026-11-16)', () => {
+    const atDisk2 = L('LIBRARY:/g/d', { crumbs: [root, title, diskCrumb], diskBase: 'LIBRARY:/g/d' });
+    expect(landedPath('LIBRARY:/g', atDisk2)).toBe('LIBRARY:/g/d');
+    const sub = L('LIBRARY:/g/d/Sub', { crumbs: [root, title, diskCrumb, { label: 'Sub', path: 'LIBRARY:/g/d/Sub' }], diskBase: 'LIBRARY:/g/d' });
+    expect(landedPath('LIBRARY:/g', sub)).toBe('LIBRARY:/g');
   });
   it('landedPath: any other answer is where it asked', () => {
     expect(landedPath('LIBRARY:/x', atDisk)).toBe('LIBRARY:/x');

@@ -16,7 +16,10 @@ vi.mock('@/lib/session', () => ({ requireOrg: async () => ({ orgId: 'o1', userId
 const { getDb, closeDb } = await import('@/db');
 const { migrate } = await import('drizzle-orm/node-postgres/migrator');
 const { eq } = await import('drizzle-orm');
-const { disks, games } = await import('@/db/schema/catalog');
+const { disks, games, blobs, entitlements } = await import('@/db/schema/catalog');
+const { createHash } = await import('node:crypto');
+const { diskStore } = await import('@/lib/storage');
+const { formatVolume } = await import('@/lib/adffs/format');
 const { organization } = await import('@/db/schema/auth');
 const { POST: create } = await import('./route');
 const { PATCH: rename } = await import('../[id]/volume-name/route');
@@ -52,6 +55,7 @@ describe('a made disk is named after its title', () => {
     expect((await post({ volumeName: 'Work:Stuff' })).status).toBe(400);
     expect((await post({ volumeName: 'a/b' })).status).toBe(400);
     expect((await post({ volumeName: 'x'.repeat(31) })).status).toBe(400);
+    expect((await post({ volumeName: 'Café€' })).status).toBe(400);   // é is Latin-1, € is not
   });
 });
 
@@ -70,6 +74,38 @@ describe('a volume rename carries the label along', () => {
   it('refuses a name AmigaDOS cannot take', async () => {
     const { diskId } = await (await post({ volumeName: 'Keep' })).json() as { diskId: string };
     expect((await patch(diskId, 'Bad:Name')).status).toBe(400);
+    expect((await patch(diskId, 'Café€')).status).toBe(400);
     expect((await diskOf(diskId)).label).toBe('Keep');
+  });
+});
+
+describe('renaming a disk of a set (review 2026-11-16)', () => {
+  /** A title made here with a second, unlabelled disk ("Disk 2" in Files) whose volume is `vol`. */
+  async function setOfTwo(title: string, vol: string) {
+    const { gameId, diskId } = await (await post({ volumeName: title })).json() as { gameId: string; diskId: string };
+    const bytes = formatVolume({ filesystem: 'FFS', volumeName: vol });
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    await diskStore.put(sha256, bytes);
+    await getDb().insert(blobs).values({ sha256, sizeBytes: bytes.length, storageKey: diskStore.storageKey(sha256) }).onConflictDoNothing();
+    await getDb().insert(entitlements).values({ orgId: 'o1', sha256, sourceFilename: `${vol}.adf` }).onConflictDoNothing();
+    const second = `${diskId}-2`;
+    await getDb().insert(disks).values({ id: second, gameId, orgId: 'o1', diskNo: 2, sha256, sizeBytes: bytes.length });
+    return { gameId, first: diskId, second };
+  }
+  const titleOf = async (gameId: string) => (await getDb().select().from(games).where(eq(games.id, gameId)))[0].title;
+
+  it('an unlabelled disk 2 takes its new volume name as its label, as a set names its disks (disk-set-store)', async () => {
+    const { second } = await setOfTwo('Two Set A', 'Data');
+    expect((await diskOf(second)).label).toBeNull();
+    expect((await patch(second, 'Data Two')).status).toBe(200);
+    expect((await diskOf(second)).label).toBe('Data Two');
+  });
+  it('renaming disk 2 leaves the title; renaming a one-disk title\'s disk renames the title', async () => {
+    const { gameId, second } = await setOfTwo('Two Set B', 'Extra');
+    expect((await patch(second, 'Extra Two')).status).toBe(200);
+    expect(await titleOf(gameId)).toBe('Two Set B');
+    const { gameId: solo, diskId } = await (await post({ volumeName: 'Solo' })).json() as { gameId: string; diskId: string };
+    expect((await patch(diskId, 'Solo Two')).status).toBe(200);
+    expect(await titleOf(solo)).toBe('Solo Two');
   });
 });

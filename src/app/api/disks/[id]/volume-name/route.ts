@@ -137,10 +137,15 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   // The catalog title follows the volume name for a disk somebody made: the
   // two are the same thing to the person who typed it. sortTitle comes along
   // because it is NOT NULL, orders games_org_sort_idx and is half the key
-  // mergeDuplicates collapses on.
-  await db.update(games)
-    .set({ title: volumeName, sortTitle: makeSortTitle(volumeName), metadataSource: 'human' })
-    .where(and(eq(games.id, disk.gameId), eq(games.orgId, orgId)));
+  // mergeDuplicates collapses on. Only for a title with this one disk (review
+  // 2026-11-16): renaming disk 2 of a set renames that disk, not the set.
+  const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(disks)
+    .where(and(eq(disks.gameId, disk.gameId), eq(disks.orgId, orgId)));
+  if (n === 1) {
+    await db.update(games)
+      .set({ title: volumeName, sortTitle: makeSortTitle(volumeName), metadataSource: 'human' })
+      .where(and(eq(games.id, disk.gameId), eq(games.orgId, orgId)));
+  }
 
   return Response.json({ id, sha256, volumeName });
 }

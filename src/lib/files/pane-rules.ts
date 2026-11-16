@@ -143,11 +143,14 @@ export function upCrumb<C extends { path: string; through?: boolean }>(crumbs: C
  * Where a pane is once `listing` lands for the path it asked: a title with one disk answers with that disk's root
  * (ruling 2026-11-16), and the pane, its address and its Up are then the disk's. Any other answer is where it asked.
  */
-export function landedPath(asked: string, listing: Pick<Listing, 'path' | 'crumbs'>): string {
+export function landedPath(asked: string, listing: Pick<Listing, 'path' | 'crumbs' | 'diskBase'>): string {
   if (listing.path === asked) return asked;
   const p = parsePath(asked);
   const want = p ? formatPath(p) : asked;
-  return listing.crumbs.some((c) => c.through && c.path === want) ? listing.path : asked;
+  // Only the disk's ROOT answers for its title: a folder inside it (a stale listing still on screen, review 2026-11-16)
+  // is not where the title's address is, though its crumbs pass through the title too.
+  const title = listing.crumbs[listing.crumbs.length - 2];
+  return listing.path === listing.diskBase && title?.through === true && title.path === want ? listing.path : asked;
 }
 
 /** "Disk 1" or "SysInfo · Disk 1": the place a disk-side dialog names. */
