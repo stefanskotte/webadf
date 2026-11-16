@@ -114,7 +114,7 @@ static void version_bytes_come_from_the_version_string(void) {
 static void a_wifi_drop_keeps_the_amiga_online(void) {
     CHECK_EQ_INT(pnet_link_for(true), PNET_LINK_NOIP);
     CHECK_EQ_INT(pnet_link_for(false), PNET_LINK_JOIN);
-    CHECK(pnet_link_for(false) != PNET_LINK_DOWN, "never DOWN: the driver would go offline");
+    CHECK(pnet_link_for(false) != PNET_LINK_DOWN, "never DOWN for a rejoin: the driver would go offline");
 }
 static void byte_155_says_the_board_speaks_lz4(void) {
     pnet_status_t st = BENCH;
@@ -129,6 +129,39 @@ static void byte_155_says_the_board_speaks_lz4(void) {
     CHECK_EQ_INT(pnet_build_status(loop, sizeof loop, 0, 0, &st), PNET_STATUS_LOOP_BYTES);   /* still fits its period */
 }
 
+/* One IP by default (pnet_shared.h, 2026-11-16): the one deliberate DOWN that makes the Amiga ask for a lease again.
+ * The driver reads the status cylinder at open and every ~5 s; each call below is one arrival. */
+static void a_readdress_is_one_down_then_up_then_a_grace(void) {
+    pnet_down_t d = {0};
+    CHECK(!pnet_down_serve(&d, 0, false, 1000), "nothing asked: never DOWN");
+    CHECK(!pnet_down_serve(&d, 0, true, 2000), "a cursor already done: never DOWN");
+    CHECK(pnet_down_serve(&d, 1, true, 10000), "asked: this record says DOWN");
+    CHECK_EQ_INT(d.pulses, 1);
+    CHECK(pnet_down_serve(&d, 1, true, 10000 + PNET_DOWN_HOLD_MS - 1), "a re-read of the same check: DOWN again");
+    CHECK(!pnet_down_serve(&d, 1, true, 15000), "the next check: UP, the driver's ONLINE");
+    CHECK_EQ_INT(d.done, 0);                            /* not done until AmiTCP_NG had time to ask */
+    CHECK(!pnet_down_serve(&d, 1, false, 20000), "withdrawn after it began: it runs to its end, UP");
+    CHECK_EQ_INT(d.done, 0);
+    CHECK(!pnet_down_serve(&d, 1, true, 15000 + PNET_DOWN_GRACE_MS), "the grace over: done");
+    CHECK_EQ_INT(d.done, 1);
+    CHECK(!pnet_down_serve(&d, 1, true, 40000), "done: never DOWN again for the same request");
+    CHECK_EQ_INT(d.pulses, 1);
+    /* A new request withdrawn before it began (the Amiga came back by itself): no DOWN, done at once. */
+    CHECK(!pnet_down_serve(&d, 2, false, 45000), "withdrawn: no DOWN");
+    CHECK_EQ_INT(d.done, 2);
+    /* Two asks while one runs: the later one gets its own DOWN once the first is over. */
+    CHECK(pnet_down_serve(&d, 3, true, 50000), "DOWN for 3");
+    CHECK(!pnet_down_serve(&d, 4, true, 55000), "4 asked while 3 runs: UP for 3");
+    CHECK(!pnet_down_serve(&d, 4, true, 55000 + PNET_DOWN_GRACE_MS), "3 done");
+    CHECK_EQ_INT(d.done, 3);
+    CHECK(pnet_down_serve(&d, 4, true, 75000), "then DOWN for 4");
+    CHECK_EQ_INT(d.pulses, 3);
+    /* clock_ms wraps: the arithmetic is unsigned differences. */
+    pnet_down_t w = {0};
+    CHECK(pnet_down_serve(&w, 1, true, 0xFFFFF000u), "DOWN just before the wrap");
+    CHECK(!pnet_down_serve(&w, 1, true, 0x00001000u), "UP after it (8 s later)");
+}
+
 int main(void) {
     RUN(the_record_is_robs_layout_byte_for_byte);
     RUN(every_start_finds_a_record_within_124_bytes);
@@ -136,5 +169,6 @@ int main(void) {
     RUN(version_bytes_come_from_the_version_string);
     RUN(byte_155_says_the_board_speaks_lz4);
     RUN(a_wifi_drop_keeps_the_amiga_online);
+    RUN(a_readdress_is_one_down_then_up_then_a_grace);
     return REPORT();
 }

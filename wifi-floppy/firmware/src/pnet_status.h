@@ -52,7 +52,7 @@
 #define PNET_ST_LIVE_BYTES      14u
 #define PNET_ST_FLAGS_RLE_BOTH  3u       /* bit 1: the Amiga sends RLE; bit 0: so does the board */
 #define PNET_ST_MAX_TX_BYTES    8192u    /* never 0 or small: the driver's 16-bit space sum would wrap */
-#define PNET_LINK_DOWN          0u       /* the driver goes offline and rejects every write: never sent */
+#define PNET_LINK_DOWN          0u       /* the driver goes offline and rejects every write: only pnet_down_serve */
 #define PNET_LINK_JOIN          1u       /* rejoining Wi-Fi: online for the driver, so the PaulaNET link keeps working */
 #define PNET_LINK_NOIP          2u       /* associated; the driver counts 1, 2, 3 and 5 as online */
 
@@ -67,6 +67,29 @@ typedef struct {
 /* The link byte for the status: NOIP while the board is on Wi-Fi, JOIN while it is (re)joining -- never DOWN, which
  * would take the Amiga's whole network offline, the board's own link to it included (bench 2026-10-22). */
 uint8_t pnet_link_for(bool sta_joined);
+
+/* ONE DELIBERATE DOWN (pnet_shared.h, 2026-11-16): when the board's address changes under a sharing Amiga, or the
+ * Amiga sends from an address that cannot work here, the Amiga is made to ask for a lease again. Rob's driver
+ * (device.c:735-750) goes offline on a DOWN it reads (S2EVENT_OFFLINE, its reads failed with S2ERR_OUTOFSERVICE) and
+ * online on the next record that is not DOWN (S2EVENT_ONLINE); AmiTCP_NG then reconfigures the interface and, on
+ * configure=dhcp, sends a DISCOVER, which the board answers with its current address.
+ * pnet_down_serve runs at every arrival of the driver on the status cylinder (open, then every ~5 s) with the
+ * sorter's request cursor (sh.down_req) and whether it is still wanted (sh.down_want: false once the Amiga is back on
+ * the shared address by itself). Phases: 0 idle; 1 DOWN -- every arrival within PNET_DOWN_HOLD_MS of the first DOWN
+ * one says DOWN too (a re-read of the same check); 2 UP -- the driver's ONLINE; done (done = req, the sorter's
+ * cursor caught up) at the first arrival PNET_DOWN_GRACE_MS after the UP one, time for AmiTCP_NG's DISCOVER. A request
+ * not yet begun that is withdrawn is done at once; one begun runs to its end (its UP must be served). True: this
+ * arrival's record must say PNET_LINK_DOWN. */
+#define PNET_DOWN_HOLD_MS  3000u
+#define PNET_DOWN_GRACE_MS 15000u
+typedef struct {
+    uint32_t done;       /* the last request finished (the sorter reads it: sh.down_done) */
+    uint32_t req;        /* the request being served */
+    uint32_t t;          /* phase 1: the first DOWN arrival; phase 2: the UP arrival (ms) */
+    uint16_t pulses;     /* DOWNs begun (the log's reading) */
+    uint8_t  phase;
+} pnet_down_t;
+bool pnet_down_serve(pnet_down_t *d, uint32_t req, bool want, uint32_t now_ms);
 /* The 156-byte payload. SSID, password and hostname are always zeros. */
 void pnet_status_payload(const pnet_status_t *st, uint8_t out[PNET_STATUS_BYTES]);
 /* What DF1 loops: PNET_STATUS_RECORDS copies of the record, PNET_STATUS_PERIOD bytes apart, at out.
