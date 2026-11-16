@@ -2100,11 +2100,14 @@ static void __attribute__((noinline)) wifi_fallback_step(device_client_t *c, upl
     const bool trial = fw_rom_trial_boot() && now < FW_TRIAL_DEADLINE_MS;   // it reverts by itself if dead
     const unsigned char hold = wifi_hold(up);
     const int cur = prov.joined ? prov.first : -1;
-    const wfb_in_t in = { now, net_radio_sta_up(), c->answers, prov.cfg.n_nets,
-                          portal_is_open() || g_wifi_win.open || trial || g_fwu_reboot_owed,
-                          hold == PORTAL_HOLD_NETWORK,   // DF1 Network: no move for "no answer" (review I2)
-                          hold == PORTAL_HOLD_NONE && !fw_busy,   // an update under way is not idle
-                          cur, g_wifi_chosen_on_page };
+    // Designated: a field added to wfb_in_t and missed here must not silently read 0 in the wrong slot.
+    const wfb_in_t in = {
+        .now = now, .link_up = net_radio_sta_up(), .answers = c->answers, .n_nets = prov.cfg.n_nets,
+        .hold = portal_is_open() || g_wifi_win.open || trial || g_fwu_reboot_owed,
+        .hold_dead = hold == PORTAL_HOLD_NETWORK,              // DF1 Network: no "no answer" move (review I2)
+        .idle = hold == PORTAL_HOLD_NONE && !fw_busy,          // an update under way is not idle
+        .cur = cur, .no_return = g_wifi_chosen_on_page, .fails = c->unanswered,
+    };
     const wfb_due_t due = wfb_due(&g_wfb, &in);
     g_ui_no_server = wfb_no_server(&g_wfb);   // the panel's honest state, every pass
     if (due == WFB_DUE_NONE) return;
