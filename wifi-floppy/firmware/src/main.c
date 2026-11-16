@@ -331,6 +331,10 @@ static volatile bool g_ui_writable = false;
 // cast, since up_sync_t and disp_sync_t are converted by a switch (see
 // core1_main's WPROT block).
 static volatile int g_ui_sync = DISP_SYNC_SYNCED;
+// The Wi-Fi glyph's no-server strike (display.h no_server; operator ruling 2026-11-16): core1 sets it from the
+// fallback's view every poll-loop pass (wfb_no_server) -- on after the first request with no answer or a link
+// drop, off with the first answer -- and clears it outside the poll loop.
+static volatile bool g_ui_no_server;
 // A tap's line (nfc_ui.h), published by core1 with the time it was published
 // and a count of publications. core0 shows it OVER g_ui_detail while it is
 // under NFC_UI_LINE_MS old (nfc_tag_clock_live, nfc_ui_detail), so the
@@ -384,6 +388,7 @@ static bool ui_snapshot(display_state_t *s, char tag[NFC_UI_LINE_BYTES], uint32_
     s->pct      = g_ui_pct;
     s->writable = g_ui_writable;
     s->sync     = (disp_sync_t)g_ui_sync;
+    s->no_server = g_ui_no_server ? 1u : 0u;
     // core1 recomputes g_ui_sync only between requests, and a long poll holds
     // it for up to 25 s. A write core0 applied meanwhile must not read as
     // "synced": that is the one question the cloud answers ("can I switch
@@ -2101,6 +2106,7 @@ static void __attribute__((noinline)) wifi_fallback_step(device_client_t *c, upl
                           hold == PORTAL_HOLD_NONE && !fw_busy,   // an update under way is not idle
                           cur, g_wifi_chosen_on_page };
     const wfb_due_t due = wfb_due(&g_wfb, &in);
+    g_ui_no_server = wfb_no_server(&g_wfb);   // the panel's honest state, every pass
     if (due == WFB_DUE_NONE) return;
     const char *cur_name = cur >= 0 ? prov.cfg.net[cur].ssid : "no network";
     int seen = 0;
@@ -2405,6 +2411,7 @@ static void core1_main(void) {
         // take (a portal waits for a person), and core1 supervision (core1_wd.h) judges only the poll loop. Left at
         // LOOP/CONTACT, a re-pair's portal would read as a poll loop gone silent.
         bt_hw_mark(1, BT1_WIFI);
+        g_ui_no_server = false;   // only the poll loop judges the server (wifi_fallback_step)
         if (prov.state == PROV_PORTAL) {
             // The catch-all, deliberately here rather than only at the sites
             // that set PROV_PORTAL: this is the single door every route into

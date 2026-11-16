@@ -239,6 +239,23 @@ static void test_no_radio_is_distinguishable_from_a_weak_one(void) {
           "'no radio' and 'associated but weak' must not look the same");
 }
 
+// Operator ruling 2026-11-16: link up, server silent -- the glyph is struck through but keeps its arcs, unlike
+// "no radio" (a struck bare dot) and unlike an answering board (no strike).
+static void test_no_server_strikes_the_signal_through(void) {
+    display_state_t ok = base_state(), quiet = base_state(), none = base_state();
+    quiet.no_server = 1;
+    none.bars = -1;
+    uint8_t a[DISP_FB_MAX], b[DISP_FB_MAX], c[DISP_FB_MAX];
+    for (int p = 0; p < 2; p++) {
+        const layout_t *l = layout_default(p == 0 ? PANEL_128x32 : PANEL_128x64);
+        display_render(&ok, l, a); display_render(&quiet, l, b); display_render(&none, l, c);
+        CHECK(memcmp(a, b, DISP_FB_MAX) != 0, "no server must not look like an answering board");
+        CHECK(memcmp(b, c, DISP_FB_MAX) != 0, "no server must not look like no radio");
+        CHECK(lit_count(b) > lit_count(a), "the strike is drawn over the arcs");
+        for (int i = 0; i < DISP_FB_MAX; i++) if ((a[i] & b[i]) != a[i]) { CHECK(0, "the arcs stay"); break; }
+    }
+}
+
 static void test_rendering_is_pure(void) {
     display_state_t s = base_state();
     strcpy(s.title, "Lemmings"); strcpy(s.detail, "1/2");
@@ -531,6 +548,7 @@ int main(int argc, char **argv) {
     RUN(test_a_title_breaks_at_a_space_when_it_can);
     RUN(test_a_long_unbreakable_title_is_truncated_visibly);
     RUN(test_more_bars_never_removes_pixels);
+    RUN(test_no_server_strikes_the_signal_through);
     RUN(test_no_radio_is_distinguishable_from_a_weak_one);
     RUN(test_rendering_is_pure);
     RUN(test_unprintable_characters_do_not_read_past_the_font);

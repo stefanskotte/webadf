@@ -344,7 +344,7 @@ static void draw_status_icon(uint8_t *fb, int x, int y, disp_status_t st, int ti
     }
 }
 
-static void draw_wifi(uint8_t *fb, int x, int y, int bars) {
+static void draw_wifi(uint8_t *fb, int x, int y, int bars, bool no_server) {
     draw_bitmap(fb, x, y, WIFI_DOT);
     if (bars >= 1) draw_bitmap(fb, x, y, WIFI_ARC1);
     if (bars >= 2) draw_bitmap(fb, x, y, WIFI_ARC2);
@@ -352,7 +352,8 @@ static void draw_wifi(uint8_t *fb, int x, int y, int bars) {
     // No radio at all: strike the glyph through, which is distinguishable
     // from "associated but weak" (a bare dot) at a glance. Those two states
     // want different actions from whoever is looking at it.
-    if (bars < 0)
+    // The server not answering is offline too: the same strike over whatever arcs the signal gives.
+    if (bars < 0 || no_server)
         for (int i = 0; i < 8; i++) px(fb, x + 1 + i, y + i);
 }
 
@@ -499,7 +500,7 @@ void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP
         const int x = AT(e->x), y = AT(e->y);
         int bw, bh; layout_el_size(e, &bw, &bh);
         switch (e->id) {
-            case EL_WIFI:    draw_wifi(fb, x, y, s->bars); break;
+            case EL_WIFI:    draw_wifi(fb, x, y, s->bars, s->no_server != 0); break;
             case EL_LEMMING: draw_lemming(fb, x, y, s->tick); break;
             case EL_WRITE:   draw_write_state(fb, x, y, s->writable, s->sync); break;
             case EL_NFC:     draw_nfc(fb, x, y, s->nfc); break;
