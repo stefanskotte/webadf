@@ -43,6 +43,7 @@
 #include <string.h>
 #include "hardware/psram.h"    // psram_check_address
 #include "pico/stdlib.h"
+#include "hardware/sync.h"       // __dmb (pnet_bridge_down_req)
 
 #define PNET_RX_SLOTS    64u
 #define PNET_TX_SLOTS    32u
