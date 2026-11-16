@@ -67,6 +67,23 @@ static void test_cold_boot_polls_since_zero(void) {
           "cold boot MUST poll since=0 or the device boots diskless forever");
 }
 
+// The Wi-Fi fallback's signal (wifi_fallback.h, B): an exchange the server answered counts, any status; one that
+// never reached a status line does not.
+static void test_answers_count_only_exchanges_the_server_answered(void) {
+    boot();
+    CHECK_EQ_INT(c.answers, 0);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK_EQ_INT(c.answers, 1);
+    push_status_json("HTTP/1.1 503 Service Unavailable", "{}");
+    dc_step(&c);
+    CHECK_EQ_INT(c.answers, 2);   // a 5xx: the network works
+    fake_set_clock(100000);
+    fake_push_connect_failure();
+    dc_step(&c);
+    CHECK_EQ_INT(c.answers, 2);   // nothing came back
+}
+
 // Task 5's binding ruling: transport_t.write() may accept fewer bytes than
 // offered, exactly as a real socket can under backpressure. A client that
 // assumes one write() call sends a whole request would pass every other
@@ -4266,6 +4283,7 @@ int main(void) {
     psram_image_init();     // pre-flight I1: SLOT_NET's storage is set up here
 
     RUN(test_cold_boot_polls_since_zero);
+    RUN(test_answers_count_only_exchanges_the_server_answered);
     RUN(test_request_survives_single_byte_writes);
     RUN(test_since_does_not_advance_on_a_failed_fetch);
     RUN(test_current_disk_survives_a_failed_replacement_fetch);

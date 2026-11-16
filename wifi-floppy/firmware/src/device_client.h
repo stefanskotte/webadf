@@ -564,6 +564,10 @@ typedef struct {
 
     // How the most recent exchange (any request) ended -- see dc_xfer_t.
     dc_xfer_t last_xfer;
+    // Exchanges the server answered (a status line was read: any status, a 5xx too -- the network works), any
+    // request. Only ever counts up (wraps). main.c's Wi-Fi fallback reads it: no answer for minutes on an up link
+    // means nothing gets through on this network (wifi_fallback.h, B).
+    uint32_t answers;
 } device_client_t;
 
 void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,

@@ -308,6 +308,7 @@ static void dc_xfer_end(device_client_t *c, const http_resp_t *r, dc_xfer_stage_
     x->body_complete = r->body_complete;
     x->bytes_read = read_bytes;
     x->ms = c->now() - t0;
+    if (r->status != 0) c->answers++;
 }
 
 const char *dc_transport_rc_text(int rc) {
