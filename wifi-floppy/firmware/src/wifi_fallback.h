@@ -1,0 +1,89 @@
+#ifndef WIFI_FALLBACK_H
+#define WIFI_FALLBACK_H
+// Moving to another saved network while running (bench 2026-11-16, HANDOFF "Phone/hotspot bench"). The board walks
+// its saved networks only at start-up; in the poll loop it stayed on the network it had joined:
+//   A. that network went away (an iPhone hotspot switched off): link DOWN for minutes, the driver re-trying the same
+//      name, while another saved network was in range;
+//   B. the link stayed up but nothing got through (UniFi "Block" of the board): TLS and DNS failures forever.
+//
+// The decisions live here (pure C, test/test_wifi_fallback.c); main.c's wifi_fallback_step does the radio work:
+// a scan for the saved names (net_radio_scan_names) and then the start-up's own rounds (wifi_rejoin_run), with the
+// same leave/drop hygiene as the Save check (net_join.c drops what the station holds before every attempt).
+//
+// The rules:
+//   * One saved network: nothing new. A stays as it was (the driver keeps re-trying the network, and a short drop
+//     recovers on its own -- fw 1.21.1), B has nowhere to go: a leave and re-join of the same network cannot undo
+//     a block or a server outage, and every leave risks the router refusing the same MAC for minutes (bench 2).
+//   * A, link down for WFB_LINK_GRACE_MS (a blip on the same network recovers inside it, as today): scan. Another
+//     saved network in range -> rounds starting with the CURRENT one (it may have come back this second, and an
+//     explicit leave + join also clears a stuck association), then the others in saved order. Nothing else in
+//     range -> stay and let the driver keep trying; scan again after 1, 2, 4, then every 5 minutes. A scan that
+//     could not run: the rounds anyway (the link is down, there is nothing to lose).
+//   * B, link up and no answer from the server for WFB_DEAD_MS (5 min; the worst single request is ~105 s, a
+//     normal pass answers every ~25 s): scan. Another saved network in range -> rounds starting with THAT one (the
+//     first in saved order); the current one is still in the round, so a fruitless move ends back where it was.
+//     The flapping guard: B never moves without another saved network in range (a server outage on a single home
+//     network leaves the board alone), and the dead period doubles after every move or empty scan that did not
+//     bring an answer (5, 10, 20, 30 min at most), reset by the first answer. A server outage with a hotspot in
+//     range therefore costs at most a few moves an hour, each ~15-30 s off line.
+//   * Held (no action; the clocks keep running): the setup page opened on request (its window), an OTA trial
+//     before its deadline (it reverts on its own if the network is dead), an update's reboot owed. The Save check
+//     runs its own rounds and resets this (wfb_reset).
+//   * A run that found no network leaves the station holding nothing, so nobody else would try again: an idle
+//     board restarts into its normal start (main.c, the Save check's rule: never with a disk in a drive, saves
+//     waiting or DF1 Network on); otherwise the rounds run again every WFB_LOST_RETRY_MS, from the network it was
+//     on, with no scan.
+#include <stdbool.h>
+#include <stdint.h>
+
+#define WFB_LINK_GRACE_MS  30000u
+#define WFB_RESCAN_MS      60000u
+#define WFB_RESCAN_MAX_MS  300000u
+#define WFB_DEAD_MS        300000u
+#define WFB_DEAD_MAX_MS    1800000u
+#define WFB_LOST_RETRY_MS  30000u
+
+typedef enum {
+    WFB_DUE_NONE = 0,
+    WFB_DUE_DOWN,    // A: scan, then maybe rounds from the current network
+    WFB_DUE_DEAD,    // B: scan, then maybe rounds from another network in range
+    WFB_DUE_LOST,    // the last run found nothing: rounds again, no scan
+} wfb_due_t;
+
+typedef struct {
+    bool     started;
+    uint32_t answers;       // the client's answer count last seen (device_client_t.answers)
+    bool     down;          // the link is down ...
+    uint32_t down_since;    // ... since then
+    uint32_t quiet_since;   // the link up, and no answer since then
+    uint32_t dead_ms;       // B's period now (doubles, reset by an answer)
+    uint32_t rescan_at;     // A: no scan before this
+    uint32_t rescan_ms;     // A's next wait after an empty scan
+    bool     lost;          // the last run joined nothing
+    uint32_t lost_at;       // the next run's time
+} wifi_fb_t;
+
+typedef struct {
+    uint32_t now;
+    bool     link_up;       // net_radio_sta_up()
+    uint32_t answers;       // device_client_t.answers
+    int      n_nets;        // saved networks
+    bool     hold;          // the setup page on request, an OTA trial, an update reboot owed
+} wfb_in_t;
+
+// The clocks start now (also after the Save check's own rounds, and after any run here).
+void wfb_reset(wifi_fb_t *fb, uint32_t now, uint32_t answers);
+
+// Once per poll-loop pass: what is due. Updates the clocks from `in` first, held or not.
+wfb_due_t wfb_due(wifi_fb_t *fb, const wfb_in_t *in);
+
+// After the scan a DOWN or DEAD asked for (`seen`: bit i = saved network i is in range; -1: the scan could not run),
+// or for LOST (seen ignored): the network the rounds start from, or -1 to stay (the next look is scheduled).
+// `cur`: the network the board is on (or was on last), -1 if none.
+int wfb_pick(wifi_fb_t *fb, wfb_due_t due, uint32_t now, int cur, int n_nets, int seen);
+
+// After the rounds: `back_on` is the network joined, -1 none (the caller restarts an idle board, or this makes the
+// rounds run again in WFB_LOST_RETRY_MS).
+void wfb_ran(wifi_fb_t *fb, wfb_due_t due, uint32_t now, int back_on);
+
+#endif
