@@ -4272,7 +4272,8 @@ static void pnet_l2_log(void) {
                          g_link.acked + st.clash + st.hooks + g_pnet_status_serves + g_pnet_status_early +
                          st.a2b + st.b2a + st.local_drops + g_link.lz4_in + g_link.lz4_bad +
                          (lz4b ? g_lz4.out_lz4 + g_lz4.out_mfm : 0u) +
-                         st.sh_entered + st.sh_moved + st.sh_own + st.sh_held + st.sh_down_req + st.sh_offers +
+                         st.sh_entered + st.sh_moved + st.sh_own + st.sh_held + st.sh_stale + st.sh_down_req +
+                         st.sh_offers +
                          st.sh_acks + st.sh_naks + st.sh_late + st.sh_frag_drops + st.sh_arp_hidden + st.own +
                          st.shared + g_pnet_down.done;
     if (sum == last_sum) return;
@@ -4321,14 +4322,16 @@ static void pnet_l2_log(void) {
             "pnet: l2 amiga %s board %s %s clash %lu heap %lu", a, b,
             st.shared ? "SHARED" : same ? "SAME" : st.own ? "OWN" : "NOIP", PNET_SAT(st.clash, 999999u),
             PNET_SAT(g_pnet_heap_low, 999999u));
-    // Shared mode: entered, the board's moves, the Amiga left on its own address, frames held, re-addresses asked /
+    // Shared mode: entered, the board's moves, the Amiga left on its own address, frames held, late frames from a
+    // former address dropped (stale), re-addresses asked /
     // finished (the link DOWN once each), the replies built (offer/ack/nak), the network's DHCP replies dropped,
     // fragments dropped, ARP kept from the Amiga. 87 characters at most each (WF_LOG_MSG).
     wf_logf(st.sh_naks || st.sh_own ? WF_WARN : WF_INFO,
-            "pnet: l2 shared in %lu mv %lu own %lu hold %lu down %lu/%lu dhcp %lu/%lu/%lu",
+            "pnet: l2 shared in %lu mv %lu own %lu hold %lu stale %lu down %lu/%lu dhcp %lu/%lu/%lu",
             PNET_SAT(st.sh_entered, 99u), PNET_SAT(st.sh_moved, 99u), PNET_SAT(st.sh_own, 99u),
-            PNET_SAT(st.sh_held, 999u), PNET_SAT(st.sh_down_req, 99u), PNET_SAT(g_pnet_down.done, 99u),
-            PNET_SAT(st.sh_offers, 999u), PNET_SAT(st.sh_acks, 999u), PNET_SAT(st.sh_naks, 999u));
+            PNET_SAT(st.sh_held, 999u), PNET_SAT(st.sh_stale, 9999u), PNET_SAT(st.sh_down_req, 99u),
+            PNET_SAT(g_pnet_down.done, 99u), PNET_SAT(st.sh_offers, 999u), PNET_SAT(st.sh_acks, 999u),
+            PNET_SAT(st.sh_naks, 999u));
     if (st.sh_late || st.sh_frag_drops || st.sh_arp_hidden)
         wf_logf(st.sh_frag_drops ? WF_WARN : WF_INFO, "pnet: l2 shared late %lu frag %lu arp %lu",
                 PNET_SAT(st.sh_late, 999u), PNET_SAT(st.sh_frag_drops, 999u), PNET_SAT(st.sh_arp_hidden, 999u));
