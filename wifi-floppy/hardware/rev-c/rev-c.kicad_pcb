@@ -15875,19 +15875,6 @@
 				)
 			)
 		)
-		(property "LCSC" "DNP"
-			(at 0 0 90)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "b8562a5f-0093-411c-99ec-3bc8c8bd613b")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
 		(property ki_fp_filters "Connector*:*_1x??_*")
 		(path "/a3452b4d-7772-4179-a463-cbc60259b093")
 		(sheetname "Root")
@@ -15898,7 +15885,7 @@
 				(pins "1" "2" "3" "4")
 			)
 		)
-		(attr through_hole dnp)
+		(attr through_hole exclude_from_pos_files exclude_from_bom)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -1.38 -1.38)
@@ -17120,7 +17107,7 @@
 		(path "/b60c8904-1523-4c55-bd71-7e73c7821e5a")
 		(sheetname "Root")
 		(sheetfile "rev-c.kicad_sch")
-		(attr through_hole)
+		(attr through_hole exclude_from_pos_files exclude_from_bom)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -1.38 -1.38)
@@ -21948,19 +21935,6 @@
 				)
 			)
 		)
-		(property "LCSC" "DNP"
-			(at 0 0 90)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "c4d33307-4f02-41cc-a710-7ae008af0c9f")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
 		(property ki_fp_filters "Connector*:*_1x??_*")
 		(path "/0c1fbc78-d58d-435f-82a6-be2d3601213a")
 		(sheetname "Root")
@@ -21971,7 +21945,7 @@
 				(pins "1" "2" "3" "4")
 			)
 		)
-		(attr through_hole dnp)
+		(attr through_hole exclude_from_pos_files exclude_from_bom)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -1.38 -1.38)
