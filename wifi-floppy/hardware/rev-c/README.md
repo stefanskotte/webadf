@@ -16,7 +16,7 @@ Rev B with the PIM726 module replaced by its parts on our PCB: RP2350B, 16 MB fl
 | `verify_reg.py` | the regulator matches Raspberry Pi's pattern: 62 differences before, 0 now |
 | `pnpm hw:verify rev-c` | passes: ERC, DRC, firmware pins, J1 lines, 1k pull-ups, the regulator, and the original-drive checks (J5's pins against J1's, the sense pins, the pull-ups, U6/Q9/U7/U8/J8/J9 pins) |
 | `check45.py rev-c.kicad_pcb` | passes: every track at a multiple of 45 degrees, every bend 45 or 90 degrees, no short leg between two bends. It lets through, and lists on every run, the regulator's own tracks (10 flags) and two 0.1 mm steps at U1 pins 71 and 73; see "Routing rule" |
-| Gerbers | regenerated 2026-11-17 for the original-drive connector, same 14 files and export settings; 308 holes for 203 vias and 105 drilled pads. Not analysed with kicad-happy, not through JLC's own check |
+| Gerbers | regenerated 2026-11-18 for the buzzer header, same 14 files and export settings; 307 holes for 204 vias and 103 drilled pads. Not analysed with kicad-happy, not through JLC's own check |
 | Tracks | 0.15 mm, necked to 0.11 mm at the QFN, vias 0.45/0.2 mm, spacing 0.127 mm: within JLC's published 4-layer limits, not confirmed by JLC |
 
 ## Copper review, 2026-11-11
@@ -141,6 +141,7 @@ The plan was a free RP2350 GPIO each for the sense, the enable and SEL2, with SE
 - **Close to the edge:** fixed 2026-11-18. DRV_EN_N ran 0.295 mm from the left edge beside R37. R37's +3.3 V via moved 0.15 mm east, next to its own pad, and DRV_EN_N now runs straight down with its centre 0.48 mm in from the edge (0.405 mm from copper to edge) from R36 to U7 pin 6, 0.145 mm from R38's pad; check45 still passes. U8's ground via is 0.3 mm from the edge.
 - **Checks after the change:** `check45.py` passes (the same 2 accepted steps and the regulator's 10), DRC 0 errors / 0 unconnected / 0 parity, ERC 0, `verify_sch.py` 82 of 82 nets, `verify_pins.py` 210 of 210, `verify_reg.py` 0 differences, `pnpm hw:verify rev-c` passes.
 - **Silkscreen:** top, in the 3.4 mm above the two shrouds: "EXT DRV" and "FROM MB", 1.6 mm high (1.4 mm wide, 0.25 mm stroke), one over each shroud. Each header is 11 mm wide, so the names alone fit at that size and the references J5/J1 moved to the back labels. J5 has the same pin-1 triangle as J1. Beside the strip: "SEL2" at J9, "J8 DRV PWR" at J8 (0.8 mm). Back: "J5 EXT DRV" and "J1 FROM MB" at 1.5 mm between the two headers, and "J9: SEL2 from EXT port". The small parts' references are hidden, like the other new parts'.
+- **Buzzer is off the board (operator, 2026-11-18):** BZ1 is now a 2-pin 2.54 mm header (pin 1 +, marked "+"; pin 2 to the switching FET) in place of the 12 mm PS1240, so any buzzer can sit on Dupont wires. It stands on the old part's right-hand pads; a via joins the + track where the old part's left pad was. **Hand-fitted:** J1, J5 and BZ1 are excluded from the BOM and the position file (not DNP, so they still show in the 3D view), so JLC does not place them.
 
 ### Owed in firmware (operator's spec, 2026-11-17)
 

@@ -10932,7 +10932,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "wifi-floppy-lib:Buzzer_TDK_PS1240P02BT_D12.2mm_H6.5mm"
+		(property "Footprint" "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical"
 			(at 169.545 113.03 90)
 			(hide yes)
 			(show_name no)
@@ -10954,18 +10954,7 @@
 				)
 			)
 		)
-		(property "Description" "Buzzer, polarized"
-			(at 168.91 115.57 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "LCSC" "C2687681"
+		(property "Description" "Buzzer on a 2-pin header (off-board, e.g. on Dupont wires): pin 1 +, pin 2 to the switching FET"
 			(at 168.91 115.57 0)
 			(hide yes)
 			(show_name no)
