@@ -3965,7 +3965,7 @@
 		(path "/ccb91e43-9ca9-4cce-adbb-46390e3a3b9c")
 		(sheetname "Root")
 		(sheetfile "rev-c.kicad_sch")
-		(attr through_hole)
+		(attr through_hole exclude_from_pos_files exclude_from_bom)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -4.68 -0.5)
@@ -7573,7 +7573,7 @@
 				(pins "1" "2")
 			)
 		)
-		(attr through_hole dnp)
+		(attr through_hole exclude_from_pos_files exclude_from_bom)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_arc
 			(start -3.9 1.499999)
@@ -22259,7 +22259,7 @@
 				)
 			)
 		)
-		(attr through_hole)
+		(attr through_hole exclude_from_pos_files exclude_from_bom)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -4.68 -0.5)
