@@ -1,6 +1,6 @@
 # Rev C: on-board RP2350, schematic and routed board
 
-Rev B with the PIM726 module replaced by its parts on our PCB: RP2350B, 16 MB flash, 16 MB PSRAM, RM2 radio, crystal, core regulator, USB-C, BOOTSEL, SWD. Every GPIO stays where the PIM726 has it, so the firmware's pin map and the pico-sdk board definition are unchanged. Same outline as rev B, widened 13.1 mm to the left on 2026-11-17 for a second floppy connector (J5 EXT DRV, an original drive as DF0): see "Original drive connector". Rev B's files are untouched.
+Rev B with the PIM726 module replaced by its parts on our PCB: RP2350B, 16 MB flash, 16 MB PSRAM, RM2 radio, crystal, core regulator, USB-C, BOOTSEL, SWD. Every GPIO stays where the PIM726 has it, so the firmware's pin map and the pico-sdk board definition are unchanged. Same outline as rev B, widened 13.1 mm to the left on 2026-11-17 for a second floppy connector (J5 EXT DRV, an original drive as DF0) and made 2 mm taller at the top on 2026-11-18 for larger connector labels: see "Original drive connector". Rev B's files are untouched.
 
 **The schematic and the routed board agree, and nothing else about the board differs from using a PIM726 on rev B. It is still not a board to order:** see "Owed before a fab order".
 
@@ -128,19 +128,19 @@ The plan was a free RP2350 GPIO each for the sense, the enable and SEL2, with SE
 - **U6 reads SEL0_B (5 V side)**, not U2's 3.3 V output: the 74LVC1G02's inputs are 5 V tolerant, and J1 pin 10 is next to J5 while U2's output is across the board.
 - **J8 and J9 are vertical headers on the outer edge**, not J2's horizontal footprint: a horizontal header needs its pins over a board edge, and the plugs must not sit between the two ribbon shrouds.
 - **Refs:** J7 is the SWD connector, so the drive's power is J8 and SEL2 is J9.
-- **Outline:** 74.55 x 54.1 mm (was 61.45 x 54.1), widened 13.1 mm to the left only; the antenna corner is unchanged. J5 stands 10.75 mm left of J1 (0.24 mm between the two shrouds' silk), and a 3.6 mm strip outside J5 holds the small parts, J8 and J9.
+- **Outline:** 74.55 x 56.1 mm (was 61.45 x 54.1), widened 13.1 mm to the left, and 2 mm taller at the top (operator, 2026-11-18: "make the board 2mm taller for bigger labels"); the antenna corner is unchanged. J5 stands 10.75 mm left of J1 (0.24 mm between the two shrouds' silk), and a 3.6 mm strip outside J5 holds the small parts, J8 and J9.
 - **Off is the hardware default.** DRV_EN_N is pulled high: the drive is never selected unless the firmware asks for it.
 
 ### Layout
 
-- **Outline** 74.55 x 54.1 mm, from 61.45 x 54.1: the left edge moved from x 101.05 to 87.9; the whole-board zones (GND on F.Cu, B.Cu and In1, +3.3 V on In2) moved with it. The antenna corner is unchanged.
+- **Outline** 74.55 x 56.1 mm, from 61.45 x 54.1: the left edge moved from x 101.05 to 87.9, and the top edge from y 100 to 98 (2026-11-18). The 45 degree cut by the USB connector runs on along its own line, so J6 still sits at its edge. The whole-board zones (GND on F.Cu, B.Cu and In1, +3.3 V on In2) moved with both. The antenna corner (bottom right) is unchanged.
 - **J5** at x 95.25 (J1 at 106.0), rows level with J1's. Its 12 straight-through lines run on the back between the two headers, each at mid-row past J1's ground pins (0.218 mm over clearance each).
 - **The strip** left of J5 (x 87.9 to 91.6) holds, top to bottom: U8, C34, R36, R37, R38 (on its side, to keep the courtyards apart), J9, R39, U7, C33, U6, C32, Q9, R35, J8. Everything is 0402 or SOT-23 and on the top.
 - **Long runs:** OLED_SCL and OLED_SDA leave U8 along the top edge on F.Cu, above both headers, to J4 pins 3 and 4; SEL0_B leaves J1 pin 10 west in row 5's gap; SEL0M_B crosses both headers in row 7's gap on F.Cu and reaches U2 pin 2 over both layers (3 vias); DRV_SEL_B reaches J5 pin 10 on the back between J5's two rows; DRV_DET_B runs from J5 pin 1 diagonally into the strip, and down the back beside J5's odd row to pin 33; +5V comes from J2's via on the back along the bottom edge (0.6 mm) and up the strip at 0.25 mm.
-- **Copper:** 140 more segments and 35 more vias (959 and 203 on the board, from 819 and 168). The SEL0_B run from R8 to U2 pin 2 (4 segments) is the only copper of the old board taken out. The OLED tracks between J4 and J3 are untouched.
-- **Close to the edge:** DRV_EN_N runs 0.295 mm from the new left edge for 3.7 mm beside R37 (the board's rule is 0.2 mm; the scripts here use 0.3); U8's ground via is 0.3 mm from it.
+- **Copper:** 140 more segments and 35 more vias (959 and 203 on the board, from 819 and 168; 957 segments after the 2026-11-18 edge fix). The SEL0_B run from R8 to U2 pin 2 (4 segments) is the only copper of the old board taken out. The OLED tracks between J4 and J3 are untouched.
+- **Close to the edge:** fixed 2026-11-18. DRV_EN_N ran 0.295 mm from the left edge beside R37. R37's +3.3 V via moved 0.15 mm east, next to its own pad, and DRV_EN_N now runs straight down with its centre 0.48 mm in from the edge (0.405 mm from copper to edge) from R36 to U7 pin 6, 0.145 mm from R38's pad; check45 still passes. U8's ground via is 0.3 mm from the edge.
 - **Checks after the change:** `check45.py` passes (the same 2 accepted steps and the regulator's 10), DRC 0 errors / 0 unconnected / 0 parity, ERC 0, `verify_sch.py` 82 of 82 nets, `verify_pins.py` 210 of 210, `verify_reg.py` 0 differences, `pnpm hw:verify rev-c` passes.
-- **Silkscreen:** top, in the 1.4 mm above the two shrouds: "J5 EXT DRV" and "J1 FROM MB" (1.0 mm, the most that fits under the board edge); J5 has the same pin-1 triangle as J1. Beside the strip: "SEL2" at J9, "J8 DRV PWR" at J8 (0.8 mm). Back: "EXT DRV" and "FROM MB" at 1.5 mm between the two headers, and "J9: SEL2 from EXT port". The small parts' references are hidden, like the other new parts'.
+- **Silkscreen:** top, in the 3.4 mm above the two shrouds: "EXT DRV" and "FROM MB", 1.6 mm high (1.4 mm wide, 0.25 mm stroke), one over each shroud. Each header is 11 mm wide, so the names alone fit at that size and the references J5/J1 moved to the back labels. J5 has the same pin-1 triangle as J1. Beside the strip: "SEL2" at J9, "J8 DRV PWR" at J8 (0.8 mm). Back: "J5 EXT DRV" and "J1 FROM MB" at 1.5 mm between the two headers, and "J9: SEL2 from EXT port". The small parts' references are hidden, like the other new parts'.
 
 ### Owed in firmware (operator's spec, 2026-11-17)
 
