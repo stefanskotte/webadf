@@ -1,0 +1,273 @@
+(footprint "TE_AMP_EI_171825-4_1x04_P2.50mm_Vertical"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(descr "TE/AMP EI series post header, vertical, 4 positions, 2.50 mm pitch, the floppy-drive power header (mates AMP 171822-4); TE customer drawing C-171825 rev Y4; LCSC C210162")
+	(tags "TE AMP EI 171825-4 floppy power Berg 2.5mm")
+	(property "Reference" "REF**"
+		(at 3.75 -3.6 0)
+		(unlocked yes)
+		(layer "F.SilkS")
+		(uuid "5fabc60a-15f5-4da0-a791-41035cc6f882")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "TE_AMP_EI_171825-4_1x04_P2.50mm_Vertical"
+		(at 3.75 3.7 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(uuid "0c3f4445-2b1e-40fc-b5a6-07ba2d739ade")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" "https://www.te.com/commerce/DocumentDelivery/DDEController?Action=srchrtrv&DocNm=171825&DocType=Customer+Drawing&DocLang=English"
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "1d4bc208-6a9f-4dd5-a113-6b7c40d3662d")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" "TE/AMP EI 171825-4 floppy power header, 4 pos, 2.5 mm, vertical"
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "4bb41784-8e6f-4963-b51d-25e4d4f8384e")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr through_hole)
+	(fp_line
+		(start -1.25 -2.4)
+		(end 8.75 -2.4)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "98e6b84a-b7c6-4e92-b8f9-fdd4915ae526")
+	)
+	(fp_line
+		(start 8.75 -2.4)
+		(end 8.75 2.5)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "ec6af208-fcda-4fbd-95f3-f8d49bb1f739")
+	)
+	(fp_line
+		(start 8.75 2.5)
+		(end -1.25 2.5)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "bab107a6-0f69-4113-a4cb-c673f91c370a")
+	)
+	(fp_line
+		(start -1.25 2.5)
+		(end -1.25 -2.4)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "314d1d15-5966-4a16-b5bf-f46e51dc5759")
+	)
+	(fp_line
+		(start -1.25 -1.7999999999999998)
+		(end 8.75 -1.7999999999999998)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "ea6c5e17-4393-45b1-b7a4-9ce1d52871f3")
+	)
+	(fp_line
+		(start -1.37 -2.52)
+		(end 8.87 -2.52)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "709f38f9-6443-4b9c-99d7-114a0cb0142c")
+	)
+	(fp_line
+		(start 8.87 -2.52)
+		(end 8.87 2.62)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "a53c9848-1fa7-4238-aa4e-2783604b46a8")
+	)
+	(fp_line
+		(start 8.87 2.62)
+		(end -1.37 2.62)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "d0c585ee-8a46-41fb-88a9-5c303d304c4f")
+	)
+	(fp_line
+		(start -1.37 2.62)
+		(end -1.37 -2.52)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "da28bc3e-4c20-4714-adba-231b5bd610c3")
+	)
+	(fp_line
+		(start -1.37 -1.7999999999999998)
+		(end 8.87 -1.7999999999999998)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "2045582d-682c-4b2b-91dc-2886d245a147")
+	)
+	(fp_line
+		(start 2.55 -2.52)
+		(end 2.55 -1.7999999999999998)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "ab9ccf92-99b5-4946-876a-1b694b21aaa3")
+	)
+	(fp_line
+		(start 4.95 -2.52)
+		(end 4.95 -1.7999999999999998)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "bc263c34-81e4-4cd5-b543-fba254f16cb1")
+	)
+	(fp_line
+		(start -1.75 3.0)
+		(end -1.75 -0.9)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "e56cd8f8-3ca6-43c3-9abd-9ef94a3f0e31")
+	)
+	(fp_line
+		(start -1.5 -2.65)
+		(end 9.0 -2.65)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "eb5f9a20-b530-4ca2-bd31-4c44588132d5")
+	)
+	(fp_line
+		(start 9.0 -2.65)
+		(end 9.0 2.75)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "66f4c033-e26c-494a-8bac-d017306cfb79")
+	)
+	(fp_line
+		(start 9.0 2.75)
+		(end -1.5 2.75)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "1a150ff5-9f8a-4660-a508-7931f9d9dac9")
+	)
+	(fp_line
+		(start -1.5 2.75)
+		(end -1.5 -2.65)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "8956ddf2-0073-45ed-93a1-f53b87bb4a57")
+	)
+	(pad "1" thru_hole rect
+		(at 0.0 0)
+		(size 1.5 1.5)
+		(drill 0.95)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "1d08b639-2acf-45e6-983f-ff7f3de2ebb5")
+	)
+	(pad "2" thru_hole circle
+		(at 2.5 0)
+		(size 1.5 1.5)
+		(drill 0.95)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "af4248bc-21c8-4779-ae8d-f13bb793dedf")
+	)
+	(pad "3" thru_hole circle
+		(at 5.0 0)
+		(size 1.5 1.5)
+		(drill 0.95)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "4c890941-2782-4868-9be7-31b622063e2a")
+	)
+	(pad "4" thru_hole circle
+		(at 7.5 0)
+		(size 1.5 1.5)
+		(drill 0.95)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "4c2bff94-4786-40b0-9484-029d5bb598d7")
+	)
+	(embedded_fonts no)
+	(model "${KICAD10_3DMODEL_DIR}/Connector_JST.3dshapes/JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical.step"
+		(offset
+			(xyz 0.2 0.21 0)
+		)
+		(scale
+			(xyz 1 0.797 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)

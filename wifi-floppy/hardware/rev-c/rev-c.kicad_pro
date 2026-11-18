@@ -596,6 +596,14 @@
       {
         "netclass": "Reg",
         "pattern": "VBUS"
+      },
+      {
+        "netclass": "Reg",
+        "pattern": "+5V_IN"
+      },
+      {
+        "netclass": "Reg",
+        "pattern": "+5V_DRV"
       }
     ]
   },

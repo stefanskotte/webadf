@@ -221,7 +221,10 @@ if REV_C and 'J5' in comps:
     want = {('U6', 1): 'SEL0_B', ('U6', 2): 'DRV_EN_N', ('U6', 4): 'DRV_GATE', ('Q9', 1): 'DRV_GATE', ('Q9', 2): 'GND', ('Q9', 3): 'DRV_SEL_B',
             ('U7', 1): 'SEL0_B', ('U7', 3): 'SEL2_B', ('U7', 6): 'DRV_EN_N', ('U7', 4): 'SEL0M_B', ('U2', 2): 'SEL0M_B',
             ('U8', 1): 'DRV_DET', ('U8', 2): 'DRV_EN_N', ('U8', 6): 'OLED_SCL', ('U8', 7): 'OLED_SDA',
-            ('J8', 1): '+5V', ('J8', 2): 'GND', ('J8', 3): 'GND', ('J9', 1): 'SEL2_B', ('J9', 2): 'GND'}
+            ('J8', 1): '+5V_DRV', ('J8', 2): 'GND', ('J8', 3): 'GND', ('J9', 1): 'SEL2_B', ('J9', 2): 'GND',
+            # each power header behind its own resettable fuse, a TVS on +5V (a reversed plug's 12 V opens the fuse)
+            ('J2', 1): '+5V_IN', ('J2', 2): 'GND', ('J2', 3): 'GND', ('F1', 1): '+5V_IN', ('F1', 2): '+5V',
+            ('F2', 1): '+5V_DRV', ('F2', 2): '+5V', ('D5', 1): '+5V', ('D5', 2): 'GND'}
     for (ref, pin), net in want.items():
         if net_of(ref, pin) != net:
             fail(f'{ref} pin {pin}: net {net_of(ref, pin)!r}, expected {net}')

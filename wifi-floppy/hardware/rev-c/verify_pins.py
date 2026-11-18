@@ -54,6 +54,10 @@ for f in r.Footprints():
         if (ref, p.GetNumber()) == ('U2', '2'):                 # 2026-11-17: U2's A0 now comes from the SEL0/SEL2 mux U7
             check('U2.2 from the mux U7.4', pad(c, 'U2', 2), ['SEL0M_B']); check('mux U7 IN1 is rev B U2.2 net', pad(c, 'U7', 1), [p.GetNetname()])
             continue
+        if (ref, p.GetNumber()) == ('J2', '1'):                 # 2026-11-18: power in now reaches +5V through the fuse F1
+            check('J2.1 into fuse F1', pad(c, 'F1', 1), ['+5V_IN']); check('F1 out is rev B J2.1 net', pad(c, 'F1', 2), [p.GetNetname()])
+            check('J2.1 is +5V_IN', pad(c, 'J2', 1), ['+5V_IN'])
+            continue
         kept += 1; check(f'rev B {ref}.{p.GetNumber()}', pad(c, ref, p.GetNumber())[0] if pad(c, ref, p.GetNumber()) else None, p.GetNetname().replace('/VSYS', 'VSYS'))
 print(f'{ok} checks passed ({kept} rev B pads), {len(bad)} failed')
 for b in bad: print(' FAIL', b)
