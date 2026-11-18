@@ -51,6 +51,9 @@ for f in r.Footprints():
     if ref == 'U1': continue
     for p in f.Pads():
         if p.GetNetname().startswith('unconnected'): continue   # names of no-connects follow the schematic
+        if (ref, p.GetNumber()) == ('U2', '2'):                 # 2026-11-17: U2's A0 now comes from the SEL0/SEL2 mux U7
+            check('U2.2 from the mux U7.4', pad(c, 'U2', 2), ['SEL0M_B']); check('mux U7 IN1 is rev B U2.2 net', pad(c, 'U7', 1), [p.GetNetname()])
+            continue
         kept += 1; check(f'rev B {ref}.{p.GetNumber()}', pad(c, ref, p.GetNumber())[0] if pad(c, ref, p.GetNumber()) else None, p.GetNetname().replace('/VSYS', 'VSYS'))
 print(f'{ok} checks passed ({kept} rev B pads), {len(bad)} failed')
 for b in bad: print(' FAIL', b)

@@ -25,7 +25,13 @@ for f in B.Footprints():
         pads.append((un(bb.GetX()), un(bb.GetY()), un(bb.GetRight()), un(bb.GetBottom()), p.GetNetname(), p.IsOnLayer(pcbnew.F_Cu), p.IsOnLayer(pcbnew.B_Cu) or th, p))
 def box_dist(x, y, q):
     dx = max(q[0]-x, 0, x-q[2]); dy = max(q[1]-y, 0, y-q[3]); return math.hypot(dx, dy)
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import reg_pattern as RP
+def in_regulator(x, y):
+    return RP.LX[0]-2.0 < x < RP.LX[0]+2.9 and RP.LX[1]-5.3 < y < RP.LX[1]+0.5
 def via_ok(x, y, net):
+    if in_regulator(x, y): return False
     if not (101.6 < x < 161.9 and 102.8 < y < 153.5) or (y > 148.4 and x > 135.9): return False
     for q in pads:
         if q[4] != net and box_dist(x, y, q) < VD/2+CL: return False
@@ -70,7 +76,7 @@ for pn, slide in ((5,0),(15,0),(24,0),(29,0),(41,0),(50,0),(60,0),(76,0),(64,0),
     (ax, ay), (vx, vy) = inward(pn, 4.0 if pn == 60 else 3.75, slide); add_track(ax, ay, vx, vy, p.GetNet()); add_via(vx, vy, p.GetNet()); placed[pn] = (vx, vy); done += 1
 ring = 2.9
 dv = upad['10'].GetNet()
-for pn, slide in ((10,0),(32,0),(51,-0.4),(65,-0.5)):
+for pn, slide in ((10,0),(32,0),(51,-0.4)):   # VREG_FB comes from COUT, regulator.py
     (ax, ay), (vx, vy) = inward(pn, ring, slide)
     (_, _), (ix, iy) = inward(pn, 4.2)   # straight off the pad first: it must not clip the pad beside it
     add_track(ax, ay, ix, iy, dv); add_track(ix, iy, vx, vy, dv); add_via(vx, vy, dv); done += 1
@@ -82,17 +88,11 @@ for q in pads:
     net = q[4]; p = q[7]
     if net not in planes: continue
     if p.GetDrillSizeX() > 0: continue         # through-hole: on the plane already
-    if p.GetParentFootprint().GetReference() == 'U1' and p.GetNumber() != '62': continue
+    if p.GetParentFootprint().GetReference() == 'U1': continue   # VREG_PGND reaches ground through the regulator's vias
     cx, cy = (q[0]+q[2])/2, (q[1]+q[3])/2
     # already joined: a via of this net touching, or a track of this net leading to a via is left to DRC's report
     if any(t[6] == net and t[5] == pcbnew.F_Cu and (box_dist(t[0], t[1], q) < 0.01 or box_dist(t[2], t[3], q) < 0.01) for t in tracks): continue
     best = None
-    if p.GetParentFootprint().GetReference() == 'U1' and p.GetNumber() == '62':
-        # VREG_PGND joins the exposed pad directly.
-        pp = p.GetPosition(); mid = pcbnew.VECTOR2I(pp.x, mm(uy-2.6)); end = pcbnew.VECTOR2I(mm(ux+1.5), mm(uy-1.5))
-        for a, c in ((pp, mid), (mid, end)):
-            t = pcbnew.PCB_TRACK(B); t.SetStart(a); t.SetEnd(c); t.SetWidth(mm(0.15)); t.SetLayer(pcbnew.F_Cu); t.SetNet(p.GetNet()); B.Add(t); keep.append(t)
-        done += 1; continue
     for r in (0.7, 0.9, 1.1, 1.3, 1.6, 2.0, 2.5, 3.0):
         away = math.degrees(math.atan2(cy-uy, cx-ux))
         for a in sorted(range(0, 360, 15), key=lambda a: abs((a-away+180) % 360-180)):   # away from the chip first

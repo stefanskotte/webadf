@@ -189,6 +189,50 @@ for ref in ('J3', 'J4'):
         if net_of(ref, 3) != 'OLED_SCL' or net_of(ref, 4) != 'OLED_SDA' or net_of(ref, 2) != '+3.3V':
             fail(f'{ref}: expected 1 GND, 2 +3.3V, 3 SCL, 4 SDA')
 
+def pulled(net, value, rail):
+    for ref, _ in on_net(net):
+        if ref.startswith('R') and comps.get(ref) == value:
+            if rail in [n for n, nodes in nets.items() if (ref, '1') in nodes or (ref, '2') in nodes]:
+                return True
+    return False
+
+if REV_C and 'J5' in comps:
+    # The original drive's connector (2026-11-17): J5 EXT DRV, U6/Q9 select gate, U7 SEL0/SEL2 mux, U8 sense/enable.
+    for pin in range(2, 35, 2):
+        got = net_of('J5', pin) or ''
+        if pin == 10:
+            if got != 'DRV_SEL_B':
+                fail(f'J5 pin 10: net {got!r}, expected DRV_SEL_B (the gated select)')
+        elif pin in (4, 6, 12, 14):
+            if not got.startswith('unconnected'):
+                fail(f'J5 pin {pin}: net {got!r}, expected no connection (pin 12 = SEL1 must not reach the drive)')
+        elif got != net_of('J1', pin):
+            fail(f'J5 pin {pin}: net {got!r}, J1 pin {pin} has {net_of("J1", pin)!r}')
+    for pin in range(1, 35, 2):
+        want = 'DRV_DET_B' if pin in (1, 33) else 'GND'
+        if net_of('J5', pin) != want:
+            fail(f'J5 pin {pin}: net {net_of("J5", pin)!r}, expected {want}')
+    for net in ('DRV_SEL_B', 'SEL2_B'):
+        if not pulled(net, '1k', '+5V'):
+            fail(f'{net} has no 1k pull-up to +5V')
+    for net in ('DRV_EN_N', 'DRV_DET_B'):
+        if not pulled(net, '10k', '+3.3V'):
+            fail(f'{net} has no 10k pull-up to +3.3V (DRV_EN_N must default high: drive deselected)')
+    want = {('U6', 1): 'SEL0_B', ('U6', 2): 'DRV_EN_N', ('U6', 4): 'DRV_GATE', ('Q9', 1): 'DRV_GATE', ('Q9', 2): 'GND', ('Q9', 3): 'DRV_SEL_B',
+            ('U7', 1): 'SEL0_B', ('U7', 3): 'SEL2_B', ('U7', 6): 'DRV_EN_N', ('U7', 4): 'SEL0M_B', ('U2', 2): 'SEL0M_B',
+            ('U8', 1): 'DRV_DET', ('U8', 2): 'DRV_EN_N', ('U8', 6): 'OLED_SCL', ('U8', 7): 'OLED_SDA',
+            ('J8', 1): '+5V', ('J8', 2): 'GND', ('J8', 3): 'GND', ('J9', 1): 'SEL2_B', ('J9', 2): 'GND'}
+    for (ref, pin), net in want.items():
+        if net_of(ref, pin) != net:
+            fail(f'{ref} pin {pin}: net {net_of(ref, pin)!r}, expected {net}')
+
+if REV_C:
+    # The core regulator against Raspberry Pi's pattern and the datasheet's limits.
+    r = subprocess.run([sys.executable, 'verify_reg.py', 'rev-c.kicad_pcb', 'mcu.kicad_sch', 'support.kicad_sch'],
+                       cwd=os.path.join(HERE, 'rev-c'), capture_output=True, text=True)
+    if r.returncode:
+        fail('core regulator differs from the pattern:\n' + r.stdout)
+
 # --- report ------------------------------------------------------------------------------
 for n in notes:
     print('note:', n)
