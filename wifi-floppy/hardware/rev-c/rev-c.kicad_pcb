@@ -22246,19 +22246,6 @@
 				)
 			)
 		)
-		(property "LCSC" "DNP"
-			(at 0 0 0)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "5a267bbb-cd8d-4bef-b859-70f462062006")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
 		(property ki_fp_filters "Connector*:*_2x??_*")
 		(path "/7645b0b6-4993-416b-9a4c-cb81521f8e00")
 		(sheetname "Root")
@@ -22272,7 +22259,7 @@
 				)
 			)
 		)
-		(attr through_hole dnp)
+		(attr through_hole)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -4.68 -0.5)
