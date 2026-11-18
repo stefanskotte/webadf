@@ -1,22 +1,22 @@
 # Rev C: on-board RP2350, schematic and routed board
 
-Rev B with the PIM726 module replaced by its parts on our PCB: RP2350B, 16 MB flash, 16 MB PSRAM, RM2 radio, crystal, core regulator, USB-C, BOOTSEL, SWD. Every GPIO stays where the PIM726 has it, so the firmware's pin map and the pico-sdk board definition are unchanged. Same outline as rev B. Rev B's files are untouched.
+Rev B with the PIM726 module replaced by its parts on our PCB: RP2350B, 16 MB flash, 16 MB PSRAM, RM2 radio, crystal, core regulator, USB-C, BOOTSEL, SWD. Every GPIO stays where the PIM726 has it, so the firmware's pin map and the pico-sdk board definition are unchanged. Same outline as rev B, widened 13.1 mm to the left on 2026-11-17 for a second floppy connector (J5 EXT DRV, an original drive as DF0): see "Original drive connector". Rev B's files are untouched.
 
 **The schematic and the routed board agree, and nothing else about the board differs from using a PIM726 on rev B. It is still not a board to order:** see "Owed before a fab order".
 
-## Result (2026-11-05, copper revised 2026-11-11 and 2026-11-16)
+## Result (2026-11-05, copper revised 2026-11-11 and 2026-11-16, original-drive connector added 2026-11-17)
 
 | Check | Result |
 |---|---|
 | Layers | 4: signals on F.Cu and B.Cu, GND on In1, +3.3 V on In2 |
-| KiCad DRC, with schematic parity | 0 unconnected, 0 errors, 0 parity differences. 24 silkscreen warnings, 21 of them M1's outline over its own pads, and one 0.03 mm neck somewhere in the top ground pour, not located |
+| KiCad DRC, with schematic parity | 0 unconnected, 0 errors, 0 parity differences. 40 warnings: the 25 from before (21 M1's outline over its own pads, 3 silkscreen at the board edge, one 0.03 mm neck somewhere in the top ground pour, not located) and 15 new: 11 where the SOT-23 and MSOP outlines of U6, U7, U8 and Q9 reach the new left edge, and 4 where the side labels SEL2, DRV PWR and J8 touch J5's and J9's outlines (the strip is 3.6 mm wide) |
 | ERC | 0 errors, 0 warnings |
-| `verify_sch.py` | all 75 multi-pin nets match, whatever they are called |
-| `verify_pins.py rev-c.kicad_pcb` | 209 of 209 against the RP2350 datasheet, firmware `board.c`, the pico-sdk header, the RM2 datasheet, and rev B's connected pads |
+| `verify_sch.py` | all 82 multi-pin nets match, whatever they are called |
+| `verify_pins.py rev-c.kicad_pcb` | 210 of 210 against the RP2350 datasheet, firmware `board.c`, the pico-sdk header, the RM2 datasheet, and rev B's connected pads (U2 pin 2 is checked as the mux's output, SEL0M_B, and the mux's SEL0 input as rev B's U2 pin 2 net) |
 | `verify_reg.py` | the regulator matches Raspberry Pi's pattern: 62 differences before, 0 now |
-| `pnpm hw:verify rev-c` | passes: ERC, DRC, firmware pins, J1 lines, 1k pull-ups, the regulator |
+| `pnpm hw:verify rev-c` | passes: ERC, DRC, firmware pins, J1 lines, 1k pull-ups, the regulator, and the original-drive checks (J5's pins against J1's, the sense pins, the pull-ups, U6/Q9/U7/U8/J8/J9 pins) |
 | `check45.py rev-c.kicad_pcb` | passes: every track at a multiple of 45 degrees, every bend 45 or 90 degrees, no short leg between two bends. It lets through, and lists on every run, the regulator's own tracks (10 flags) and two 0.1 mm steps at U1 pins 71 and 73; see "Routing rule" |
-| Gerbers | regenerated 2026-11-16 after the routing-rule pass and C23's ground track below, same 14 files and export settings (they reproduce the 2026-11-11 set from its board); 233 holes for 168 vias and 65 drilled pads. The four copper layers, the drill file and the drill map differ from the last set; masks, paste, silkscreen, outline and job file do not. The 2026-11-08 set was analysed with kicad-happy, this one was not. Not yet through JLC's own check |
+| Gerbers | regenerated 2026-11-17 for the original-drive connector, same 14 files and export settings; 308 holes for 203 vias and 105 drilled pads. Not analysed with kicad-happy, not through JLC's own check |
 | Tracks | 0.15 mm, necked to 0.11 mm at the QFN, vias 0.45/0.2 mm, spacing 0.127 mm: within JLC's published 4-layer limits, not confirmed by JLC |
 
 ## Copper review, 2026-11-11
@@ -101,6 +101,63 @@ For whoever reads the copper next:
 
 Freerouting has a 45 degree mode: `(snap_angle fortyfive_degree)` in the DSN file's `structure` section (its `Structure` and `AngleRestriction` classes read it). It was not used here, because routing again would have lost the hand fixes; a rebuild from `variants.sh` should set it, and will still need `check45.py`, since `stitch.py` and `centre.py` make their own off-angle legs.
 
+## Original drive connector, 2026-11-17
+
+The operator's request (2026-11-17): "lets build rev c with the floppy connector on it - use the odd pins as detection mechanism. We need silkscreen to clear say "FROM MB", "EXT DRV" so people don't wire it wrong". Then: "yeah just extend the board slightly"; "I would like it to be automatic, so when a physical drive is present it just 'works', by becoming df0: as default, then df1, df2 is the wififloppy"; and "we dont want an option to switch the physical drive to df1, its not needed. We just need an option to turn it off, as it wasn't there".
+
+### What is on the board
+
+| Ref | Part | What it does |
+|---|---|---|
+| J5 | 2x17 keyed IDC header, same footprint as J1, silk **EXT DRV** | The original drive's ribbon. Every even pin is J1's, straight through, except pin 10 (the drive's select, gated below), pin 12 (SEL1, **not** passed on: the board is DF1 when the drive is fitted) and pins 4, 6, 14 (unconnected, as on J1). Odd pins are ground except **1 and 33** |
+| J5 pins 1, 33 | presence sense, net DRV_DET_B | A floppy drive grounds its odd pins. R37 (10k) pulls the net to 3.3 V, so: drive on the ribbon, low; nothing plugged in, or a ribbon with no drive, high. R38 (1k) in series to U8 |
+| U6, Q9, R35 | 74LVC1G02 NOR + BSS138, 1k pull-up to +5 V | J5 pin 10 is pulled low (drive selected) only while the Amiga's SEL0 is low **and** DRV_EN_N is low. U6's input is 5 V tolerant and reads SEL0_B straight from J1 pin 10 |
+| R36 | 10k pull-up on DRV_EN_N | A board that is unpowered, in reset, in BOOTSEL or not yet flashed leaves the drive deselected (it then releases every line) |
+| U8 | PCA9536 (VSSOP-8), I2C address 0x41, on the OLED/NFC bus | IO0 reads DRV_DET, IO1 drives DRV_EN_N. IO2 and IO3 unused |
+| U7 | 74LVC1G97 wired as a 2:1 mux | Feeds U2's A0 (rev B: SEL0_B): SEL0_B while DRV_EN_N is high, **SEL2_B** while it is low. So with the drive on, the GPIO the firmware reads as SEL0 (GP2) carries SEL2 |
+| J9, R39 | 2-pin header, silk **SEL2**, 1k pull-up to +5 V | SEL2 by a wire from the external DB23 port (pin 9). The A500's CN11 has no SEL2 (pin 14 is not connected, schematic p.8). Unwired, the pull-up keeps it deselected |
+| J8 | 1x4 vertical header, silk **DRV PWR** | +5 V, GND, GND, NC for the drive's power, in parallel with J2, by a 0.6 mm track on the back from J2's +5 V |
+| C32-C34 | 100 nF | U6, U7, U8 |
+
+### Changes from the plan, and the operator's rulings (2026-11-18)
+
+The plan was a free RP2350 GPIO each for the sense, the enable and SEL2, with SEL0 reaching U2 as on rev B. Two parts of that changed; the operator approved both on 2026-11-18 ("APPROVED both deviations").
+
+- **Ruling 1, the PCA9536 for the sense and the enable (no new RP2350 GPIOs).** The plan was a GPIO each for the sense, the enable and SEL2. Every free U1 pad is boxed in: GPIO14-17 have TRK0's track 0.3 mm from their pad ends with WPROT, ACT_LED, WGATE and SWCLK running north-south on the back under them; GPIO20's escape via is shut in by the same back tracks; GPIO26-28 are behind the crystal's and WL_CS's copper; GPIO30-46 on the east and south sides could only be reached by tracks under the QFN body, 3 to 5 vias and about 60 mm each, across the board. So the sense and the enable go through U8 on the existing I2C bus (two tracks from J4 along the top edge).
+- **Ruling 2, the SEL0/SEL2 mux in front of U2 (net SEL0M_B).** SEL0 no longer reaches U2's A0 directly: U7 passes SEL0_B while DRV_EN_N is high and SEL2_B while it is low. With no GPIO free for SEL2, this puts SEL2 on GP2 when the original drive is DF0, and the firmware needs no new PIO input: SEL0, SEL1, MTR and DIR stay the four consecutive GPIOs GP2-5. The cost: a dead U7 takes away the board's own select; with DRV_EN_N's pull-up a board in reset still hands U2 SEL0.
+- **U6 reads SEL0_B (5 V side)**, not U2's 3.3 V output: the 74LVC1G02's inputs are 5 V tolerant, and J1 pin 10 is next to J5 while U2's output is across the board.
+- **J8 and J9 are vertical headers on the outer edge**, not J2's horizontal footprint: a horizontal header needs its pins over a board edge, and the plugs must not sit between the two ribbon shrouds.
+- **Refs:** J7 is the SWD connector, so the drive's power is J8 and SEL2 is J9.
+- **Outline:** 74.55 x 54.1 mm (was 61.45 x 54.1), widened 13.1 mm to the left only; the antenna corner is unchanged. J5 stands 10.75 mm left of J1 (0.24 mm between the two shrouds' silk), and a 3.6 mm strip outside J5 holds the small parts, J8 and J9.
+- **Off is the hardware default.** DRV_EN_N is pulled high: the drive is never selected unless the firmware asks for it.
+
+### Layout
+
+- **Outline** 74.55 x 54.1 mm, from 61.45 x 54.1: the left edge moved from x 101.05 to 87.9; the whole-board zones (GND on F.Cu, B.Cu and In1, +3.3 V on In2) moved with it. The antenna corner is unchanged.
+- **J5** at x 95.25 (J1 at 106.0), rows level with J1's. Its 12 straight-through lines run on the back between the two headers, each at mid-row past J1's ground pins (0.218 mm over clearance each).
+- **The strip** left of J5 (x 87.9 to 91.6) holds, top to bottom: U8, C34, R36, R37, R38 (on its side, to keep the courtyards apart), J9, R39, U7, C33, U6, C32, Q9, R35, J8. Everything is 0402 or SOT-23 and on the top.
+- **Long runs:** OLED_SCL and OLED_SDA leave U8 along the top edge on F.Cu, above both headers, to J4 pins 3 and 4; SEL0_B leaves J1 pin 10 west in row 5's gap; SEL0M_B crosses both headers in row 7's gap on F.Cu and reaches U2 pin 2 over both layers (3 vias); DRV_SEL_B reaches J5 pin 10 on the back between J5's two rows; DRV_DET_B runs from J5 pin 1 diagonally into the strip, and down the back beside J5's odd row to pin 33; +5V comes from J2's via on the back along the bottom edge (0.6 mm) and up the strip at 0.25 mm.
+- **Copper:** 140 more segments and 35 more vias (959 and 203 on the board, from 819 and 168). The SEL0_B run from R8 to U2 pin 2 (4 segments) is the only copper of the old board taken out. The OLED tracks between J4 and J3 are untouched.
+- **Close to the edge:** DRV_EN_N runs 0.295 mm from the new left edge for 3.7 mm beside R37 (the board's rule is 0.2 mm; the scripts here use 0.3); U8's ground via is 0.3 mm from it.
+- **Checks after the change:** `check45.py` passes (the same 2 accepted steps and the regulator's 10), DRC 0 errors / 0 unconnected / 0 parity, ERC 0, `verify_sch.py` 82 of 82 nets, `verify_pins.py` 210 of 210, `verify_reg.py` 0 differences, `pnpm hw:verify rev-c` passes.
+- **Silkscreen:** top, in the 1.4 mm above the two shrouds: "J5 EXT DRV" and "J1 FROM MB" (1.0 mm, the most that fits under the board edge); J5 has the same pin-1 triangle as J1. Beside the strip: "SEL2" at J9, "J8 DRV PWR" at J8 (0.8 mm). Back: "EXT DRV" and "FROM MB" at 1.5 mm between the two headers, and "J9: SEL2 from EXT port". The small parts' references are hidden, like the other new parts'.
+
+### Owed in firmware (operator's spec, 2026-11-17)
+
+One setting, **Original drive: Auto (default) / Off**.
+
+- **Auto:** at power-on, read DRV_DET through U8 (I2C 0x41, IO0) **before Kickstart's drive-ID read** (so before `bus_out_init` asserts anything). Low: the board stops answering SEL0 (all six outputs released, write capture off), then sets IO1 (DRV_EN_N) low. From then on: the original drive is **DF0**; **GP3 = SEL1 = DF1** (the board's first drive); **GP2 = SEL2 = DF2** (the board's second drive, through U7) if J9 is wired, and never selected if it is not (R39 holds SEL2 high), in which case DF1 can be PaulaNET as today. No drive: today's behaviour, board DF0 + DF1, DRV_EN_N stays high.
+- **Off:** DRV_EN_N stays high; the drive is never selected and releases every line; the board is DF0 + DF1 exactly as with no drive.
+- **A change while running** (a drive plugged or unplugged, or the setting changed): the study's handover rules (docs/superpowers/research/2026-09-28-df0-passthrough.md §3a) apply: an eject/insert handshake on CHNG, never while a motor is latched on or WGATE is active, and never answer SEL0 while DRV_DET is low and the drive is enabled.
+- **Web app:** show the original drive as DF0 and renumber the board's drives (`drive_base` already exists on the server).
+- The firmware must treat a missing or silent U8 (I2C error) as "no drive" and leave DRV_EN_N alone.
+
+### Owed on the bench
+
+- That the operator's drives ground pins 1 and 33 (continuity from each to the drive's ground), and that a bare ribbon reads high.
+- SEL2 from the DB23 port on a real A500, with the board as DF2.
+- VOL on the shared lines with the board and a drive both on the bus (the study's measurement 2).
+
 ## Parts
 
 From Pimoroni's Pico Plus 2 W schematic unless noted.
@@ -119,7 +176,7 @@ Left out as nothing here uses them: the VSYS sense divider and its MOSFET, the 1
 
 The reset button is out (operator, 2026-11-05: BOOTSEL is needed, PIM726's RESET is not). Test pad TP1 on RUN replaces it; RUN keeps its internal pull-up (RP2350 pin table), as on Pimoroni's sheet.
 
-**Scope (operator, 2026-11-05): everything stays as it is with a PIM726.** So the J5 DRIVE passthrough, Amiga RESET line and keyed I2C connectors from the earlier rev C plan are not on this board. Firmware does not use what is left out: GP26-28, GP43 and GP45 appear in comments only.
+**Scope (operator, 2026-11-05): everything stays as it is with a PIM726.** So the Amiga RESET line and keyed I2C connectors from the earlier rev C plan are not on this board. The original-drive connector came back on 2026-11-17 (operator's request), as J5 EXT DRV with its own select gate: see "Original drive connector". Firmware does not use what is left out: GP26-28, GP43 and GP45 appear in comments only.
 
 ## Schematic
 
@@ -159,6 +216,7 @@ From the ISSI datasheet and `hardware_psram/psram.c`: same pinout and commands a
 
 ## Owed before a fab order
 
+0. **The original-drive connector** (2026-11-17): its firmware mode and bench checks, listed in "Original drive connector". The strip's parts and copper are generated and hand-placed like the rest; nobody has read them.
 1. **A person reading the schematic.** Nobody has yet.
 2. **A person checking the core regulator against datasheet figures 23 and 24**, and the crystal: Y1's placement and tracks are still autorouted, its part and caps are now Raspberry Pi's.
 3. **A person reading the autorouted copper:** QSPI lengths, the USB pair (12 Mbit/s, so no impedance control needed, but keep it short), the floppy lines. It has too many vias. The 2026-11-11 review fixed its nine findings as far as the table above says (QCS and SD1's length to the flash are the leftovers); the copper it did not touch is still autorouted.
