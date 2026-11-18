@@ -8204,10 +8204,10 @@
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
-		(in_bom yes)
+		(in_bom no)
 		(on_board yes)
 		(in_pos_files yes)
-		(dnp yes)
+		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "2628604b-d3ab-46c1-8524-b8c77e768d93")
 		(property "Reference" "J2"
@@ -8230,7 +8230,7 @@
 				)
 			)
 		)
-		(property "Footprint" "wifi-floppy-lib:PinHeader_1x04_P2.54mm_Horizontal"
+		(property "Footprint" "wifi-floppy-lib:PinHeader_1x04_P2.54mm_Vertical"
 			(at 71.12 22.86 0)
 			(hide yes)
 			(show_name no)
@@ -8254,17 +8254,6 @@
 		)
 		(property "Description" "Generic connector, single row, 01x04, script generated (kicad-library-utils/schlib/autogen/connector/)"
 			(at 71.12 22.86 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "LCSC" "DNP"
-			(at 71.12 22.86 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
