@@ -15,7 +15,8 @@
 #include <stdbool.h>
 #include "transport.h"
 #include "display_layout.h"   // pure: layout_t, for dc_display_verdict_t
-#include "drive_store.h"      // pure: df1_mode_t
+#include "drive_store.h"
+#include "orig_drive.h"      // pure: df1_mode_t
 struct i2c_scan;              // i2c_scan.h; dc_set_i2c_scan keeps a pointer
 
 typedef enum {
@@ -118,7 +119,10 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // 1.12.0+ board. With it the worst case is 1,557 bytes (device-limits.test.ts),
 // past 1,536. Five statics use this size (the three dc_body_buf_t, and the two
 // lift copies in dc_take_next and dc_take_nfc_write): +640 B of .bss.
-#define DC_POLL_BODY_BYTES 1664
+// Rev C's original drive (2026-11-19) adds ,"origDrive":{"seq":4294967295,"mode":"auto"} on every body to a board
+// that sends &origAck=: the worst case goes to 1,696 bytes (device-limits.test.ts), past 1,664. 1,792: five statics,
+// +640 B of .bss again.
+#define DC_POLL_BODY_BYTES 1792
 //
 // Moved here from device_client.c so the server side can assert against it:
 // src/lib/device-limits.test.ts computes the worst-case body from the real
@@ -181,8 +185,10 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // rides like lastBoot: until heard, left out (still owed) when the body is full. The budget is not raised.
 // Shared-IP mode (2026-11-15, pnet_shared.h) adds "shared":true, to the net tail -- 14 bytes: the body goes to 1728
 // (+16 B of .bss), so every tail still fits at its maximum and upKey still waits. The request: ~1854 <= 2048.
+// Rev C's original drive (2026-11-19) adds ,"origDrive":{"mode":"auto","version":4294967295,"present":false,"active":false}
+// -- 81 bytes: the body goes to 1808 (+80 B of .bss; measured 1800 at maximum, upKey still waits). Request ~1935 <= 2048.
 // test_status_body_fits_at_maximum prints the measured sizes.
-#define DC_STATUS_BODY_BYTES  1728
+#define DC_STATUS_BODY_BYTES  1808
 #define DC_STATUS_REQ_BYTES   2048
 // `err` is firmware-authored (a short static string or errno-derived text,
 // never network input), but it still has to survive being embedded in a
@@ -375,6 +381,19 @@ typedef struct {
     dc_net_t _net;
     bool     _net_sent_valid, _net_sent_on, _net_sent_seen, _net_sent_shared;
     uint32_t _net_sent_ip;
+    // Rev C's original drive (orig_drive.h, 2026-11-19). orig_ack: the highest origDrive seq handled (seeded by
+    // main.c from the store, echoed as &origAck=, reported as "version"). Only a board whose U8 answered at power-on
+    // (dc_set_orig: _orig_capable) sends either. _orig_mode: the stored setting (what the next power-on does);
+    // _orig_present/_orig_active: this power-on's facts.
+    uint32_t   orig_ack;
+    uint32_t   orig_want_seq;
+    uint8_t    orig_want_mode;    // orig_mode_t
+    bool       orig_owed;
+    bool       _orig_capable, _orig_present, _orig_active;
+    uint8_t    _orig_mode;
+    bool       _orig_sent_valid;
+    uint8_t    _orig_sent_mode;
+    uint32_t   _orig_sent_ack;
     bool       _drive_sent_valid;  // a report carrying secondDrive was accepted
     uint8_t    _drive_sent_mode;
     uint32_t   _drive_sent_ack;
@@ -875,6 +894,14 @@ uint32_t dc_net_driver_age_s(uint32_t now, uint32_t seen);
 // (the poll's seq and mode; an unknown mode is acked and never taken). dc_drive_handled: record the
 // seq as handled (applied or refused) -- it is what the poll echoes.
 bool dc_drive_take(device_client_t *c, uint32_t *seq, df1_mode_t *mode);
+// Rev C's original drive (orig_drive.h). dc_set_orig: this power-on's facts and the stored setting (main.c, on
+// every core1 entry; a board without U8 never calls it and sends nothing). dc_orig_take: true once per owed
+// origDrive change. dc_orig_handled: the stored setting is now `mode` (core0 took it), acked as `seq`.
+// dc_orig_report_owed: the server has not yet heard the current setting and ack.
+void dc_set_orig(device_client_t *c, bool present, bool active, orig_mode_t mode);
+bool dc_orig_take(device_client_t *c, uint32_t *seq, orig_mode_t *mode);
+void dc_orig_handled(device_client_t *c, uint32_t seq, orig_mode_t mode);
+bool dc_orig_report_owed(const device_client_t *c);
 void dc_drive_handled(device_client_t *c, uint32_t seq);
 // True when the mode/ack differ from the last status report the server
 // accepted: a report is OWED, or the server never learns the board applied it.

@@ -1,5 +1,6 @@
 #include "bus_gate.h"
 #include "floppy_io.h"
+#include "orig_drive.h"
 
 #define BIT(p) (1u << (p))
 
@@ -14,12 +15,16 @@ uint32_t bus_gate_apply(uint32_t shadow, unsigned pin, bool assert) {
 }
 
 bus_step_t bus_step_decode(uint32_t word) {
-    // Bit n = GP(PIN_SEL0 + n), active low through the '541.
+    // Bit n = GP(PIN_SEL0 + n), active low through the '541. The two select
+    // LINES become the board's two UNITS through orig_lines_to_units: the same
+    // bits on every board except a rev C whose original drive is DF0, where
+    // unit 0 answers on GP3 and unit 1 on GP2 (orig_drive.h).
+    const uint8_t lines = (uint8_t)(((word & BIT(PIN_SEL0 - PIN_SEL0)) == 0 ? 1u : 0u) |
+                                    ((word & BIT(PIN_SEL1 - PIN_SEL0)) == 0 ? 2u : 0u));
     bus_step_t s;
-    s.selected = (word & BIT(PIN_SEL0 - PIN_SEL0)) == 0;
+    s.sel_mask = orig_lines_to_units(lines);
+    s.selected = (s.sel_mask & BUS_SEL_DF0) != 0;
     s.outwards = (word & BIT(PIN_DIR - PIN_SEL0)) != 0;
-    s.sel_mask = (uint8_t)((s.selected ? BUS_SEL_DF0 : 0u) |
-                           ((word & BIT(PIN_SEL1 - PIN_SEL0)) == 0 ? BUS_SEL_DF1 : 0u));
     return s;
 }
 

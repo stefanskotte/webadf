@@ -145,20 +145,23 @@ The plan was a free RP2350 GPIO each for the sense, the enable and SEL2, with SE
 - **Silkscreen:** top, in the 3.4 mm above the two shrouds: "EXT DRV" and "FROM MB", 1.6 mm high (1.4 mm wide, 0.25 mm stroke), one over each shroud. Each header is 11 mm wide, so the names alone fit at that size and the references J5/J1 moved to the back labels. J5 has the same pin-1 triangle as J1. Beside the strip: "SEL2" at J9 (0.8 mm). Under the power headers: "PWR IN" (J2) and "DRV PWR" (J8), 0.8 mm. Back: "J5 EXT DRV" and "J1 FROM MB" at 1.5 mm between the two headers, and "J9: SEL2 from EXT port". The small parts' references are hidden, like the other new parts'.
 - **Buzzer is off the board (operator, 2026-11-18):** BZ1 is now a 2-pin 2.54 mm header (pin 1 +, marked "+"; pin 2 to the switching FET) in place of the 12 mm PS1240, so any buzzer can sit on Dupont wires. It stands on the old part's right-hand pads; a via joins the + track where the old part's left pad was. **Hand-fitted (operator, 2026-11-18):** every header (J1, J2, J3, J4, J5, J8, J9) and BZ1 is excluded from the BOM and the position file (not DNP, so they still show in the 3D view), so JLC does not place them; JLC fits the SMD parts, F1, F2 and D5 included.
 
-### Owed in firmware (operator's spec, 2026-11-17)
+### Firmware (operator's spec 2026-11-17; built 2026-11-19, branch feat/orig-drive, not yet on a board)
 
-One setting, **Original drive: Auto (default) / Off**.
+One setting, **Original drive: Auto (default) / Off**, in the web app's Board settings, shown only for a board whose U8 answers.
 
-- **Auto:** at power-on, read DRV_DET through U8 (I2C 0x41, IO0) **before Kickstart's drive-ID read** (so before `bus_out_init` asserts anything). Low: the board stops answering SEL0 (all six outputs released, write capture off), then sets IO1 (DRV_EN_N) low. From then on: the original drive is **DF0**; **GP3 = SEL1 = DF1** (the board's first drive); **GP2 = SEL2 = DF2** (the board's second drive, through U7) if J9 is wired, and never selected if it is not (R39 holds SEL2 high), in which case DF1 can be PaulaNET as today. No drive: today's behaviour, board DF0 + DF1, DRV_EN_N stays high.
-- **Off:** DRV_EN_N stays high; the drive is never selected and releases every line; the board is DF0 + DF1 exactly as with no drive.
-- **A change while running** (a drive plugged or unplugged, or the setting changed): the study's handover rules (docs/superpowers/research/2026-09-28-df0-passthrough.md §3a) apply: an eject/insert handshake on CHNG, never while a motor is latched on or WGATE is active, and never answer SEL0 while DRV_DET is low and the drive is enabled.
-- **Web app:** show the original drive as DF0 and renumber the board's drives (`drive_base` already exists on the server).
-- The firmware must treat a missing or silent U8 (I2C error) as "no drive" and leave DRV_EN_N alone.
+- **Decided once, at power-on** (operator ruling 2026-11-19: "At power-on", not live). Before `bus_out_init` and every state machine is given its select pin -- so before Kickstart's drive-ID read -- the firmware reads U8 (I2C 0x41, input register, IO0 = DRV_DET). A setting changed in the web app is stored and acts at the next power-on ("Applies the next time the Amiga is switched on"); a drive plugged or unplugged while running changes nothing until then. Kickstart reads the drive IDs only at its own reset, so a live change would not have reached a running Amiga anyway.
+- **Auto, drive found (DET low):** U8's IO1 (DRV_EN_N) is made an output at 0 (output register first, then configuration), so U7 hands GP2 SEL2 and U6/Q9 pass SEL0 to the drive. The board's two units swap lines: **unit 0, its main drive, answers on GP3 (SEL1) as DF1**, and **unit 1, its second drive, on GP2 (SEL2) as DF2** -- reachable only with J9 wired; unwired, R39 holds SEL2 high and it is never selected. Unit 0 then gets DF1's drive-ID rule (the answer restarts on an ID change, since the motor line the board sees is DF0's). Nothing of the board answers SEL0: the board cannot even see it (GP2 carries SEL2).
+- **Off, or no drive, or Auto with no drive:** U8 is written back to all inputs (it keeps its registers through an RP2350 reset, such as an OTA reboot), R36 holds DRV_EN_N high, and the board is DF0 + DF1 exactly as on rev B.
+- **No U8** (rev A/B), a NAK, a timeout or a held bus: "no drive", U8 left alone, DF0 + DF1. Such a board sends nothing new to the server.
+- **Code:** `orig_drive.c/.h` (the decision, U8's register values, the unit-to-line map `PIN_SEL_OF(d)`; host-tested in `test_orig_drive.c`), every select-pin use in `bus_out.c`, `bus_gate.c` (`bus_step_decode` maps lines to units) and `main.c` goes through `PIN_SEL_OF`; the setting is a second block (`'ORG1'`) after DF1's on the drive store's page, so older firmware still reads its own record; `device_client.c` sends `&origAck=` and `"origDrive":{"mode","version","present","active"}`, and takes the poll's `origDrive {seq, mode}`.
+- **Web app:** while the board reports the drive in use, Drive numbers is DF1 + DF2 and locked; when it reports it not in use (Off, or unplugged) after being in use, DF0 + DF1.
+- **Not handled:** the motor line the board sees on J1 is DF0's (MTR0D on the A500's internal connector), so with the drive as DF0 the board's main drive's "motor on" (disk-swap holds, the store's idle test, the activity LED) follows the real DF0's motor. That only makes the board wait longer before a swap or a settings write; it is the same situation the board's DF1 has always had.
 
 ### Owed on the bench
 
 - That the operator's drives ground pins 1 and 33 (continuity from each to the drive's ground), and that a bare ribbon reads high.
 - SEL2 from the DB23 port on a real A500, with the board as DF2.
+- The firmware mode on a rev C board: power on with a drive on EXT DRV and the setting Auto (the drive boots as DF0, the board's disk is DF1), then Off (the board is DF0 again at the next power-on), and with no drive.
 - VOL on the shared lines with the board and a drive both on the bus (the study's measurement 2).
 
 ## Parts

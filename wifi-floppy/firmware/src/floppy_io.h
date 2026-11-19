@@ -8,6 +8,11 @@
 // runtime reads of *g_board now: never use one where C needs a constant.
 #define PIN_SEL0    (g_board->sel0)
 #define PIN_SEL1    (g_board->sel1)
+// The select line unit d (0 = the main drive, 1 = the second) answers on: SEL0/SEL1, or, on a rev C whose
+// original drive is DF0, GP3 (SEL1) for unit 0 and GP2 (SEL2 through U7) for unit 1 (orig_drive.h). board_check
+// guarantees SEL1 = SEL0 + 1.
+#include "orig_drive.h"
+#define PIN_SEL_OF(d) (PIN_SEL0 + orig_unit_line(d))
 #define PIN_MTR     (g_board->mtr)
 #define PIN_DIR     (g_board->dir)      // high = step outwards (towards track 0) per Shugart DIRC
 #define PIN_STEP    (g_board->step)

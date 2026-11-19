@@ -26,4 +26,12 @@
  *  and is marked done at the end, so the status report can carry the list. */
 int i2c_probe_bus(uint8_t *panel_addr, i2c_scan_t *scan);
 
+/** Rev C's original drive (orig_drive.h): a bus clear and i2c_init before the scan, for U8's power-on read.
+ *  False: SCL is held -- no I2C this boot (the scan then says so). The register reads and writes are one
+ *  byte each, 2 ms timeouts; false on a NAK or a timeout (the block is re-initialised after either). */
+#include <stdbool.h>
+bool i2c_early_init(void);
+bool i2c_early_reg_read(uint8_t addr, uint8_t reg, uint8_t *val);
+bool i2c_early_reg_write(uint8_t addr, uint8_t reg, uint8_t val);
+
 #endif

@@ -1,6 +1,7 @@
 #include "harness.h"
 #include "../src/bus_gate.h"
 #include "../src/floppy_io.h"
+#include "../src/orig_drive.h"
 
 /*
  * The decisions behind SEL0 gating (HANDOFF 4d), without the PIO.
@@ -158,6 +159,22 @@ static void df1_is_seen_only_after_several_steps(void) {
     CHECK(bus_df1_seen(250), "the 4e bench count: seen");
 }
 
+// Rev C with the original drive as DF0 (orig_drive.h): unit 0 answers on GP3, unit 1 on GP2 (SEL2 through U7).
+// The step word's bits are lines; sel_mask and `selected` are units.
+static void step_word_follows_the_swapped_units(void) {
+    g_orig_swapped = true;
+    bus_step_t a = bus_step_decode(0x1u);          // GP2 high, GP3 low: unit 0 (DF1)
+    CHECK_EQ_INT(a.sel_mask, BUS_SEL_DF0);
+    CHECK(a.selected, "GP3 low is the main drive's step when swapped");
+    bus_step_t b = bus_step_decode(0x2u);          // GP2 low: unit 1 (DF2)
+    CHECK_EQ_INT(b.sel_mask, BUS_SEL_DF1);
+    CHECK(!b.selected, "GP2 (SEL2) is the second drive's when swapped");
+    CHECK_EQ_INT(bus_step_decode(0x0u).sel_mask, BUS_SEL_DF0 | BUS_SEL_DF1);
+    CHECK_EQ_INT(bus_step_decode(0x3u).sel_mask, 0);
+    g_orig_swapped = false;
+    CHECK_EQ_INT(bus_step_decode(0x1u).sel_mask, BUS_SEL_DF1);   // and back: the usual mapping
+}
+
 int main(void) {
     RUN(status_pins_are_exactly_the_five_gated_outputs);
     RUN(apply_sets_and_clears_one_pin_without_touching_others);
@@ -167,6 +184,7 @@ int main(void) {
     RUN(step_word_for_the_other_drive);
     RUN(step_word_ignores_sel1_and_mtr);
     RUN(step_word_names_every_select_that_was_low);
+    RUN(step_word_follows_the_swapped_units);
     RUN(df1_is_seen_only_after_several_steps);
     RUN(sniff_decode_round_trips_every_sampled_pin);
     RUN(sniff_decode_never_reports_the_flux_pins);

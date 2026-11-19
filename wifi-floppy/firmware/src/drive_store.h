@@ -29,9 +29,15 @@ bool df1_mode_from_wire(const char *s, df1_mode_t *out);
 typedef struct {
     uint32_t version;   // the setting's version (the board's ack after a reboot)
     uint8_t  mode;      // df1_mode_t
+    // Rev C's original drive (orig_drive.h, 2026-11-19): its own setting and version, in a second block after
+    // the DF1 record on the same page. A page without it (every board before) loads as Auto, version 0; a
+    // firmware before it reads only the first block, and a save there drops the second (Auto again).
+    uint32_t orig_version;
+    uint8_t  orig_mode;     // orig_mode_t
 } drive_record_t;
 
-bool drive_store_load(drive_record_t *out);      // false: nothing valid stored (erased, bad magic, bad CRC)
+bool drive_store_load(drive_record_t *out);      // false: no valid DF1 block (erased, bad magic, bad CRC);
+                                                 // *out's orig fields are filled either way (Auto, 0 if absent)
 bool drive_store_save(const drive_record_t *r);  // false on a flash error; the caller decides when (below)
 void drive_store_erase(void);                    // tests only, and a future reset
 
@@ -63,6 +69,8 @@ bool drive_store_idle(uint32_t now, bool motor_on, bool wgate_asserted,
 #ifdef WFMF_HOST_TEST
 // Flips one payload byte of the stored record (a bit flip after a completed write).
 void drive_store_corrupt_for_test(void);
+// Erases the original drive's block only: the page as firmware before 2026-11-19 wrote it.
+void drive_store_drop_orig_for_test(void);
 #endif
 
 #endif

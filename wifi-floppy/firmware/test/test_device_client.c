@@ -550,6 +550,9 @@ static void test_status_body_fits_at_maximum(void) {
     CHECK(psram_publish_df1(1), "precondition: DF1 holds the record's slot");
     dc_set_df1(&c, DF1_MODE_NEXT, true);
     c.drive_ack = 4294967295u;
+    // Rev C's original drive: the longer of each spelling ("auto", "false").
+    dc_set_orig(&c, false, false, ORIG_MODE_AUTO);
+    c.orig_ack = 4294967295u;
 
     // Phase 3: the longest `net` tail -- every key, each number at its saturation, the longest address.
     dc_net_t worst_net = { .on = true, .driver_seen = true, .driver_s = 999999u, .amiga_ip = 0xFFFFFFFFu,
@@ -584,6 +587,8 @@ static void test_status_body_fits_at_maximum(void) {
     CHECK(strstr(r, "\"df1Seen\":false") != NULL, "the SEL1 readings survive a maximal body");
     CHECK(strstr(r, "\"displayVersion\":4294967295") != NULL, "the display ack survives");
     CHECK(strstr(r, "\"secondDrive\":\"df1\",\"driveVersion\":4294967295") != NULL, "the drive ack survives");
+    CHECK(strstr(r, ",\"origDrive\":{\"mode\":\"auto\",\"version\":4294967295,\"present\":false,\"active\":false}") != NULL,
+          "the original drive's tail survives a maximal body");
     CHECK(strstr(r, "\"framesOut\":999999999}") != NULL, "the net tail survives a maximal body");
     CHECK(strstr(r, "\"amigaIp\":\"255.255.255.255\",\"shared\":true,") != NULL, "shared mode's flag too");
     CHECK(strstr(r, ",\"server\":{\"custom\":true,\"tls\":\"noverify\"}") != NULL,
@@ -4000,9 +4005,10 @@ static void the_worst_case_poll_with_req_is_sent_whole(void) {
     dc_set_req(&c, 4294967295u, 4, true, true);
     dc_set_wifi(&c, 4294967295u, NULL, NULL);   // Wi-Fi networks (2026-11-15): path 240, request 512
     dc_set_boot(&c, 0xffffffffu, true);
+    dc_set_orig(&c, true, true, ORIG_MODE_AUTO); c.orig_ack = 4294967295u;   // rev C (2026-11-19): path 256
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
-    CHECK(strstr(fake_last_request(), "&xferAck=4294967295&rx=u&reqAck=4294967295&rxv=4&browse=1&write=1&wifiAck=4294967295&boot=ffffffff&ota=1 HTTP/1.1\r\n") != NULL,
+    CHECK(strstr(fake_last_request(), "&origAck=4294967295&xferAck=4294967295&rx=u&reqAck=4294967295&rxv=4&browse=1&write=1&wifiAck=4294967295&boot=ffffffff&ota=1 HTTP/1.1\r\n") != NULL,
           "every parameter, in order");
 }
 
@@ -4331,6 +4337,67 @@ static void an_update_boot_says_so(void) {
           "the worst-case path is sent whole");
 }
 
+// Rev C's original drive (orig_drive.h, 2026-11-19).
+static void orig_drive_params_only_from_a_board_with_u8(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "origAck") == NULL, "no U8: no origAck");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 0, -50, NULL, "1.0.0"), "sent");
+    CHECK(strstr(fake_last_request(), "origDrive") == NULL, "no U8: no origDrive");
+    CHECK(!dc_orig_report_owed(&c), "and nothing owed");
+
+    boot();
+    dc_set_orig(&c, true, true, ORIG_MODE_AUTO);
+    c.orig_ack = 7;
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&origAck=7") != NULL, "U8: the ack rides the poll");
+    CHECK(dc_orig_report_owed(&c), "not heard yet");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 0, -50, NULL, "1.0.0"), "sent");
+    CHECK(strstr(fake_last_request(), ",\"origDrive\":{\"mode\":\"auto\",\"version\":7,\"present\":true,\"active\":true}") != NULL,
+          "both facts, the setting and its ack");
+    CHECK(!dc_orig_report_owed(&c), "heard");
+}
+
+static void orig_drive_setting_is_taken_once_and_acked_by_the_caller(void) {
+    boot();
+    dc_set_orig(&c, false, false, ORIG_MODE_AUTO);
+    push_ok_json("{\"version\":1,\"desired\":null,\"origDrive\":{\"seq\":3,\"mode\":\"off\"}}");
+    dc_step(&c);
+    uint32_t seq = 0; orig_mode_t m = ORIG_MODE_AUTO;
+    CHECK(dc_orig_take(&c, &seq, &m), "owed");
+    CHECK_EQ_INT(seq, 3); CHECK(m == ORIG_MODE_OFF, "off");
+    CHECK(!dc_orig_take(&c, &seq, &m), "taken once");
+    dc_orig_handled(&c, 3, ORIG_MODE_OFF);
+    CHECK_EQ_INT(c.orig_ack, 3);
+    CHECK(dc_orig_report_owed(&c), "the new setting is owed to the server");
+    push_ok_json("{\"version\":2,\"desired\":null,\"origDrive\":{\"seq\":3,\"mode\":\"off\"}}");
+    dc_step(&c);
+    CHECK(!dc_orig_take(&c, &seq, &m), "the same seq and mode: nothing new");
+}
+
+static void orig_drive_unknown_mode_is_acked_and_ignored(void) {
+    boot();
+    dc_set_orig(&c, false, false, ORIG_MODE_AUTO);
+    push_ok_json("{\"version\":1,\"desired\":null,\"origDrive\":{\"seq\":5,\"mode\":\"df9\"}}");
+    dc_step(&c);
+    uint32_t seq; orig_mode_t m;
+    CHECK(!dc_orig_take(&c, &seq, &m), "not taken");
+    CHECK_EQ_INT(c.orig_ack, 5);
+}
+
+static void orig_drive_is_ignored_by_a_board_without_u8(void) {
+    boot();
+    push_ok_json("{\"version\":1,\"desired\":null,\"origDrive\":{\"seq\":5,\"mode\":\"off\"}}");
+    dc_step(&c);
+    uint32_t seq; orig_mode_t m;
+    CHECK(!dc_orig_take(&c, &seq, &m), "no U8: never taken");
+    CHECK_EQ_INT(c.orig_ack, 0);
+}
+
 int main(void) {
     RUN(boot_id_is_absent_until_set); RUN(boot_id_rides_every_poll_across_a_reconnect); RUN(boot_id_rides_the_tap_too);
     RUN(an_update_boot_says_so);
@@ -4382,6 +4449,10 @@ int main(void) {
     RUN(test_status_sends_all_seven_fields);
     RUN(test_status_reports_a_null_version_explicitly);
     RUN(test_status_body_fits_at_maximum);
+    RUN(orig_drive_params_only_from_a_board_with_u8);
+    RUN(orig_drive_setting_is_taken_once_and_acked_by_the_caller);
+    RUN(orig_drive_unknown_mode_is_acked_and_ignored);
+    RUN(orig_drive_is_ignored_by_a_board_without_u8);
     RUN(test_status_reports_plays_hd_only_when_set);
     RUN(test_status_reports_both_sel1_readings_once_known);
     RUN(test_status_carries_net_only_in_network_mode);

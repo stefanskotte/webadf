@@ -107,3 +107,38 @@ int i2c_probe_bus(uint8_t *panel_addr, i2c_scan_t *scan) {
     if (panel_addr) *panel_addr = panel;
     return found;
 }
+
+// Rev C's original drive (orig_drive.h): the power-on read of U8, before the display's scan, before the bus is
+// driven. The same bus clear and speed as the scan; i2c_probe_bus later clears and inits again, which is harmless.
+bool i2c_early_init(void) {
+    int pulses = 0;
+    const i2c_rec_t rec = bus_clear(&pulses);
+    if (rec == I2C_REC_SCL_HELD) return false;     // the scan says so in the log; no drive this boot
+    i2c_init(board_i2c(), PROBE_HZ);
+    gpio_set_function(PIN_I2C_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(PIN_I2C_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(PIN_I2C_SDA);
+    gpio_pull_up(PIN_I2C_SCL);
+    return true;
+}
+
+bool i2c_early_reg_read(uint8_t addr, uint8_t reg, uint8_t *val) {
+    if (i2c_write_timeout_us(board_i2c(), addr, &reg, 1, true, PROBE_TIMEOUT_US) != 1) {
+        i2c_init(board_i2c(), PROBE_HZ);           // a timeout leaves the transfer queued (see the scan)
+        return false;
+    }
+    if (i2c_read_timeout_us(board_i2c(), addr, val, 1, false, PROBE_TIMEOUT_US) != 1) {
+        i2c_init(board_i2c(), PROBE_HZ);
+        return false;
+    }
+    return true;
+}
+
+bool i2c_early_reg_write(uint8_t addr, uint8_t reg, uint8_t val) {
+    const uint8_t b[2] = { reg, val };
+    if (i2c_write_timeout_us(board_i2c(), addr, b, 2, false, PROBE_TIMEOUT_US) != 2) {
+        i2c_init(board_i2c(), PROBE_HZ);
+        return false;
+    }
+    return true;
+}
