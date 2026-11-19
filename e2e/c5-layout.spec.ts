@@ -308,14 +308,14 @@ test('Help: topics in four groups, the one arrived at marked current, each artic
   const nav = page.getByTestId('help-nav');
   await expect(nav).toBeVisible();
   for (const g of ['drives', 'disks', 'network', 'server']) await expect(page.getByTestId(`help-group-${g}`)).toBeVisible();
-  await expect(page.getByTestId('help-group-drives').getByRole('link')).toHaveCount(6);
+  await expect(page.getByTestId('help-group-drives').getByRole('link')).toHaveCount(8);
   await expect(page.locator('#help-h-write-protect')).toBeInViewport();
   await expect(nav.getByRole('link', { name: 'Write protection' })).toHaveAttribute('aria-current', 'true');
   await expect(page.getByTestId('help-section-write-protect')).toContainText('Help · Drives');
   await expect(page.getByTestId('help-section-library')).toContainText('Help · Library and disks');
   const order = await page.locator('article[data-testid^="help-section-"]').evaluateAll((els) => els.map((e) => e.id));
-  expect(order).toHaveLength(22);
-  expect(order.slice(0, 3)).toEqual(['boards', 'display', 'second-drive']);
+  expect(order).toHaveLength(24);
+  expect(order.slice(0, 3)).toEqual(['boards', 'wifi-networks', 'display']);
   await expect(page.getByTestId('help-nav-toggle')).toBeHidden();   // the phone summary is not drawn from lg
 });
 
@@ -353,12 +353,12 @@ test('Help at 390 px: the filter and a closed Topics disclosure sit above the ar
   await page.goto('/help');
   await hydrated(page, 'help-filter', 'onChange');
   const toggle = page.getByTestId('help-nav-toggle');
-  await expect(toggle).toHaveText('Topics · 22');
+  await expect(toggle).toHaveText('Topics · 24');
   await expect(page.getByTestId('help-nav')).toBeHidden();
   await toggle.click();
   await expect(page.getByTestId('help-nav')).toBeVisible();
   await page.getByTestId('help-filter').fill('drive');
-  await expect(toggle).toHaveText('Topics · 4 of 22');
+  await expect(toggle).toHaveText('Topics · 5 of 24');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
@@ -692,7 +692,7 @@ test('at 390 px: Settings stacks with no list, Help folds its topics, Search has
   await noSideways();
 
   await page.goto('/help');
-  await expect(page.getByTestId('help-nav-toggle')).toHaveText('Topics · 22');
+  await expect(page.getByTestId('help-nav-toggle')).toHaveText('Topics · 24');
   await noSideways();
 
   await hydrated(page, 'search-open');
