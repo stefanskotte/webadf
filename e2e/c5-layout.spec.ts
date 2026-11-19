@@ -319,7 +319,7 @@ test('Help: topics in four groups, the one arrived at marked current, each artic
   await expect(page.getByTestId('help-nav-toggle')).toBeHidden();   // the phone summary is not drawn from lg
 });
 
-test('Help: the filter keeps only matching topics, says how many, and Escape brings all 22 back', async ({ page }) => {
+test('Help: the filter keeps only matching topics, says how many, and Escape brings all 24 back', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await signUpFresh(page);
   await page.goto('/help');
@@ -327,23 +327,23 @@ test('Help: the filter keeps only matching topics, says how many, and Escape bri
   await hydrated(page, 'help-filter', 'onChange');
   await filter.fill('d');
   await expect(page.getByTestId('help-filter-count')).toHaveText('');
-  await expect(articles(page)).toHaveCount(22);
-  // filterHelpTopics('drive') is second-drive, boards, network, send (pinned in src/lib/help/match.test.ts).
+  await expect(articles(page)).toHaveCount(24);
+  // filterHelpTopics('drive') is second-drive, orig-drive, boards, network, send (pinned in src/lib/help/match.test.ts).
   await filter.fill('drive');
-  await expect(page.getByTestId('help-filter-count')).toHaveText('4 of 22 topics');
-  await expect(articles(page)).toHaveCount(4);
+  await expect(page.getByTestId('help-filter-count')).toHaveText('5 of 24 topics');
+  await expect(articles(page)).toHaveCount(5);
   await expect(page.getByTestId('help-section-library')).toBeHidden();
   await expect(page.getByTestId('help-group-disks')).toHaveCount(0);
-  await expect(page.getByTestId('help-nav').getByRole('link')).toHaveCount(4);
+  await expect(page.getByTestId('help-nav').getByRole('link')).toHaveCount(5);
   await filter.fill('zzqx');
-  await expect(page.getByTestId('help-filter-empty')).toHaveText('No topic matches “zzqx”. Clear the search to see all 22.');
+  await expect(page.getByTestId('help-filter-empty')).toHaveText('No topic matches “zzqx”. Clear the search to see all 24.');
   await expect(articles(page)).toHaveCount(0);
-  await expect(page.getByTestId('help-filter-count')).toHaveText('0 of 22 topics');
+  await expect(page.getByTestId('help-filter-count')).toHaveText('0 of 24 topics');
   await expect(page.getByTestId('help-group-server')).toBeVisible();
   await expect(page.getByTestId('help-nav').getByRole('link')).toHaveCount(0);
   await filter.press('Escape');
   await expect(filter).toHaveValue('');
-  await expect(articles(page)).toHaveCount(22);
+  await expect(articles(page)).toHaveCount(24);
   await expect(page.getByTestId('help-filter-empty')).toHaveCount(0);
 });
 

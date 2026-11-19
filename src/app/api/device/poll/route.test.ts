@@ -66,7 +66,7 @@ const get = (qs = '') => new Request(`http://test/api/device/poll${qs}`);
 const baseTick = (over: Partial<PollTick> = {}): PollTick => ({
   version: 1, instructionVersion: 0, instructionAck: 0, nfcWriteSeq: 0, displayVersion: 0, secondDriveVersion: 0, secondDrive: 'off',
   secondDriveReported: null, secondDriveAppliedVersion: null, netNextSentVersion: null,
-  df1Version: 0, sendVersion: 0, reqVersion: 0, wifiSeq: 0, df1Sha256: null, netDriverSeenAt: null, netAmigaIpLast: null, ...over,
+  df1Version: 0, sendVersion: 0, reqVersion: 0, wifiSeq: 0, origDriveVersion: 0, origDrive: 'auto', df1Sha256: null, netDriverSeenAt: null, netAmigaIpLast: null, ...over,
 });
 
 beforeEach(() => {
@@ -506,6 +506,48 @@ describe('GET /api/device/poll -- driveAck and secondDrive', () => {
       readPollTick.mockResolvedValue(baseTick({ secondDriveVersion: 2, secondDrive: 'df1' }));
       const { GET } = await import('./route');
       const p = GET(get('?since=1&driveAck=2'));
+      await vi.advanceTimersByTimeAsync(26_000);
+      expect((await p).status).toBe(204);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// Original drive (rev C, 2026-11-19, src/lib/orig-drive.ts): the driveAck rule, for ?origAck= and `origDrive`.
+describe('GET /api/device/poll -- origAck and origDrive', () => {
+  it('wakes on an origAck mismatch and carries origDrive inline', async () => {
+    readPollTick.mockResolvedValue(baseTick({ origDriveVersion: 2, origDrive: 'off' }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&origAck=1'));
+    expect(res.status).toBe(200);
+    expect((await res.json()).origDrive).toEqual({ seq: 2, mode: 'off' });
+  });
+  it('wakes when origAck is ABOVE the version (a re-paired board) and carries the lower one', async () => {
+    readPollTick.mockResolvedValue(baseTick({ origDriveVersion: 0, origDrive: 'auto' }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&origAck=5'));
+    expect(res.status).toBe(200);
+    expect((await res.json()).origDrive).toEqual({ seq: 0, mode: 'auto' });
+  });
+  it('rides every body to a board that sent origAck, even when something else woke it', async () => {
+    readPollTick.mockResolvedValue(baseTick({ version: 2, origDriveVersion: 3, origDrive: 'auto' }));
+    const { GET } = await import('./route');
+    const body = await (await GET(get('?since=1&origAck=3'))).json();
+    expect(body.origDrive).toEqual({ seq: 3, mode: 'auto' });
+  });
+  it('never wakes or sends origDrive to a board without origAck', async () => {
+    readPollTick.mockResolvedValue(baseTick({ version: 2, origDriveVersion: 5, origDrive: 'off' }));
+    const { GET } = await import('./route');
+    const body = await (await GET(get('?since=1&driveAck=0'))).json();
+    expect(body.origDrive).toBeUndefined();
+  });
+  it('does not wake when origAck matches, and a lone since-caught-up poll holds (204)', async () => {
+    vi.useFakeTimers();
+    try {
+      readPollTick.mockResolvedValue(baseTick({ origDriveVersion: 2, origDrive: 'auto' }));
+      const { GET } = await import('./route');
+      const p = GET(get('?since=1&origAck=2'));
       await vi.advanceTimersByTimeAsync(26_000);
       expect((await p).status).toBe(204);
     } finally {

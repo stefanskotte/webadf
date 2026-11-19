@@ -14,6 +14,7 @@ import { orgFilter } from '@/db/scope';
 import { getGameDemozoo, demozooCovers, type GameDemozoo } from '@/lib/demozoo/queries';
 import type { ImageFormat } from '@/lib/disk-format';
 import { asSecondDriveMode, SECOND_DRIVE_NET_FW, type SecondDriveMode } from '@/lib/second-drive';
+import { asOrigDriveMode, type OrigDriveMode } from '@/lib/orig-drive';
 import { isHdAdfSql } from '@/lib/disk-format-sql';
 import { firmwareAtLeast } from '@/lib/firmware-version';
 import { asBootDisk, BOOT_DISK_FW, type BootDisk } from '@/lib/boot-disk';
@@ -510,6 +511,15 @@ export interface DeviceListItem {
   /** Inside the Amiga (DF0) or in an external case (DF1): names the drive only (src/lib/drive-numbers.ts). */
   driveBase: DriveBase;
   bootDiskCapable: boolean;
+  /** Original drive (rev C, 2026-11-19, src/lib/orig-drive.ts): the choice and its cursor, the board's ack and
+   *  stored mode, the expander capability, and what it found at power-on (present) and uses now (active = DF0). */
+  origDrive: OrigDriveMode;
+  origDriveVersion: number;
+  origDriveAppliedVersion: number;
+  origDriveReported: OrigDriveMode | null;
+  origDriveCapable: boolean;
+  origDrivePresent: boolean;
+  origDriveActive: boolean;
   /** Wi-Fi networks (2026-11-15, src/lib/wifi-networks.ts): the saved names in hex (null = firmware does not report
    *  them), the one the board is on, the setup page's close time, and the request cursor with the board's answer. */
   wifiNets: string[] | null;
@@ -618,6 +628,13 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       displayLayout: devices.displayLayout,
       bootDisk: devices.bootDisk,
       driveBase: devices.driveBase,
+      origDrive: devices.origDrive,
+      origDriveVersion: devices.origDriveVersion,
+      origDriveAppliedVersion: devices.origDriveAppliedVersion,
+      origDriveReported: devices.origDriveReported,
+      origDriveCapable: devices.origDriveCapable,
+      origDrivePresent: devices.origDrivePresent,
+      origDriveActive: devices.origDriveActive,
       wifiNets: devices.wifiNets,
       wifiCurrent: devices.wifiCurrent,
       wifiSetupUntil: devices.wifiSetupUntil,
@@ -663,6 +680,8 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
     secondDriveCapable: r.secondDriveCapable === true,
     bootDisk: asBootDisk(r.bootDisk),
     driveBase: asDriveBase(r.driveBase),
+    origDrive: asOrigDriveMode(r.origDrive) ?? 'auto',
+    origDriveReported: asOrigDriveMode(r.origDriveReported),
     bootDiskCapable: firmwareAtLeast(r.firmwareVersion, BOOT_DISK_FW),
     displayLayout: r.displayLayout && r.displayLayout.length > 0
       ? Buffer.from(stripHeadRecords(r.displayLayout)).toString('base64')   // 1.17.0's head element is withdrawn; stored blobs are not migrated

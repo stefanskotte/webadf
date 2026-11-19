@@ -17,6 +17,7 @@ type RecordStatusArg = {
   i2c?: number[];
   lastBoot?: unknown; nfcFail?: string; upKey?: string;
   wifi?: { nets: string[]; cur: number; ack: number; res: string | null; setup: number };
+  origDrive?: { mode: string; version: number; present: boolean; active: boolean };
 };
 const recordStatus = vi.fn<(deviceId: string, s: RecordStatusArg) => Promise<void>>(
   async () => undefined,
@@ -267,6 +268,37 @@ describe('POST /api/device/status -- wifi', () => {
       const s = recordStatus.mock.calls[0]![1];
       expect(s.wifi).toBeUndefined();
       expect(s.mountedSha256).toBe(SHA);
+    }
+  });
+});
+
+// Original drive (rev C, 2026-11-19, src/lib/orig-drive.ts): telemetry, dropped whole when malformed -- never a 400.
+describe('POST /api/device/status -- origDrive', () => {
+  const origDrive = { mode: 'auto', version: 2, present: true, active: true };
+  it('passes origDrive through', async () => {
+    const { POST } = await import('./route');
+    expect((await POST(post({ mountedSha256: null, origDrive }))).status).toBe(204);
+    expect(recordStatus.mock.calls[0]![1].origDrive).toEqual(origDrive);
+    await POST(post({ mountedSha256: null, origDrive: { mode: 'off', version: 0, present: false, active: false } }));
+    expect(recordStatus.mock.calls[1]![1].origDrive).toEqual({ mode: 'off', version: 0, present: false, active: false });
+  });
+  it('leaves it undefined when absent', async () => {
+    const { POST } = await import('./route');
+    await POST(post({ mountedSha256: null }));
+    expect(recordStatus.mock.calls[0]![1].origDrive).toBeUndefined();
+  });
+  it('drops a malformed origDrive whole and still records the report', async () => {
+    const { POST } = await import('./route');
+    for (const bad of [
+      { ...origDrive, mode: 'on' }, { ...origDrive, version: -1 }, { ...origDrive, version: 4294967295 },
+      { ...origDrive, present: 'yes' }, { mode: 'auto', version: 1, present: true }, 'auto', null,
+    ]) {
+      recordStatus.mockClear();
+      const res = await POST(post({ mountedSha256: SHA, origDrive: bad }));
+      expect(res.status).toBe(204);
+      const s = recordStatus.mock.calls[0]![1];
+      expect(s.mountedSha256).toBe(SHA);
+      expect(s.origDrive).toBeUndefined();
     }
   });
 });

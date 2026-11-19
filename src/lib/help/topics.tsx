@@ -571,6 +571,40 @@ export const HELP_TOPICS = {
       </>
     ),
   },
+  // Original drive (rev C, 2026-11-19). Sources: wifi-floppy/hardware/rev-c/README.md "Original drive connector";
+  // src/lib/orig-drive.ts (ORIG_DRIVE_OPTIONS, ORIG_DRIVE_HINT, ORIG_DRIVE_APPLIES, origDriveStatus texts,
+  // ORIG_DRIVE_ACTIVE_REASON); operator ruling 2026-11-19 (power-on only, never live); recordStatus in
+  // src/lib/mount.ts (drive_base 1 when it starts being used, 0 when it stops); drive-numbers-store.ts (refused while
+  // in use); orig-drive-setting.tsx (shown only when the board reports the expander).
+  'orig-drive': {
+    title: 'Original drive',
+    short:
+      'A rev C board can keep your Amiga’s own floppy drive working: plug it into the board’s EXT DRV connector and it stays DF0. Auto unless you switch it off.',
+    body: (
+      <>
+        <p>
+          The setting is under <em>Original drive</em> in <em>Board settings</em>, and only boards with the EXT DRV
+          connector show it. With <em>Auto</em>, a drive plugged into EXT DRV when the Amiga is switched on is DF0, and the
+          board answers as DF1, with its second drive as DF2. With <em>Off</em> the original drive is never used and the
+          board is DF0 and DF1 as usual.
+        </p>
+        <p>
+          The board looks for the drive only when the Amiga is switched on, and a change of setting waits for that too:
+          a warm restart (Ctrl-Amiga-Amiga) changes nothing. The status line says what the board does now:{' '}
+          <em>In use as DF0</em>, <em>No drive found at power-on</em> or <em>Off</em>.
+        </p>
+        <p>
+          <strong>Drive numbers.</strong> While the original drive is in use, <em>Drive numbers</em> shows DF1 + DF2 and
+          cannot be changed. When it stops being used, the board goes back to DF0 + DF1.
+        </p>
+        <GoodToKnow items={[
+          'Plug or unplug the original drive only with the Amiga switched off.',
+          <>The board&apos;s second drive still works, as DF2: see{' '}
+            <a className="underline" href="/help#second-drive">Second drive</a>.</>,
+        ]} />
+      </>
+    ),
+  },
 
   // Sources: spec docs/superpowers/specs/2026-10-12-paulanet-phase3-network-setting-design.md §1-§5, §8; the
   // setting and checklist texts in second-drive-setting.tsx / network-checklist.ts; DF0 empty or changing: plan
@@ -978,7 +1012,7 @@ export type HelpGroup = { id: HelpGroupId; name: string; topics: readonly HelpTo
  * its section list and the header search's Help ranking.
  */
 export const HELP_GROUPS: readonly HelpGroup[] = [
-  { id: 'drives', name: 'Drives', topics: ['boards', 'wifi-networks', 'display', 'second-drive', 'next-disk', 'nfc', 'write-protect'] },
+  { id: 'drives', name: 'Drives', topics: ['boards', 'wifi-networks', 'display', 'second-drive', 'orig-drive', 'next-disk', 'nfc', 'write-protect'] },
   { id: 'disks', name: 'Library and disks', topics: ['library', 'files', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image'] },
   { id: 'network', name: 'Amiga networking', topics: ['network', 'stash-net', 'amiga-disks', 'send', 'from-amiga'] },
   { id: 'server', name: 'This server', topics: ['preferences', 'sharing', 'remote', 'own-server', 'about'] },

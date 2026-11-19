@@ -10,6 +10,8 @@ import { Modal } from '@/components/ui/modal';
 import { HelpTip } from '@/components/help/help-tip';
 import { BootDiskSetting } from './boot-disk-setting';
 import { DriveNumbersSetting } from './drive-numbers-setting';
+import { OrigDriveSetting } from './orig-drive-setting';
+import type { OrigDriveMode } from '@/lib/orig-drive';
 import type { DriveBase } from '@/lib/drive-numbers';
 import { DeleteDeviceConfirm } from './delete-device-dialog';
 import { DisplayEditor } from './display-editor';
@@ -51,6 +53,8 @@ export function BoardSettings({ device, openOnArrival = false, now = 0 }: {
   const [failed, setFailed] = useState<string | null>(null);
   const [base, setBase] = useState<DriveBase>(device.driveBase);
   const [baseFailed, setBaseFailed] = useState<string | null>(null);
+  const [orig, setOrig] = useState<OrigDriveMode>(device.origDrive);
+  const [origFailed, setOrigFailed] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const deleting = useRef(false);
@@ -65,13 +69,16 @@ export function BoardSettings({ device, openOnArrival = false, now = 0 }: {
   const i2c = describeI2cScan(device.nfcReader, device.i2cAddrs, device.firmwareVersion);
   const bootDirty = draft !== device.bootDisk;
   const baseDirty = base !== device.driveBase;
-  const dirty = bootDirty || baseDirty;
+  const origDirty = device.origDriveCapable && orig !== device.origDrive;
+  const dirty = bootDirty || baseDirty || origDirty;
 
   function show() {
     setDraft(device.bootDisk);
     setBase(device.driveBase);
+    setOrig(device.origDrive);
     setFailed(null);
     setBaseFailed(null);
+    setOrigFailed(null);
     setOpen(true);
   }
 
@@ -85,11 +92,13 @@ export function BoardSettings({ device, openOnArrival = false, now = 0 }: {
       document.getElementById(`device-${id}`)?.scrollIntoView({ block: 'center' });
       setDraft(device.bootDisk);
       setBase(device.driveBase);
+      setOrig(device.origDrive);
       setFailed(null);
       setBaseFailed(null);
+      setOrigFailed(null);
       setOpen(true);
     });
-  }, [openOnArrival, id, device.bootDisk, device.driveBase]);
+  }, [openOnArrival, id, device.bootDisk, device.driveBase, device.origDrive]);
 
   // Each changed setting is its own PATCH; a refusal stays on its own section and keeps the modal open. A setting
   // that saved stays saved (the refresh shows it), so a retry sends only what is still different.
@@ -111,14 +120,18 @@ export function BoardSettings({ device, openOnArrival = false, now = 0 }: {
     setBusy(true);
     setFailed(null);
     setBaseFailed(null);
+    setOrigFailed(null);
     try {
       const baseOk = !baseDirty || await patch('drive-base', { base }, setBaseFailed);
+      const origOk = !origDirty || await patch('orig-drive', { mode: orig }, setOrigFailed);
       const bootOk = !bootDirty || await patch('boot-disk', { mode: draft }, setFailed);
       startRefresh(() => router.refresh());
-      if (!baseOk || !bootOk) return;
+      if (!baseOk || !origOk || !bootOk) return;
       setOpen(false);
-      toast.success(bootDirty && !baseDirty ? 'Disk at startup saved. The board uses it at its next start.'
-        : bootDirty ? 'Board settings saved. Disk at startup applies at the board\'s next start.' : 'Board settings saved.');
+      toast.success(bootDirty && !baseDirty && !origDirty ? 'Disk at startup saved. The board uses it at its next start.'
+        : bootDirty ? 'Board settings saved. Disk at startup applies at the board\'s next start.'
+        : origDirty ? 'Board settings saved. Original drive applies the next time the Amiga is switched on.'
+        : 'Board settings saved.');
     } finally { setBusy(false); }
   }
 
@@ -228,6 +241,7 @@ export function BoardSettings({ device, openOnArrival = false, now = 0 }: {
             {displayOpen && <DisplayEditor device={device} onOpenChange={setDisplayOpen} finalFocus={displayToggle} />}
           </div>
           <DriveNumbersSetting device={device} value={base} onChange={setBase} error={baseFailed} busy={busy} />
+          <OrigDriveSetting device={device} value={orig} onChange={setOrig} error={origFailed} busy={busy} />
           <BootDiskSetting device={device} value={draft} onChange={setDraft} error={failed} busy={busy} />
           <WifiNetworksSetting device={device} serverNow={now} busy={busy} />
           <div className="flex flex-col gap-2">

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { requireOrg } from '@/lib/session';
 import { saveDriveBase } from '@/lib/drive-numbers-store';
 import type { DriveBase } from '@/lib/drive-numbers';
+import { ORIG_DRIVE_ACTIVE_REASON } from '@/lib/orig-drive';
 
 const body = z.object({ base: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]) });
 
@@ -16,5 +17,8 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   if (!parsed.success) return Response.json({ error: 'invalid_body', detail: z.flattenError(parsed.error) }, { status: 400 });
   const r = await saveDriveBase(orgId, id, parsed.data.base as DriveBase);
   if (r === 'not_found') return Response.json({ error: 'not_found' }, { status: 404 });
+  if (r === 'orig_drive_active') {
+    return Response.json({ error: 'orig_drive_active', reason: ORIG_DRIVE_ACTIVE_REASON }, { status: 409 });
+  }
   return Response.json({ base: parsed.data.base });
 }

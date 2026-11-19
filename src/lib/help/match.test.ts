@@ -33,7 +33,7 @@ describe('filterHelpTopics (C5 spec §3.4, Ruling 15)', () => {
   });
   it('matches every word in title or short text, with no limit', () => {
     // e2e/c5-layout.spec.ts's filter test relies on this exact set.
-    expect(filterHelpTopics('drive')).toEqual({ active: true, ids: new Set(['second-drive', 'boards', 'network', 'send']) });
+    expect(filterHelpTopics('drive')).toEqual({ active: true, ids: new Set(['second-drive', 'orig-drive', 'boards', 'network', 'send']) });
     expect(filterHelpTopics('disk').ids.size).toBeGreaterThan(3);   // more than the header's three
   });
   it('active with no match is a real answer: zero topics', () => {

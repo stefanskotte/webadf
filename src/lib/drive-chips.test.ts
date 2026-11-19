@@ -32,6 +32,8 @@ const loaded: LiveStateRow = {
   secondDriveCapable: null, sel1Wired: null, df1Seen: null,
   serverCustom: null, serverTls: null,
   wifiNets: null, wifiCurrent: null, wifiSetupUntil: null, wifiSeq: 0, wifiAck: null, wifiResult: null,
+  origDrive: 'auto', origDriveVersion: 0, origDriveAppliedVersion: 0, origDriveReported: null,
+  origDriveCapable: false, origDrivePresent: false, origDriveActive: false,
 };
 
 const empty: LiveStateRow = {

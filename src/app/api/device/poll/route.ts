@@ -113,6 +113,15 @@ export async function GET(request: Request) {
       ? Number(driveAckRaw)
       : 0;
 
+  // origAck is the Original drive setting cursor (rev C, 2026-11-19, src/lib/orig-drive.ts). Parsed like driveAck:
+  // ABSENT means a board without the expander -- never woken for the setting, never sent `origDrive`.
+  const origAckRaw = new URL(request.url).searchParams.get('origAck');
+  const origAck = origAckRaw === null
+    ? null
+    : /^\d+$/.test(origAckRaw) && Number.isSafeInteger(Number(origAckRaw))
+      ? Number(origAckRaw)
+      : 0;
+
   // df1Ack is the cursor of the disk mounted into DF1 (fw 1.12.0, spec 2026-10-14 §4.2). Parsed like driveAck, for
   // the same reasons: ABSENT means a board that cannot hold a pick -- never woken for one, never sent `df1`.
   const df1AckRaw = new URL(request.url).searchParams.get('df1Ack');
@@ -211,6 +220,8 @@ export async function GET(request: Request) {
     const displayMoved = displayAck !== null && tick.displayVersion !== displayAck;
 
     const driveMoved = driveAck !== null && tick.secondDriveVersion !== driveAck;
+    // INEQUALITY, the displayAck rule: a re-paired board's higher ack is reset by the body that carries origDrive.
+    const origMoved = origAck !== null && tick.origDriveVersion !== origAck;
     // INEQUALITY, the displayAck rule: a re-paired board carrying a higher ack is woken so it resets.
     const df1Moved = df1Ack !== null && tick.df1Version !== df1Ack;
     // INEQUALITY again: a re-paired board's higher ack is reset by the body that carries xfer.v.
@@ -241,7 +252,7 @@ export async function GET(request: Request) {
     // device echoes it back as mountedVersion and the server reads that for an
     // upload's not_mounted/behind verdict (HANDOFF 4g), so bumping it could
     // strand an Amiga write that was mid-session. See spec 4.2.
-    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved || displayMoved || driveMoved || netNextMoved || df1Moved || xferMoved || reqMoved || wifiMoved) {
+    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved || displayMoved || driveMoved || netNextMoved || df1Moved || xferMoved || reqMoved || wifiMoved || origMoved) {
       const state = await readDesired(device.deviceId);
       if (!state) return notFound();
       // Multi-disk spec §3.3 / plan R1: the disk the board should preload.
@@ -328,6 +339,9 @@ export async function GET(request: Request) {
           // Inline: one byte of setting needs no fetch (spec §3). Every body for a board
           // that sent driveAck, so a re-paired board's higher ack is reset at its first 200.
           ...(driveAck !== null ? { secondDrive: { seq: tick.secondDriveVersion, mode: tick.secondDrive } } : {}),
+          // Original drive (rev C): inline the same way, on every body to a board that sent origAck. The board stores
+          // it and uses it at its next power-on only (operator ruling 2026-11-19).
+          ...(origAck !== null ? { origDrive: { seq: tick.origDriveVersion, mode: tick.origDrive } } : {}),
           // DF1 any disk (spec 2026-10-14 §4.2): {v, sha256}, sha256 null without a pick (DF1 follows the set).
           ...(df1 !== null ? { df1 } : {}),
           // The send queue's cursor (PaulaNET Phase 4): the board fetches GET /api/device/send/queue when it moves.

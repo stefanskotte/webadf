@@ -104,6 +104,15 @@ const statusBody = z.object({
     res: z.string().max(16).nullable(),
     setup: z.number().int().min(0).max(3600),
   }).optional().catch(undefined),
+  // Original drive (rev C, 2026-11-19, src/lib/orig-drive.ts): the stored mode, its origAck, whether a drive was
+  // found at this power-on and whether it is DF0 now. Only boards with the expander send it. Dropped whole when
+  // malformed -- the telemetry rule above.
+  origDrive: z.object({
+    mode: z.enum(['auto', 'off']),
+    version: z.number().int().min(0).max(2_147_483_647),
+    present: z.boolean(),
+    active: z.boolean(),
+  }).optional().catch(undefined),
   error: z.string().max(500).nullable().optional(),
   psramFree: z.number().int().nonnegative().nullable().optional(),
   // Real WiFi RSSI ranges roughly -100..0 dBm, but a marginal link can report
@@ -188,6 +197,7 @@ export async function POST(request: Request) {
     net: parsed.data.net,
     server: parsed.data.server,
     wifi: parsed.data.wifi,
+    origDrive: parsed.data.origDrive,
   });
 
   return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });

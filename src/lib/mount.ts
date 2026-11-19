@@ -12,6 +12,7 @@ import { boardDiskLabel } from '@/lib/disk-label';
 import { isHdAdf, isServable } from '@/lib/disk-format';
 import { LEGACY_BOARD_TRACK_MAX_BYTES } from '@/lib/adfmfm';
 import { asSecondDriveMode, type SecondDriveMode } from '@/lib/second-drive';
+import { asOrigDriveMode, type OrigDriveMode } from '@/lib/orig-drive';
 import { netNextRearm, netNextRearmCandidate } from '@/lib/paulanet-disk';
 import { bootPatch } from '@/lib/boot-disk-store';
 import type { BootReport } from '@/lib/boot-disk';
@@ -173,6 +174,9 @@ export interface PollTick {
   reqVersion: number;
   /** The Wi-Fi instruction cursor (2026-11-15): compared against the board's ?wifiAck=. */
   wifiSeq: number;
+  /** The Original drive setting cursor and value (rev C, 2026-11-19): compared against the board's ?origAck=. */
+  origDriveVersion: number;
+  origDrive: OrigDriveMode;
   /** The Amiga's last address (R17): sent as xfer.ip. */
   netAmigaIpLast: string | null;
   /** What DF1 holds and when the Amiga's driver last read: driverDiskFor's inputs (plan 2026-10-17 R16). */
@@ -205,6 +209,8 @@ export async function readPollTick(deviceId: string): Promise<PollTick | null> {
       sendVersion: devices.sendVersion,
       reqVersion: devices.reqVersion,
       wifiSeq: devices.wifiSeq,
+      origDriveVersion: devices.origDriveVersion,
+      origDrive: devices.origDrive,
       netAmigaIpLast: devices.netAmigaIpLast,
       df1Sha256: devices.df1Sha256,
       netDriverSeenAt: devices.netDriverSeenAt,
@@ -217,6 +223,7 @@ export async function readPollTick(deviceId: string): Promise<PollTick | null> {
         ...row,
         secondDrive: asSecondDriveMode(row.secondDrive) ?? 'off',
         secondDriveReported: asSecondDriveMode(row.secondDriveReported),
+        origDrive: asOrigDriveMode(row.origDrive) ?? 'auto',
       }
     : null;
 }
@@ -373,6 +380,8 @@ export async function recordStatus(
     net?: { driver?: number; amigaIp?: string; framesIn?: number; framesOut?: number };
     /** Wi-Fi networks (2026-11-15): sent only when it changed -- see src/lib/wifi-networks.ts. */
     wifi?: { nets: string[]; cur: number; ack: number; res: string | null; setup: number };
+    /** Original drive (rev C, 2026-11-19): sent only by a board with the expander -- its presence means capable. */
+    origDrive?: { mode: OrigDriveMode; version: number; present: boolean; active: boolean };
   },
 ): Promise<void> {
   const db = getDb();
@@ -510,6 +519,29 @@ export async function recordStatus(
     patch.wifiNets = sql`case when ${other} then null else ${devices.wifiNets} end`;
     patch.wifiCurrent = sql`case when ${other} then null else ${devices.wifiCurrent} end`;
     patch.wifiSetupUntil = sql`case when ${other} then null else ${devices.wifiSetupUntil} end`;
+  }
+  // Original drive (rev C, src/lib/orig-drive.ts). Build-bound (the playsHd rule): a report naming its firmware
+  // without origDrive is a board without the expander (or a build without it), which never uses an original drive.
+  // drive_base moves on a FLIP of active only, in this same UPDATE against the row's pre-image: false->true makes the
+  // board DF1 + DF2 (the original drive is DF0); true->false puts it back to DF0 + DF1 (a board with an original drive
+  // on its EXT DRV connector sits on the internal connector). Not on every report, so the user's own Drive numbers
+  // stand while nothing changes. The version is plain assignment (the displayVersion rule: a re-paired board's ack
+  // can go down).
+  if (s.origDrive !== undefined) {
+    patch.origDriveCapable = true;
+    patch.origDriveReported = s.origDrive.mode;
+    patch.origDriveAppliedVersion = s.origDrive.version;
+    patch.origDrivePresent = s.origDrive.present;
+    patch.origDriveActive = s.origDrive.active;
+    patch.driveBase = s.origDrive.active
+      ? sql`case when ${devices.origDriveActive} then ${devices.driveBase} else 1 end`
+      : sql`case when ${devices.origDriveActive} then 0 else ${devices.driveBase} end`;
+  } else if (s.firmwareVersion !== undefined) {
+    patch.origDriveCapable = false;
+    patch.origDriveReported = null;
+    patch.origDrivePresent = false;
+    patch.origDriveActive = false;
+    patch.driveBase = sql`case when ${devices.origDriveActive} then 0 else ${devices.driveBase} end`;
   }
   if (s.i2c !== undefined) patch.i2cAddrs = s.i2c;
   else if (s.firmwareVersion !== undefined) patch.i2cAddrs = null;

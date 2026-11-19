@@ -103,6 +103,9 @@ export interface LiveStateRow {
    *  and the setup page's state update without a reload when the board reports. */
   wifiNets: string[] | null; wifiCurrent: number | null; wifiSetupUntil: Date | null;
   wifiSeq: number; wifiAck: number | null; wifiResult: string | null;
+  /** Original drive (rev C, 2026-11-19): Board settings' section and Drive numbers read these, so page inputs. */
+  origDrive: string; origDriveVersion: number; origDriveAppliedVersion: number; origDriveReported: string | null;
+  origDriveCapable: boolean; origDrivePresent: boolean; origDriveActive: boolean;
   /** The computed next-disk verdict for this device, or null (multi-disk plan R3). */
   next: NextInfo | null;
 }
@@ -172,6 +175,8 @@ export function liveFingerprint(
         r.sendVersion, r.sendRx ?? '',
         r.wifiNets === null ? '' : r.wifiNets.join(','), r.wifiCurrent ?? '', r.wifiSetupUntil?.toISOString() ?? '',
         r.wifiSeq, r.wifiAck ?? '', r.wifiResult ?? '',
+        r.origDrive, r.origDriveVersion, r.origDriveAppliedVersion, r.origDriveReported ?? '',
+        r.origDriveCapable ? '1' : '0', r.origDrivePresent ? '1' : '0', r.origDriveActive ? '1' : '0',
         receiverRunning({ rx: r.sendRx as Rx | null, rxAt: r.sendRxAt?.getTime() ?? null }, false, now) ? 'fresh' : 'stale',
         isOnline(r.lastSeenAt, now) ? '1' : '0',
         // Every offline card, not just 'stale' -- see the doc comment above.
@@ -260,6 +265,10 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       sendVersion: devices.sendVersion, sendRx: devices.sendRx, sendRxAt: devices.sendRxAt,
       wifiNets: devices.wifiNets, wifiCurrent: devices.wifiCurrent, wifiSetupUntil: devices.wifiSetupUntil,
       wifiSeq: devices.wifiSeq, wifiAck: devices.wifiAck, wifiResult: devices.wifiResult,
+      origDrive: devices.origDrive, origDriveVersion: devices.origDriveVersion,
+      origDriveAppliedVersion: devices.origDriveAppliedVersion, origDriveReported: devices.origDriveReported,
+      origDriveCapable: devices.origDriveCapable, origDrivePresent: devices.origDrivePresent,
+      origDriveActive: devices.origDriveActive,
     })
     .from(devices)
     // Org-scoped on both sides of both joins: without `disks.orgId`, a

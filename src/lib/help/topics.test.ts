@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HELP_TOPICS, HELP_ORDER, HELP_GROUPS, helpGroupOf, type HelpTopicId } from './topics';
 
-const IDS: HelpTopicId[] = ['library', 'boards', 'wifi-networks', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'from-amiga', 'cover-image', 'about', 'preferences', 'sharing', 'remote', 'files', 'stash-net', 'amiga-disks'];
+const IDS: HelpTopicId[] = ['library', 'boards', 'wifi-networks', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'orig-drive', 'network', 'send', 'from-amiga', 'cover-image', 'about', 'preferences', 'sharing', 'remote', 'files', 'stash-net', 'amiga-disks'];
 // Internal words a reader of the help should never meet (spec §5).
 const BANNED = /\b(PSRAM|TBYB|poll|sha256|cursor|WPROT)\b/i;
 
@@ -354,7 +354,7 @@ describe('help groups (C5 spec §3.1, Ruling 14)', () => {
     expect(HELP_GROUPS.map((g) => [g.id, g.name])).toEqual([
       ['drives', 'Drives'], ['disks', 'Library and disks'], ['network', 'Amiga networking'], ['server', 'This server'],
     ]);
-    expect(HELP_GROUPS[0].topics).toEqual(['boards', 'wifi-networks', 'display', 'second-drive', 'next-disk', 'nfc', 'write-protect']);
+    expect(HELP_GROUPS[0].topics).toEqual(['boards', 'wifi-networks', 'display', 'second-drive', 'orig-drive', 'next-disk', 'nfc', 'write-protect']);
     expect(HELP_GROUPS[1].topics).toEqual(['library', 'files', 'write-back', 'disk-sets', 'hd-hfe', 'cover-image']);
     expect(HELP_GROUPS[2].topics).toEqual(['network', 'stash-net', 'amiga-disks', 'send', 'from-amiga']);
     expect(HELP_GROUPS[3].topics).toEqual(['preferences', 'sharing', 'remote', 'own-server', 'about']);
@@ -362,7 +362,7 @@ describe('help groups (C5 spec §3.1, Ruling 14)', () => {
   it('put every topic in exactly one group, and HELP_ORDER is the groups flattened', () => {
     const all = HELP_GROUPS.flatMap((g) => g.topics);
     expect([...all].sort()).toEqual([...IDS].sort());
-    expect(new Set(all).size).toBe(23);
+    expect(new Set(all).size).toBe(24);
     expect(HELP_ORDER).toEqual(all);
     expect(helpGroupOf('library').name).toBe('Library and disks');
     expect(helpGroupOf('write-protect').id).toBe('drives');

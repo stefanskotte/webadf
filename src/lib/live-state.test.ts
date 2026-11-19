@@ -27,6 +27,8 @@ const base: LiveStateRow = {
   secondDriveCapable: true, sel1Wired: true, df1Seen: false,
   serverCustom: null, serverTls: null,
   wifiNets: null, wifiCurrent: null, wifiSetupUntil: null, wifiSeq: 0, wifiAck: null, wifiResult: null,
+  origDrive: 'auto', origDriveVersion: 0, origDriveAppliedVersion: 0, origDriveReported: null,
+  origDriveCapable: false, origDrivePresent: false, origDriveActive: false,
 };
 const other: LiveStateRow = { ...base, id: 'dev-b', name: 'Second' };
 const fp = (rows: LiveStateRow[], now = NOW) => liveFingerprint(rows, now, 0);

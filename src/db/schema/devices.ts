@@ -206,6 +206,22 @@ export const devices = pgTable('devices', {
    * where it is plugged in; this only names the drives. Server-side only: nothing is sent to the board.
    */
   driveBase: integer('drive_base').notNull().default(0),
+
+  // --- Original drive (rev C, 2026-11-19, migration 0061; src/lib/orig-drive.ts) ---
+  /** 'auto' | 'off' -- what the user chose. Auto: a drive on EXT DRV at power-on becomes DF0, the board DF1 + DF2. */
+  origDrive: text('orig_drive').notNull().default('auto'),
+  /** Cursor, bumped on every change; the board echoes ?origAck=. */
+  origDriveVersion: integer('orig_drive_version').notNull().default(0),
+  /** The board's origAck as last reported in a status (origDrive.version); 0 = never. */
+  origDriveAppliedVersion: integer('orig_drive_applied_version').notNull().default(0),
+  /** 'auto' | 'off' as the board stores it; null = never reported. */
+  origDriveReported: text('orig_drive_reported'),
+  /** The board has the PCA9536 expander (its status carries origDrive). False = never said, or a build without it. */
+  origDriveCapable: boolean('orig_drive_capable').notNull().default(false),
+  /** A drive was plugged into EXT DRV at this power-on. */
+  origDrivePresent: boolean('orig_drive_present').notNull().default(false),
+  /** The original drive is DF0 now (auto AND present at power-on). Its flips move drive_base (recordStatus). */
+  origDriveActive: boolean('orig_drive_active').notNull().default(false),
   /** The board's id for its current boot (?boot= on a poll or tap, fw 1.18.1+); null = never heard. */
   bootId: text('boot_id'),
   /** The boot before it: a late request carrying it is ignored, never taken for a new boot. Null = none yet. */

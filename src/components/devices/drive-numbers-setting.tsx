@@ -3,6 +3,7 @@ import type { KeyboardEvent } from 'react';
 import type { DeviceListItem } from '@/lib/queries';
 import { DRIVE_BASE_HINT, DRIVE_BASE_OPTIONS, type DriveBase } from '@/lib/drive-numbers';
 import { HelpTip } from '@/components/help/help-tip';
+import { ORIG_DRIVE_ACTIVE_REASON } from '@/lib/orig-drive';
 
 /** Drive numbers (src/lib/drive-numbers.ts): DF0 + DF1 | DF1 + DF2 | DF2 + DF3 | DF3 only. Names the drives everywhere;
  *  the board is sent nothing. A controlled section of the Board settings modal, as Disk at startup is: it edits a draft
@@ -14,6 +15,9 @@ export function DriveNumbersSetting({ device, value, onChange, error, busy = fal
   busy?: boolean;
 }) {
   const id = device.id;
+  // The original drive is DF0 (src/lib/orig-drive.ts): the board's status set DF1 + DF2 and will set it back, so the
+  // numbers are not the user's to change until it stops (the save is refused too, drive-numbers-store.ts).
+  const locked = device.origDriveActive;
   // Saving DF3 switches the second drive Off (drive-numbers-store.ts): say so before Save, not after.
   const dropsSecondDrive = value === 3 && device.driveBase !== 3 && device.secondDrive !== 'off';
 
@@ -21,7 +25,7 @@ export function DriveNumbersSetting({ device, value, onChange, error, busy = fal
     const dir = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
     if (!dir) return;
     e.preventDefault();
-    if (busy) return;
+    if (busy || locked) return;
     const at = DRIVE_BASE_OPTIONS.findIndex((r) => r.value === value);
     const target = DRIVE_BASE_OPTIONS[(at + dir + DRIVE_BASE_OPTIONS.length) % DRIVE_BASE_OPTIONS.length].value;
     e.currentTarget.querySelector<HTMLElement>(`[data-testid="drive-base-${id}-${target}"]`)?.focus();
@@ -38,10 +42,10 @@ export function DriveNumbersSetting({ device, value, onChange, error, busy = fal
            onKeyDown={onKeyDown} className="seg seg--sm flex-wrap self-start">
         {DRIVE_BASE_OPTIONS.map((r) => (
           <button key={r.value} type="button" role="radio" aria-checked={value === r.value}
-                  tabIndex={r.value === value ? 0 : -1} aria-disabled={busy}
+                  tabIndex={r.value === value ? 0 : -1} aria-disabled={busy} disabled={locked}
                   data-testid={`drive-base-${id}-${r.value}`}
-                  onClick={() => { if (!busy) onChange(r.value); }}
-                  className="seg-item whitespace-nowrap">
+                  onClick={() => { if (!busy && !locked) onChange(r.value); }}
+                  className="seg-item whitespace-nowrap disabled:opacity-50">
             {r.label}
           </button>
         ))}
@@ -49,6 +53,11 @@ export function DriveNumbersSetting({ device, value, onChange, error, busy = fal
       <span className="text-[12px]" style={{ color: 'var(--muted-2)' }} data-testid={`drive-base-hint-${id}`}>
         {DRIVE_BASE_HINT[value]}
       </span>
+      {locked && (
+        <span className="text-[12px]" style={{ color: 'var(--muted)' }} data-testid={`drive-base-locked-${id}`}>
+          {`${ORIG_DRIVE_ACTIVE_REASON}.`}
+        </span>
+      )}
       {dropsSecondDrive && (
         <span className="text-[12px]" style={{ color: 'var(--amber-text)' }} data-testid={`drive-base-drops-second-${id}`}>
           Saving also switches the board&apos;s second drive Off.
