@@ -18266,7 +18266,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "1.1A"
+		(property "Value" "1.5A"
 			(at 346.71 176.53 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -18299,7 +18299,7 @@
 				)
 			)
 		)
-		(property "Description" "Resettable fuse 1.1 A hold, 2.2 A trip, 16 V, 1206 (RUILON SMD1206P110TF/16)"
+		(property "Description" "Resettable fuse 1.5 A hold, 3.0 A trip, 16 V, 1206 (LUTE 1206L150/16NR)"
 			(at 342.9 175.26 0)
 			(hide yes)
 			(show_name no)
@@ -18310,7 +18310,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C46970781"
+		(property "LCSC" "C22379952"
 			(at 342.9 175.26 0)
 			(hide yes)
 			(show_name no)
