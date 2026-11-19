@@ -30,11 +30,13 @@ uint32_t bus_gate_status_mask(void);
 // it unchanged.
 uint32_t bus_gate_apply(uint32_t shadow, unsigned pin, bool assert);
 
+// Bits of the board's UNITS (0 = its main drive, 1 = its second), named by what they are on
+// every board but a rev C with the original drive as DF0, where they are DF1 and DF2 (orig_drive.h).
 #define BUS_SEL_DF0 0x1u
 #define BUS_SEL_DF1 0x2u
 // One step_dir word: GP(SEL0)..GP(SEL0+3) (SEL0 SEL1 MTR DIR) as sampled when STEP fell.
 typedef struct {
-    bool    selected;   // SEL0 asserted (low): the step is DF0's
+    bool    selected;   // unit 0's select asserted (low): the step is the main drive's
     bool    outwards;   // DIR high: towards track 0
     uint8_t sel_mask;   // BUS_SEL_DF0 | BUS_SEL_DF1: every select that was low
 } bus_step_t;

@@ -4,7 +4,9 @@
 // Record layout, one program page:
 //   magic(4) . version(4) . mode(1) . crc32(4)
 // The CRC covers version .. mode (not the magic, which only says "a record is
-// here at all").
+// here at all"). Then, from 2026-11-19, the original drive's block, the same
+// shape: magic 'ORG1' . version(4) . mode(1) . crc32(4). Older firmware reads
+// the first block only; the page is otherwise 0xFF.
 #include "drive_store.h"
 #include "psram_image.h"
 #include "swap_gate.h"
@@ -13,6 +15,9 @@
 #define DRIVE_MAGIC 0x44525631u   // 'DRV1'
 #define DRIVE_PAYLOAD_LEN 5       // version(4) + mode(1)
 #define DRIVE_RECORD_LEN (4 + DRIVE_PAYLOAD_LEN + 4)
+#define ORIG_MAGIC 0x4F524731u    // 'ORG1'
+#define ORIG_OFFSET DRIVE_RECORD_LEN
+#define ORIG_RECORD_LEN (4 + DRIVE_PAYLOAD_LEN + 4)
 
 #if WF_DF1_DEFAULT
 // Image marker: tells scripts/firmware-release.ts (src/lib/firmware-manifest.ts)
@@ -43,21 +48,34 @@ static uint32_t crc32_bitwise(const uint8_t *data, size_t len) {
 }
 
 static bool page_load(const uint8_t *page, size_t page_len, drive_record_t *out) {
+    memset(out, 0, sizeof *out);                    // orig: Auto (0), version 0 unless its block says otherwise
+    if (page_len >= ORIG_OFFSET + ORIG_RECORD_LEN) {
+        const uint8_t *o = page + ORIG_OFFSET;
+        if (read_u32(o) == ORIG_MAGIC &&
+            crc32_bitwise(o + 4, DRIVE_PAYLOAD_LEN) == read_u32(o + 4 + DRIVE_PAYLOAD_LEN)) {
+            out->orig_version = read_u32(o + 4);
+            out->orig_mode = o[8];
+        }
+    }
     if (page_len < DRIVE_RECORD_LEN || read_u32(page) != DRIVE_MAGIC) return false;
     if (crc32_bitwise(page + 4, DRIVE_PAYLOAD_LEN) != read_u32(page + 4 + DRIVE_PAYLOAD_LEN)) return false;
-    memset(out, 0, sizeof *out);
     out->version = read_u32(page + 4);
     out->mode = page[8];
     return true;
 }
 
 static bool page_build(uint8_t *out, size_t page_len, const drive_record_t *r) {
-    if (page_len < DRIVE_RECORD_LEN) return false;
+    if (page_len < ORIG_OFFSET + ORIG_RECORD_LEN) return false;
     memset(out, 0xFF, page_len);
     write_u32(out, DRIVE_MAGIC);
     write_u32(out + 4, r->version);
     out[8] = r->mode;
     write_u32(out + 4 + DRIVE_PAYLOAD_LEN, crc32_bitwise(out + 4, DRIVE_PAYLOAD_LEN));
+    uint8_t *o = out + ORIG_OFFSET;
+    write_u32(o, ORIG_MAGIC);
+    write_u32(o + 4, r->orig_version);
+    o[8] = r->orig_mode;
+    write_u32(o + 4 + DRIVE_PAYLOAD_LEN, crc32_bitwise(o + 4, DRIVE_PAYLOAD_LEN));
     return true;
 }
 
@@ -154,7 +172,7 @@ void drive_store_erase(void) {
 
 #else   // WFMF_HOST_TEST
 
-static uint8_t g_page[DRIVE_RECORD_LEN];
+static uint8_t g_page[ORIG_OFFSET + ORIG_RECORD_LEN];
 static bool    g_page_init;
 
 static void ensure_init(void) {
@@ -180,6 +198,11 @@ void drive_store_erase(void) {
 void drive_store_corrupt_for_test(void) {
     ensure_init();
     g_page[8] ^= 0xFF;   // the mode byte; magic untouched
+}
+
+void drive_store_drop_orig_for_test(void) {
+    ensure_init();
+    memset(g_page + ORIG_OFFSET, 0xFF, ORIG_RECORD_LEN);   // a page written by firmware before the block
 }
 
 #endif

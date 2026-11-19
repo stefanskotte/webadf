@@ -42,6 +42,7 @@
 #include "wf_log.h"
 #include "activity_led.h"
 #include "i2c_probe.h"
+#include "orig_drive.h"     // rev C: the original drive on EXT DRV (2026-11-19)
 #include "boot_trail.h"
 #include "core1_wd.h"          // core1 supervision: core0 judges core1's heartbeat
 #include "hardware/watchdog.h"
@@ -526,6 +527,20 @@ static volatile uint32_t g_drive_boot_ack;
 static volatile uint8_t  g_df1_req_mode;
 static volatile uint32_t g_drive_req_version;   // what the store record will say
 static volatile uint32_t g_df1_req_seq, g_df1_applied_seq;
+
+// Rev C's original drive (orig_drive.h, 2026-11-19). Decided once at power-on, before the bus is driven; never
+// changed live (operator ruling 2026-11-19). g_orig_state: this power-on's facts (U8 answered, a drive on J5, the
+// drive is DF0). g_orig_boot: the stored setting and its version at boot -- what core1 reports and acks first.
+// A new setting from the web app is only STORED (core1 -> core0 like DF1's: mode and version, then the seq) and
+// acted on at the next power-on. Written before core1 launches, except the handoff.
+#if DF1_CAPABLE   // the swap needs the drive-ID responder: the main drive answers as DF1
+static orig_state_t      g_orig_state;
+static volatile uint8_t  g_orig_boot_mode;      // orig_mode_t
+static volatile uint32_t g_orig_boot_version;
+static volatile uint8_t  g_orig_req_mode;
+static volatile uint32_t g_orig_req_version;
+static volatile uint32_t g_orig_req_seq, g_orig_applied_seq;
+#endif
 
 // Per drive (bus_out.h WF_DRIVES; 0 = DF0, 1 = DF1). n_drives is how many the
 // board answers as -- set once at boot on core0, before the bus IRQs are
@@ -1432,12 +1447,13 @@ static bool display_core1_fetch(device_client_t *c) {
 }
 
 static void __isr gpio_isr(uint gpio, uint32_t events) {
-    if (gpio == PIN_SEL1 && (events & GPIO_IRQ_EDGE_FALL)) {
+    // The second unit's line: SEL1, or GP2 (SEL2 through U7, wired by J9) with rev C's original drive as DF0.
+    if (gpio == PIN_SEL_OF(1) && (events & GPIO_IRQ_EDGE_FALL)) {
         g_sel1_wired = true;
-        gpio_set_irq_enabled(PIN_SEL1, GPIO_IRQ_EDGE_FALL, false);   // one edge is the reading
+        gpio_set_irq_enabled(PIN_SEL_OF(1), GPIO_IRQ_EDGE_FALL, false);   // one edge is the reading
         return;
     }
-    if (gpio == PIN_SEL0 && (events & GPIO_IRQ_EDGE_FALL)) {
+    if (gpio == PIN_SEL_OF(0) && (events & GPIO_IRQ_EDGE_FALL)) {
         if (!WF_BUS_SNIFF) wf_trace(WF_EV_SEL, 1, 0);
     } else if (gpio == PIN_WGATE) {
         /*
@@ -1468,8 +1484,8 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
         // Loopback (TEST build): DF1 writing cylinder 77, side 0, is a PaulaNET batch -- a raw
         // capture for pnet_take_capture(), never a disk write. Checked before the SEL0 rule
         // below, which would count it as another drive's write and drop it.
-        if (writing && gpio_get(PIN_SEL0) &&
-            pnet_capture_ours(g_pnet_df1_mounted, false, !gpio_get(PIN_SEL1), cur_cyl[1], cur_side)) {
+        if (writing && gpio_get(PIN_SEL_OF(0)) &&
+            pnet_capture_ours(g_pnet_df1_mounted, false, !gpio_get(PIN_SEL_OF(1)), cur_cyl[1], cur_side)) {
             pnet_write_ours = true;              // set either way: its release is ours too
             bool armed_now = false;
             if (flux_capture_prearm_claim()) {
@@ -1503,20 +1519,23 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
         // arms below exactly as it would without one (arm() would cancel it too), and another
         // drive's write would only put its flux in the ring.
         if (writing && flux_capture_prearm_cancel()) {
-            if (!gpio_get(PIN_SEL0)) g_pnet_pre_df0++; else g_pnet_pre_other++;
+            if (!gpio_get(PIN_SEL_OF(0))) g_pnet_pre_df0++; else g_pnet_pre_other++;
         }
         // A DF0 write about to arm over a batch the loop has not taken yet: count it, as lost.
-        if (writing && !gpio_get(PIN_SEL0) && pnet_raw_pending) {
+        if (writing && !gpio_get(PIN_SEL_OF(0)) && pnet_raw_pending) {
             pnet_raw_pending = false;
             g_pnet_lost++;
         }
 #endif
         /*
-         * Only DF0's writes. SEL0 is read here, at interrupt time, and that is
-         * enough -- unlike STEP's DIR -- because the Amiga holds the drive
-         * selected for the whole ~200 ms write, not for microseconds.
+         * Only DF0's writes (the main drive's: on SEL1 when rev C's original
+         * drive is DF0 -- whose own writes then read both board lines high and
+         * land here as another drive's). The select is read here, at interrupt
+         * time, and that is enough -- unlike STEP's DIR -- because the Amiga
+         * holds the drive selected for the whole ~200 ms write, not for
+         * microseconds.
          */
-        if (writing && gpio_get(PIN_SEL0)) {
+        if (writing && gpio_get(PIN_SEL_OF(0))) {
             writes_other_drive++;
             return;
         }
@@ -2798,8 +2817,12 @@ static void core1_main(void) {
         {
             static bool drive_seeded = false;
             c.drive_ack = drive_seeded ? 0u : g_drive_boot_ack;
+            // Rev C's original drive: the same cursor rule. Only a board whose U8 answered reports or polls it.
+            c.orig_ack = drive_seeded ? 0u : g_orig_boot_version;
             drive_seeded = true;
         }
+        if (g_orig_state.expander)
+            dc_set_orig(&c, g_orig_state.present, g_orig_state.active, orig_mode_from_byte(g_orig_boot_mode));
 #endif
         // HANDOFF 4g rule 1: a token chosen per boot, so a rebooted board's seq 1
         // is never mistaken for the previous boot's seq 1.
@@ -3270,6 +3293,30 @@ static void core1_main(void) {
                     }
                 }
             }
+            // Rev C's original drive (orig_drive.h): a new setting, handed to core0 to STORE -- it acts at the next
+            // power-on. Acked once core0 has taken it, by DF1's rule above: not taken within 50 ms, not acked.
+            {
+                uint32_t seq;
+                orig_mode_t mode;
+                if (dc_orig_take(&c, &seq, &mode)) {
+                    g_orig_req_version = seq;
+                    g_orig_req_mode = (uint8_t)mode;
+                    __dmb();
+                    const uint32_t want = g_orig_req_seq + 1u;
+                    g_orig_req_seq = want;
+                    for (int i = 0; i < 50 && g_orig_applied_seq != want; i++) sleep_ms(1);
+                    if (g_orig_applied_seq == want) {
+                        dc_orig_handled(&c, seq, mode);
+                        g_orig_boot_mode = (uint8_t)mode;   // a re-entry (re-pair) reports the stored setting
+                        wf_logf(WF_INFO, "orig: setting %lu -> %s (at the next power-on)", (unsigned long)seq,
+                                orig_mode_wire(mode));
+                    } else {
+                        wf_logf(WF_WARN, "orig: setting %lu not taken by core0 within 50 ms -- retried on the next poll",
+                                (unsigned long)seq);
+                        sleep_ms(1000);
+                    }
+                }
+            }
 #endif
 
             // Wi-Fi networks from the web app (2026-11-15): the setup page opened on request, and the instructions.
@@ -3577,7 +3624,7 @@ static void core1_main(void) {
             // A preload report owed from an earlier pass (see the preload
             // below) rides here too -- but never ahead of a waiting tap.
             if (!report_retry && s != DC_HALTED && (disk_changed || version_changed || fw_report_owed ||
-                                    dc_sel1_owed(&c) || dc_drive_report_owed(&c) || dc_net_owed(&c) || nfc_report_owed || display_report_owed ||
+                                    dc_sel1_owed(&c) || dc_drive_report_owed(&c) || dc_orig_report_owed(&c) || dc_net_owed(&c) || nfc_report_owed || display_report_owed ||
                                     dc_wifi_owed(&c) ||
                                     (preload_report_owed && !nfc_event_pending(NULL)) ||
                                     (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
@@ -4326,7 +4373,7 @@ static void pnet_serve_df1(int32_t tok, int *loaded) {
     // while the Amiga really reads DF1: selected (SEL1 low) AND its motor on. The stream never stops
     // on its own, so a head parked here would otherwise hold the OTA forever; select alone is not
     // enough either (trackdisk polls a disk change selected, motor off). Review fix round 2.
-    if ((act == PNET_DF1_ECHO || act == PNET_DF1_STATUS) && want == *loaded && g_pnet_echo_live && !gpio_get(PIN_SEL1) &&
+    if ((act == PNET_DF1_ECHO || act == PNET_DF1_STATUS) && want == *loaded && g_pnet_echo_live && !gpio_get(PIN_SEL_OF(1)) &&
         dskchg_motor_on_d(1))
         g_pnet_last_ms = clock_ms() | 1u;
 #endif
@@ -4742,6 +4789,10 @@ int main(void) {
         const bool drv_loaded = drive_store_load(&drv_rec);
         g_df1_mode = drive_boot_mode(drv_loaded, &drv_rec);
         g_drive_boot_ack = drv_loaded ? drv_rec.version : 0;   // core1 seeds driveAck (Phase 3)
+#if DF1_CAPABLE
+        g_orig_boot_mode = (uint8_t)orig_mode_from_byte(drv_rec.orig_mode);   // Auto, 0 when the block is absent
+        g_orig_boot_version = drv_rec.orig_version;
+#endif
 #if !DF1_CAPABLE
         if (g_df1_mode != DF1_MODE_OFF)
             wf_logf(WF_WARN, "df1: stored ON, but this build has no drive-ID responder -- off");
@@ -4804,6 +4855,38 @@ int main(void) {
         wf_logf(WF_ERR, "pnet: the echo store is not backed by PSRAM -- the loopback will fail");
     pnet_set_mode(g_df1_mode);    // Phase 3: the gate, before the bus IRQs are enabled
     wf_logf(WF_INFO, "pnet: network path built in; %s", g_pnet_on ? "on (DF1 is Network)" : "off");
+#endif
+#if DF1_CAPABLE
+    // Rev C's original drive (orig_drive.h): read U8 now -- before bus_out_init and every state machine below is
+    // given its select pin, and so before Kickstart's drive-ID read. A board without U8 (rev A/B), a silent U8 or a
+    // held bus is "no drive": DRV_EN_N is left alone and the board is DF0 + DF1 as ever. With U8 answering, its
+    // DRV_EN_N is always written, active or not: U8 keeps its registers through an RP2350 reset.
+    {
+        const orig_mode_t mode = orig_mode_from_byte(g_orig_boot_mode);
+        uint8_t in = 0xFF;
+        const bool ok = i2c_early_init() && i2c_early_reg_read(ORIG_PCA9536_ADDR, ORIG_REG_INPUT, &in);
+        orig_state_t st = orig_drive_decide(mode, ok, in);
+        if (st.expander) {
+            bool set = false;
+            if (st.active) {
+                set = i2c_early_reg_write(ORIG_PCA9536_ADDR, ORIG_REG_OUTPUT, orig_drive_output_reg(true)) &&
+                      i2c_early_reg_write(ORIG_PCA9536_ADDR, ORIG_REG_CONFIG, orig_drive_config_reg(true));
+                if (!set) st.active = false;    // not enabled after all: back to inputs below, board DF0 + DF1
+            }
+            if (!st.active) {
+                set = i2c_early_reg_write(ORIG_PCA9536_ADDR, ORIG_REG_CONFIG, orig_drive_config_reg(false)) &&
+                      i2c_early_reg_write(ORIG_PCA9536_ADDR, ORIG_REG_OUTPUT, orig_drive_output_reg(false));
+            }
+            if (!set) wf_logf(WF_WARN, "orig: U8 did not take its registers -- the original drive stays off");
+        }
+        g_orig_state = st;
+        g_orig_swapped = st.active;       // from here on, PIN_SEL_OF: unit 0 on SEL1, unit 1 on GP2 (SEL2)
+        if (st.expander)
+            wf_logf(WF_INFO, "orig: setting %s (version %lu); %s", orig_mode_wire(mode), (unsigned long)g_orig_boot_version,
+                    st.active ? "a drive on EXT DRV is DF0 -- the board is DF1, and DF2 on SEL2 (J9)"
+                    : st.present ? "a drive on EXT DRV, Off: never selected -- the board is DF0 + DF1"
+                                 : "no drive on EXT DRV -- the board is DF0 + DF1");
+    }
 #endif
     // One word per drive; PIN_* are board reads, so filled here, not static.
     uint32_t boot_lines[WF_DRIVES];
@@ -4953,7 +5036,7 @@ int main(void) {
     // PIO
     uint off_out = pio_add_program(pio, &flux_out_program);
     g_stream[0].sm = pio_claim_unused_sm(pio, true);
-    flux_out_program_init(pio, g_stream[0].sm, off_out, PIN_RDATA, PIN_SEL0);
+    flux_out_program_init(pio, g_stream[0].sm, off_out, PIN_RDATA, PIN_SEL_OF(0));
     pio_sm_set_enabled(pio, g_stream[0].sm, true);
 #if DF1_CAPABLE
     // DF1's flux, the same program copy, gated by SEL1. Both machines share
@@ -4963,7 +5046,7 @@ int main(void) {
     // DF1 on, starts its stream) and stalls at `out` with no side-set -- it
     // never writes RDATA. (DF1's sel_mtr, below, only reads pins.)
     g_stream[1].sm = pio_claim_unused_sm(pio, true);
-    flux_out_program_init(pio, g_stream[1].sm, off_out, PIN_RDATA, PIN_SEL1);
+    flux_out_program_init(pio, g_stream[1].sm, off_out, PIN_RDATA, PIN_SEL_OF(1));
     pio_sm_set_enabled(pio, g_stream[1].sm, true);
 #endif
 
@@ -5005,7 +5088,7 @@ int main(void) {
     uint off_mtr = pio_add_program(bus_pio, &sel_mtr_program);
     for (unsigned d = 0; d < n_drives; d++) {
         const uint sm = pio_claim_unused_sm(bus_pio, true);
-        sel_mtr_program_init(bus_pio, sm, off_mtr, d == 0 ? PIN_SEL0 : PIN_SEL1, PIN_MTR);
+        sel_mtr_program_init(bus_pio, sm, off_mtr, PIN_SEL_OF(d), PIN_MTR);
         pio_set_irq0_source_enabled(bus_pio, pio_get_rx_fifo_not_empty_interrupt_source(sm), true);
         mtr_sm[d] = (int)sm;
     }
@@ -5167,6 +5250,11 @@ int main(void) {
     // drives empty or the Amiga idle (the store block below); a failed save
     // retries in 5 s.
     static drive_record_t drive_store_rec;
+    // Seeded with what boot runs, so a save of either setting keeps the other (orig_drive.h's block shares the page).
+    drive_store_rec.version = g_drive_boot_ack;
+    drive_store_rec.mode = (uint8_t)g_df1_mode;
+    drive_store_rec.orig_version = g_orig_boot_version;
+    drive_store_rec.orig_mode = g_orig_boot_mode;
     bool     drive_store_pending = false;
     uint32_t drive_save_retry_at = 0;
     uint32_t key_save_retry_at = 0;   // the board key's store (fw 1.19.0)
@@ -5314,7 +5402,7 @@ int main(void) {
             const uint8_t serving = df1_serving_mask(n_drives, bus_out_drive_enabled(1));
             bool busy = false;
             if (!g_bus_unpowered) {
-                busy = led_drive_busy(!gpio_get(PIN_SEL0), dskchg_motor_on_d(0), false);
+                busy = led_drive_busy(!gpio_get(PIN_SEL_OF(0)), dskchg_motor_on_d(0), false);
 #if DF1_CAPABLE
 #if WF_PNET_LOOP
                 const bool df1_pnet = led_pnet_track(g_pnet_on, cur_cyl[1]);
@@ -5322,7 +5410,7 @@ int main(void) {
                 const bool df1_pnet = false;
 #endif
                 if (serving & BUS_SEL_DF1)
-                    busy = busy || led_drive_busy(!gpio_get(PIN_SEL1), dskchg_motor_on_d(1), df1_pnet);
+                    busy = busy || led_drive_busy(!gpio_get(PIN_SEL_OF(1)), dskchg_motor_on_d(1), df1_pnet);
 #endif
             }
             (void)serving;
@@ -5426,6 +5514,19 @@ int main(void) {
         // seq, then the values it names; publish applied = that seq last. A
         // newer handoff landing meanwhile has a newer seq and is applied next
         // pass, so a torn read is never the one acknowledged.
+        // Rev C's original drive: a new setting is stored for the next power-on, never acted on now.
+        if (g_orig_req_seq != g_orig_applied_seq) {
+            const uint32_t s = g_orig_req_seq;
+            __dmb();
+            drive_store_rec.orig_mode = g_orig_req_mode;
+            drive_store_rec.orig_version = g_orig_req_version;
+            drive_store_pending = true;
+            drive_save_retry_at = clock_ms();
+            __dmb();
+            g_orig_applied_seq = s;
+            wf_logf(WF_INFO, "orig: setting %lu (%s) -- stored for the next power-on", (unsigned long)g_orig_req_version,
+                    orig_mode_wire(orig_mode_from_byte(g_orig_req_mode)));
+        }
         if (g_df1_req_seq != g_df1_applied_seq) {
             const uint32_t s = g_df1_req_seq;
             __dmb();

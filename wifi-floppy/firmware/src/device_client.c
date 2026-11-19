@@ -1193,6 +1193,30 @@ static void dc_take_second_drive(device_client_t *c, char *json) {
     c->drive_owed = true;
 }
 
+// Rev C's original drive (2026-11-19): lifts `origDrive` ({"seq":N,"mode":"auto"|"off"}) out of a 200 poll body and
+// BLANKS it, like secondDrive. Only a board that sent &origAck= reads it. Unknown mode: acked and ignored.
+static void dc_take_orig_drive(device_client_t *c, char *json) {
+    static char obj[96];   // {"seq":4294967295,"mode":"auto"} is 32; static: STACK note
+    if (!c->_orig_capable || !json_object(json, "origDrive", obj, sizeof obj, true)) return;
+    uint32_t seq;
+    if (!json_u32_strict(obj, "seq", &seq)) return;
+    char mode[8] = "";
+    json_str(obj, "mode", mode, sizeof mode);
+    orig_mode_t parsed;
+    if (!orig_mode_from_wire(mode, &parsed)) {
+        if (seq != c->orig_ack)
+            wf_logf(WF_WARN, "orig: setting %lu names an unknown mode \"%s\" -- ignored", (unsigned long)seq, mode);
+        c->orig_ack = seq;
+        c->orig_owed = false;
+        return;
+    }
+    // Nothing new only when the seq is acked AND the stored setting is already that mode (secondDrive's rule I1).
+    if (seq == c->orig_ack && !c->orig_owed && (uint8_t)parsed == c->_orig_mode) return;
+    c->orig_want_seq = seq;
+    c->orig_want_mode = (uint8_t)parsed;
+    c->orig_owed = true;
+}
+
 // DF1 any disk (spec 2026-10-14 §4.2/§5): lifts `df1` ({"v":N,"sha256":"<hex>"|null}) out of a 200 poll body and
 // BLANKS it before any flat lookup -- its sha256 must never be read as desired's, whichever comes first in the
 // body. The server sends it on every body to a board that sends df1Ack, so the record is always the latest word:
@@ -1301,6 +1325,31 @@ bool dc_drive_take(device_client_t *c, uint32_t *seq, df1_mode_t *mode) {
 }
 
 void dc_drive_handled(device_client_t *c, uint32_t seq) { c->drive_ack = seq; }
+
+void dc_set_orig(device_client_t *c, bool present, bool active, orig_mode_t mode) {
+    c->_orig_capable = true;
+    c->_orig_present = present;
+    c->_orig_active = active;
+    c->_orig_mode = (uint8_t)mode;
+}
+
+bool dc_orig_take(device_client_t *c, uint32_t *seq, orig_mode_t *mode) {
+    if (!c->orig_owed) return false;
+    c->orig_owed = false;
+    *seq = c->orig_want_seq;
+    *mode = (orig_mode_t)c->orig_want_mode;
+    return true;
+}
+
+void dc_orig_handled(device_client_t *c, uint32_t seq, orig_mode_t mode) {
+    c->orig_ack = seq;
+    c->_orig_mode = (uint8_t)mode;
+}
+
+bool dc_orig_report_owed(const device_client_t *c) {
+    return c->_orig_capable &&
+           (!c->_orig_sent_valid || c->_orig_sent_mode != c->_orig_mode || c->_orig_sent_ack != c->orig_ack);
+}
 
 bool dc_drive_report_owed(const device_client_t *c) {
     return c->_df1_capable &&
@@ -1858,6 +1907,17 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
                  df1_mode_wire((df1_mode_t)c->_df1_mode), (unsigned long)c->drive_ack);
     else drive_tail[0] = '\0';
 
+    // Rev C's original drive: the stored setting, its ack, and this power-on's facts. 81 bytes at most.
+    static char orig_tail[96];
+    const uint8_t orig_mode_sent = c->_orig_mode;
+    const uint32_t orig_ack_sent = c->orig_ack;
+    if (c->_orig_capable)
+        snprintf(orig_tail, sizeof orig_tail,
+                 ",\"origDrive\":{\"mode\":\"%s\",\"version\":%lu,\"present\":%s,\"active\":%s}",
+                 orig_mode_wire((orig_mode_t)c->_orig_mode), (unsigned long)c->orig_ack,
+                 c->_orig_present ? "true" : "false", c->_orig_active ? "true" : "false");
+    else orig_tail[0] = '\0';
+
     // Phase 3 (plan 2026-10-12 ruling 13): Network mode's readings, only in Network mode. "driver" and "amigaIp"
     // only when known -- an absent key is "not yet", never a zero. "shared":true only in shared-IP mode (the Amiga
     // uses the board's own address, pnet_shared.h). 110 bytes at most (header note); the buffer is larger than that
@@ -1891,13 +1951,13 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
     int body_len = snprintf(body, sizeof body,
         "{\"mountedSha256\":%s,\"mountedDiskId\":%s,\"version\":%lu,"
         "\"error\":%s,\"psramFree\":%d,\"firmwareVersion\":%s,\"rssi\":%d,"
-        "\"trackMaxBytes\":%u%s%s%s%s%s%s%s%s%s%s",
+        "\"trackMaxBytes\":%u%s%s%s%s%s%s%s%s%s%s%s",
         sha_field, disk_field, (unsigned long)c->mounted_version,
         err_field, psram_free, ver_field, rssi, (unsigned)TRACK_MAX_BYTES, fw_tail, nfc_tail,
         display_tail, preload_tail,
         // playsHd: only from a build with the drive-ID responder (HD spec §5.5).
         c->_plays_hd ? ",\"playsHd\":true" : "",
-        sel1_tail, df1_tail, drive_tail, net_tail, server_tail);
+        sel1_tail, df1_tail, drive_tail, orig_tail, net_tail, server_tail);
     if (body_len < 0 || body_len >= (int)sizeof body) return false; // should never happen; give up quietly
     // The boot I2C scan, written straight into the body (no tail buffer of its own: .bss), then the
     // closing brace. "" until the scan is done, or from a client never given one.
@@ -1956,6 +2016,11 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         c->_sel1_sent_valid = true;
         c->_sel1_sent_wired = sel1_wired_sent;
         c->_df1_sent_seen = df1_seen_sent;
+    }
+    if (accepted && c->_orig_capable) {
+        c->_orig_sent_valid = true;
+        c->_orig_sent_mode = orig_mode_sent;
+        c->_orig_sent_ack = orig_ack_sent;
     }
     if (accepted && c->_df1_capable) {
         c->_drive_sent_valid = true;
@@ -2254,13 +2319,17 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     // &reqAck=4294967295&rxv=3&browse=1 (fw 1.22.0, the web app's requests to Transfer) adds 33 to the worst: 199.
     // &write=1 (fw 1.23.0, NET: volumes writes) adds 8: 207, so 216 (ruling N6; the_worst_case_poll_with_req_is_sent_whole).
     // &wifiAck=4294967295 (Wi-Fi networks, 2026-11-15) adds 19: 226, so 240.
+    // &origAck=4294967295 (rev C's original drive, 2026-11-19) adds 19: 245, so 256.
     // test_poll_url_carries_display_ack / _drive_ack / poll_url_carries_df1_ack / send_poll_params_only_once_set send them.
-    static char path[240];
+    static char path[256];
     int plen = snprintf(path, sizeof path, "/api/device/poll?since=%lu&nfcAck=%lu&displayAck=%lu",
              (unsigned long)c->since, (unsigned long)c->nfc_ack, (unsigned long)c->display_ack);
     if (c->_df1_capable && plen > 0 && plen < (int)sizeof path)
         snprintf(path + plen, sizeof path - (size_t)plen, "&driveAck=%lu&df1Ack=%lu&netPick=1",
                  (unsigned long)c->drive_ack, (unsigned long)c->df1_ack);
+    plen = (int)strnlen(path, sizeof path);
+    if (c->_orig_capable && plen > 0 && plen < (int)sizeof path)
+        snprintf(path + plen, sizeof path - (size_t)plen, "&origAck=%lu", (unsigned long)c->orig_ack);
     plen = (int)strnlen(path, sizeof path);
     if (c->_send_on && plen > 0 && plen < (int)sizeof path)
         snprintf(path + plen, sizeof path - (size_t)plen, "&xferAck=%lu&rx=%c",
@@ -2412,6 +2481,7 @@ static dc_state_t dc_step_inner(device_client_t *c) {
         dc_take_req(c, body.buf);
         dc_take_wifi(c, body.buf);           // Wi-Fi networks: lifted and blanked first, like req            // NET: volumes: lifted and blanked first, like xfer
         dc_take_second_drive(c, body.buf);   // lifted and BLANKED first: its keys must never shadow ours
+        dc_take_orig_drive(c, body.buf);     // likewise
         dc_take_df1(c, body.buf);            // lifted and BLANKED too: its sha256 must never be read as desired's
         dc_take_fw_fields(c, body.buf);
         dc_take_nfc_write(c, body.buf);

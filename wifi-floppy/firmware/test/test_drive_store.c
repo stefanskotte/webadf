@@ -13,7 +13,7 @@ static void nothing_stored_boots_with_the_compiled_default(void) {
 
 static void a_stored_mode_round_trips_and_wins_over_the_default(void) {
     drive_store_erase();
-    drive_record_t a = { 7, DF1_MODE_NEXT }, b;
+    drive_record_t a = { 7, DF1_MODE_NEXT, 0, 0 }, b;
     CHECK(drive_store_save(&a), "saved");
     CHECK(drive_store_load(&b), "loaded");
     CHECK_EQ_INT(b.version, 7);
@@ -21,13 +21,13 @@ static void a_stored_mode_round_trips_and_wins_over_the_default(void) {
 }
 
 static void an_out_of_range_mode_boots_off(void) {
-    drive_record_t r = { 3, 9 };
+    drive_record_t r = { 3, 9, 0, 0 };
     CHECK_EQ_INT(drive_boot_mode(true, &r), DF1_MODE_OFF);   // never guess "on"
 }
 
 static void a_corrupt_record_does_not_load(void) {
     drive_store_erase();
-    drive_record_t a = { 5, DF1_MODE_NEXT }, b;
+    drive_record_t a = { 5, DF1_MODE_NEXT, 0, 0 }, b;
     drive_store_save(&a);
     drive_store_corrupt_for_test();
     CHECK(!drive_store_load(&b), "a bit flip fails the CRC");
@@ -69,7 +69,7 @@ static void writes_while_idle_with_a_disk_mounted(void) {
 static void the_save_itself_does_not_refuse_a_mounted_disk(void) {
     drive_store_erase();
     psram_publish_slot(0);
-    drive_record_t a = { 9, DF1_MODE_OFF }, b;
+    drive_record_t a = { 9, DF1_MODE_OFF, 0, 0 }, b;
     CHECK(drive_store_save(&a), "saved with DF0 mounted (the caller decides when)");
     CHECK(drive_store_load(&b), "loaded");
     CHECK_EQ_INT(b.version, 9);
@@ -79,7 +79,7 @@ static void the_save_itself_does_not_refuse_a_mounted_disk(void) {
 
 static void network_mode_round_trips_and_boots(void) {
     drive_store_erase();
-    drive_record_t a = { 11, DF1_MODE_NET }, b;
+    drive_record_t a = { 11, DF1_MODE_NET, 0, 0 }, b;
     CHECK(drive_store_save(&a), "saved");
     CHECK(drive_store_load(&b), "loaded");
     CHECK_EQ_INT(drive_boot_mode(true, &b), DF1_MODE_NET);
@@ -102,6 +102,43 @@ static void the_wire_names_and_the_parser_agree(void) {
     CHECK(strcmp(df1_mode_name(DF1_MODE_NET), "network (PaulaNET)") == 0, "log name");
 }
 
+// Rev C's original drive (orig_drive.h): its own block on the same page.
+static void the_original_drive_setting_round_trips_beside_df1(void) {
+    drive_store_erase();
+    drive_record_t a = { 7, DF1_MODE_NET, 12, 1 }, b;
+    CHECK(drive_store_save(&a), "saved");
+    CHECK(drive_store_load(&b), "loaded");
+    CHECK_EQ_INT(b.version, 7); CHECK_EQ_INT(b.mode, DF1_MODE_NET);
+    CHECK_EQ_INT(b.orig_version, 12); CHECK_EQ_INT(b.orig_mode, 1);
+}
+
+static void a_page_from_older_firmware_is_auto_version_0(void) {
+    drive_store_erase();
+    drive_record_t a = { 4, DF1_MODE_NEXT, 9, 1 }, b;
+    drive_store_save(&a);
+    drive_store_drop_orig_for_test();
+    CHECK(drive_store_load(&b), "the DF1 block still loads");
+    CHECK_EQ_INT(b.mode, DF1_MODE_NEXT);
+    CHECK_EQ_INT(b.orig_version, 0); CHECK_EQ_INT(b.orig_mode, 0);   // Auto
+}
+
+static void a_corrupt_df1_block_keeps_the_original_drive_setting(void) {
+    drive_store_erase();
+    drive_record_t a = { 5, DF1_MODE_NEXT, 3, 1 }, b;
+    drive_store_save(&a);
+    drive_store_corrupt_for_test();
+    CHECK(!drive_store_load(&b), "DF1's block fails its CRC");
+    CHECK_EQ_INT(b.orig_version, 3); CHECK_EQ_INT(b.orig_mode, 1);
+}
+
+static void erased_is_auto_version_0(void) {
+    drive_store_erase();
+    drive_record_t b;
+    memset(&b, 0x55, sizeof b);
+    CHECK(!drive_store_load(&b), "erased");
+    CHECK_EQ_INT(b.orig_version, 0); CHECK_EQ_INT(b.orig_mode, 0);
+}
+
 int main(void) {
     static uint8_t backing[2 * 160 * 14336];
     psram_image_set_backing(backing, sizeof backing);
@@ -112,6 +149,10 @@ int main(void) {
     RUN(network_mode_round_trips_and_boots);
     RUN(the_wire_names_and_the_parser_agree);
     RUN(a_corrupt_record_does_not_load);
+    RUN(the_original_drive_setting_round_trips_beside_df1);
+    RUN(a_page_from_older_firmware_is_auto_version_0);
+    RUN(a_corrupt_df1_block_keeps_the_original_drive_setting);
+    RUN(erased_is_auto_version_0);
     RUN(writes_wait_for_an_empty_drive);
     RUN(writes_while_idle_with_a_disk_mounted);
     RUN(the_save_itself_does_not_refuse_a_mounted_disk);

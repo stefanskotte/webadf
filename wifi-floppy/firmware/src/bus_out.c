@@ -15,9 +15,11 @@ static uint32_t     shadow[WF_DRIVES];
 // bus_out_init on; the others start off. Written under gate_lock.
 static volatile bool drive_on[WF_DRIVES];
 
-// Drive d's select line: SEL0 for DF0, SEL1 for DF1. A function, not a table:
-// the pins are read from the board description at run time.
-static uint sel_pin_of(unsigned d) { return d == 0 ? PIN_SEL0 : PIN_SEL1; }
+// Drive d's select line: SEL0 for DF0, SEL1 for DF1 -- or, on a rev C whose
+// original drive is DF0, the other way round (PIN_SEL_OF, orig_drive.h). A
+// function, not a table: the pins are read from the board description and the
+// power-on decision at run time, both settled before bus_out_init.
+static uint sel_pin_of(unsigned d) { return PIN_SEL_OF(d); }
 
 #if WF_DRIVE_ID
 #include "drive_id.h"
@@ -165,7 +167,9 @@ bool bus_out_drive_id_set(unsigned d, drive_id_kind_t k) {
     // reset, found no DF1 (bench 2026-10-13, fw 1.11.0, HANDOFF 3bj). DF0
     // keeps the old rule (a new word at the next load): its motor-on select
     // is visible, and its HD/DD changes passed the bench that way (3an).
-    if (d != 0) {
+    // With rev C's original drive as DF0, no unit is DF0 (orig_unit_is_df0):
+    // the main drive answers on SEL1 as DF1, and gets DF1's rule.
+    if (!orig_unit_is_df0(d)) {
         uint32_t save = spin_lock_blocking(gate_lock);    // against bus_out_set_drive's PC check
         pio_sm_exec(id_pio, (uint)id_sm[d], pio_encode_jmp(id_off + drive_id_offset_on_released));
         spin_unlock(gate_lock, save);
@@ -229,10 +233,11 @@ void bus_out_drive_enable(unsigned d, bool on) {
         drive_on[d] = false;
         // Release what this drive may have left on the pads -- once, by the
         // drive's own (now disabled) machines, which still run exec'd
-        // instructions. Only with SEL0 high: then no DF0 word is on the pads
-        // to overwrite. With SEL0 low, DF0's gate rewrites its word every few
-        // cycles and DF0's machines release the pads at its deselect.
-        if (gpio_get(PIN_SEL0)) {
+        // instructions. Only with unit 0's select high (SEL0, or SEL1 when
+        // the original drive is DF0): then no word of unit 0 is on the pads
+        // to overwrite. With it low, unit 0's gate rewrites its word every few
+        // cycles and its machines release the pads at its deselect.
+        if (gpio_get(PIN_SEL_OF(0))) {
             pio_sm_exec(gate_pio, gate_sm[d], pio_encode_mov(pio_pins, pio_null));
 #if WF_DRIVE_ID
             if (id_sm[d] >= 0) pio_sm_exec(id_pio, (uint)id_sm[d], pio_encode_set(pio_pins, 0));
